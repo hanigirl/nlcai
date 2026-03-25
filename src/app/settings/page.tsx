@@ -8,6 +8,16 @@ import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { createClient } from "@/lib/supabase/client"
 
+const GOOGLE_FONTS = [
+  "Rubik", "Heebo", "Assistant", "Open Sans", "Noto Sans Hebrew", "Secular One",
+  "Alef", "Varela Round", "Frank Ruhl Libre", "Suez One", "David Libre",
+  "Amatic SC", "Karantina", "Fredoka", "Bona Nova", "Bellefair",
+  "Inter", "Roboto", "Montserrat", "Poppins", "Lato", "Raleway",
+  "Oswald", "Playfair Display", "Merriweather", "Nunito", "Work Sans",
+  "DM Sans", "Space Grotesk", "Outfit", "Manrope", "Sora", "Lexend",
+  "Plus Jakarta Sans", "Figtree", "Geist", "Satoshi",
+]
+
 type KeyName = "anthropic_api_key" | "heygen_api_key"
 type SettingsTab = "connections" | "products" | "media"
 
@@ -74,11 +84,19 @@ export default function SettingsPage() {
   const [analyzeError, setAnalyzeError] = useState<string | null>(null)
   const [fontFiles, setFontFiles] = useState<{ name: string; data: string }[]>([])
   const [googleFontSearch, setGoogleFontSearch] = useState("")
+  const [showFontDropdown, setShowFontDropdown] = useState(false)
   const [fontUploading, setFontUploading] = useState<UploadingFile[]>([])
   const [elementImages, setElementImages] = useState<string[]>([])
   const coverInputRef = useRef<HTMLInputElement>(null)
   const fontInputRef = useRef<HTMLInputElement>(null)
   const elementInputRef = useRef<HTMLInputElement>(null)
+
+  // Close font dropdown on outside click
+  useEffect(() => {
+    const handler = () => setShowFontDropdown(false)
+    document.addEventListener("click", handler)
+    return () => document.removeEventListener("click", handler)
+  }, [])
 
   useEffect(() => {
     const supabase = createClient()
@@ -409,32 +427,44 @@ export default function SettingsPage() {
                     </div>
                     <p className="text-small text-text-neutral-default">העלי את הפונטים שאת עובדת איתם, או בחרי מ-Google Fonts.</p>
 
-                    {/* Google Fonts search */}
-                    <div className="flex flex-col gap-1.5">
+                    {/* Google Fonts searchable dropdown */}
+                    <div className="flex flex-col gap-1.5 relative" onClick={(e) => e.stopPropagation()}>
                       <label className="text-xs text-text-neutral-default">Google Fonts</label>
-                      <div className="flex gap-2">
+                      <div className="relative">
                         <Input
-                          placeholder="חפשי פונט, למשל: Heebo, Assistant..."
+                          placeholder="חפשי פונט..."
                           value={googleFontSearch}
-                          onChange={(e) => setGoogleFontSearch(e.target.value)}
-                          className="flex-1 text-sm"
+                          onChange={(e) => { setGoogleFontSearch(e.target.value); setShowFontDropdown(true) }}
+                          onFocus={() => setShowFontDropdown(true)}
+                          className="text-sm"
                           dir="ltr"
                         />
-                        <Button
-                          variant="outline"
-                          disabled={!googleFontSearch.trim() || fontFiles.length >= 3}
-                          onClick={() => {
-                            const name = googleFontSearch.trim()
-                            if (!name) return
-                            setFontFiles((prev) => prev.length >= 3 ? prev : [...prev, { name: `${name} (Google Fonts)`, data: `google:${name}` }])
-                            setGoogleFontSearch("")
-                          }}
-                          className="gap-1 text-sm shrink-0"
-                        >
-                          <Plus className="size-3.5" />
-                          הוסף
-                        </Button>
+                        <ChevronDown className="absolute end-3 top-1/2 -translate-y-1/2 size-4 text-text-neutral-default pointer-events-none" />
                       </div>
+                      {showFontDropdown && googleFontSearch.length > 0 && (
+                        <div className="absolute top-full mt-1 left-0 right-0 z-10 max-h-[200px] overflow-y-auto rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 shadow-lg">
+                          {GOOGLE_FONTS.filter((f) => f.toLowerCase().includes(googleFontSearch.toLowerCase())).slice(0, 8).map((font) => (
+                            <button
+                              key={font}
+                              onClick={() => {
+                                if (fontFiles.length < 3) {
+                                  setFontFiles((prev) => [...prev, { name: `${font} (Google Fonts)`, data: `google:${font}` }])
+                                }
+                                setGoogleFontSearch("")
+                                setShowFontDropdown(false)
+                              }}
+                              disabled={fontFiles.length >= 3}
+                              className="w-full text-start px-3 py-2.5 text-sm text-text-primary-default hover:bg-bg-surface transition-colors cursor-pointer disabled:opacity-40"
+                              style={{ fontFamily: font }}
+                            >
+                              {font}
+                            </button>
+                          ))}
+                          {GOOGLE_FONTS.filter((f) => f.toLowerCase().includes(googleFontSearch.toLowerCase())).length === 0 && (
+                            <div className="px-3 py-2.5 text-xs text-text-neutral-default">לא נמצאו תוצאות</div>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {/* Divider */}
