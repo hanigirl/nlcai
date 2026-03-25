@@ -1,0 +1,42 @@
+---
+description: Hybrid Figma-to-code strategy -- always use shadcn components as base, extend for significant design differences
+alwaysApply: true
+---
+
+# Figma to shadcn/ui -- Hybrid Strategy
+
+## Core rule
+
+Always use existing shadcn/ui components from `src/components/ui/` as the base for any UI code. Never generate raw HTML elements (`<button>`, `<input>`, `<div role="dialog">`, etc.) when a shadcn equivalent exists.
+
+## Handling Figma designs
+
+1. **Map Figma output to shadcn** -- when `get_design_context` returns generic React+Tailwind, replace with the closest shadcn component
+2. **Ignore small differences** -- if the Figma design has slightly different padding, border-radius, or spacing from the shadcn default, use shadcn as-is
+3. **Extend for significant differences** -- if the design requires a meaningfully different style (new color, distinct layout, missing variant), extend via `className` or add a new `cva` variant inside the component
+4. **Never bypass shadcn** -- even for custom designs, wrap or extend the existing component
+
+## Installed components
+
+avatar, badge, button, card, dialog, input, label, separator, tabs, textarea
+
+If a Figma design uses a component not listed above, install it first: `npx shadcn@latest add <component>`
+
+## Design tokens
+
+Figma tokens map directly to Tailwind classes -- never hardcode colors or radii.
+
+Color mapping from Figma names:
+- "Brand Blue" / primary color -> `bg-primary`, `text-primary`
+- "Light Gray" / neutral background -> `bg-muted`, `text-muted-foreground`
+- "Secondary" -> `bg-secondary`
+- "Accent" -> `bg-accent`
+- "Destructive" / error / red -> `bg-destructive`
+
+Available token classes: `primary`, `secondary`, `muted`, `accent`, `destructive`, `border`, `ring`, `card`, `popover`, `sidebar-*`, `chart-1` to `chart-5`
+
+Radius: `rounded-sm` through `rounded-2xl` (derived from `--radius`)
+
+## Icons
+
+Always use `lucide-react`. Never use other icon libraries or inline SVGs.
