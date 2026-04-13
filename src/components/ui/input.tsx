@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils"
 
 const inputVariants = {
   default: "bg-bg-surface",
-  homepage: "bg-white",
+  homepage: "bg-white dark:bg-gray-10",
 } as const
 
 const inputSizes = {

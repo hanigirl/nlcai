@@ -131,7 +131,7 @@ export function SelectionCard({
 
         {/* Tooltip */}
         {showTooltip && isClamped && (
-          <div className="absolute z-50 start-0 end-0 top-full mt-1 rounded-lg bg-gray-10 text-white text-xs-body p-3 shadow-lg">
+          <div className="absolute z-50 start-0 end-0 top-full mt-1 rounded-lg bg-gray-10 dark:bg-gray-90 text-white dark:text-gray-10 text-xs-body p-3 shadow-lg">
             {description}
           </div>
         )}

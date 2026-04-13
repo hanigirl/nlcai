@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { idea, userResponse, productName, count = 3 } = await req.json()
+    const { idea, userResponse, productName, count = 3, fieldIdeas = [] } = await req.json()
 
     if (!idea) {
       return NextResponse.json(
@@ -31,12 +31,16 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Fetch core identity & audience identity
+    // Fetch core identity, audience identity & trending context
     const [{ data: coreIdentity }, { data: audienceIdentity }, learningInsights] = await Promise.all([
       supabase.from("core_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("audience_identities").select("*").eq("user_id", user.id).single(),
       fetchLearningInsights(supabase, user.id, "hook"),
     ])
+
+    if (!audienceIdentity || !audienceIdentity.daily_pains) {
+      return NextResponse.json({ error: "audience_missing" }, { status: 400 })
+    }
 
     let apiKey: string
     try {
@@ -49,6 +53,60 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: msg }, { status: 500 })
     }
 
+    // Load verified creators + trend context from niche_creators cache
+    let trendContext = ""
+    try {
+      const niche = coreIdentity?.niche || ""
+      if (niche) {
+        // Load cached creators for this niche
+        const { data: nicheCreators } = await supabase
+          .from("niche_creators")
+          .select("handle, platform, followers, bio")
+          .eq("user_id", user.id)
+          .eq("niche", niche)
+
+        if (nicheCreators && nicheCreators.length > 0) {
+          const fmtFollowers = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${Math.round(n / 1_000)}K` : `${n}`
+          const creatorsContext = nicheCreators.map((c: { handle: string; platform: string; followers: number; bio: string }) =>
+            `- @${c.handle} (${c.platform}, ${fmtFollowers(c.followers)} עוקבים)${c.bio ? `: ${c.bio.slice(0, 100)}` : ""}`
+          ).join("\n")
+          trendContext = `יוצרי תוכן מובילים בנישה (מאומתים):\n${creatorsContext}`
+        }
+
+        // Search for trends ABOUT THE SPECIFIC IDEA, not generic niche trends
+        if (process.env.SERPER_API_KEY && idea) {
+          // Extract core topic from idea (first ~60 chars, strip creator mentions)
+          const ideaTopic = idea.replace(/@[\w.]+/g, "").replace(/\([\d,.KkMm]+\s*עוקבים.*?\)/g, "").trim().slice(0, 80)
+          const searches = await Promise.all([
+            fetch("https://google.serper.dev/search", {
+              method: "POST",
+              headers: { "X-API-KEY": process.env.SERPER_API_KEY, "Content-Type": "application/json" },
+              body: JSON.stringify({ q: `${ideaTopic} ${niche} 2026`, num: 5 }),
+            }).then((r) => r.ok ? r.json() : { organic: [] }).catch(() => ({ organic: [] })),
+            fetch("https://google.serper.dev/search", {
+              method: "POST",
+              headers: { "X-API-KEY": process.env.SERPER_API_KEY, "Content-Type": "application/json" },
+              body: JSON.stringify({ q: `${ideaTopic} tips viral trending`, num: 5 }),
+            }).then((r) => r.ok ? r.json() : { organic: [] }).catch(() => ({ organic: [] })),
+          ])
+          const results = searches.flatMap((d) => (d.organic ?? []) as { title: string; snippet: string }[])
+          // Dedupe by title
+          const seen = new Set<string>()
+          const unique = results.filter((r) => { if (seen.has(r.title)) return false; seen.add(r.title); return true })
+          if (unique.length > 0) {
+            trendContext += `\n\nמה אומרים ברשת על הנושא הזה:\n${unique.slice(0, 8).map((r) => `- ${r.title}: ${r.snippet}`).join("\n")}`
+          }
+        }
+      }
+    } catch {
+      // non-fatal
+    }
+
+    // Add field ideas
+    if (fieldIdeas.length > 0) {
+      trendContext += `\n\nרעיונות מהשטח — תוכן ויראלי שנמצא מיוצרים מובילים בנישה:\n${fieldIdeas.slice(0, 10).map((t: string, i: number) => `${i + 1}. ${t}`).join("\n")}`
+    }
+
     const prompt = buildHookGeneratorPrompt({
       idea,
       userResponse,
@@ -57,6 +115,7 @@ export async function POST(req: NextRequest) {
       audienceIdentity,
       count,
       learningInsights,
+      trendContext,
     })
 
     const client = new Anthropic({ apiKey })
@@ -73,9 +132,12 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("Hook generation error:", message)
+    const isCredits = /credit|billing|insufficient_quota|payment|402/.test(message)
+    const isOverloaded = /overloaded|529|503/.test(message)
+    const errCode = isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : `Failed to generate hooks: ${message}`
     return NextResponse.json(
-      { error: `Failed to generate hooks: ${message}` },
-      { status: 500 }
+      { error: errCode },
+      { status: isCredits ? 402 : isOverloaded ? 503 : 500 }
     )
   }
 }

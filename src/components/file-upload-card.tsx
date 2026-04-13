@@ -106,7 +106,7 @@ export function FileUploadCard({
 
         {status === "done" && (
           <div className="flex flex-col items-center gap-3 rounded-xl border border-green-500/30 bg-green-50 dark:bg-green-950/20 p-8">
-            <Check className="size-8 text-green-600" />
+            <Check className="size-8 text-green-600 dark:text-green-400" />
             <span className="text-small text-green-700 dark:text-green-400">
               הקובץ עובד בהצלחה!
             </span>

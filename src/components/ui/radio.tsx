@@ -11,14 +11,14 @@ export function Radio({ checked, className }: RadioProps) {
       className={cn(
         "flex size-4 shrink-0 items-center justify-center rounded-full transition-all",
         checked
-          ? "bg-yellow-20"
+          ? "bg-yellow-20 dark:bg-yellow-50"
           : "border border-gray-60 bg-transparent",
         className
       )}
     >
       {checked && (
         <svg
-          className="size-[9px] text-white"
+          className="size-[9px] text-white dark:text-gray-10"
           viewBox="0 0 6 4.125"
           fill="none"
           stroke="currentColor"

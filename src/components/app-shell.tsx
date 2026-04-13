@@ -16,7 +16,7 @@ export function AppShell({ children, idea, isHome }: AppShellProps) {
       <AppSidebar />
       <SidebarInset>
         <AppHeader idea={idea} />
-        <main className={`flex-1 ${idea ? "overflow-hidden bg-bg-surface" : isHome ? "overflow-y-auto bg-bg-surface pt-[72px] px-6 pb-6" : "overflow-y-auto bg-white pt-[72px] px-6 pb-6"}`}>
+        <main className={`flex-1 ${idea ? "overflow-hidden bg-bg-surface" : isHome ? "overflow-y-auto bg-bg-surface pt-[72px] px-6 pb-6" : "overflow-y-auto bg-white dark:bg-gray-10 pt-[72px] px-6 pb-6"}`}>
           {children}
         </main>
       </SidebarInset>

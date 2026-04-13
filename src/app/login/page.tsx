@@ -13,6 +13,41 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
+type FieldErrors = {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  password?: string;
+};
+
+type Message = {
+  text: string;
+  type: "error" | "success";
+};
+
+function validateEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function getHebrewError(errorMessage: string): string {
+  if (errorMessage.includes("Invalid login credentials")) {
+    return "המייל או הסיסמא שהזנת לא נכונים";
+  }
+  if (errorMessage.includes("Email not confirmed")) {
+    return "המייל עדיין לא אומת. בדקי את תיבת המייל שלך";
+  }
+  if (errorMessage.includes("User already registered")) {
+    return "כבר קיים חשבון עם המייל הזה. נסי להתחבר";
+  }
+  if (errorMessage.includes("Email rate limit exceeded") || errorMessage.includes("rate limit")) {
+    return "יותר מדי ניסיונות. נסי שוב בעוד כמה דקות";
+  }
+  if (errorMessage.includes("Password should be at least")) {
+    return "הסיסמא צריכה להכיל לפחות 6 תווים";
+  }
+  return "משהו השתבש. נסי שוב";
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -20,14 +55,42 @@ export default function LoginPage() {
   const [lastName, setLastName] = useState("");
   const [isSignUp, setIsSignUp] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState<Message | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   const supabase = createClient();
 
+  function validateFields(): boolean {
+    const errors: FieldErrors = {};
+
+    if (isSignUp) {
+      if (!firstName.trim()) errors.firstName = "חובה להזין שם פרטי";
+      if (!lastName.trim()) errors.lastName = "חובה להזין שם משפחה";
+    }
+
+    if (!email.trim()) {
+      errors.email = "חובה להזין מייל";
+    } else if (!validateEmail(email)) {
+      errors.email = "כתובת מייל לא תקינה";
+    }
+
+    if (!password) {
+      errors.password = "חובה להזין סיסמא";
+    } else if (password.length < 6) {
+      errors.password = "הסיסמא צריכה להכיל לפחות 6 תווים";
+    }
+
+    setFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setMessage(null);
+
+    if (!validateFields()) return;
+
     setLoading(true);
-    setMessage("");
 
     if (isSignUp) {
       const { error } = await supabase.auth.signUp({
@@ -41,9 +104,12 @@ export default function LoginPage() {
         },
       });
       if (error) {
-        setMessage(error.message);
+        setMessage({ text: getHebrewError(error.message), type: "error" });
       } else {
-        setMessage("Check your email for a confirmation link.");
+        setMessage({
+          text: "שלחנו לך מייל אימות. בדקי את תיבת המייל שלך כדי להשלים את ההרשמה",
+          type: "success",
+        });
       }
     } else {
       const { error } = await supabase.auth.signInWithPassword({
@@ -51,7 +117,7 @@ export default function LoginPage() {
         password,
       });
       if (error) {
-        setMessage(error.message);
+        setMessage({ text: getHebrewError(error.message), type: "error" });
       } else {
         window.location.href = "/";
       }
@@ -61,12 +127,19 @@ export default function LoginPage() {
   }
 
   async function handleGoogleLogin() {
-    await supabase.auth.signInWithOAuth({
+    setMessage(null);
+    const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
+        queryParams: {
+          prompt: "select_account",
+        },
       },
     });
+    if (error) {
+      setMessage({ text: "ההתחברות עם Google נכשלה. נסי שוב", type: "error" });
+    }
   }
 
   return (
@@ -92,42 +165,73 @@ export default function LoginPage() {
           </CardHeader>
 
           <CardContent>
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
               {isSignUp && (
                 <div className="flex gap-3">
-                  <Input
-                    type="text"
-                    placeholder="שם פרטי *"
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    required
-                  />
-                  <Input
-                    type="text"
-                    placeholder="שם משפחה *"
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                    required
-                  />
+                  <div className="flex-1">
+                    <Input
+                      type="text"
+                      placeholder="שם פרטי *"
+                      value={firstName}
+                      onChange={(e) => {
+                        setFirstName(e.target.value);
+                        if (fieldErrors.firstName) setFieldErrors((prev) => ({ ...prev, firstName: undefined }));
+                      }}
+                      aria-invalid={!!fieldErrors.firstName}
+                    />
+                    {fieldErrors.firstName && (
+                      <p className="mt-1 text-xs text-button-destructive-default">{fieldErrors.firstName}</p>
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <Input
+                      type="text"
+                      placeholder="שם משפחה *"
+                      value={lastName}
+                      onChange={(e) => {
+                        setLastName(e.target.value);
+                        if (fieldErrors.lastName) setFieldErrors((prev) => ({ ...prev, lastName: undefined }));
+                      }}
+                      aria-invalid={!!fieldErrors.lastName}
+                    />
+                    {fieldErrors.lastName && (
+                      <p className="mt-1 text-xs text-button-destructive-default">{fieldErrors.lastName}</p>
+                    )}
+                  </div>
                 </div>
               )}
 
-              <Input
-                type="email"
-                placeholder="מייל *"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
+              <div>
+                <Input
+                  type="email"
+                  placeholder="מייל *"
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (fieldErrors.email) setFieldErrors((prev) => ({ ...prev, email: undefined }));
+                  }}
+                  aria-invalid={!!fieldErrors.email}
+                />
+                {fieldErrors.email && (
+                  <p className="mt-1 text-xs text-button-destructive-default">{fieldErrors.email}</p>
+                )}
+              </div>
 
-              <Input
-                type="password"
-                placeholder="סיסמא *"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={6}
-              />
+              <div>
+                <Input
+                  type="password"
+                  placeholder="סיסמא *"
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    if (fieldErrors.password) setFieldErrors((prev) => ({ ...prev, password: undefined }));
+                  }}
+                  aria-invalid={!!fieldErrors.password}
+                />
+                {fieldErrors.password && (
+                  <p className="mt-1 text-xs text-button-destructive-default">{fieldErrors.password}</p>
+                )}
+              </div>
 
               <Button type="submit" disabled={loading} className="w-full h-12 rounded-xl">
                 {loading
@@ -169,14 +273,20 @@ export default function LoginPage() {
                   fill="#EA4335"
                 />
               </svg>
-              המשיכו עם Google
+              {isSignUp ? "הרשמה עם Google" : "כניסה עם Google"}
             </Button>
 
             {/* Message */}
             {message && (
-              <p className="mt-4 text-center text-small text-text-neutral-default">
-                {message}
-              </p>
+              <div
+                className={`mt-4 rounded-xl px-4 py-3 text-center text-sm ${
+                  message.type === "error"
+                    ? "bg-red-95 text-button-destructive-default"
+                    : "bg-bg-surface-primary-default text-text-primary-default"
+                }`}
+              >
+                {message.text}
+              </div>
             )}
 
             {/* Toggle sign up / sign in */}
@@ -185,7 +295,8 @@ export default function LoginPage() {
               <button
                 onClick={() => {
                   setIsSignUp(!isSignUp);
-                  setMessage("");
+                  setMessage(null);
+                  setFieldErrors({});
                 }}
                 className="font-semibold text-text-primary-default hover:underline"
               >

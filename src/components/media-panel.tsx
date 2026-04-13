@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react"
 import Image from "next/image"
-import { X, Smartphone, Video, Layers, Image as ImageIcon, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, ChevronLeft, ChevronRight, type LucideIcon } from "lucide-react"
+import { X, Smartphone, Video, Layers, Image as ImageIcon, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, Upload, ChevronLeft, ChevronRight, type LucideIcon } from "lucide-react"
 
 import { AvatarPicker, type Avatar } from "@/components/avatar-picker"
 import { Button } from "@/components/ui/button"
@@ -31,6 +31,11 @@ interface MediaPanelProps {
   onThTranscriptChange: (text: string) => void
   onThVideoUrlChange: (url: string | null) => void
   onThSourceModeChange: (mode: "choose" | "upload" | "avatar") => void
+  thCoverImage: string | null
+  onThCoverImageChange: (image: string | null) => void
+  onThCoverLoadingChange?: (loading: boolean) => void
+  onThVideoFrameChange?: (dataUrl: string) => void
+  hookText?: string
   onScrollToVideo?: () => void
   // Carousel state (lifted)
   carouselImages: string[] | null
@@ -54,6 +59,11 @@ export function MediaPanel({
   onThTranscriptChange,
   onThVideoUrlChange,
   onThSourceModeChange,
+  thCoverImage,
+  onThCoverImageChange,
+  onThCoverLoadingChange,
+  onThVideoFrameChange,
+  hookText: panelHookText,
   onScrollToVideo,
   carouselImages,
   carouselSlides,
@@ -68,7 +78,7 @@ export function MediaPanel({
 
   return (
     <div
-      className={`fixed left-0 top-14 bottom-0 w-[400px] bg-white border-r border-border-neutral-default z-30 transition-transform duration-300 ease-in-out ${
+      className={`fixed left-0 top-14 bottom-0 w-[400px] bg-white dark:bg-gray-10 border-r border-border-neutral-default z-30 transition-transform duration-300 ease-in-out ${
         isOpen ? "translate-x-0" : "-translate-x-full"
       }`}
       dir="rtl"
@@ -117,6 +127,11 @@ export function MediaPanel({
             onTranscriptChange={onThTranscriptChange}
             onVideoUrlChange={onThVideoUrlChange}
             onSourceModeChange={onThSourceModeChange}
+            coverImage={thCoverImage}
+            onCoverImageChange={onThCoverImageChange}
+            onCoverLoadingChange={onThCoverLoadingChange}
+            onVideoFrameChange={onThVideoFrameChange}
+            hookText={panelHookText}
             onScrollToVideo={onScrollToVideo}
           />
         )}
@@ -165,6 +180,11 @@ function TalkingHeadFlow({
   onTranscriptChange,
   onVideoUrlChange,
   onSourceModeChange,
+  coverImage,
+  onCoverImageChange,
+  onCoverLoadingChange,
+  onVideoFrameChange,
+  hookText,
   onScrollToVideo,
 }: {
   avatar: Avatar | null
@@ -177,6 +197,11 @@ function TalkingHeadFlow({
   onTranscriptChange: (t: string) => void
   onVideoUrlChange: (url: string | null) => void
   onSourceModeChange: (mode: "choose" | "upload" | "avatar") => void
+  coverImage: string | null
+  onCoverImageChange: (image: string | null) => void
+  onCoverLoadingChange?: (loading: boolean) => void
+  onVideoFrameChange?: (dataUrl: string) => void
+  hookText?: string
   onScrollToVideo?: () => void
 }) {
   // --- upload video state ---
@@ -196,14 +221,12 @@ function TalkingHeadFlow({
   const timerRef = useRef<NodeJS.Timeout | null>(null)
 
   // --- video generation state ---
-  const [videoPhase, setVideoPhase] = useState<"idle" | "generating" | "done">("idle")
+  const [videoPhase, setVideoPhase] = useState<"idle" | "generating" | "done">(liftedVideoUrl ? "done" : "idle")
   const [videoProgress, setVideoProgress] = useState("")
   const [videoError, setVideoError] = useState<string | null>(null)
 
   // --- cover generation state ---
-  const [coverImages, setCoverImages] = useState<string[] | null>(null)
   const [coverLoading, setCoverLoading] = useState(false)
-  const [selectedCover, setSelectedCover] = useState(0)
 
   // Load mic devices
   useEffect(() => {
@@ -303,7 +326,19 @@ function TalkingHeadFlow({
         const data = await res.json()
         if (data.status === "completed" && data.video_url) {
           clearInterval(interval)
-          onVideoUrlChange(data.video_url)
+          setVideoProgress("שומר וידאו...")
+          // Download and store in Supabase Storage
+          try {
+            const storeRes = await fetch("/api/videos/store", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ video_url: data.video_url }),
+            })
+            const storeData = await storeRes.json()
+            onVideoUrlChange(storeData.url || data.video_url)
+          } catch {
+            onVideoUrlChange(data.video_url)
+          }
           setVideoPhase("done")
           // Auto-generate cover if thumbnail available
           if (data.thumbnail_url) {
@@ -367,30 +402,29 @@ function TalkingHeadFlow({
     }
   }
 
-  const generateCover = async (thumbnailUrl: string) => {
-    setCoverLoading(true)
+  const generateCover = async (thumbnailUrl: string, customTitle?: string) => {
+    setCoverLoading(true); onCoverLoadingChange?.(true)
     try {
       const res = await fetch("/api/reel-cover/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ thumbnail_url: thumbnailUrl, title: transcript || "ריל חדש" }),
+        body: JSON.stringify({ thumbnail_url: thumbnailUrl || undefined, title: customTitle || hookText || transcript || "ריל חדש" }),
       })
       const data = await res.json()
-      if (data.covers) {
-        setCoverImages(data.covers)
-        setSelectedCover(0)
+      if (data.covers?.[0]) {
+        onCoverImageChange(data.covers[0])
       }
     } catch {
       // Cover generation is optional, fail silently
     } finally {
-      setCoverLoading(false)
+      setCoverLoading(false); onCoverLoadingChange?.(false)
     }
   }
 
   const handleDownloadCover = () => {
-    if (!coverImages || !coverImages[selectedCover]) return
+    if (!coverImage) return
     const a = document.createElement("a")
-    a.href = `data:image/png;base64,${coverImages[selectedCover]}`
+    a.href = `data:image/png;base64,${coverImage}`
     a.download = "reel-cover.png"
     a.click()
   }
@@ -403,29 +437,93 @@ function TalkingHeadFlow({
     setVideoPhase("idle")
     onVideoUrlChange(null)
     setVideoError(null)
-    setCoverImages(null)
+    onCoverImageChange(null)
     setCoverLoading(false)
     onSourceModeChange("choose")
     setUploadedVideoUrl(null)
   }
 
+  // Extract a frame from a video file as data URL
+  const extractFrameFromFile = (file: File): Promise<string | null> => {
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(file)
+      const video = document.createElement("video")
+      video.muted = true
+      video.src = url
+      video.onloadeddata = () => { video.currentTime = 1 }
+      video.onseeked = () => {
+        try {
+          const canvas = document.createElement("canvas")
+          canvas.width = video.videoWidth
+          canvas.height = video.videoHeight
+          canvas.getContext("2d")?.drawImage(video, 0, 0)
+          URL.revokeObjectURL(url)
+          resolve(canvas.toDataURL("image/jpeg", 0.8))
+        } catch { resolve(null) }
+      }
+      video.onerror = () => { URL.revokeObjectURL(url); resolve(null) }
+      setTimeout(() => resolve(null), 5000)
+    })
+  }
+
+  const processVideoFile = async (file: File) => {
+    const localUrl = URL.createObjectURL(file)
+    setUploadedVideoUrl(localUrl)
+    onVideoUrlChange(localUrl)
+    setVideoPhase("done")
+
+    // Extract frame for cover before uploading
+    const frameDataUrl = await extractFrameFromFile(file)
+    if (frameDataUrl) onVideoFrameChange?.(frameDataUrl)
+
+    // Save thumbnail (not the full video) to Supabase Storage
+    if (frameDataUrl) {
+      try {
+        const { createClient } = await import("@/lib/supabase/client")
+        const supabase = createClient()
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) {
+          const base64 = frameDataUrl.split(",")[1]
+          const binaryStr = atob(base64)
+          const bytes = new Uint8Array(binaryStr.length)
+          for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
+          const storagePath = `${user.id}/video-thumb/${crypto.randomUUID()}.jpg`
+          const { error } = await supabase.storage.from("user-media").upload(storagePath, bytes, { contentType: "image/jpeg" })
+          if (!error) {
+            const thumbUrl = supabase.storage.from("user-media").getPublicUrl(storagePath).data.publicUrl
+            // Save thumbnail URL as the "video" reference — lightweight
+            onVideoUrlChange(thumbUrl)
+          }
+        }
+      } catch { /* keep local URL for this session */ }
+    }
+
+    // Generate cover with video frame as thumbnail
+    const coverTitle = hookText || transcript || "ריל חדש"
+    setCoverLoading(true); onCoverLoadingChange?.(true)
+    try {
+      const res = await fetch("/api/reel-cover/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thumbnail_url: frameDataUrl || undefined, title: coverTitle }),
+      })
+      const data = await res.json()
+      if (data.covers?.[0]) onCoverImageChange(data.covers[0])
+    } catch { /* ignore */ }
+    finally { setCoverLoading(false); onCoverLoadingChange?.(false) }
+  }
+
   const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    const url = URL.createObjectURL(file)
-    setUploadedVideoUrl(url)
-    onVideoUrlChange(url)
-    setVideoPhase("done")
+    processVideoFile(file)
   }
 
   const handleVideoDrop = (e: React.DragEvent) => {
     e.preventDefault()
     const file = e.dataTransfer.files[0]
     if (!file || !file.type.startsWith("video/")) return
-    const url = URL.createObjectURL(file)
-    setUploadedVideoUrl(url)
-    onVideoUrlChange(url)
-    setVideoPhase("done")
+    processVideoFile(file)
   }
 
   // Determine current step for progress bar
@@ -457,7 +555,7 @@ function TalkingHeadFlow({
   )
 
   // --- Choose source: upload or avatar ---
-  if (!avatar && sourceMode === "choose") {
+  if (!avatar && sourceMode === "choose" && !(videoPhase === "done" && liftedVideoUrl)) {
     return (
       <div className="flex flex-col gap-6">
         {/* Upload video drop zone */}
@@ -508,61 +606,150 @@ function TalkingHeadFlow({
     )
   }
 
-  // --- Video done → show only success message ---
-  if (videoPhase === "done" && liftedVideoUrl) {
+  // --- Video done (uploaded, not avatar) → show video preview + cover ---
+  if (videoPhase === "done" && liftedVideoUrl && !avatar) {
+    return (
+      <div className="flex flex-col gap-6">
+        {/* Video + Cover side by side */}
+        <div className="flex gap-3 justify-center">
+          {/* Video */}
+          <div className="flex flex-col items-center gap-2">
+            <p className="text-xs text-text-neutral-default">סרטון</p>
+            <div className="w-[80px] aspect-[9/16] rounded-lg overflow-hidden bg-gray-95 relative">
+              {liftedVideoUrl.startsWith("blob:") ? (
+                <video
+                  src={liftedVideoUrl}
+                  controls={false}
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover cursor-pointer"
+                  onClick={(e) => { const v = e.target as HTMLVideoElement; if (v.paused) v.play(); else v.pause() }}
+                />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={liftedVideoUrl} alt="video" className="w-full h-full object-cover" />
+              )}
+            </div>
+          </div>
+
+          {/* Cover */}
+          {coverLoading && (
+            <div className="flex flex-col items-center gap-2">
+              <p className="text-xs text-text-neutral-default">קאבר</p>
+              <div className="w-[80px] aspect-[9/16] rounded-lg bg-gray-95 flex items-center justify-center">
+                <Loader2 className="size-4 animate-spin text-text-neutral-default" />
+              </div>
+            </div>
+          )}
+          {coverImage && !coverLoading && (
+            <div className="flex flex-col items-center gap-2">
+              <p className="text-xs text-text-neutral-default">קאבר</p>
+              <div className="w-[80px] aspect-[9/16] rounded-lg overflow-hidden">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`data:image/png;base64,${coverImage}`}
+                  alt="cover"
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-2">
+          <input
+            ref={videoInputRef}
+            type="file"
+            accept="video/*"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) processVideoFile(f) }}
+            className="hidden"
+          />
+          <Button variant="outline" onClick={() => videoInputRef.current?.click()} size="sm" className="flex-1 gap-1.5">
+            <Upload className="size-3.5" />
+            החלף סרטון
+          </Button>
+          {coverImage && (
+            <Button onClick={handleDownloadCover} size="sm" className="flex-1 gap-1.5">
+              <Download className="size-3.5" />
+              הורד קאבר
+            </Button>
+          )}
+        </div>
+
+        {/* Divider */}
+        <div className="flex items-center gap-3">
+          <div className="h-px flex-1 bg-border-neutral-default" />
+          <span className="text-xs text-text-neutral-default">או</span>
+          <div className="h-px flex-1 bg-border-neutral-default" />
+        </div>
+
+        {/* Avatar option */}
+        <Button
+          variant="outline"
+          onClick={() => { handleStartOver(); onSourceModeChange("avatar") }}
+          className="w-full gap-2"
+        >
+          טען אווטארים
+        </Button>
+      </div>
+    )
+  }
+
+  // --- Video done (via avatar flow) → show success + cover ---
+  if (videoPhase === "done" && liftedVideoUrl && avatar) {
     return (
       <div className="flex flex-col gap-6">
         {progressBar}
-        <Alert className="border-green-200 bg-green-50 [&>svg]:text-green-600">
-          <CircleCheck className="size-4" />
-          <AlertTitle className="text-green-800">הוידאו נוצר בהצלחה!</AlertTitle>
-          <AlertDescription className="text-green-700">
-            הוידאו מוצג מתחת לכרטיס דיבור למצלמה.{" "}
-            <button
-              onClick={onScrollToVideo}
-              className="underline font-medium hover:text-green-900 transition-colors"
-            >
-              קח אותי לוידאו
-            </button>
-          </AlertDescription>
-        </Alert>
 
-        {/* Cover generation */}
-        {coverLoading && (
-          <div className="flex items-center gap-2 text-sm text-text-neutral-default">
-            <Loader2 className="size-4 animate-spin" />
-            מייצר cover לריל...
-          </div>
-        )}
-
-        {coverImages && coverImages.length > 0 && (
-          <div className="flex flex-col gap-3">
-            <p className="text-small-bold text-text-primary-default">בחר cover לריל:</p>
-            <div className="grid grid-cols-3 gap-2">
-              {coverImages.map((img, i) => (
-                <button
-                  key={i}
-                  onClick={() => setSelectedCover(i)}
-                  className={`relative aspect-[9/16] rounded-lg overflow-hidden transition-all cursor-pointer ${
-                    selectedCover === i
-                      ? "ring-2 ring-yellow-50"
-                      : "opacity-60 hover:opacity-100"
-                  }`}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={`data:image/png;base64,${img}`}
-                    alt={`cover ${i + 1}`}
-                    className="w-full h-full object-cover"
-                  />
-                </button>
-              ))}
+        {/* Video + Cover side by side */}
+        <div className="flex gap-3 justify-center">
+          <div className="flex flex-col items-center gap-2">
+            <p className="text-xs text-text-neutral-default">סרטון</p>
+            <div className="w-[80px] aspect-[9/16] rounded-lg overflow-hidden bg-gray-95 relative">
+              {liftedVideoUrl.startsWith("blob:") ? (
+                <video
+                  src={liftedVideoUrl}
+                  controls={false}
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover cursor-pointer"
+                  onClick={(e) => { const v = e.target as HTMLVideoElement; if (v.paused) v.play(); else v.pause() }}
+                />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={liftedVideoUrl} alt="video" className="w-full h-full object-cover" />
+              )}
             </div>
-            <Button onClick={handleDownloadCover} className="w-full gap-2">
-              <Download className="size-4" />
-              הורד cover
-            </Button>
           </div>
+          {coverLoading && (
+            <div className="flex flex-col items-center gap-2">
+              <p className="text-xs text-text-neutral-default">קאבר</p>
+              <div className="w-[80px] aspect-[9/16] rounded-lg bg-gray-95 flex items-center justify-center">
+                <Loader2 className="size-4 animate-spin text-text-neutral-default" />
+              </div>
+            </div>
+          )}
+          {coverImage && !coverLoading && (
+            <div className="flex flex-col items-center gap-2">
+              <p className="text-xs text-text-neutral-default">קאבר</p>
+              <div className="w-[80px] aspect-[9/16] rounded-lg overflow-hidden">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`data:image/png;base64,${coverImage}`}
+                  alt="cover"
+                  className="w-full h-full object-cover"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {coverImage && (
+          <Button onClick={handleDownloadCover} size="sm" className="w-full gap-1.5">
+            <Download className="size-3.5" />
+            הורד קאבר
+          </Button>
         )}
 
         <div className="flex flex-col items-center gap-2">
@@ -601,7 +788,7 @@ function TalkingHeadFlow({
             <select
               value={selectedDevice}
               onChange={(e) => setSelectedDevice(e.target.value)}
-              className="h-9 w-full appearance-none rounded-lg border border-border-neutral-default bg-white pe-8 ps-3 text-sm text-text-primary-default outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+              className="h-9 w-full appearance-none rounded-lg border border-border-neutral-default bg-white dark:bg-gray-10 pe-8 ps-3 text-sm text-text-primary-default outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
             >
               {devices.map((d) => (
                 <option key={d.deviceId} value={d.deviceId}>
@@ -744,30 +931,42 @@ function CarouselFlow({
 
   // Parse carousel text into slides
   const parseTextToSlides = (text: string): SlideData[] => {
-    const slideBlocks = text.split(/\n\n+/).filter(Boolean)
+    const slideHeaderRegex = /^\s*(?:שקופית\s*\d+|\[.*?\])\s*:?\s*$/
+    const blocks = text
+      .split(/\n\s*\n+/)
+      .map((b) => b.trim())
+      .filter(Boolean)
+
     const parsed: SlideData[] = []
     let slideNum = 1
 
-    for (const block of slideBlocks) {
-      const lines = block.trim().split("\n")
-      const headerLine = lines[0]
+    for (const block of blocks) {
+      const lines = block.split("\n").map((l) => l.trim()).filter(Boolean)
+      if (lines.length === 0) continue
 
-      let type: SlideData["type"] = "content"
-      if (headerLine.includes("כריכה")) type = "cover"
-      else if (headerLine.includes("סיום")) type = "cta"
+      const hasHeader = slideHeaderRegex.test(lines[0])
+      const contentLines = hasHeader ? lines.slice(1) : lines
+      if (contentLines.length === 0) continue
 
-      // Extract title from "כותרת: ..." line
-      const titleLine = lines.find((l) => l.startsWith("כותרת:"))
-      const title = titleLine ? titleLine.replace("כותרת:", "").trim() : lines[0].replace(/^\[.*\]\s*/, "").trim()
+      const legacyTitleLine = contentLines.find((l) => l.startsWith("כותרת:"))
+      let title: string
+      let body: string
 
-      // Body is remaining lines after header and title
-      const bodyLines = lines.filter(
-        (l) => l !== headerLine && l !== titleLine,
-      )
-      const body = bodyLines.join("\n").trim()
+      if (legacyTitleLine) {
+        title = legacyTitleLine.replace("כותרת:", "").trim()
+        body = contentLines.filter((l) => l !== legacyTitleLine).join("\n").trim()
+      } else {
+        title = contentLines[0]
+        body = contentLines.slice(1).join("\n").trim()
+      }
 
-      parsed.push({ slide: slideNum, type, title, body })
+      parsed.push({ slide: slideNum, type: "content", title, body })
       slideNum++
+    }
+
+    if (parsed.length > 0) {
+      parsed[0].type = "cover"
+      parsed[parsed.length - 1].type = "cta"
     }
 
     return parsed
@@ -847,14 +1046,14 @@ function CarouselFlow({
   if (images && images.length > 0) {
     return (
       <div className="flex flex-col gap-5">
-        <Alert className="border-green-200 bg-green-50 [&>svg]:text-green-600">
+        <Alert className="border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950 [&>svg]:text-green-600 dark:[&>svg]:text-green-400">
           <CircleCheck className="size-4" />
-          <AlertTitle className="text-green-800">הקרוסלה נוצרה!</AlertTitle>
-          <AlertDescription className="text-green-700">
+          <AlertTitle className="text-green-800 dark:text-green-200">הקרוסלה נוצרה!</AlertTitle>
+          <AlertDescription className="text-green-700 dark:text-green-300">
             {images.length} סליידים נוצרו בהצלחה.{" "}
             <button
               onClick={onScrollToCarousel}
-              className="underline font-medium hover:text-green-900 transition-colors"
+              className="underline font-medium hover:text-green-900 dark:hover:text-green-100 transition-colors"
             >
               הצג בקנבס
             </button>

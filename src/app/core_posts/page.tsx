@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { FileText, Loader2, ChevronDown, ArrowLeft } from "lucide-react"
+import { FileText, Loader2, ArrowLeft, LayoutGrid, List, Search } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { Card, CardContent } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 
 const FORMAT_LABELS: Record<string, string> = {
   story: "סטורי",
@@ -42,6 +43,8 @@ export default function CorePostsPage() {
   const [posts, setPosts] = useState<SavedPost[]>([])
   const [loading, setLoading] = useState(true)
   const [formatFilter, setFormatFilter] = useState("")
+  const [searchQuery, setSearchQuery] = useState("")
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
 
   useEffect(() => {
     fetch("/api/core-posts")
@@ -53,43 +56,89 @@ export default function CorePostsPage() {
       .finally(() => setLoading(false))
   }, [])
 
-  const filtered = formatFilter
-    ? posts.filter((p) => p.formats.includes(formatFilter))
-    : posts
+  const q = searchQuery.trim().toLowerCase()
+  const filtered = posts.filter((p) => {
+    if (formatFilter && !p.formats.includes(formatFilter)) return false
+    if (q) {
+      const haystack = `${p.title || ""} ${p.body} ${p.hook_text || ""}`.toLowerCase()
+      if (!haystack.includes(q)) return false
+    }
+    return true
+  })
   const { recent, older } = groupByRecency(filtered)
 
   return (
     <AppShell>
       <div className="max-w-[1200px] mx-auto" dir="rtl">
-        {/* Header + Filters */}
-        <div className="flex items-center justify-between mb-8">
-          <h2 className="text-text-primary-default">פוסטי ליבה</h2>
-          <div className="flex items-center gap-3">
-          <span className="text-small text-text-neutral-default">סנן לפי</span>
-          <div className="relative w-[177px]">
-            <select
-              className="h-[34px] w-full appearance-none rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 pe-10 ps-3 text-sm text-text-primary-default outline-none leading-[34px] focus-visible:ring-2 focus-visible:ring-ring/50"
-            >
-              <option value="">כל המוצרים</option>
-            </select>
-            <ChevronDown className="absolute end-3 top-1/2 -translate-y-1/2 size-4 text-text-neutral-default pointer-events-none" />
-          </div>
-          <div className="relative w-[177px]">
-            <select
-              value={formatFilter}
-              onChange={(e) => setFormatFilter(e.target.value)}
-              className="h-[34px] w-full appearance-none rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 pe-10 ps-3 text-sm text-text-primary-default outline-none leading-[34px] focus-visible:ring-2 focus-visible:ring-ring/50"
-            >
-              <option value="">כל הפורמטים</option>
-              <option value="talking_head">דיבור למצלמה</option>
-              <option value="carousel">קרוסלה</option>
-              <option value="story">סטורי</option>
-              <option value="image_post">תמונה</option>
-            </select>
-            <ChevronDown className="absolute end-3 top-1/2 -translate-y-1/2 size-4 text-text-neutral-default pointer-events-none" />
-          </div>
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-2">
+            <img src="/images/letter-min.png" alt="" className="w-[48px] h-[48px]" />
+            <h2 className="text-text-primary-default">פוסטי ליבה</h2>
           </div>
         </div>
+
+        {/* Filter bar + view switcher */}
+        {!loading && posts.length > 0 && (
+          <div className="flex items-center gap-2 mb-6">
+            {[
+              { id: "", label: "הכל" },
+              { id: "talking_head", label: "דיבור למצלמה" },
+              { id: "carousel", label: "קרוסלה" },
+              { id: "story", label: "סטורי" },
+              { id: "image_post", label: "תמונה" },
+            ].map((tab) => (
+              <span
+                key={tab.id}
+                onClick={() => setFormatFilter(tab.id)}
+                className={`cursor-pointer rounded-full px-3 py-1.5 text-small transition-colors ${
+                  formatFilter === tab.id
+                    ? "border border-gray-80 bg-white dark:bg-gray-10 text-text-primary-default"
+                    : "bg-white dark:bg-gray-10 text-gray-50 hover:bg-gray-95 dark:hover:bg-gray-20"
+                }`}
+              >
+                {tab.label}
+              </span>
+            ))}
+
+            <div className="flex-1" />
+
+            {/* Search */}
+            <div className="relative w-[200px]">
+              <Search className="absolute start-3 top-1/2 -translate-y-1/2 size-3.5 text-text-neutral-default pointer-events-none" />
+              <Input
+                inputSize="small"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="חיפוש פוסטים..."
+                className="ps-8 text-xs"
+              />
+            </div>
+
+            <div className="flex items-center bg-bg-surface dark:bg-white/5 rounded-lg h-[34px] px-1.5 gap-1">
+              <button
+                onClick={() => setViewMode("grid")}
+                className={`px-2.5 py-1 rounded-md transition-colors ${
+                  viewMode === "grid"
+                    ? "bg-white dark:bg-white/10 shadow-sm text-text-primary-default"
+                    : "text-text-neutral-default hover:text-text-primary-default"
+                }`}
+              >
+                <LayoutGrid className="size-4" />
+              </button>
+              <button
+                onClick={() => setViewMode("list")}
+                className={`px-2.5 py-1 rounded-md transition-colors ${
+                  viewMode === "list"
+                    ? "bg-white dark:bg-white/10 shadow-sm text-text-primary-default"
+                    : "text-text-neutral-default hover:text-text-primary-default"
+                }`}
+              >
+                <List className="size-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {loading && (
           <div className="flex items-center justify-center gap-2 py-16">
@@ -113,7 +162,7 @@ export default function CorePostsPage() {
         {!loading && posts.length > 0 && filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
             <FileText className="size-10 text-text-neutral-default" />
-            <p className="text-p text-text-neutral-default">אין פוסטים בפורמט הזה</p>
+            <p className="text-p text-text-neutral-default">{q ? "לא נמצאו פוסטים" : "אין פוסטים בפורמט הזה"}</p>
           </div>
         )}
 
@@ -121,7 +170,7 @@ export default function CorePostsPage() {
         {!loading && recent.length > 0 && (
           <section className="mb-10">
             <p className="text-small text-text-neutral-default mb-4">נשמרו לאחרונה</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" : "flex flex-col gap-2"}>
               {recent.map((post) => (
                 <CorePostCard
                   key={post.id}
@@ -137,7 +186,7 @@ export default function CorePostsPage() {
         {!loading && older.length > 0 && (
           <section>
             <p className="text-small text-text-neutral-default mb-4">מוקדם יותר</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" : "flex flex-col gap-2"}>
               {older.map((post) => (
                 <CorePostCard
                   key={post.id}
@@ -206,7 +255,7 @@ function CorePostCard({
                 return (
                   <span
                     key={fid}
-                    className="rounded-full bg-bg-surface-primary-default group-hover:bg-bg-surface-primary-default-80 px-3 py-1.5 text-xs text-yellow-30 transition-colors"
+                    className="rounded-full bg-white dark:bg-gray-20 hover:bg-gray-95 dark:hover:bg-gray-30 px-3 py-1.5 text-xs text-text-neutral-default transition-colors"
                   >
                     {label}
                   </span>
