@@ -2,7 +2,15 @@ import { NextRequest, NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
-import { GREAT_HOOKS_EXAMPLES } from "@/lib/agents/great-hooks"
+import { TEMPLATE_LIBRARY, getTemplatesByCategory, type TemplateCategory } from "@/lib/agents/hook-templates"
+
+interface PlanItem {
+  category: TemplateCategory
+  specific_topic: string
+  target_pain_or_desire: string
+  audience_quote: string
+  angle_summary: string
+}
 import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
@@ -164,122 +172,174 @@ ${audienceIdentity.limiting_beliefs}
       trendContext += `\n\nרעיונות מהשטח — תוכן ויראלי שנמצא מיוצרים מובילים בנישה:\n${fieldIdeas.slice(0, 15).map((t, i) => `${i + 1}. ${t}`).join("\n")}`
     }
 
-    const prompt = `אתה סוכן מומחה ביצירת הוקים ויראליים לתוכן קצר (Shorts, Reels, TikTok).
+    // ============= PIPELINE STEP 1 — PLANNING =============
+    // Generate 15 angle plans: { category, angle, target_emotion, audience_quote, specific_topic }
+    const HOOK_COUNT = 15
 
-## המשימה שלך
-צור 20 הוקים ויראליים עבור המשתמש. ההוקים חייבים להתבסס על **המחקר מהשטח** למטה — נושאים אמיתיים, כלים ספציפיים, שיטות ושמות שיוצרי תוכן מובילים מדברים עליהם.
+    const categoriesCatalog = TEMPLATE_LIBRARY
+      .map((g) => `- ${g.category} (${g.contentType}, "${g.label}"): ${g.goal}`)
+      .join("\n")
 
-**20 הוקים = 20 נושאים שונים.** כל הוק על נושא/כלי/שיטה אחרת. אסור לחזור על אותו נושא.
+    const planningPrompt = `אתה אסטרטג שיווק שמתכנן זוויות תוכן עבור יוצרי קונטנט בישראל.
+
+## המטרה
+לנתח את קהל היעד והמחקר מהשטח, ולהפיק ${HOOK_COUNT} זוויות שונות להוקים. כל זווית = רעיון מובחן עם קטגוריה + רגש + ציטוט מהקהל.
 
 ${identitySection}
 ${audienceSection}
 ${productsSection}
-${trendContext ? `## מחקר מהשטח (חובה להשתמש! זה הבסיס להוקים):\n${trendContext}\n` : ""}
-## הנחיות ליצירת הוקים
-1. **רוב ההוקים חייבים להתבסס על נושאים מהמחקר למעלה** — כלים ספציפיים (Figma AI, Framer, Linear), שיטות (Design Tokens, Auto Layout), טרנדים (AI-native design). אל תמציא נושאים גנריים!
-2. **ציין שמות ספציפיים** — לא "כלי AI חדש" אלא "Figma AI". לא "טרנד בעיצוב" אלא "Motion Blur"
-3. **כל הוק על נושא אחר** — 20 הוקים = 20 נושאים/כלים/שיטות שונים
-4. **חבר בין הנושא מהשטח לכאב של הקהל** — ההוק מדבר על כלי/שיטה ספציפיים דרך הכאב/רצון של הקהל
-5. **השתמש בתבניות מהדוגמאות למטה** — התאם אותן לנושאים מהמחקר
-6. הוקים בסגנון טיקטוקי/יוטיוב שורטס: מבטיחים טריק, סוד, או קיצור דרך
-7. קצרים ופאנצ'יים — משפט אחד עד שניים מקסימום
-8. כתוב בעברית, בגובה העיניים, בשפה יומיומית
-9. השתמש בטון ובסגנון של המשתמש לפי ה-Core Identity שלו
-10. אל תשתמש בדפוסים שהמשתמש ציין ב"מה אני אף פעם לא עושה"
+${trendContext ? `## מחקר מהשטח:\n${trendContext}\n` : ""}
 
-## דוגמאות לתבניות הוקים מעולים — העדף להשתמש בהן ולהתאים לנישה של המשתמש:
-${GREAT_HOOKS_EXAMPLES}
+## קטגוריות הוקים זמינות (תבחר אחת לכל זווית):
+${categoriesCatalog}
 
-${learningInsights}
+## הוראות
+1. הפק ${HOOK_COUNT} זוויות שונות. גוון בין הקטגוריות — תכלול awareness, connection, ו-authority. אל תיצמד לקטגוריה אחת.
+2. לכל זווית — בחר נושא ספציפי מהמחקר/קהל היעד (כלי, שיטה, כאב ספציפי, רצון). אסור גנרי.
+3. השתמש בשפת הקהל מ-cross_audience_quotes ו-identity_statements.
+4. הזווית צריכה להיות מובחנת — לא חפיפה בין שתי זוויות.
+
 ## פלט
-החזר בדיוק 20 הוקים, כל אחד בשורה אחת בלבד.
-כל הוק חייב להיות משפט שלם ומוגמר — אסור שהוק ייקטע באמצע.
-אל תוסיף מספור, תבליטים, מקפים, או הסברים — רק את הטקסט של ההוק עצמו.
-אל תשבור הוק ל-2 שורות — הכל בשורה אחת.`
+החזר JSON תקין בלבד (בלי markdown, בלי הסברים). מערך של ${HOOK_COUNT} אובייקטים בפורמט הזה:
+[
+  {
+    "category": "myth_breaking" | "common_mistakes" | "diagnosis" | "personal_story" | "empowerment" | "identification" | "agenda" | "lists" | "real_reason" | "how_to",
+    "specific_topic": "הנושא הקונקרטי (כלי/שיטה/בעיה ספציפית)",
+    "target_pain_or_desire": "הכאב/רצון של הקהל שהזווית נוגעת בו",
+    "audience_quote": "ציטוט/ביטוי בשפת הקהל שיופיע בהוק",
+    "angle_summary": "תיאור קצר של מה ההוק יגיד (משפט)"
+  }
+]`
 
+    // ============= PIPELINE EXECUTION =============
     const client = new Anthropic({ apiKey })
     const userId = user.id
+
+    // Helper — call with Sonnet → Haiku fallback
+    const planWithFallback = async (): Promise<{ plans: PlanItem[]; fallback: boolean }> => {
+      const tryModel = async (model: string) => {
+        const res = await client.messages.create({
+          model,
+          max_tokens: 4096,
+          messages: [{ role: "user", content: planningPrompt }],
+        })
+        const text = res.content.find((b) => b.type === "text")?.text ?? ""
+        // Extract JSON array from response (in case model wraps it)
+        const jsonMatch = text.match(/\[[\s\S]*\]/)
+        if (!jsonMatch) throw new Error("No JSON in plan response")
+        return JSON.parse(jsonMatch[0]) as PlanItem[]
+      }
+      try {
+        return { plans: await tryModel(PRIMARY_MODEL), fallback: false }
+      } catch (err) {
+        if (!isOverloadError(err)) throw err
+        return { plans: await tryModel(FALLBACK_MODEL), fallback: true }
+      }
+    }
 
     const encoder = new TextEncoder()
     const stream = new ReadableStream({
       async start(controller) {
         let hookCount = 0
-
-        const runStream = async (model: string) => {
-          const streamResponse = client.messages.stream({
-            model,
-            max_tokens: 4096,
-            messages: [{ role: "user", content: prompt }],
-          })
-          let buffer = ""
-          for await (const event of streamResponse) {
-            if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-              buffer += event.delta.text
-              const lines = buffer.split("\n")
-              buffer = lines.pop() || ""
-              for (const rawLine of lines) {
-                const line = rawLine.trim().replace(/^\d+[\.\)]\s*/, "")
-                if (line.length <= 10) continue
-                if (line.startsWith("#") || line.startsWith("-") || line.startsWith("*") || line.startsWith("```")) continue
-                if (hookCount >= 20) continue
-                const { data: row } = await supabase.from("hooks").insert({
-                  user_id: userId,
-                  hook_text: line,
-                  display_order: hookCount,
-                  status: "completed",
-                  is_selected: false,
-                  is_used: false,
-                } as Record<string, unknown>).select("id").single()
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                  id: row?.id || crypto.randomUUID(),
-                  hook_text: line,
-                  is_used: false,
-                  created_at: new Date().toISOString(),
-                })}\n\n`))
-                hookCount++
-              }
-            }
-          }
-          if (buffer.trim().length > 10 && hookCount < 20) {
-            const line = buffer.trim().replace(/^\d+[\.\)]\s*/, "")
-            if (!line.startsWith("#") && !line.startsWith("-") && !line.startsWith("*")) {
-              const { data: row } = await supabase.from("hooks").insert({
-                user_id: userId,
-                hook_text: line,
-                display_order: hookCount,
-                status: "completed",
-                is_selected: false,
-                is_used: false,
-              } as Record<string, unknown>).select("id").single()
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                id: row?.id || crypto.randomUUID(),
-                hook_text: line,
-                is_used: false,
-                created_at: new Date().toISOString(),
-              })}\n\n`))
-            }
-          }
-        }
+        let usedFallback = false
 
         try {
-          await runStream(PRIMARY_MODEL)
+          // ============= STEP 1: PLANNING =============
+          const { plans, fallback } = await planWithFallback()
+          if (fallback) {
+            usedFallback = true
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
+          }
+
+          // ============= STEP 2: WRITING — one hook per plan, sequentially streamed =============
+          for (const plan of plans) {
+            if (hookCount >= HOOK_COUNT) break
+            const templates = getTemplatesByCategory(plan.category)
+            if (templates.length === 0) continue
+
+            const writePrompt = `אתה כותב הוקים ויראליים בעברית NATIVE לישראלים.
+
+## הזווית שאת/ה כותב/ת לפיה
+נושא ספציפי: ${plan.specific_topic}
+כאב/רצון של הקהל: ${plan.target_pain_or_desire}
+ביטוי בשפת הקהל: "${plan.audience_quote}"
+תיאור הזווית: ${plan.angle_summary}
+
+## הטון של היוצר
+${coreIdentity.who_i_am}
+איך אני נשמע/ת: ${coreIdentity.how_i_sound}
+${coreIdentity.slang_examples ? `סלנג: ${coreIdentity.slang_examples}` : ""}
+מה אני אף פעם לא עושה: ${coreIdentity.what_i_never_do}
+
+## תבניות לבחירה (חובה לבחור אחת מהן ולמלא את ה-slots)
+${templates.map((t, i) => `${i + 1}. ${t}`).join("\n")}
+
+## הוראות
+- בחר/י תבנית אחת מהרשימה למעלה.
+- מלא/י את ה-slots ({...}) עם תוכן ספציפי לפי הזווית והנושא.
+- הוק יחיד, משפט אחד עד שניים, פאנצ'י, NATIVE עברית.
+- בלי "וואו" — תגיד "אמאלה". בלי "מדהים" — תגיד "תותח/חבל על הזמן". בלי תרגומים מאנגלית.
+- אסור להמציא תבנית חדשה. רק להתאים אחת מהקיימות.
+
+## פלט
+משפט אחד בלבד — ההוק עצמו, בלי הסברים, בלי מספור, בלי גרשיים.`
+
+            // Write the hook (Sonnet → Haiku fallback)
+            let hookText = ""
+            const writeWithFallback = async () => {
+              try {
+                const res = await client.messages.create({
+                  model: usedFallback ? FALLBACK_MODEL : PRIMARY_MODEL,
+                  max_tokens: 200,
+                  messages: [{ role: "user", content: writePrompt }],
+                })
+                hookText = (res.content.find((b) => b.type === "text")?.text ?? "").trim()
+              } catch (err) {
+                if (!isOverloadError(err) || usedFallback) throw err
+                usedFallback = true
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
+                const res = await client.messages.create({
+                  model: FALLBACK_MODEL,
+                  max_tokens: 200,
+                  messages: [{ role: "user", content: writePrompt }],
+                })
+                hookText = (res.content.find((b) => b.type === "text")?.text ?? "").trim()
+              }
+            }
+            await writeWithFallback()
+
+            // Clean up — strip wrapping quotes / bullets / numbering / multi-line
+            hookText = hookText
+              .split("\n")[0]
+              .trim()
+              .replace(/^\d+[\.\)]\s*/, "")
+              .replace(/^["'״׳"\-*•]+/, "")
+              .replace(/["'״׳"]+$/, "")
+              .trim()
+
+            if (hookText.length <= 10) continue
+
+            const { data: row } = await supabase.from("hooks").insert({
+              user_id: userId,
+              hook_text: hookText,
+              display_order: hookCount,
+              status: "completed",
+              is_selected: false,
+              is_used: false,
+            } as Record<string, unknown>).select("id").single()
+
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+              id: row?.id || crypto.randomUUID(),
+              hook_text: hookText,
+              is_used: false,
+              created_at: new Date().toISOString(),
+            })}\n\n`))
+            hookCount++
+          }
+
           controller.enqueue(encoder.encode("data: [DONE]\n\n"))
           controller.close()
         } catch (err) {
-          if (isOverloadError(err) && hookCount === 0) {
-            try {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
-              await runStream(FALLBACK_MODEL)
-              controller.enqueue(encoder.encode("data: [DONE]\n\n"))
-              controller.close()
-              return
-            } catch (err2) {
-              const msg = err2 instanceof Error ? err2.message : String(err2)
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`))
-              controller.close()
-              return
-            }
-          }
           const msg = err instanceof Error ? err.message : String(err)
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`))
           controller.close()
