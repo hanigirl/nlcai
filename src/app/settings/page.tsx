@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { Loader2, Link2, Unlink, Plus, Trash2, Upload, X, Sparkles, Check, Type, Image as ImageIcon, Search, Download } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
+import { ComingSoon } from "@/components/coming-soon"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -736,10 +737,16 @@ function SettingsPageInner() {
             {/* ==================== MEDIA TAB ==================== */}
             {activeTab === "media" && (
               <div className="flex gap-8">
-                <SubNav sections={SUB_SECTIONS.media} active={activeMediaSection} onChange={(id) => { setActiveMediaSection(id as MediaSection); setActiveSubSection(id) }} />
+                <div className="pointer-events-none opacity-50">
+                  <SubNav sections={SUB_SECTIONS.media} active={activeMediaSection} onChange={(id) => { setActiveMediaSection(id as MediaSection); setActiveSubSection(id) }} />
+                </div>
 
-                {/* Content area — 50% of page */}
-                <div className="w-1/2 min-w-0">
+                {/* Content area — 50% of page, disabled with Coming Soon overlay */}
+                <div className="w-1/2 min-w-0 relative">
+                  <div className="absolute inset-0 z-10 flex items-start justify-center pt-12 bg-bg-surface/60 backdrop-blur-[2px] rounded-xl">
+                    <ComingSoon />
+                  </div>
+                  <div className="pointer-events-none opacity-40 select-none" aria-hidden="true">
                   {/* ── Fonts ── */}
                   {activeMediaSection === "fonts" && (
                     <div className="flex flex-col gap-5">
@@ -972,6 +979,7 @@ function SettingsPageInner() {
                       </div>
                     </div>
                   )}
+                  </div>
                 </div>
               </div>
             )}

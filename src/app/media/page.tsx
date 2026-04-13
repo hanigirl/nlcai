@@ -1,35 +1,13 @@
 "use client"
 
 import { useState } from "react"
-import { Download, Image as ImageIcon } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
+import { ComingSoon } from "@/components/coming-soon"
 
 type MediaTab = "covers" | "stories" | "carousels"
 
 export default function MediaPage() {
   const [activeTab, setActiveTab] = useState<MediaTab>("covers")
-
-  // TODO: load generated media from DB (media_assets)
-  const generatedCovers: string[] = []
-  const generatedStories: string[] = []
-  const generatedCarousels: string[] = []
-
-  const getItems = () => {
-    switch (activeTab) {
-      case "covers": return generatedCovers
-      case "stories": return generatedStories
-      case "carousels": return generatedCarousels
-    }
-  }
-
-  const handleDownload = (base64: string, index: number) => {
-    const a = document.createElement("a")
-    a.href = base64.startsWith("data:") ? base64 : `data:image/png;base64,${base64}`
-    a.download = `${activeTab}-${index + 1}.png`
-    a.click()
-  }
-
-  const items = getItems()
 
   const TABS: { id: MediaTab; label: string }[] = [
     { id: "covers", label: "קאברים" },
@@ -60,40 +38,7 @@ export default function MediaPage() {
         </div>
 
         {/* Content */}
-        {items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
-            <div className="rounded-2xl bg-bg-surface p-6">
-              <ImageIcon className="size-10 text-text-neutral-default mx-auto mb-3" />
-              <p className="text-p text-text-neutral-default">
-                {activeTab === "covers" && "עדיין אין קאברים"}
-                {activeTab === "stories" && "עדיין אין סטוריז"}
-                {activeTab === "carousels" && "עדיין אין קרוסלות"}
-              </p>
-              <p className="text-small text-text-primary-disabled mt-1">
-                כשתיצרי תוכן, התמונות שנוצרו יופיעו כאן
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {items.map((item, i) => (
-              <div key={i} className="group relative aspect-[9/16] rounded-xl overflow-hidden bg-gray-95">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={item.startsWith("data:") ? item : `data:image/png;base64,${item}`}
-                  alt={`${activeTab} ${i + 1}`}
-                  className="w-full h-full object-cover"
-                />
-                <button
-                  onClick={() => handleDownload(item, i)}
-                  className="absolute bottom-2 end-2 flex items-center justify-center size-8 rounded-lg bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                >
-                  <Download className="size-4 text-white" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        <ComingSoon />
       </div>
     </AppShell>
   )
