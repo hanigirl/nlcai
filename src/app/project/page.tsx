@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, type LucideIcon } from "lucide-react"
@@ -50,6 +50,14 @@ function shortenTitle(text: string, maxWords = 7): string {
 }
 
 export default function ProjectPage() {
+  return (
+    <Suspense fallback={null}>
+      <ProjectPageInner />
+    </Suspense>
+  )
+}
+
+function ProjectPageInner() {
   const searchParams = useSearchParams()
   const initialIdea = searchParams.get("idea") ?? ""
   const hookParam = searchParams.get("hook") ?? ""

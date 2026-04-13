@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { Loader2, Link2, Unlink, Plus, Trash2, Upload, X, Sparkles, Check, Type, Image as ImageIcon, Search, Download } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
@@ -61,6 +61,14 @@ interface UploadingFile {
 }
 
 export default function SettingsPage() {
+  return (
+    <Suspense fallback={null}>
+      <SettingsPageInner />
+    </Suspense>
+  )
+}
+
+function SettingsPageInner() {
   type Product = { id: string; name: string; type: "front" | "premium" | "lead_magnet"; landing_page_url: string; page_summary: string | null }
 
   const searchParams = useSearchParams()
