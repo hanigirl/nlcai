@@ -122,8 +122,8 @@ export function InfiniteCanvas({ children }: InfiniteCanvasProps) {
         </div>
       </div>
 
-      {/* Zoom controls */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-0 rounded-2xl bg-white dark:bg-gray-10 shadow-md border border-border-neutral-default">
+      {/* Zoom controls — floating, fixed to viewport */}
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-0 rounded-2xl bg-white dark:bg-gray-10 shadow-md border border-border-neutral-default">
         <Button
           variant="ghost"
           size="icon"
