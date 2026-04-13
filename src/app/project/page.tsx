@@ -111,6 +111,56 @@ function ProjectPageInner() {
   const [savedPostLoading, setSavedPostLoading] = useState(!!postId)
   const [savedHookText, setSavedHookText] = useState("")
 
+  // Persist canvas state across refresh — keyed by URL params so different sessions don't bleed
+  const CANVAS_KEY = "canvasState_v1"
+  const sessionKey = `${flow}|${initialIdea}|${hookParam}|${postId}`
+  const restoredRef = useRef(false)
+
+  useEffect(() => {
+    if (restoredRef.current) return
+    restoredRef.current = true
+    try {
+      const raw = localStorage.getItem(CANVAS_KEY)
+      if (!raw) return
+      const saved = JSON.parse(raw)
+      if (saved?.sessionKey !== sessionKey) return
+      if (typeof saved.idea === "string") setIdea(saved.idea)
+      if (Array.isArray(saved.hooks)) setHooks(saved.hooks)
+      if (saved.selectedHook === null || typeof saved.selectedHook === "number") setSelectedHook(saved.selectedHook)
+      if (typeof saved.response === "string") setResponse(saved.response)
+      if (typeof saved.corePost === "string") setCorePost(saved.corePost)
+      if (typeof saved.showFormats === "boolean") setShowFormats(saved.showFormats)
+      if (Array.isArray(saved.selectedFormats)) setSelectedFormats(saved.selectedFormats)
+      if (Array.isArray(saved.duplicatedFormats)) setDuplicatedFormats(saved.duplicatedFormats)
+      if (saved.formatPosts && typeof saved.formatPosts === "object") setFormatPosts(saved.formatPosts)
+      if (typeof saved.editableHook === "string") setEditableHook(saved.editableHook)
+      if (typeof saved.coverText === "string") setCoverText(saved.coverText)
+      if (typeof saved.thTranscript === "string") setThTranscript(saved.thTranscript)
+      if (saved.thSourceMode === "choose" || saved.thSourceMode === "upload" || saved.thSourceMode === "avatar") setThSourceMode(saved.thSourceMode)
+      if (typeof saved.savedHookText === "string") setSavedHookText(saved.savedHookText)
+      if (Array.isArray(saved.originalHooks)) setOriginalHooks(saved.originalHooks)
+      if (typeof saved.originalCorePost === "string") setOriginalCorePost(saved.originalCorePost)
+    } catch { /* corrupted state, ignore */ }
+  }, [sessionKey])
+
+  // Save canvas state on changes (debounced)
+  useEffect(() => {
+    if (!restoredRef.current) return
+    const t = setTimeout(() => {
+      try {
+        const state = {
+          sessionKey,
+          idea, hooks, selectedHook, response, corePost,
+          showFormats, selectedFormats, duplicatedFormats, formatPosts,
+          editableHook, coverText, thTranscript, thSourceMode,
+          savedHookText, originalHooks, originalCorePost,
+        }
+        localStorage.setItem(CANVAS_KEY, JSON.stringify(state))
+      } catch { /* quota exceeded or other; ignore */ }
+    }, 300)
+    return () => clearTimeout(t)
+  }, [sessionKey, idea, hooks, selectedHook, response, corePost, showFormats, selectedFormats, duplicatedFormats, formatPosts, editableHook, coverText, thTranscript, thSourceMode, savedHookText, originalHooks, originalCorePost])
+
   // Extract a frame from a video URL as a data URL
   const extractVideoFrame = (videoSrc: string): Promise<string | null> => {
     return new Promise((resolve) => {
