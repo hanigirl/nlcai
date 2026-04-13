@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { HookCard } from "@/components/hook-card"
+import { GeneratingStatus } from "@/components/generating-status"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
 import { useAutoAnimate } from "@formkit/auto-animate/react"
@@ -385,11 +386,14 @@ export default function HooksPage() {
 
         {/* Skeletons while generating — always on top */}
         {skeletonCount > 0 && (
-          <div className={`mb-8 ${viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" : "flex flex-col gap-2"}`}>
-            {Array.from({ length: skeletonCount }).map((_, i) => (
-              <HookSkeleton key={`gen-skel-${i}`} />
-            ))}
-          </div>
+          <>
+            {generating && <GeneratingStatus className="mb-2" />}
+            <div className={`mb-8 ${viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" : "flex flex-col gap-2"}`}>
+              {Array.from({ length: skeletonCount }).map((_, i) => (
+                <HookSkeleton key={`gen-skel-${i}`} />
+              ))}
+            </div>
+          </>
         )}
 
         {/* Grouped by date */}
