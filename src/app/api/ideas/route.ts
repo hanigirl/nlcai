@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
+import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
 
 // ── Types ──────────────────────────────────────────────
 interface SerperResult { title: string; link: string; snippet: string; date?: string }
@@ -665,16 +666,17 @@ JSONL:
     const encoder = new TextEncoder()
     const stream = new ReadableStream({
       async start(controller) {
-        try {
+        let buffer = ""
+        let fullText = ""
+        const sentTexts = new Set<string>()
+
+        const runStream = async (model: string) => {
           const sr = client.messages.stream({
-            model: "claude-sonnet-4-20250514",
+            model,
             max_tokens: 4096,
             temperature: 1.0,
             messages: [{ role: "user", content: promptContent }],
           })
-          let buffer = ""
-          let fullText = ""
-          const sentTexts = new Set<string>()
           for await (const event of sr) {
             if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
               buffer += event.delta.text
@@ -708,10 +710,31 @@ JSONL:
               }
             }
           }
+        }
+
+        try {
+          await runStream(PRIMARY_MODEL)
           console.log(`Ideas API: Stream complete. Total sent: ${sentTexts.size}. Full response length: ${fullText.length}`)
           controller.enqueue(encoder.encode("data: [DONE]\n\n"))
           controller.close()
         } catch (err) {
+          if (isOverloadError(err) && sentTexts.size === 0) {
+            try {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
+              await runStream(FALLBACK_MODEL)
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"))
+              controller.close()
+              return
+            } catch (err2) {
+              const msg = err2 instanceof Error ? err2.message : String(err2)
+              const isCredits = /credit|billing|insufficient_quota|payment|402/.test(msg)
+              const isOverloaded = /overloaded|529|503/.test(msg)
+              const errCode = isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : msg
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: errCode })}\n\n`))
+              controller.close()
+              return
+            }
+          }
           const msg = err instanceof Error ? err.message : String(err)
           const isCredits = /credit|billing|insufficient_quota|payment|402/.test(msg)
           const isOverloaded = /overloaded|529|503/.test(msg)

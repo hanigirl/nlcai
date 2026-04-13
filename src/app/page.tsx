@@ -158,6 +158,7 @@ export default function Home() {
             if (!d || d === "[DONE]") continue
             try {
               const h = JSON.parse(d)
+              if (h.model_fallback) { setModelFallback(true); continue }
               if (h.hook_text) {
                 streamed.push(h.hook_text)
                 setHooks([...streamed])
@@ -198,6 +199,7 @@ export default function Home() {
   }
 
   const [ideasError, setIdeasError] = useState("")
+  const [modelFallback, setModelFallback] = useState(false)
 
   const STORAGE_KEY = "generatedIdeas_v23"
   const generatingRef = useRef(false)
@@ -254,6 +256,7 @@ export default function Home() {
           if (!data || data === "[DONE]") continue
           try {
             const idea = JSON.parse(data)
+            if (idea.model_fallback) { setModelFallback(true); continue }
             if (idea.error) {
               const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected"]
               setIdeasError(known.includes(idea.error) ? idea.error : (idea.error || "generic"))
@@ -284,6 +287,13 @@ export default function Home() {
 
   return (
     <AppShell isHome>
+      {modelFallback && (
+        <div dir="rtl" className="fixed top-4 right-1/2 translate-x-1/2 z-50 max-w-md mx-auto rounded-xl border border-yellow-50 bg-yellow-95 px-4 py-2 shadow-sm">
+          <p className="text-small text-text-primary-default text-center">
+            ⚡ עברנו זמנית למודל קל יותר בגלל עומס. האיכות עשויה להיות מעט נמוכה
+          </p>
+        </div>
+      )}
       <div dir="rtl" className="mx-auto max-w-3xl relative z-10 px-20 pt-[72px] pb-[100px]">
         {/* Greeting */}
         <div className="text-center mb-[72px]">

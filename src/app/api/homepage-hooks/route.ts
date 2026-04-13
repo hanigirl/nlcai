@@ -5,6 +5,7 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { GREAT_HOOKS_EXAMPLES } from "@/lib/agents/great-hooks"
 import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
+import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
 
 const USE_DUMMY = false
 
@@ -202,31 +203,25 @@ ${learningInsights}
     const encoder = new TextEncoder()
     const stream = new ReadableStream({
       async start(controller) {
-        try {
+        let hookCount = 0
+
+        const runStream = async (model: string) => {
           const streamResponse = client.messages.stream({
-            model: "claude-sonnet-4-20250514",
+            model,
             max_tokens: 4096,
             messages: [{ role: "user", content: prompt }],
           })
-
           let buffer = ""
-          let hookCount = 0
-
           for await (const event of streamResponse) {
             if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
               buffer += event.delta.text
-
-              // Check for complete lines (hooks are one per line)
               const lines = buffer.split("\n")
-              buffer = lines.pop() || "" // keep incomplete last line
-
+              buffer = lines.pop() || ""
               for (const rawLine of lines) {
                 const line = rawLine.trim().replace(/^\d+[\.\)]\s*/, "")
                 if (line.length <= 10) continue
                 if (line.startsWith("#") || line.startsWith("-") || line.startsWith("*") || line.startsWith("```")) continue
                 if (hookCount >= 20) continue
-
-                // Save to DB
                 const { data: row } = await supabase.from("hooks").insert({
                   user_id: userId,
                   hook_text: line,
@@ -235,21 +230,16 @@ ${learningInsights}
                   is_selected: false,
                   is_used: false,
                 } as Record<string, unknown>).select("id").single()
-
-                const hookData = {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({
                   id: row?.id || crypto.randomUUID(),
                   hook_text: line,
                   is_used: false,
                   created_at: new Date().toISOString(),
-                }
-
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify(hookData)}\n\n`))
+                })}\n\n`))
                 hookCount++
               }
             }
           }
-
-          // Process any remaining buffer
           if (buffer.trim().length > 10 && hookCount < 20) {
             const line = buffer.trim().replace(/^\d+[\.\)]\s*/, "")
             if (!line.startsWith("#") && !line.startsWith("-") && !line.startsWith("*")) {
@@ -261,7 +251,6 @@ ${learningInsights}
                 is_selected: false,
                 is_used: false,
               } as Record<string, unknown>).select("id").single()
-
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({
                 id: row?.id || crypto.randomUUID(),
                 hook_text: line,
@@ -270,10 +259,27 @@ ${learningInsights}
               })}\n\n`))
             }
           }
+        }
 
+        try {
+          await runStream(PRIMARY_MODEL)
           controller.enqueue(encoder.encode("data: [DONE]\n\n"))
           controller.close()
         } catch (err) {
+          if (isOverloadError(err) && hookCount === 0) {
+            try {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
+              await runStream(FALLBACK_MODEL)
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"))
+              controller.close()
+              return
+            } catch (err2) {
+              const msg = err2 instanceof Error ? err2.message : String(err2)
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`))
+              controller.close()
+              return
+            }
+          }
           const msg = err instanceof Error ? err.message : String(err)
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`))
           controller.close()

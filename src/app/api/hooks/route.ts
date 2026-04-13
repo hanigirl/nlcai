@@ -5,6 +5,7 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { buildHookGeneratorPrompt, parseHooks } from "@/lib/agents/hook-generator"
 import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
+import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
 
 const USE_DUMMY = false
 
@@ -119,16 +120,25 @@ export async function POST(req: NextRequest) {
     })
 
     const client = new Anthropic({ apiKey })
-    const message = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
+    const baseParams = {
       max_tokens: count > 5 ? 2048 : 1024,
-      messages: [{ role: "user", content: prompt }],
-    })
+      messages: [{ role: "user" as const, content: prompt }],
+    }
+
+    let modelFallback = false
+    let message
+    try {
+      message = await client.messages.create({ ...baseParams, model: PRIMARY_MODEL })
+    } catch (err) {
+      if (!isOverloadError(err)) throw err
+      modelFallback = true
+      message = await client.messages.create({ ...baseParams, model: FALLBACK_MODEL })
+    }
 
     const textBlock = message.content.find((b) => b.type === "text")
     const hooks = parseHooks(textBlock?.text ?? "", count)
 
-    return NextResponse.json({ hooks })
+    return NextResponse.json({ hooks, model_fallback: modelFallback })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("Hook generation error:", message)
