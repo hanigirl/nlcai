@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Loader2 } from "lucide-react"
 
 interface GeneratingStatusProps {
   messages?: string[]
@@ -20,27 +19,22 @@ const DEFAULT_MESSAGES = [
 
 export function GeneratingStatus({
   messages = DEFAULT_MESSAGES,
-  intervalMs = 2800,
+  intervalMs = 2500,
   className = "",
 }: GeneratingStatusProps) {
   const [index, setIndex] = useState(0)
 
   useEffect(() => {
-    const id = setInterval(() => {
-      setIndex((i) => (i + 1) % messages.length)
-    }, intervalMs)
+    const id = setInterval(() => setIndex((i) => (i + 1) % messages.length), intervalMs)
     return () => clearInterval(id)
   }, [messages.length, intervalMs])
 
   return (
-    <div className={`flex items-center justify-center gap-2 py-3 ${className}`}>
-      <Loader2 className="size-4 animate-spin text-yellow-50 shrink-0" />
-      <span
-        key={index}
-        className="text-small text-text-neutral-default animate-[fade-in_0.4s_ease-out]"
-      >
-        {messages[index]}
-      </span>
-    </div>
+    <p
+      key={index}
+      className={`text-small text-text-primary-default animate-in fade-in duration-300 ${className}`}
+    >
+      {messages[index]}
+    </p>
   )
 }
