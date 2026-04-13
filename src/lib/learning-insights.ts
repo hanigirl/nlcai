@@ -10,7 +10,7 @@ export async function fetchLearningInsights(
     .select("insight")
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
-    .limit(10)
+    .limit(30)
 
   if (contentType) {
     query = query.eq("content_type", contentType)

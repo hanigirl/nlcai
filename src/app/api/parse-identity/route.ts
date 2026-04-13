@@ -62,6 +62,42 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         console.error("File text extraction failed:", err)
       }
+
+      // Save original file to Supabase Storage
+      try {
+        const category = type === "core" ? "style_file" : "audience_file"
+        const ext = file.name.split(".").pop() || "txt"
+        const storagePath = `${user.id}/${category}/${crypto.randomUUID()}.${ext}`
+        const fileBuffer = Buffer.from(await file.arrayBuffer())
+
+        // Delete previous file in this category
+        const { data: existing } = await supabase
+          .from("user_media")
+          .select("id, storage_path")
+          .eq("user_id", user.id)
+          .eq("category", category)
+        if (existing && existing.length > 0) {
+          await supabase.storage.from("user-media").remove(existing.map((e: { storage_path: string }) => e.storage_path))
+          await supabase.from("user_media").delete().eq("user_id", user.id).eq("category", category)
+        }
+
+        // Upload new file
+        await supabase.storage.from("user-media").upload(storagePath, fileBuffer, {
+          contentType: file.type || "application/octet-stream",
+        })
+
+        // Record in user_media
+        await supabase.from("user_media").insert({
+          user_id: user.id,
+          category,
+          file_name: file.name,
+          storage_path: storagePath,
+          metadata: {},
+        })
+      } catch (err) {
+        console.error("Failed to save original file to storage:", err)
+        // Non-fatal — continue with parsing
+      }
     }
 
     // Parse with AI if we have both text and API key

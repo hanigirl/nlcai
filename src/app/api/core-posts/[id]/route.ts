@@ -44,6 +44,7 @@ export async function GET(
 
     // Load video URL from media_assets for talking_head
     let videoUrl: string | null = null
+    let coverUrl: string | null = null
     const thVariant = variants.find((v) => v.format === "talking_head")
     if (thVariant) {
       const { data: mediaData } = await supabase
@@ -58,6 +59,20 @@ export async function GET(
       if (mediaData) {
         videoUrl = (mediaData as unknown as { url: string }).url
       }
+
+      // Load cover URL
+      const { data: coverData } = await supabase
+        .from("media_assets")
+        .select("url")
+        .eq("format_variant_id", thVariant.id)
+        .eq("asset_type", "cover")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single()
+
+      if (coverData) {
+        coverUrl = (coverData as unknown as { url: string }).url
+      }
     }
 
     return NextResponse.json({
@@ -65,6 +80,7 @@ export async function GET(
         ...(post as Record<string, unknown>),
         formatPosts,
         videoUrl,
+        coverUrl,
       },
     })
   } catch (error) {
@@ -86,11 +102,13 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, formatPosts, videoUrl, deleteVideo } = (await req.json()) as {
+    const { body, formatPosts, videoUrl, deleteVideo, coverBase64, coverText } = (await req.json()) as {
       body?: string
       formatPosts?: Record<string, string>
       videoUrl?: string
       deleteVideo?: boolean
+      coverBase64?: string
+      coverText?: string
     }
 
     // Update core post body if provided
@@ -98,6 +116,15 @@ export async function PATCH(
       await supabase
         .from("core_posts")
         .update({ body } as never)
+        .eq("id", id)
+        .eq("user_id", user.id)
+    }
+
+    // Update cover text if provided
+    if (coverText !== undefined) {
+      await supabase
+        .from("core_posts")
+        .update({ cover_text: coverText } as never)
         .eq("id", id)
         .eq("user_id", user.id)
     }
@@ -171,6 +198,48 @@ export async function PATCH(
           asset_type: "video",
           url: videoUrl,
           provider: "heygen",
+          status: "completed",
+        } as never)
+      }
+    }
+
+    // Save cover image
+    if (coverBase64) {
+      let { data: thVariant } = await supabase
+        .from("format_variants")
+        .select("id")
+        .eq("core_post_id", id)
+        .eq("format", "talking_head")
+        .single()
+
+      if (!thVariant) {
+        const { data: newVariant } = await supabase
+          .from("format_variants")
+          .insert({ core_post_id: id, format: "talking_head", body: "" } as never)
+          .select("id")
+          .single()
+        thVariant = newVariant
+      }
+
+      if (thVariant) {
+        const variantRow = thVariant as unknown as { id: string }
+        // Upload cover to storage
+        const coverBuffer = Buffer.from(coverBase64, "base64")
+        const storagePath = `${user.id}/cover/${crypto.randomUUID()}.png`
+        await supabase.storage.from("user-media").upload(storagePath, coverBuffer, { contentType: "image/png" })
+        const coverUrl = supabase.storage.from("user-media").getPublicUrl(storagePath).data.publicUrl
+
+        // Replace existing cover asset
+        await supabase
+          .from("media_assets")
+          .delete()
+          .eq("format_variant_id", variantRow.id)
+          .eq("asset_type", "cover")
+
+        await supabase.from("media_assets").insert({
+          format_variant_id: variantRow.id,
+          asset_type: "cover",
+          url: coverUrl,
           status: "completed",
         } as never)
       }

@@ -66,7 +66,10 @@ export function AppHeader({ idea }: AppHeaderProps) {
         {idea && (
           <>
             <button
-              onClick={() => router.push("/")}
+              onClick={() => {
+                if (window.history.length > 1) router.back()
+                else router.push("/")
+              }}
               className="flex items-center justify-center rounded-lg p-2 hover:bg-bg-surface transition-colors"
             >
               <ArrowLeft className="size-4 text-text-primary-default rotate-180" />

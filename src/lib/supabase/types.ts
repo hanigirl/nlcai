@@ -10,17 +10,38 @@ export type ProductType = "front" | "premium" | "lead_magnet";
 // ---- Row types ----
 
 export interface BrandStyle {
-  overlay_style: "solid" | "gradient" | "semi-transparent" | "blur";
-  overlay_opacity: number;
-  overlay_color: string;
+  // Text
+  font_name: string;
+  font_size_px: number;
+  font_weight: "bold" | "light" | "regular" | "extra-bold";
   text_color: string;
   text_position: "center" | "bottom-center" | "top" | "bottom-left" | "bottom-right" | "top-left" | "top-right";
   text_size: "large" | "medium" | "small";
-  font_weight: "bold" | "light" | "regular";
   text_direction: "rtl" | "ltr";
+  text_shadow: boolean;
+  text_shadow_color?: string;
+  line_height: number;
+  letter_spacing: number;
+  text_align: "center" | "right" | "left";
+  avg_words_per_line: number;
+  // Overlay
+  overlay_style: "solid" | "gradient" | "semi-transparent" | "blur" | "none";
+  overlay_opacity: number;
+  overlay_color: string;
+  overlay_gradient_direction?: string;
+  overlay_gradient_from?: string;
+  overlay_gradient_to?: string;
+  // Text background (pill/box behind text, separate from image overlay)
   has_text_background: boolean;
   text_background_color?: string;
+  text_background_opacity?: number;
+  text_background_border_radius?: number;
+  // Colors
   accent_color?: string;
+  secondary_color?: string;
+  // Recurring elements
+  has_recurring_elements: boolean;
+  recurring_elements_description?: string;
 }
 
 export interface User {
@@ -152,6 +173,18 @@ export interface Product {
   updated_at: string;
 }
 
+export type UserMediaCategory = "font" | "element" | "cover" | "style_file" | "audience_file";
+
+export interface UserMedia {
+  id: string;
+  user_id: string;
+  category: UserMediaCategory;
+  file_name: string;
+  storage_path: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
 // ---- Insert types (omit server-generated fields) ----
 
 export type UserInsert = Pick<User, "id" | "email"> &
@@ -176,6 +209,9 @@ export type MediaAssetInsert = Pick<MediaAsset, "format_variant_id" | "asset_typ
   Partial<Pick<MediaAsset, "provider" | "provider_ref_id" | "status" | "metadata">>;
 
 export type ProductInsert = Pick<Product, "user_id" | "name" | "type">;
+
+export type UserMediaInsert = Pick<UserMedia, "user_id" | "category" | "file_name" | "storage_path"> &
+  Partial<Pick<UserMedia, "metadata">>;
 
 export type CoreIdentityInsert = Pick<CoreIdentity, "user_id"> &
   Partial<Pick<CoreIdentity, "who_i_am" | "who_i_serve" | "how_i_sound" | "slang_examples" | "what_i_never_do" | "product_name" | "niche">>;
@@ -249,6 +285,11 @@ export interface Database {
         Row: AudienceIdentity;
         Insert: AudienceIdentityInsert;
         Update: AudienceIdentityUpdate;
+      };
+      user_media: {
+        Row: UserMedia;
+        Insert: UserMediaInsert;
+        Update: never;
       };
     };
     Enums: {

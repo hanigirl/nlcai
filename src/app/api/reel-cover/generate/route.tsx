@@ -7,7 +7,30 @@ import type { BrandStyle } from "@/lib/supabase/types"
 const COVER_WIDTH = 1080
 const COVER_HEIGHT = 1920 // 9:16 aspect ratio
 
-// Reuse font cache from carousel pipeline
+const DEFAULT_BRAND_STYLE: BrandStyle = {
+  font_name: "Rubik",
+  font_size_px: 72,
+  font_weight: "bold",
+  text_color: "#FFFFFF",
+  text_position: "bottom-center",
+  text_size: "large",
+  text_direction: "rtl",
+  text_shadow: true,
+  text_shadow_color: "rgba(0,0,0,0.5)",
+  line_height: 1.0,
+  letter_spacing: 0,
+  text_align: "center",
+  avg_words_per_line: 2,
+  overlay_style: "gradient",
+  overlay_opacity: 0.3,
+  overlay_color: "#000000",
+  overlay_gradient_direction: "bottom-to-top",
+  overlay_gradient_from: "#000000",
+  overlay_gradient_to: "#000000",
+  has_text_background: false,
+  has_recurring_elements: false,
+}
+
 let fontDataCache: ArrayBuffer | null = null
 let boldFontCache: ArrayBuffer | null = null
 
@@ -90,95 +113,170 @@ function getFontWeight(weight: BrandStyle["font_weight"]): number {
   }
 }
 
+// Satori reverses Hebrew characters — reverse them back per word
+function fixWordForSatori(word: string): string {
+  return [...word].reverse().join("")
+}
+
+function hexToRgb(hex: string) {
+  const c = hex.replace("#", "")
+  return {
+    r: parseInt(c.slice(0, 2), 16) || 0,
+    g: parseInt(c.slice(2, 4), 16) || 0,
+    b: parseInt(c.slice(4, 6), 16) || 0,
+  }
+}
+
+function getGradientDirection(dir?: string): string {
+  switch (dir) {
+    case "bottom-to-top": return "to top"
+    case "top-to-bottom": return "to bottom"
+    case "left-to-right": return "to right"
+    case "right-to-left": return "to left"
+    default: return "to top"
+  }
+}
+
 function renderCover(
-  thumbnailBase64: string,
   title: string,
   style: BrandStyle,
   variation: number,
+  thumbnailBase64?: string,
 ): React.ReactElement {
   const positionStyles = getTextPositionStyles(style.text_position)
-  const fontSize = getTextSize(style.text_size)
+  const fontSize = style.font_size_px || getTextSize(style.text_size)
   const fontWeight = getFontWeight(style.font_weight)
+  const isRtl = style.text_direction === "rtl"
+  const words = title.split(" ")
 
-  // Variation tweaks
-  const opacityTweak = variation === 0 ? 0 : variation === 1 ? 0.1 : -0.1
-  const overlayOpacity = Math.max(0, Math.min(1, style.overlay_opacity + opacityTweak))
+  const overlayOpacity = style.overlay_opacity
+  const { r, g, b } = hexToRgb(style.overlay_color || "#000000")
 
-  const overlayColor = style.overlay_color || "#000000"
-  const r = parseInt(overlayColor.slice(1, 3), 16)
-  const g = parseInt(overlayColor.slice(3, 5), 16)
-  const b = parseInt(overlayColor.slice(5, 7), 16)
+  // Text shadow
+  const textShadow = style.text_shadow
+    ? `2px 2px 8px ${style.text_shadow_color || "rgba(0,0,0,0.6)"}`
+    : undefined
 
-  return (
-    <div style={{ display: "flex", width: COVER_WIDTH, height: COVER_HEIGHT, position: "relative" }}>
-      {/* Background image */}
-      <img
-        src={thumbnailBase64}
-        style={{ position: "absolute", top: 0, left: 0, width: COVER_WIDTH, height: COVER_HEIGHT, objectFit: "cover" }}
-      />
-      {/* Overlay */}
+  // Word spacing based on font size
+  const wordGap = Math.max(10, Math.round(fontSize * 0.22))
+
+  // Overlay rendering
+  const renderOverlay = () => {
+    if (style.overlay_style === "none" || !thumbnailBase64) return null
+
+    if (style.overlay_style === "gradient" && style.overlay_gradient_from) {
+      const fromRgb = hexToRgb(style.overlay_gradient_from)
+      const toRgb = hexToRgb(style.overlay_gradient_to || style.overlay_gradient_from)
+      const dir = getGradientDirection(style.overlay_gradient_direction)
+      return (
+        <div
+          style={{
+            position: "absolute", top: 0, left: 0,
+            width: COVER_WIDTH, height: COVER_HEIGHT,
+            backgroundImage: `linear-gradient(${dir}, rgba(${fromRgb.r},${fromRgb.g},${fromRgb.b},${overlayOpacity}) 0%, rgba(${toRgb.r},${toRgb.g},${toRgb.b},0) 100%)`,
+          }}
+        />
+      )
+    }
+
+    return (
       <div
         style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: COVER_WIDTH,
-          height: COVER_HEIGHT,
+          position: "absolute", top: 0, left: 0,
+          width: COVER_WIDTH, height: COVER_HEIGHT,
           backgroundColor: `rgba(${r},${g},${b},${overlayOpacity})`,
         }}
       />
+    )
+  }
+
+  // Text background (pill/box)
+  const textBgStyle = style.has_text_background && style.text_background_color
+    ? {
+        backgroundColor: style.text_background_color,
+        padding: "24px 40px",
+        borderRadius: `${style.text_background_border_radius ?? 16}px`,
+        opacity: style.text_background_opacity ?? 1,
+      }
+    : {}
+
+  const hasTextBg = style.has_text_background && style.text_background_color
+
+  return (
+    <div style={{ display: "flex", width: COVER_WIDTH, height: COVER_HEIGHT, position: "relative" }}>
+      {/* Background */}
+      {thumbnailBase64 ? (
+        <img
+          src={thumbnailBase64}
+          style={{ position: "absolute", top: 0, left: 0, width: COVER_WIDTH, height: COVER_HEIGHT, objectFit: "cover" }}
+        />
+      ) : (
+        <div
+          style={{
+            position: "absolute", top: 0, left: 0,
+            width: COVER_WIDTH, height: COVER_HEIGHT,
+            backgroundImage: "linear-gradient(145deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)",
+          }}
+        />
+      )}
+
+      {/* Overlay */}
+      {renderOverlay()}
+
       {/* Text layer */}
       <div
         style={{
           display: "flex",
           flexDirection: "column",
           position: "absolute",
-          top: 0,
-          left: 0,
+          top: 0, left: 0,
           width: COVER_WIDTH,
           height: COVER_HEIGHT,
           padding: "60px",
           ...positionStyles,
         }}
       >
-        {style.has_text_background && style.text_background_color ? (
-          <div
-            style={{
-              display: "flex",
-              backgroundColor: style.text_background_color,
-              padding: "24px 40px",
-              borderRadius: "16px",
-            }}
-          >
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            flexDirection: isRtl ? "row-reverse" : "row",
+            maxWidth: "900px",
+            justifyContent: (style.text_align || "center") === "center" ? "center" : (style.text_align === "left" ? "flex-end" : "flex-start"),
+            ...textBgStyle,
+          }}
+        >
+          {words.map((w, i) => (
             <span
+              key={i}
               style={{
                 color: style.text_color,
                 fontSize,
                 fontWeight,
                 fontFamily: "Rubik",
-                direction: style.text_direction,
-                textAlign: style.text_direction === "rtl" ? "right" : "left",
-                lineHeight: 1.4,
+                lineHeight: style.line_height || 1.0,
+                letterSpacing: `${style.letter_spacing ?? 0}em`,
+                marginLeft: isRtl ? `${wordGap}px` : "0",
+                marginRight: isRtl ? "0" : `${wordGap}px`,
+                ...(textShadow ? { textShadow } : {}),
               }}
             >
-              {title}
+              {isRtl ? fixWordForSatori(w) : w}
             </span>
-          </div>
-        ) : (
-          <span
+          ))}
+        </div>
+        {/* Accent underline if accent color exists and no text background */}
+        {!hasTextBg && style.accent_color && (
+          <div
             style={{
-              color: style.text_color,
-              fontSize,
-              fontWeight,
-              fontFamily: "Rubik",
-              direction: style.text_direction,
-              textAlign: style.text_direction === "rtl" ? "right" : "left",
-              lineHeight: 1.4,
-              maxWidth: "900px",
+              width: "120px",
+              height: "6px",
+              backgroundColor: style.accent_color,
+              borderRadius: "3px",
+              marginTop: "16px",
+              ...(isRtl ? { alignSelf: "flex-end" } : {}),
             }}
-          >
-            {title}
-          </span>
+          />
         )}
       </div>
     </div>
@@ -188,21 +286,21 @@ function renderCover(
 export async function POST(req: NextRequest) {
   try {
     const { thumbnail_url, title } = (await req.json()) as {
-      thumbnail_url: string
+      thumbnail_url?: string
       title: string
     }
 
-    if (!thumbnail_url || !title) {
-      return NextResponse.json({ error: "thumbnail_url and title are required" }, { status: 400 })
+    if (!title) {
+      return NextResponse.json({ error: "title is required" }, { status: 400 })
     }
 
-    // Get user's brand style
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
+    // Get user's brand style — required
     const { data: userData } = await supabase
       .from("users")
       .select("brand_style")
@@ -211,20 +309,34 @@ export async function POST(req: NextRequest) {
 
     const brandStyle = (userData as Record<string, unknown> | null)?.brand_style as BrandStyle | null
     if (!brandStyle) {
-      return NextResponse.json({ error: "No brand style configured. Upload cover examples in Settings." }, { status: 400 })
+      return NextResponse.json({ error: "no_brand_style" }, { status: 400 })
     }
+    const style = brandStyle
 
-    // Fetch thumbnail and convert to base64
-    const thumbRes = await fetch(thumbnail_url)
-    const thumbBuffer = Buffer.from(await thumbRes.arrayBuffer())
-    const thumbBase64 = `data:image/jpeg;base64,${thumbBuffer.toString("base64")}`
+    // Fetch thumbnail if provided (supports data URLs and regular URLs)
+    let thumbBase64: string | undefined
+    if (thumbnail_url) {
+      if (thumbnail_url.startsWith("data:")) {
+        thumbBase64 = thumbnail_url
+      } else {
+        try {
+          const thumbRes = await fetch(thumbnail_url)
+          if (thumbRes.ok) {
+            const thumbBuffer = Buffer.from(await thumbRes.arrayBuffer())
+            thumbBase64 = `data:image/jpeg;base64,${thumbBuffer.toString("base64")}`
+          }
+        } catch {
+          // Continue without thumbnail
+        }
+      }
+    }
 
     const [fontData, boldFontData] = await Promise.all([loadFont(), loadBoldFont()])
 
-    // Generate 3 variations
+    // Generate 1 cover
     const covers: string[] = []
-    for (let v = 0; v < 3; v++) {
-      const element = renderCover(thumbBase64, title, brandStyle, v)
+    {
+      const element = renderCover(title, style, 0, thumbBase64)
 
       const svg = await satori(element, {
         width: COVER_WIDTH,

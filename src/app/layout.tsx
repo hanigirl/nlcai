@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Rubik } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
+import { Toaster } from "sonner";
 import "./globals.css";
 
 const rubik = Rubik({
@@ -28,6 +29,19 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           {children}
+          <Toaster
+            position="bottom-center"
+            dir="rtl"
+            toastOptions={{
+              style: {
+                background: "#1a1a1a",
+                color: "#fff",
+                border: "none",
+                borderRadius: "12px",
+                fontSize: "14px",
+              },
+            }}
+          />
         </ThemeProvider>
       </body>
     </html>

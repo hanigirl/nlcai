@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react"
 import { useSearchParams } from "next/navigation"
 import Link from "next/link"
-import { Loader2, Smartphone, Video, Layers, Image, Download, ChevronLeft, ChevronRight, Trash2, type LucideIcon } from "lucide-react"
+import { Loader2, Smartphone, Video, Layers, Image, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, type LucideIcon } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { InfiniteCanvas } from "@/components/infinite-canvas"
 import { WorkflowCard } from "@/components/workflow-card"
@@ -28,13 +28,36 @@ const FORMAT_MAP = Object.fromEntries(FORMATS.map((f) => [f.id, f]))
 const CARD_WIDTH = 346
 const CARD_GAP = 24
 
+function shortenTitle(text: string, maxWords = 7): string {
+  if (!text) return text
+  let working = text.trim()
+
+  // Remove leading "@username (XK עוקבים, platform) — " pattern
+  working = working.replace(/^@\S+\s*\([^)]*\)\s*[—\-–:]\s*/, "")
+  // Remove leading "טרנד:" prefix
+  working = working.replace(/^טרנד:\s*/, "")
+  // Remove brackets at start
+  working = working.replace(/^\[/, "").replace(/\]$/, "")
+
+  // Take the first sentence (split by . ! ?)
+  const sentenceMatch = working.match(/^[^.!?]+/)
+  if (sentenceMatch) working = sentenceMatch[0].trim()
+
+  // Trim to maxWords without ellipsis
+  const words = working.split(/\s+/)
+  if (words.length <= maxWords) return working
+  return words.slice(0, maxWords).join(" ")
+}
+
 export default function ProjectPage() {
   const searchParams = useSearchParams()
-  const idea = searchParams.get("idea") ?? ""
+  const initialIdea = searchParams.get("idea") ?? ""
   const hookParam = searchParams.get("hook") ?? ""
   const postId = searchParams.get("post_id") ?? ""
   const flow: Flow = postId ? "saved" : hookParam ? "hook" : "idea"
 
+  const [idea, setIdea] = useState(initialIdea)
+  useEffect(() => { setIdea(initialIdea) }, [initialIdea])
   const [hooks, setHooks] = useState<string[]>([])
   const [selectedHook, setSelectedHook] = useState<number | null>(null)
   const [hooksLoading, setHooksLoading] = useState(false)
@@ -59,6 +82,10 @@ export default function ProjectPage() {
   const [thTranscript, setThTranscript] = useState("")
   const [thVideoUrl, setThVideoUrl] = useState<string | null>(null)
   const [thSourceMode, setThSourceMode] = useState<"choose" | "upload" | "avatar">("choose")
+  const [thCoverImage, setThCoverImage] = useState<string | null>(null)
+  const [thCoverLoading, setThCoverLoading] = useState(false)
+  const [coverText, setCoverText] = useState("")
+  const [thVideoFrameDataUrl, setThVideoFrameDataUrl] = useState<string | null>(null)
   const thVideoCardRef = useRef<HTMLDivElement>(null)
 
   // Carousel state (lifted for panel persistence)
@@ -73,9 +100,75 @@ export default function ProjectPage() {
   // Saved post tracking
   const [savedPostId, setSavedPostId] = useState<string | null>(postId || null)
   const [savedPostLoading, setSavedPostLoading] = useState(!!postId)
+  const [savedHookText, setSavedHookText] = useState("")
+
+  // Extract a frame from a video URL as a data URL
+  const extractVideoFrame = (videoSrc: string): Promise<string | null> => {
+    return new Promise((resolve) => {
+      const video = document.createElement("video")
+      video.crossOrigin = "anonymous"
+      video.muted = true
+      video.src = videoSrc
+      video.onloadeddata = () => {
+        video.currentTime = 1 // grab frame at 1 second
+      }
+      video.onseeked = () => {
+        try {
+          const canvas = document.createElement("canvas")
+          canvas.width = video.videoWidth
+          canvas.height = video.videoHeight
+          const ctx = canvas.getContext("2d")
+          ctx?.drawImage(video, 0, 0)
+          resolve(canvas.toDataURL("image/jpeg", 0.8))
+        } catch {
+          resolve(null)
+        }
+      }
+      video.onerror = () => resolve(null)
+      setTimeout(() => resolve(null), 5000)
+    })
+  }
+
+  // Generate cover with optional video frame as thumbnail
+  const generateCoverForPost = async (hookText: string, videoSrc?: string) => {
+    setThCoverLoading(true)
+    let thumbnailUrl: string | undefined
+
+    // Reuse saved frame data URL if available
+    if (thVideoFrameDataUrl) {
+      thumbnailUrl = thVideoFrameDataUrl
+    } else if (videoSrc && !videoSrc.includes("heygen.com")) {
+      const isImageUrl = videoSrc.includes("/video-thumb/") || videoSrc.match(/\.(jpg|jpeg|png|webp)(\?|$)/i)
+      if (isImageUrl) {
+        thumbnailUrl = videoSrc
+      } else {
+        const frame = await extractVideoFrame(videoSrc)
+        if (frame) {
+          thumbnailUrl = frame
+          setThVideoFrameDataUrl(frame)
+        }
+      }
+    }
+
+    try {
+      const res = await fetch("/api/reel-cover/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: hookText, thumbnail_url: thumbnailUrl }),
+      })
+      const d = await res.json()
+      if (d.covers?.[0]) setThCoverImage(d.covers[0])
+    } catch { /* ignore */ }
+    finally { setThCoverLoading(false) }
+  }
 
   // The currently active hook text
-  const activeHook = flow === "hook" ? hookParam : (selectedHook !== null ? hooks[selectedHook] : "")
+  const activeHook = flow === "hook" ? hookParam : flow === "saved" ? savedHookText : (selectedHook !== null ? hooks[selectedHook] : "")
+
+  // Sync cover text with active hook (only set if empty)
+  useEffect(() => {
+    if (activeHook && !coverText) setCoverText(activeHook)
+  }, [activeHook, coverText])
 
   // Saved flow: load post from DB
   useEffect(() => {
@@ -88,6 +181,10 @@ export default function ProjectPage() {
           setCorePost(data.post.body)
           setOriginalCorePost(data.post.body)
           setResponse(data.post.user_response ?? "")
+          if (data.post.hook_text) {
+            setSavedHookText(data.post.hook_text as string)
+            setCoverText((data.post.cover_text as string) || (data.post.hook_text as string))
+          }
           setActiveCard("post")
 
           // Restore format variants
@@ -99,9 +196,81 @@ export default function ProjectPage() {
             setShowFormats(true)
           }
 
-          // Restore video URL
+          // Restore saved cover if exists
+          if (data.post.coverUrl) {
+            fetch(data.post.coverUrl as string)
+              .then((r) => r.blob())
+              .then((blob) => {
+                const reader = new FileReader()
+                reader.onload = () => {
+                  const dataUrl = reader.result as string
+                  const base64 = dataUrl.split(",")[1]
+                  if (base64) setThCoverImage(base64)
+                }
+                reader.readAsDataURL(blob)
+              })
+              .catch(() => {})
+          }
+
+          // Load video thumbnail as data URL for cover regeneration
           if (data.post.videoUrl) {
-            setThVideoUrl(data.post.videoUrl)
+            const vUrl = data.post.videoUrl as string
+            const isThumb = vUrl.includes("/video-thumb/") || vUrl.match(/\.(jpg|jpeg|png|webp)(\?|$)/i)
+            if (isThumb) {
+              fetch(vUrl)
+                .then((r) => r.blob())
+                .then((blob) => {
+                  const reader = new FileReader()
+                  reader.onload = () => setThVideoFrameDataUrl(reader.result as string)
+                  reader.readAsDataURL(blob)
+                })
+                .catch(() => {})
+            }
+          }
+
+          // Restore video URL and auto-generate cover if no saved cover
+          if (data.post.videoUrl) {
+            const videoUrl = data.post.videoUrl as string
+            const hookForCover = (data.post.hook_text as string) || ""
+            const hasSavedCover = !!data.post.coverUrl
+
+            // Convert HeyGen embed to stored MP4
+            const embedMatch = videoUrl.match(/heygen\.com\/embeds\/([a-f0-9]+)/)
+            if (embedMatch) {
+              fetch(`/api/videos/${embedMatch[1]}`)
+                .then((r) => r.json())
+                .then(async (vData) => {
+                  if (vData.video_url) {
+                    const storeRes = await fetch("/api/videos/store", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ video_url: vData.video_url }),
+                    })
+                    const stored = await storeRes.json()
+                    if (stored.url) {
+                      setThVideoUrl(stored.url)
+                      if (postId) {
+                        fetch(`/api/core-posts/${postId}`, {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ videoUrl: stored.url }),
+                        }).catch(() => {})
+                      }
+                      if (hookForCover && !hasSavedCover) generateCoverForPost(hookForCover, stored.url)
+                      return
+                    }
+                  }
+                  setThVideoUrl(videoUrl)
+                  if (hookForCover && !hasSavedCover) generateCoverForPost(hookForCover)
+                })
+                .catch(() => {
+                  setThVideoUrl(videoUrl)
+                  if (hookForCover && !hasSavedCover) generateCoverForPost(hookForCover)
+                })
+            } else {
+              setThVideoUrl(videoUrl)
+              if (hookForCover && !hasSavedCover) generateCoverForPost(hookForCover, videoUrl)
+            }
           }
         }
       })
@@ -112,7 +281,6 @@ export default function ProjectPage() {
   // Auto-save video URL when it changes
   useEffect(() => {
     if (!savedPostId || !thVideoUrl) return
-    // Don't save blob URLs (local uploads) - only HeyGen URLs
     if (thVideoUrl.startsWith("blob:")) return
     fetch(`/api/core-posts/${savedPostId}`, {
       method: "PATCH",
@@ -121,14 +289,44 @@ export default function ProjectPage() {
     }).catch(() => {})
   }, [savedPostId, thVideoUrl])
 
-  // Idea flow: auto-generate hooks on load
+  // Auto-save cover when it changes
   useEffect(() => {
-    if (flow !== "idea" || !idea) return
+    if (!savedPostId || !thCoverImage) return
+    fetch(`/api/core-posts/${savedPostId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ coverBase64: thCoverImage }),
+    }).catch(() => {})
+  }, [savedPostId, thCoverImage])
+
+  // Auto-save cover text when it changes (debounced by dependency)
+  // Auto-save cover text (debounced)
+  const prevCoverTextRef = useRef(coverText)
+  useEffect(() => {
+    if (!savedPostId || !coverText || coverText === prevCoverTextRef.current) return
+    prevCoverTextRef.current = coverText
+    const timer = setTimeout(() => {
+      fetch(`/api/core-posts/${savedPostId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ coverText }),
+      }).catch(() => {})
+    }, 1000)
+    return () => clearTimeout(timer)
+  }, [savedPostId, coverText])
+
+  // Manual hooks generation (no auto-generation)
+  const handleGenerateHooks = () => {
+    if (!idea) return
     setHooksLoading(true)
     fetch("/api/hooks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idea, count: 10 }),
+      body: JSON.stringify({
+        idea,
+        count: 10,
+        fieldIdeas: (() => { try { const s = localStorage.getItem("generatedIdeas_v23"); return s ? JSON.parse(s).map((i: { text: string }) => i.text) : [] } catch { return [] } })(),
+      }),
     })
       .then((res) => res.json())
       .then((data) => {
@@ -143,7 +341,7 @@ export default function ProjectPage() {
       })
       .catch(() => setError("שגיאה ביצירת הוקים"))
       .finally(() => setHooksLoading(false))
-  }, [flow, idea])
+  }
 
   const handleGeneratePost = async () => {
     if (!activeHook || !response.trim()) return
@@ -213,7 +411,7 @@ export default function ProjectPage() {
   }
 
   return (
-    <AppShell idea={idea || hookParam || (postId ? "עריכת פוסט" : "")}>
+    <AppShell idea={shortenTitle(idea || hookParam || (postId ? "עריכת פוסט" : ""))}>
       {/* Media Panel — sibling to InfiniteCanvas, slides from left */}
       <MediaPanel
         formatId={selectedFormatCard}
@@ -228,6 +426,11 @@ export default function ProjectPage() {
         onThTranscriptChange={setThTranscript}
         onThVideoUrlChange={setThVideoUrl}
         onThSourceModeChange={setThSourceMode}
+        thCoverImage={thCoverImage}
+        onThCoverImageChange={setThCoverImage}
+        onThCoverLoadingChange={setThCoverLoading}
+        onThVideoFrameChange={setThVideoFrameDataUrl}
+        hookText={activeHook}
         onScrollToVideo={() => thVideoCardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
         carouselImages={carouselImages}
         carouselSlides={carouselSlides}
@@ -253,16 +456,23 @@ export default function ProjectPage() {
           {/* === Flow: from idea === */}
           {flow === "idea" && (
             <>
-              {/* Idea card */}
+              {/* Idea card — editable */}
               <div
                 dir="rtl"
-                className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[346px]"
+                className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[346px] shrink-0"
               >
                 <div className="flex items-center bg-bg-surface px-6 py-3 rounded-t-[20px]">
                   <span className="text-p-bold text-text-primary-default">רעיון</span>
                 </div>
                 <div className="px-6">
-                  <p className="text-small text-text-primary-default">{idea}</p>
+                  <div className="rounded-lg p-2 transition-colors focus-within:bg-gray-95">
+                    <Textarea
+                      value={idea}
+                      onChange={(e) => setIdea(e.target.value)}
+                      placeholder="כתבי או ערכי את הרעיון..."
+                      className="min-h-[120px] text-small text-text-primary-default border-none bg-transparent shadow-none p-0 resize-none focus-visible:ring-0"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -274,7 +484,7 @@ export default function ProjectPage() {
               {/* Hook selection card */}
               <div
                 dir="rtl"
-                className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[567px]"
+                className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[567px] shrink-0"
               >
                 <div className={`flex items-center px-6 py-3 rounded-t-[20px] ${activeCard === "hooks" ? "bg-bg-surface-primary-default-80" : "bg-bg-surface"}`}>
                   <span className="text-p-bold text-text-primary-default">בחירת הוק</span>
@@ -288,8 +498,34 @@ export default function ProjectPage() {
                 )}
 
                 {error && !hooksLoading && (
-                  <div className="px-6">
-                    <span className="text-small text-button-destructive-default">{error}</span>
+                  <div className="px-6 flex flex-col gap-2 items-center">
+                    {error === "anthropic_overloaded" ? (
+                      <>
+                        <span className="text-small text-text-primary-default">השרתים של Anthropic עמוסים כרגע. נסי שוב בעוד דקה</span>
+                        <Button size="sm" onClick={() => { setError(""); handleGenerateHooks() }} className="gap-1.5">
+                          <Sparkles className="size-3.5" />
+                          נסי שוב
+                        </Button>
+                      </>
+                    ) : error === "credits_exhausted" ? (
+                      <>
+                        <span className="text-small text-text-primary-default">נגמרו לך הקרדיטים של Anthropic</span>
+                        <a href="https://console.anthropic.com/settings/billing" target="_blank" rel="noopener noreferrer" className="text-small-bold text-text-primary-default hover:underline">
+                          לרכישת קרדיטים →
+                        </a>
+                      </>
+                    ) : (
+                      <span className="text-small text-button-destructive-default">{error}</span>
+                    )}
+                  </div>
+                )}
+
+                {hooks.length === 0 && !hooksLoading && !error && (
+                  <div className="flex justify-center px-6 py-4">
+                    <Button onClick={handleGenerateHooks} size="sm" className="gap-1.5">
+                      <Sparkles className="size-3.5" />
+                      תייצר לי הוקים
+                    </Button>
                   </div>
                 )}
 
@@ -416,11 +652,11 @@ export default function ProjectPage() {
               )}
 
               {corePost && !postLoading && (
-                <div className="relative flex flex-col items-center w-[567px]">
+                <div className="relative flex flex-col items-center w-[567px] shrink-0">
                   {/* Core post card */}
                   <div
                     dir="rtl"
-                    className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[567px]"
+                    className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[567px] shrink-0"
                   >
                     <div className={`flex items-center px-6 py-3 rounded-t-[20px] ${activeCard === "post" ? "bg-bg-surface-primary-default-80" : "bg-bg-surface"}`}>
                       <span className="text-p-bold text-text-primary-default">פוסט ליבה</span>
@@ -463,7 +699,7 @@ export default function ProjectPage() {
                       <div className="w-[2px] h-7 bg-gray-80" />
                       <div
                         dir="rtl"
-                        className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[567px]"
+                        className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[567px] shrink-0"
                       >
                         <div className={`flex items-center px-6 py-3 rounded-t-[20px] ${activeCard === "formats" ? "bg-bg-surface-primary-default-80" : "bg-bg-surface"}`}>
                           <span className="text-p-bold text-text-primary-default">לאיזה פורמטים לשכפל?</span>
@@ -562,6 +798,7 @@ export default function ProjectPage() {
                             setThVideoUrl(null)
                             setThAudioBlob(null)
                             setThTranscript("")
+                            setThCoverImage(null)
                             // Delete from DB
                             if (savedPostId) {
                               fetch(`/api/core-posts/${savedPostId}`, {
@@ -571,6 +808,11 @@ export default function ProjectPage() {
                               }).catch(() => {})
                             }
                           }}
+                          thCoverImage={thCoverImage}
+                          thCoverLoading={thCoverLoading}
+                          coverText={coverText}
+                          onCoverTextChange={setCoverText}
+                          onCoverRegenerate={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
                           carouselImages={carouselImages}
                           carouselCardRef={carouselCardRef}
                           onCarouselRegenerate={() => {
@@ -606,6 +848,11 @@ function FormatTree({
   thVideoCardRef,
   onThReRecord,
   onThDelete,
+  thCoverImage,
+  thCoverLoading,
+  coverText,
+  onCoverTextChange,
+  onCoverRegenerate,
   carouselImages,
   carouselCardRef,
   onCarouselRegenerate,
@@ -622,6 +869,11 @@ function FormatTree({
   thVideoCardRef: React.RefObject<HTMLDivElement | null>
   onThReRecord: () => void
   onThDelete: () => void
+  thCoverImage: string | null
+  thCoverLoading: boolean
+  coverText: string
+  onCoverTextChange: (text: string) => void
+  onCoverRegenerate: () => void
   carouselImages: string[] | null
   carouselCardRef: React.RefObject<HTMLDivElement | null>
   onCarouselRegenerate: () => void
@@ -727,41 +979,19 @@ function FormatTree({
                       <Video className="size-4 text-text-neutral-default" />
                     </div>
                     <div className="px-6 flex flex-col gap-4">
-                      {/* Video + Cover side by side */}
-                      <div className="flex gap-4 justify-center">
-                        {/* Video */}
-                        <div className="flex flex-col items-center gap-2">
-                          <span className="text-xs text-text-neutral-default">וידאו</span>
-                          <div className="relative w-[160px] aspect-[9/16] rounded-xl overflow-hidden bg-gray-95">
-                            <video
-                              src={thVideoUrl}
-                              controls
-                              className="w-full h-full object-cover"
-                              onMouseDown={(e) => e.stopPropagation()}
-                            />
-                          </div>
-                        </div>
-                        {/* Cover */}
-                        <div className="flex flex-col items-center gap-2">
-                          <span className="text-xs text-text-neutral-default">קאבר</span>
-                          <div className="relative w-[160px] aspect-[9/16] rounded-xl overflow-hidden bg-gray-10">
-                            {/* Placeholder cover with hook text */}
-                            <div className="absolute inset-0 flex flex-col justify-end p-4 bg-gradient-to-t from-black/60 to-black/20">
-                              <p className="text-white text-sm font-bold leading-tight text-right" dir="rtl">
-                                {hookText || "הוק לדוגמה"}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
+                      <div className="flex justify-center">
+                        <VideoPlayer url={thVideoUrl} />
                       </div>
                       <div className="flex gap-3 w-full items-center">
-                        <Button asChild className="flex-1">
-                          <a href={thVideoUrl} download="video.mp4">
-                            הורד וידאו
-                          </a>
-                        </Button>
+                        {thVideoUrl.startsWith("blob:") && (
+                          <Button asChild className="flex-1">
+                            <a href={thVideoUrl} download="video.mp4">
+                              הורד וידאו
+                            </a>
+                          </Button>
+                        )}
                         <Button variant="outline" className="flex-1" onClick={onThReRecord}>
-                          הקלט מחדש
+                          {thVideoUrl.startsWith("blob:") ? "הקלט מחדש" : "החלף סרטון"}
                         </Button>
                         <button
                           onClick={onThDelete}
@@ -771,6 +1001,66 @@ function FormatTree({
                           <Trash2 className="size-4 text-button-destructive-default" />
                         </button>
                       </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* Cover loading indicator */}
+              {fid === "talking_head" && thCoverLoading && !thCoverImage && (
+                <>
+                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <div dir="rtl" className="flex items-center gap-2 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4 w-full">
+                    <Loader2 className="size-4 animate-spin text-text-neutral-default" />
+                    <span className="text-sm text-text-neutral-default">מייצר קאבר...</span>
+                  </div>
+                </>
+              )}
+
+              {/* Cover card below video card */}
+              {fid === "talking_head" && thCoverImage && (
+                <>
+                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <div
+                    dir="rtl"
+                    className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
+                  >
+                    <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface-primary-default-80">
+                      <span className="text-p-bold text-text-primary-default">קאבר</span>
+                      <Image className="size-4 text-text-neutral-default" />
+                    </div>
+                    <div className="px-6 flex flex-col gap-4">
+                      {/* Editable cover text */}
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs text-text-neutral-default">טקסט לקאבר</label>
+                        <div className="flex gap-2">
+                          <input
+                            value={coverText}
+                            onChange={(e) => onCoverTextChange(e.target.value)}
+                            className="flex-1 rounded-lg border border-border-neutral-default bg-transparent px-3 py-2 text-sm text-text-primary-default outline-none focus:border-yellow-50"
+                            onMouseDown={(e) => e.stopPropagation()}
+                          />
+                          <Button size="sm" onClick={onCoverRegenerate} disabled={thCoverLoading} className="shrink-0">
+                            {thCoverLoading ? <Loader2 className="size-4 animate-spin" /> : "צור"}
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="flex justify-center">
+                        <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={`data:image/png;base64,${thCoverImage}`}
+                            alt="cover"
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      </div>
+                      <Button asChild className="w-full gap-2">
+                        <a href={`data:image/png;base64,${thCoverImage}`} download="reel-cover.png">
+                          <Download className="size-4" />
+                          הורד קאבר
+                        </a>
+                      </Button>
                     </div>
                   </div>
                 </>
@@ -890,5 +1180,71 @@ function CarouselResultCard({
         </div>
       </div>
     </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Minimal Video Player — play/pause overlay, portrait, no controls  */
+/* ------------------------------------------------------------------ */
+
+function VideoPlayer({ url }: { url: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [playing, setPlaying] = useState(false)
+
+  const toggle = () => {
+    const v = videoRef.current
+    if (!v) return
+    if (v.paused) { v.play(); setPlaying(true) }
+    else { v.pause(); setPlaying(false) }
+  }
+
+  const isEmbed = url.includes("heygen.com/embeds")
+  const isThumbnail = url.includes("/video-thumb/") || url.match(/\.(jpg|jpeg|png|webp)(\?|$)/i)
+  const isBlob = url.startsWith("blob:")
+
+  if (isEmbed) {
+    return (
+      <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden bg-gray-95">
+        <iframe
+          src={url}
+          className="w-full h-full"
+          allow="encrypted-media; fullscreen;"
+          allowFullScreen
+        />
+      </div>
+    )
+  }
+
+  // Saved thumbnail — show as image
+  if (isThumbnail && !isBlob) {
+    return (
+      <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden bg-gray-95">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={url} alt="video thumbnail" className="w-full h-full object-cover" />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="size-12 rounded-full bg-black/40 flex items-center justify-center backdrop-blur-sm">
+            <Play className="size-5 text-white ms-0.5" />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Playable video (blob or direct mp4)
+  return (
+    <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden bg-gray-95 cursor-pointer" onClick={toggle} onMouseDown={(e) => e.stopPropagation()}>
+      <video
+        ref={videoRef}
+        src={url}
+        className="w-full h-full object-cover"
+        playsInline
+        onEnded={() => setPlaying(false)}
+      />
+      <div className={`absolute inset-0 flex items-center justify-center transition-opacity ${playing ? "opacity-0 hover:opacity-100" : "opacity-100"}`}>
+        <div className="size-12 rounded-full bg-black/40 flex items-center justify-center backdrop-blur-sm">
+          {playing ? <Pause className="size-5 text-white" /> : <Play className="size-5 text-white ms-0.5" />}
+        </div>
+      </div>
+    </div>
   )
 }

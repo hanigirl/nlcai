@@ -20,6 +20,9 @@ When generating a reel cover:
 - Always use the **hook text** as the cover title
 - If the hook is too long (more than ~5 words), shorten it to a punchy 2-4 word version that captures the essence
 - Keep the text bold, short, and attention-grabbing — like a headline
+- Generate **exactly 1 cover** — no variations
+- **Requires `brand_style`** — if the user has no brand_style in the DB, do NOT generate a cover. Show a message directing them to upload cover examples in Settings > Media > Covers
+- The cover uses the user's `brand_style` (overlay, text color, position, size, font weight, direction) from the `users` table
 
 ## Design Tokens Reference
 

@@ -1,32 +1,27 @@
 import { createFormatRoute } from "@/lib/agents/create-format-route"
-import { buildCarouselPrompt, parseCarouselResponse, carouselToText } from "@/lib/agents/carousel-generator"
+import { buildCarouselPrompt, parseCarouselResponse } from "@/lib/agents/carousel-generator"
 
-const DUMMY_CAROUSEL = `[כריכה]
-כותרת: אתה עדיין מחפש כלי AI חדש כל שבוע? הנה למה זה טעות
+const DUMMY_CAROUSEL = `שקופית 1
+אתה עדיין מחפש כלי AI חדש כל שבוע? הנה למה זה טעות
 
-[סלייד 2]
-כותרת: הבעיה האמיתית
+שקופית 2
 כל שבוע יוצא כלי חדש. כולם רצים לנסות. ואז עוברים לכלי הבא.
 
-[סלייד 3]
-כותרת: מה שבאמת עובד
+שקופית 3
 במקום לקפוץ בין 10 כלים — תבחר אחד. תלמד אותו לעומק. תבנה איתו תהליך.
 
-[סלייד 4]
-כותרת: הדוגמה שלי
+שקופית 4
 זה מה שעשיתי עם פיגמה וקלוד. לא כי הם מושלמים — כי אני מכיר אותם מספיק טוב.
 
-[סלייד 5]
-כותרת: הכלל הפשוט
+שקופית 5
 העומק מנצח את הרוחב. תמיד.
 
-[סיום]
-כותרת: שמרו את זה
-למי שמרגיש אבוד בין כל הכלים — שלחו לו את הקרוסלה הזו`
+שקופית 6
+שמרו את זה. שלחו למי שמרגיש אבוד בין כל הכלים.`
 
 export const POST = createFormatRoute({
   buildPrompt: buildCarouselPrompt,
-  parseResponse: (text) => carouselToText(parseCarouselResponse(text)),
+  parseResponse: parseCarouselResponse,
   maxTokens: 2048,
   dummyText: DUMMY_CAROUSEL,
 })

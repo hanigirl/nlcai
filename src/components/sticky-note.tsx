@@ -1,17 +1,20 @@
+import { ExternalLink } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface StickyNoteProps {
   text: string
-  productName: string
-  date: string
+  source: string
+  url?: string
+  profileUrl?: string
   onClick?: () => void
   className?: string
 }
 
 export function StickyNote({
   text,
-  productName,
-  date,
+  source,
+  url,
+  profileUrl,
   onClick,
   className,
 }: StickyNoteProps) {
@@ -25,10 +28,48 @@ export function StickyNote({
         className
       )}
     >
-      <p className="text-p text-text-primary-default dark:text-yellow-95 line-clamp-5">{text}</p>
+      <p className="text-xs text-text-primary-default dark:text-yellow-95 line-clamp-6 leading-relaxed">{text}</p>
       <div className="flex items-end justify-between">
-        <span className="text-xs-body text-yellow-30">{date}</span>
-        <span dir="auto" className="text-xs-body text-yellow-30 truncate max-w-[10ch]">{productName}</span>
+        {(url || profileUrl) ? (
+          <a
+            href={url || profileUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-yellow-30 hover:text-yellow-10 dark:text-yellow-70 dark:hover:text-yellow-90 transition-colors"
+            title={url ? "פתח פוסט" : "פתח פרופיל"}
+          >
+            <ExternalLink className="size-4" />
+          </a>
+        ) : (
+          <span />
+        )}
+        {profileUrl ? (
+          <a
+            href={profileUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-xs-body text-yellow-30 hover:text-yellow-10 dark:text-yellow-70 dark:hover:text-yellow-90 truncate max-w-[14ch] transition-colors underline"
+            dir="auto"
+            title="פתח פרופיל"
+          >
+            {source}
+          </a>
+        ) : url ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-xs-body text-yellow-30 hover:text-yellow-10 dark:text-yellow-70 dark:hover:text-yellow-90 truncate max-w-[14ch] transition-colors underline"
+            dir="auto"
+          >
+            {source}
+          </a>
+        ) : (
+          <span dir="auto" className="text-xs-body text-yellow-30 dark:text-yellow-70 truncate max-w-[14ch]">{source}</span>
+        )}
       </div>
     </div>
   )

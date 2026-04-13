@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Home, FileText, Image, Settings, Anchor } from "lucide-react"
+import { Home, FileText, Image, Settings, Anchor, Lightbulb } from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
@@ -24,6 +24,11 @@ const navItems = [
     label: "פוסטי ליבה",
     href: "/core_posts",
     icon: FileText,
+  },
+  {
+    label: "רעיונות",
+    href: "/ideas",
+    icon: Lightbulb,
   },
   {
     label: "מחסן הוקים",
@@ -49,7 +54,7 @@ export function AppSidebar() {
     <Sidebar side="right" collapsible="icon" className="border-l border-border-neutral-default bg-white dark:bg-gray-10">
       <SidebarHeader className="flex items-center justify-center p-4 group-data-[collapsible=icon]:p-2">
         <Link href="/">
-          <img src="/logo.png" alt="Logo" className="size-8 shrink-0 rounded-full" />
+          <img src="/logo-new-minimise.png" alt="Logo" className="size-8 shrink-0" />
         </Link>
       </SidebarHeader>
 

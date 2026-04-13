@@ -4,7 +4,8 @@ import { useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Image from "next/image"
 import { ArrowLeft, Paperclip, Plus, Trash2, Loader2, Link2 } from "lucide-react"
-import logoFull from "../../../images/logo-full.png"
+import logoNew from "../../../images/logo-new.png"
+import onboardingHero from "../../../images/onboarding-hero.png"
 import { createClient } from "@/lib/supabase/client"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -188,9 +189,9 @@ export default function OnboardingPage() {
         {/* Logo */}
         <div className="mb-8 flex flex-col items-center">
           <Image
-            src={logoFull}
-            alt="Postudio"
-            className="h-[86px] w-auto"
+            src={logoNew}
+            alt="Next Level Content AI"
+            className="h-[100px] w-auto"
             priority
           />
         </div>
@@ -430,7 +431,7 @@ export default function OnboardingPage() {
                           updated[i].type = e.target.value as "front" | "premium" | "lead_magnet"
                           setProductsList(updated)
                         }}
-                        className="h-10 rounded-xl border border-border-neutral-default bg-white px-3 text-small text-text-primary-default appearance-none cursor-pointer pe-8"
+                        className="h-10 rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 px-3 text-small text-text-primary-default appearance-none cursor-pointer pe-8"
                         style={{
                           backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23808080' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
                           backgroundRepeat: "no-repeat",
@@ -462,7 +463,7 @@ export default function OnboardingPage() {
                         updated[i].url = e.target.value
                         setProductsList(updated)
                       }}
-                      className="border-none bg-white shadow-none text-sm"
+                      className="border-none bg-white dark:bg-gray-10 shadow-none text-sm"
                     />
                   </div>
                 ))}
@@ -524,7 +525,14 @@ export default function OnboardingPage() {
       </div>
 
       {/* Left side */}
-      <div className="hidden flex-1 bg-bg-surface lg:block" />
+      <div className="hidden flex-1 bg-bg-surface lg:flex items-center justify-center">
+        <Image
+          src={onboardingHero}
+          alt=""
+          className="w-[550px] object-contain -translate-x-12"
+          priority
+        />
+      </div>
     </div>
   )
 }
