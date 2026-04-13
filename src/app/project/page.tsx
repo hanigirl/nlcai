@@ -966,14 +966,12 @@ function FormatTree({
                   />
                   <Button
                     variant="outline"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onSelectFormat(fid)
-                    }}
-                    className="w-full rounded-[10px] border-border-neutral-default text-text-primary-default text-small gap-2"
+                    disabled
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-full rounded-[10px] border-border-neutral-default text-text-primary-default text-small gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Icon className="size-4" />
-                    ערוך מדיה ל{format.label}
+                    ערוך מדיה ל{format.label} (בקרוב)
                   </Button>
                 </div>
               </div>
