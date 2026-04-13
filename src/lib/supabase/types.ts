@@ -292,6 +292,9 @@ export interface Database {
         Update: never;
       };
     };
+    Views: Record<string, never>;
+    Functions: Record<string, never>;
+    CompositeTypes: Record<string, never>;
     Enums: {
       plan_tier: PlanTier;
       format_type: FormatType;
