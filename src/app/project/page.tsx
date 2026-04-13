@@ -80,6 +80,7 @@ function ProjectPageInner() {
   const [duplicatedFormats, setDuplicatedFormats] = useState<string[]>([])
   const [formatPosts, setFormatPosts] = useState<Record<string, string>>({})
   const [activeCard, setActiveCard] = useState<string>(flow === "hook" ? "response" : "hooks")
+  const [editableHook, setEditableHook] = useState<string>(hookParam || "")
 
   // Media panel state
   const [selectedFormatCard, setSelectedFormatCard] = useState<string | null>(null)
@@ -171,7 +172,7 @@ function ProjectPageInner() {
   }
 
   // The currently active hook text
-  const activeHook = flow === "hook" ? hookParam : flow === "saved" ? savedHookText : (selectedHook !== null ? hooks[selectedHook] : "")
+  const activeHook = flow === "hook" ? editableHook : flow === "saved" ? savedHookText : (selectedHook !== null ? hooks[selectedHook] : "")
 
   // Sync cover text with active hook (only set if empty)
   useEffect(() => {
@@ -589,16 +590,23 @@ function ProjectPageInner() {
           {/* === Flow: from hook === */}
           {flow === "hook" && (
             <>
-              {/* Hook card */}
+              {/* Hook card — editable */}
               <div
                 dir="rtl"
-                className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[346px]"
+                className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[346px] shrink-0"
               >
                 <div className="flex items-center bg-bg-surface px-6 py-3 rounded-t-[20px]">
                   <span className="text-p-bold text-text-primary-default">הוק</span>
                 </div>
                 <div className="px-6">
-                  <p className="text-small text-text-primary-default">{hookParam}</p>
+                  <div className="rounded-lg p-2 transition-colors focus-within:bg-gray-95">
+                    <Textarea
+                      value={editableHook}
+                      onChange={(e) => setEditableHook(e.target.value)}
+                      placeholder="כתבי או ערכי את ההוק..."
+                      className="min-h-[120px] text-small text-text-primary-default border-none bg-transparent shadow-none p-0 resize-none focus-visible:ring-0"
+                    />
+                  </div>
                 </div>
               </div>
 
