@@ -225,7 +225,7 @@ export default function OnboardingPage() {
             <>
               <div className="text-center mb-2">
                 <h3 className="text-text-primary-default mb-2">
-                  היי חני, וולקאם לפוסט סטודיו!
+                  וולקאם לנקסט לבל של יצירת תוכן
                 </h3>
                 <p className="text-small text-text-neutral-default">
                   חברי את חשבונות ה-AI שלך כדי להתחיל ליצור תוכן.
