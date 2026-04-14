@@ -35,12 +35,18 @@ export async function GET(request: Request) {
   if (tokenHash && type) {
     const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
     if (!error) return routeByOnboardingState(supabase, origin, explicitNext);
+    // Disambiguate common failure modes for better messaging.
+    const msg = error.message.toLowerCase();
+    if (msg.includes("expired")) return NextResponse.redirect(`${origin}/login?error=expired`);
+    if (msg.includes("invalid") || msg.includes("already")) return NextResponse.redirect(`${origin}/login?error=used`);
+    return NextResponse.redirect(`${origin}/login?error=auth`);
   }
 
   // Path B — PKCE code exchange (OAuth providers, same-device signups)
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) return routeByOnboardingState(supabase, origin, explicitNext);
+    return NextResponse.redirect(`${origin}/login?error=auth`);
   }
 
   return NextResponse.redirect(`${origin}/login?error=auth`);

@@ -1,7 +1,7 @@
 "use client";
 
 import { createClient } from "@/lib/supabase/client";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Image from "next/image";
 import logoNew from "../../../images/logo-new.png";
@@ -24,6 +24,10 @@ type FieldErrors = {
 type Message = {
   text: string;
   type: "error" | "success";
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
 };
 
 function validateEmail(email: string): boolean {
@@ -71,15 +75,45 @@ function LoginPageInner() {
 
   const supabase = createClient();
 
+  // Keep a live ref of email so callbacks created earlier (e.g. in the callback-error
+  // useEffect at mount) still read the current value when the user clicks them later.
+  const emailRef = useRef(email);
+  useEffect(() => { emailRef.current = email; }, [email]);
+
   // Show informative message if callback returned an auth error
   useEffect(() => {
-    if (searchParams.get("error") === "auth") {
-      setIsSignUp(false);
+    const err = searchParams.get("error");
+    if (!err) return;
+    setIsSignUp(false);
+    if (err === "expired") {
       setMessage({
-        text: "הקישור לא תקף יותר (אולי כבר לחצת עליו, או שפג תוקפו). נסי להתחבר, ואם צריך — נשלח מייל חדש.",
+        text: "הקישור פג תוקף. הזיני את המייל שלך ונשלח מייל אימות חדש.",
         type: "error",
+        action: {
+          label: "לשלוח מייל אימות חדש",
+          onClick: () => handleResendConfirmation(emailRef.current),
+        },
+      });
+    } else if (err === "used") {
+      setMessage({
+        text: "הקישור כבר שומש. אם כבר אימתת את המייל — נסי להתחבר. אחרת, נשלח מייל חדש.",
+        type: "error",
+        action: {
+          label: "לשלוח מייל אימות חדש",
+          onClick: () => handleResendConfirmation(emailRef.current),
+        },
+      });
+    } else {
+      setMessage({
+        text: "הקישור לא תקף. נסי להתחבר, או לבקש מייל אימות חדש.",
+        type: "error",
+        action: {
+          label: "לשלוח מייל אימות חדש",
+          onClick: () => handleResendConfirmation(emailRef.current),
+        },
       });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   function validateFields(): boolean {
@@ -126,10 +160,31 @@ function LoginPageInner() {
         },
       });
 
-      // Supabase quirk: signUp for an existing UNCONFIRMED user returns 200 with
-      // data.user populated but identities=[]. In that case we resend the confirmation.
-      const userExistsUnconfirmed = !error && data?.user && data.user.identities && data.user.identities.length === 0;
-      if (userExistsUnconfirmed) {
+      // Supabase quirks on existing emails:
+      // - If user exists AND is confirmed: returns success with data.user BUT identities is empty.
+      //   (Supabase hides this for security, but we detect it and send to login.)
+      // - If user exists AND is unconfirmed: same response shape. We resend the confirmation.
+      // - On network/unrelated errors: error is populated.
+      // We disambiguate between "exists confirmed" and "exists unconfirmed" by checking email_confirmed_at
+      // which is NOT returned to us — so we use the "identities=[]" heuristic and always resend.
+      // If it's truly confirmed, Supabase resend will no-op silently, which is fine.
+      const userExistsAlready = !error && data?.user && data.user.identities && data.user.identities.length === 0;
+      const userIsConfirmed = userExistsAlready && data?.user?.confirmed_at;
+
+      if (userIsConfirmed) {
+        // Existing CONFIRMED user — don't resend, just route them to login.
+        setIsSignUp(false);
+        setPassword("");
+        setMessage({
+          text: "המייל הזה כבר רשום במערכת. נסי להתחבר עם הסיסמא שלך.",
+          type: "error",
+          action: {
+            label: "שכחתי סיסמא",
+            onClick: () => handleResetPassword(email),
+          },
+        });
+      } else if (userExistsAlready) {
+        // Existing UNCONFIRMED user — resend confirmation email.
         const { error: resendErr } = await supabase.auth.resend({
           type: "signup",
           email,
@@ -139,26 +194,23 @@ function LoginPageInner() {
           setMessage({ text: getHebrewError(resendErr.message), type: "error" });
         } else {
           setMessage({
-            text: "שלחנו לך מייל אימות חדש. בדקי את תיבת המייל שלך (גם בספאם)",
+            text: "המייל הזה כבר נרשם אצלנו אך לא אומת. שלחנו מייל אימות חדש — בדקי את התיבה (וגם בספאם).",
             type: "success",
           });
         }
       } else if (error) {
-        // If already fully registered (confirmed), nudge them to resend or login
+        // Fallback — rare cases where Supabase returns a proper error instead of the "identities=[]" shape.
         if (error.message.includes("User already registered")) {
-          const { error: resendErr } = await supabase.auth.resend({
-            type: "signup",
-            email,
-            options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+          setIsSignUp(false);
+          setPassword("");
+          setMessage({
+            text: "המייל הזה כבר רשום במערכת. נסי להתחבר עם הסיסמא שלך.",
+            type: "error",
+            action: {
+              label: "שכחתי סיסמא",
+              onClick: () => handleResetPassword(email),
+            },
           });
-          if (!resendErr) {
-            setMessage({
-              text: "נראה שכבר נרשמת. שלחנו לך מייל אימות חדש — אם הוא לא מגיע, נסי להתחבר במקום.",
-              type: "success",
-            });
-          } else {
-            setMessage({ text: getHebrewError(error.message), type: "error" });
-          }
         } else {
           setMessage({ text: getHebrewError(error.message), type: "error" });
         }
@@ -174,13 +226,75 @@ function LoginPageInner() {
         password,
       });
       if (error) {
-        setMessage({ text: getHebrewError(error.message), type: "error" });
+        if (error.message.includes("Email not confirmed")) {
+          setMessage({
+            text: "המייל עדיין לא אומת. בדקי את תיבת המייל שלך.",
+            type: "error",
+            action: {
+              label: "לשלוח מייל אימות חדש",
+              onClick: () => handleResendConfirmation(emailRef.current),
+            },
+          });
+        } else if (error.message.includes("Invalid login credentials")) {
+          setMessage({
+            text: "המייל או הסיסמא שהזנת לא נכונים.",
+            type: "error",
+            action: {
+              label: "שכחתי סיסמא",
+              onClick: () => handleResetPassword(email),
+            },
+          });
+        } else {
+          setMessage({ text: getHebrewError(error.message), type: "error" });
+        }
       } else {
         window.location.href = "/";
       }
     }
 
     setLoading(false);
+  }
+
+  async function handleResendConfirmation(targetEmail: string) {
+    if (!targetEmail || !validateEmail(targetEmail)) {
+      setMessage({ text: "הזיני כתובת מייל תקינה ואז לחצי לשליחה מחדש", type: "error" });
+      return;
+    }
+    setLoading(true);
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email: targetEmail,
+      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+    });
+    setLoading(false);
+    if (error) {
+      setMessage({ text: getHebrewError(error.message), type: "error" });
+    } else {
+      setMessage({
+        text: "שלחנו מייל אימות חדש. בדקי את תיבת המייל שלך (גם בספאם).",
+        type: "success",
+      });
+    }
+  }
+
+  async function handleResetPassword(targetEmail: string) {
+    if (!targetEmail || !validateEmail(targetEmail)) {
+      setMessage({ text: "הזיני את כתובת המייל שלך ואז לחצי על 'שכחתי סיסמא'", type: "error" });
+      return;
+    }
+    setLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(targetEmail, {
+      redirectTo: `${window.location.origin}/auth/callback`,
+    });
+    setLoading(false);
+    if (error) {
+      setMessage({ text: getHebrewError(error.message), type: "error" });
+    } else {
+      setMessage({
+        text: "שלחנו לך מייל לאיפוס סיסמא. בדקי את תיבת המייל שלך (גם בספאם).",
+        type: "success",
+      });
+    }
   }
 
   async function handleGoogleLogin() {
@@ -342,7 +456,17 @@ function LoginPageInner() {
                     : "bg-bg-surface-primary-default text-text-primary-default"
                 }`}
               >
-                {message.text}
+                <p>{message.text}</p>
+                {message.action && (
+                  <button
+                    type="button"
+                    onClick={message.action.onClick}
+                    className="mt-2 text-small-bold underline hover:opacity-80 disabled:opacity-50"
+                    disabled={loading}
+                  >
+                    {message.action.label}
+                  </button>
+                )}
               </div>
             )}
 
