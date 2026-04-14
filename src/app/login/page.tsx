@@ -1,7 +1,8 @@
 "use client";
 
 import { createClient } from "@/lib/supabase/client";
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Image from "next/image";
 import logoNew from "../../../images/logo-new.png";
 import { Input } from "@/components/ui/input";
@@ -49,16 +50,37 @@ function getHebrewError(errorMessage: string): string {
 }
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginPageInner />
+    </Suspense>
+  )
+}
+
+function LoginPageInner() {
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [isSignUp, setIsSignUp] = useState(true);
+  // Default to login (returning users). Callers can force signup via ?mode=signup.
+  const [isSignUp, setIsSignUp] = useState(() => searchParams.get("mode") === "signup");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   const supabase = createClient();
+
+  // Show informative message if callback returned an auth error
+  useEffect(() => {
+    if (searchParams.get("error") === "auth") {
+      setIsSignUp(false);
+      setMessage({
+        text: "הקישור לא תקף יותר (אולי כבר לחצת עליו, או שפג תוקפו). נסי להתחבר, ואם צריך — נשלח מייל חדש.",
+        type: "error",
+      });
+    }
+  }, [searchParams]);
 
   function validateFields(): boolean {
     const errors: FieldErrors = {};
@@ -93,7 +115,7 @@ export default function LoginPage() {
     setLoading(true);
 
     if (isSignUp) {
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
@@ -103,11 +125,46 @@ export default function LoginPage() {
           },
         },
       });
-      if (error) {
-        setMessage({ text: getHebrewError(error.message), type: "error" });
+
+      // Supabase quirk: signUp for an existing UNCONFIRMED user returns 200 with
+      // data.user populated but identities=[]. In that case we resend the confirmation.
+      const userExistsUnconfirmed = !error && data?.user && data.user.identities && data.user.identities.length === 0;
+      if (userExistsUnconfirmed) {
+        const { error: resendErr } = await supabase.auth.resend({
+          type: "signup",
+          email,
+          options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+        });
+        if (resendErr) {
+          setMessage({ text: getHebrewError(resendErr.message), type: "error" });
+        } else {
+          setMessage({
+            text: "שלחנו לך מייל אימות חדש. בדקי את תיבת המייל שלך (גם בספאם)",
+            type: "success",
+          });
+        }
+      } else if (error) {
+        // If already fully registered (confirmed), nudge them to resend or login
+        if (error.message.includes("User already registered")) {
+          const { error: resendErr } = await supabase.auth.resend({
+            type: "signup",
+            email,
+            options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+          });
+          if (!resendErr) {
+            setMessage({
+              text: "נראה שכבר נרשמת. שלחנו לך מייל אימות חדש — אם הוא לא מגיע, נסי להתחבר במקום.",
+              type: "success",
+            });
+          } else {
+            setMessage({ text: getHebrewError(error.message), type: "error" });
+          }
+        } else {
+          setMessage({ text: getHebrewError(error.message), type: "error" });
+        }
       } else {
         setMessage({
-          text: "שלחנו לך מייל אימות. בדקי את תיבת המייל שלך כדי להשלים את ההרשמה",
+          text: "שלחנו לך מייל אימות. בדקי את תיבת המייל שלך (גם בספאם) כדי להשלים את ההרשמה",
           type: "success",
         });
       }
