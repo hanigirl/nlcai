@@ -4,7 +4,7 @@ import { useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Image from "next/image"
 import { ArrowLeft, Paperclip, Plus, Trash2, Loader2, Link2 } from "lucide-react"
-import logoFull from "../../../images/logo-full.png"
+import logoNew from "../../../images/logo-new.png"
 import onboardingHero from "../../../images/onboarding-hero.png"
 import { createClient } from "@/lib/supabase/client"
 import { Input } from "@/components/ui/input"
@@ -189,7 +189,7 @@ export default function OnboardingPage() {
         {/* Logo */}
         <div className="mb-8 flex flex-col items-center">
           <Image
-            src={logoFull}
+            src={logoNew}
             alt="Next Level Content AI"
             className="h-[100px] w-auto"
             priority
