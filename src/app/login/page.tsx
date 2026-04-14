@@ -160,43 +160,48 @@ function LoginPageInner() {
         },
       });
 
-      // Supabase quirks on existing emails:
-      // - If user exists AND is confirmed: returns success with data.user BUT identities is empty.
-      //   (Supabase hides this for security, but we detect it and send to login.)
-      // - If user exists AND is unconfirmed: same response shape. We resend the confirmation.
-      // - On network/unrelated errors: error is populated.
-      // We disambiguate between "exists confirmed" and "exists unconfirmed" by checking email_confirmed_at
-      // which is NOT returned to us — so we use the "identities=[]" heuristic and always resend.
-      // If it's truly confirmed, Supabase resend will no-op silently, which is fine.
+      // Supabase quirk on existing emails: signUp for BOTH confirmed and unconfirmed
+      // existing users returns success with data.user but identities=[] (obfuscated for
+      // security). We can't distinguish confirmed from unconfirmed from the signUp response
+      // — confirmed_at is always null in the spoofed payload.
+      //
+      // Strategy: whenever we detect "exists" (identities=[]), try resend.
+      //  - If user is UNCONFIRMED → resend succeeds → email goes out.
+      //  - If user is CONFIRMED → resend returns error like "already confirmed" / "already registered"
+      //     → we route them to login.
       const userExistsAlready = !error && data?.user && data.user.identities && data.user.identities.length === 0;
-      const userIsConfirmed = userExistsAlready && data?.user?.confirmed_at;
 
-      if (userIsConfirmed) {
-        // Existing CONFIRMED user — don't resend, just route them to login.
-        setIsSignUp(false);
-        setPassword("");
-        setMessage({
-          text: "המייל הזה כבר רשום במערכת. נסי להתחבר עם הסיסמא שלך.",
-          type: "error",
-          action: {
-            label: "שכחתי סיסמא",
-            onClick: () => handleResetPassword(email),
-          },
-        });
-      } else if (userExistsAlready) {
-        // Existing UNCONFIRMED user — resend confirmation email.
+      if (userExistsAlready) {
         const { error: resendErr } = await supabase.auth.resend({
           type: "signup",
           email,
           options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
         });
-        if (resendErr) {
-          setMessage({ text: getHebrewError(resendErr.message), type: "error" });
-        } else {
+        if (!resendErr) {
+          // Resend succeeded — user was unconfirmed, email is on its way.
           setMessage({
             text: "המייל הזה כבר נרשם אצלנו אך לא אומת. שלחנו מייל אימות חדש — בדקי את התיבה (וגם בספאם).",
             type: "success",
           });
+        } else {
+          const rmsg = resendErr.message.toLowerCase();
+          const isAlreadyConfirmed = rmsg.includes("already") || rmsg.includes("confirmed") || rmsg.includes("registered");
+          if (isAlreadyConfirmed) {
+            // User is fully registered — send them to login.
+            setIsSignUp(false);
+            setPassword("");
+            setMessage({
+              text: "המייל הזה כבר רשום ומאומת במערכת. נסי להתחבר עם הסיסמא שלך.",
+              type: "error",
+              action: {
+                label: "שכחתי סיסמא",
+                onClick: () => handleResetPassword(emailRef.current),
+              },
+            });
+          } else {
+            // Rate-limit or other — show the error.
+            setMessage({ text: getHebrewError(resendErr.message), type: "error" });
+          }
         }
       } else if (error) {
         // Fallback — rare cases where Supabase returns a proper error instead of the "identities=[]" shape.
