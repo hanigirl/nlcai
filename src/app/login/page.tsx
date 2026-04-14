@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { useState } from "react";
 import Image from "next/image";
-import logoFull from "../../../images/logo-full.png";
+import logoNew from "../../../images/logo-new.png";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -149,8 +149,8 @@ export default function LoginPage() {
         {/* Logo */}
         <div className="mb-10 flex flex-col items-center">
           <Image
-            src={logoFull}
-            alt="Postudio"
+            src={logoNew}
+            alt="Next Level Content AI"
             className="h-[86px] w-auto"
             priority
           />
