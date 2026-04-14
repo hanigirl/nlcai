@@ -160,7 +160,7 @@ export default function LoginPage() {
         <Card className="w-full max-w-md border-border-neutral-default rounded-3xl">
           <CardHeader className="items-center pb-2">
             <CardTitle className="text-2xl text-text-primary-default text-center">
-              {isSignUp ? "היי, וולקאם!" : "טוב לראות אותך שוב..."}
+              {isSignUp ? "וולקאם לנקסט לבל של התכנים שלך" : "טוב לראות אותך שוב..."}
             </CardTitle>
           </CardHeader>
 
