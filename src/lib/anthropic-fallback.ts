@@ -1,4 +1,4 @@
-export const PRIMARY_MODEL = "claude-sonnet-4-20250514"
+export const PRIMARY_MODEL = "claude-sonnet-4-6"
 export const FALLBACK_MODEL = "claude-haiku-4-5-20251001"
 
 export function isOverloadError(err: unknown): boolean {

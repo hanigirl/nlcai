@@ -97,7 +97,7 @@ export async function POST(req: NextRequest) {
       const apiKey = await getUserApiKey(supabase, "anthropic_api_key")
       const client = new Anthropic({ apiKey })
       const msg = await client.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 50,
         messages: [{
           role: "user",

@@ -169,7 +169,7 @@ export async function POST(req: NextRequest) {
     // STEP 1: Claude suggests known handles
     // ══════════════════════════════════════════════
     const handleMsg = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: 1024,
       messages: [{
         role: "user",
@@ -280,7 +280,7 @@ Use exact handles WITHOUT @.`
     if (combinedArticleText.length > 100) {
       try {
         const extractMsg = await client.messages.create({
-          model: "claude-sonnet-4-20250514",
+          model: "claude-sonnet-4-6",
           max_tokens: 1024,
           messages: [{
             role: "user",
@@ -399,7 +399,7 @@ Return ONLY a JSON array of Instagram handles (best guess based on names):
     if (passedChecks.length > 0) {
       try {
         const relevanceMsg = await client.messages.create({
-          model: "claude-sonnet-4-20250514",
+          model: "claude-sonnet-4-6",
           max_tokens: 1024,
           messages: [{
             role: "user",
