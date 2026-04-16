@@ -336,7 +336,7 @@ export default function OnboardingPage() {
                     ref={fileInputRef}
                     type="file"
                     className="hidden"
-                    accept=".doc,.docx,.txt,.rtf,.pdf,.odt"
+                    accept=".pdf,.docx,.doc,.txt,.md,.rtf"
                     onChange={(e) => setStyleFile(e.target.files?.[0] ?? null)}
                   />
                 </div>
@@ -378,7 +378,7 @@ export default function OnboardingPage() {
                     ref={audienceFileRef}
                     type="file"
                     className="hidden"
-                    accept=".doc,.docx,.txt,.rtf,.pdf,.odt"
+                    accept=".pdf,.docx,.doc,.txt,.md,.rtf"
                     onChange={(e) => setAudienceFile(e.target.files?.[0] ?? null)}
                   />
                 </div>

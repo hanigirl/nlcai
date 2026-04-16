@@ -68,7 +68,7 @@ export function FileUploadCard({
         <input
           ref={inputRef}
           type="file"
-          accept=".txt,.md,.doc,.docx,.pdf"
+          accept=".pdf,.docx,.doc,.txt,.md,.rtf"
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0]
@@ -86,7 +86,7 @@ export function FileUploadCard({
               גרור קובץ לכאן או לחץ לבחירה
             </span>
             <span className="text-xs-body text-text-neutral-default">
-              txt, md, doc, docx, pdf
+              pdf, docx, doc, txt, md
             </span>
           </button>
         )}

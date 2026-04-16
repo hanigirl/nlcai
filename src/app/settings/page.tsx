@@ -624,7 +624,7 @@ function SettingsPageInner() {
                       ref={styleFileRef}
                       type="file"
                       className="hidden"
-                      accept=".doc,.docx,.txt,.rtf,.pdf,.odt"
+                      accept=".pdf,.docx,.doc,.txt,.md,.rtf"
                       onChange={(e) => {
                         const f = e.target.files?.[0]
                         if (f) {
@@ -664,7 +664,7 @@ function SettingsPageInner() {
                       ref={audienceFileRef}
                       type="file"
                       className="hidden"
-                      accept=".doc,.docx,.txt,.rtf,.pdf,.odt"
+                      accept=".pdf,.docx,.doc,.txt,.md,.rtf"
                       onChange={(e) => {
                         const f = e.target.files?.[0]
                         if (f) {

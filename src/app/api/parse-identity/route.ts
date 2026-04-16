@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
 import mammoth from "mammoth"
+import WordExtractor from "word-extractor"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import {
@@ -8,15 +9,56 @@ import {
   AUDIENCE_IDENTITY_PARSE_PROMPT,
 } from "@/lib/agents/identity-parser"
 
-async function extractText(file: File): Promise<string> {
+type FileContent =
+  | { kind: "text"; text: string }
+  | { kind: "pdf"; base64: string }
+  | { kind: "unsupported"; message: string }
+
+async function extractContent(file: File, buffer: Buffer): Promise<FileContent> {
   const name = file.name.toLowerCase()
-  if (name.endsWith(".docx") || name.endsWith(".doc")) {
-    const buffer = Buffer.from(await file.arrayBuffer())
-    const result = await mammoth.extractRawText({ buffer })
-    return result.value
+
+  if (name.endsWith(".pdf")) {
+    return { kind: "pdf", base64: buffer.toString("base64") }
   }
-  // txt, rtf, etc — read as plain text
-  return file.text()
+
+  if (name.endsWith(".docx")) {
+    try {
+      const result = await mammoth.extractRawText({ buffer })
+      const text = result.value?.trim()
+      if (!text) {
+        return { kind: "unsupported", message: "הקובץ נראה ריק. נסי להעלות שוב." }
+      }
+      return { kind: "text", text }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { kind: "unsupported", message: `לא הצלחנו לקרוא את קובץ ה-docx (${msg})` }
+    }
+  }
+
+  if (name.endsWith(".doc")) {
+    try {
+      const extractor = new WordExtractor()
+      const extracted = await extractor.extract(buffer)
+      const text = extracted.getBody()?.trim()
+      if (!text) {
+        return { kind: "unsupported", message: "הקובץ נראה ריק. שמרי אותו כ-docx או pdf ונסי שוב." }
+      }
+      return { kind: "text", text }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { kind: "unsupported", message: `לא הצלחנו לקרוא את קובץ ה-doc (${msg}). שמרי אותו כ-docx או pdf ונסי שוב.` }
+    }
+  }
+
+  if (name.endsWith(".txt") || name.endsWith(".md") || name.endsWith(".rtf")) {
+    const text = buffer.toString("utf8").trim()
+    if (!text) {
+      return { kind: "unsupported", message: "הקובץ ריק." }
+    }
+    return { kind: "text", text }
+  }
+
+  return { kind: "unsupported", message: "פורמט לא נתמך. תומכים ב-pdf, docx, doc, txt, md." }
 }
 
 export async function POST(req: NextRequest) {
@@ -53,14 +95,17 @@ export async function POST(req: NextRequest) {
 
     let parsed: Record<string, string> = {}
     let aiError: string | null = null
-    let fileText: string | null = null
+    let fileContent: FileContent | null = null
+    let fileBuffer: Buffer | null = null
 
-    // Extract text from file (always, even without API key)
+    // Extract content from file
     if (file) {
-      try {
-        fileText = await extractText(file)
-      } catch (err) {
-        console.error("File text extraction failed:", err)
+      fileBuffer = Buffer.from(await file.arrayBuffer())
+      fileContent = await extractContent(file, fileBuffer)
+
+      // Hard fail early when the file format is unreadable — user needs immediate feedback.
+      if (fileContent.kind === "unsupported") {
+        return NextResponse.json({ error: fileContent.message }, { status: 400 })
       }
 
       // Save original file to Supabase Storage
@@ -68,7 +113,6 @@ export async function POST(req: NextRequest) {
         const category = type === "core" ? "style_file" : "audience_file"
         const ext = file.name.split(".").pop() || "txt"
         const storagePath = `${user.id}/${category}/${crypto.randomUUID()}.${ext}`
-        const fileBuffer = Buffer.from(await file.arrayBuffer())
 
         // Delete previous file in this category
         const { data: existing } = await supabase
@@ -100,8 +144,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Parse with AI if we have both text and API key
-    if (fileText) {
+    // Parse with AI
+    if (fileContent) {
       if (!anthropicApiKey) {
         aiError = "Claude API key not connected"
       } else {
@@ -112,15 +156,31 @@ export async function POST(req: NextRequest) {
               : AUDIENCE_IDENTITY_PARSE_PROMPT
 
           const client = new Anthropic({ apiKey: anthropicApiKey })
+
+          const userContent: Anthropic.ContentBlockParam[] =
+            fileContent.kind === "pdf"
+              ? [
+                  {
+                    type: "document",
+                    source: {
+                      type: "base64",
+                      media_type: "application/pdf",
+                      data: fileContent.base64,
+                    },
+                  },
+                  { type: "text", text: systemPrompt },
+                ]
+              : [
+                  {
+                    type: "text",
+                    text: `${systemPrompt}\n\n--- הטקסט ---\n${fileContent.text}`,
+                  },
+                ]
+
           const message = await client.messages.create({
             model: "claude-sonnet-4-6",
             max_tokens: 2048,
-            messages: [
-              {
-                role: "user",
-                content: `${systemPrompt}\n\n--- הטקסט ---\n${fileText}`,
-              },
-            ],
+            messages: [{ role: "user", content: userContent }],
           })
 
           const textBlock = message.content.find((b) => b.type === "text")
@@ -137,6 +197,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // raw_file_text is only available for text-based formats. For PDF we skip it;
+    // reparse flow will need a reupload. That's an acceptable tradeoff since PDF
+    // parsing via document block is reliable on the first pass.
+    const rawFileText =
+      fileContent?.kind === "text" ? fileContent.text : null
+
     // Save to DB — manual fields take priority over parsed (non-empty manual fields won't be overwritten)
     if (type === "core") {
       const row = {
@@ -148,7 +214,7 @@ export async function POST(req: NextRequest) {
         how_i_sound: parsed.howISound || manual.howISound || "",
         slang_examples: parsed.slangExamples || manual.slangExamples || "",
         what_i_never_do: parsed.whatINeverDo || manual.whatINeverDo || "",
-        ...(fileText ? { raw_file_text: fileText } : {}),
+        ...(rawFileText ? { raw_file_text: rawFileText } : {}),
       }
 
       const { error } = await supabase
@@ -184,7 +250,7 @@ export async function POST(req: NextRequest) {
         cross_audience_quotes: parsed.crossAudienceQuotes ?? "",
         ideal_solution_words: parsed.idealSolutionWords ?? "",
         identity_statements: parsed.identityStatements ?? "",
-        ...(fileText ? { raw_file_text: fileText } : {}),
+        ...(rawFileText ? { raw_file_text: rawFileText } : {}),
       }
 
       const { error } = await supabase
