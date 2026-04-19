@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NLCAI — Architecture Summary</title>
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --surface: #141414;
+      --surface-2: #1e1e1e;
+      --border: #2a2a2a;
+      --text: #e5e5e5;
+      --text-muted: #888;
+      --accent: #f5c842;
+      --accent-dim: #f5c84233;
+      --blue: #5b9bf5;
+      --green: #4ade80;
+      --red: #f87171;
+      --purple: #a78bfa;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      padding: 3rem 1.5rem;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 4rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    header h1 {
+      font-size: 2.2rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      background: linear-gradient(135deg, var(--accent), #fde68a);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    header p {
+      color: var(--text-muted);
+      font-size: 1rem;
+    }
+
+    h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin: 3rem 0 1rem;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    h2 .num {
+      background: var(--accent);
+      color: var(--bg);
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      font-weight: 800;
+      flex-shrink: 0;
+    }
+
+    h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin: 1.5rem 0 0.75rem;
+      color: var(--text);
+    }
+
+    p, li {
+      color: var(--text);
+      font-size: 0.95rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin: 1rem 0;
+    }
+
+    .card-accent {
+      border-color: var(--accent-dim);
+      background: linear-gradient(135deg, var(--surface), #1a1700);
+    }
+
+    .flow-banner {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem 2rem;
+      margin: 2rem 0;
+      text-align: center;
+      font-size: 1.3rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      direction: ltr;
+    }
+
+    .flow-banner span {
+      color: var(--accent);
+    }
+
+    .flow-banner .arrow {
+      color: var(--text-muted);
+      margin: 0 0.25rem;
+    }
+
+    ul {
+      list-style: none;
+      padding: 0;
+    }
+
+    ul li {
+      padding: 0.3rem 0;
+      padding-right: 1.25rem;
+      position: relative;
+    }
+
+    ul li::before {
+      content: '▸';
+      position: absolute;
+      right: 0;
+      color: var(--accent);
+    }
+
+    .file-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.2rem 0.6rem;
+      margin: 0.15rem 0;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.82rem;
+      color: var(--blue);
+      text-decoration: none;
+      transition: all 0.15s;
+    }
+
+    .file-link:hover {
+      background: #1a2a40;
+      border-color: var(--blue);
+    }
+
+    .file-link .icon {
+      font-size: 0.75rem;
+      opacity: 0.6;
+    }
+
+    .files-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin: 0.75rem 0;
+      direction: rtl;
+      justify-content: flex-start;
+    }
+
+    .field-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      margin: 0.5rem 0;
+      direction: ltr;
+    }
+
+    .field-tag {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.15rem 0.5rem;
+      font-family: 'SF Mono', monospace;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+      font-size: 0.9rem;
+    }
+
+    th {
+      text-align: right;
+      padding: 0.75rem;
+      background: var(--surface-2);
+      color: var(--accent);
+      font-weight: 600;
+      border-bottom: 2px solid var(--border);
+    }
+
+    td {
+      padding: 0.65rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    tr:hover td {
+      background: var(--surface);
+    }
+
+    .pipeline-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      margin: 1rem 0;
+    }
+
+    .step-num {
+      background: var(--surface-2);
+      border: 2px solid var(--accent);
+      color: var(--accent);
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 0.85rem;
+      flex-shrink: 0;
+      margin-top: 0.15rem;
+    }
+
+    .step-content {
+      flex: 1;
+    }
+
+    .step-content strong {
+      color: var(--accent);
+    }
+
+    .diagram {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2.5rem 1.5rem;
+      margin: 2rem 0;
+      overflow-x: auto;
+      direction: ltr;
+    }
+
+    .diagram-grid {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.5rem;
+      min-width: 700px;
+    }
+
+    .d-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .d-box {
+      background: var(--surface-2);
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      padding: 0.7rem 1.2rem;
+      text-align: center;
+      font-size: 0.85rem;
+      font-weight: 500;
+      min-width: 140px;
+    }
+
+    .d-box.identity {
+      border-color: var(--accent);
+      background: #1a1700;
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .d-box.ideas { border-color: var(--green); color: var(--green); }
+    .d-box.hooks { border-color: var(--blue); color: var(--blue); }
+    .d-box.post { border-color: var(--purple); color: var(--purple); }
+    .d-box.format { border-color: var(--text-muted); color: var(--text-muted); }
+    .d-box.learning { border-color: var(--red); color: var(--red); }
+
+    .d-arrow {
+      color: var(--text-muted);
+      font-size: 1.4rem;
+      line-height: 1;
+    }
+
+    .d-arrow-down {
+      color: var(--text-muted);
+      font-size: 1.2rem;
+      text-align: center;
+    }
+
+    .d-branch {
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.1rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .badge-awareness { background: #1a2a1a; color: var(--green); }
+    .badge-connection { background: #2a1a2a; color: var(--purple); }
+    .badge-authority { background: #1a1a2a; color: var(--blue); }
+
+    .category-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 0.5rem;
+      margin: 0.75rem 0;
+    }
+
+    .cat-item {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 3rem 0;
+    }
+
+    footer {
+      text-align: center;
+      margin-top: 4rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <header>
+      <h1>NLCAI — Agent Architecture</h1>
+      <p>סיכום מערכת הסוכנים, הוקים, רעיונות ולולאת הלמידה</p>
+    </header>
+
+    <div class="flow-banner">
+      <span>Identity</span>
+      <span class="arrow">&rarr;</span>
+      <span>Ideas</span>
+      <span class="arrow">&rarr;</span>
+      <span>Hooks</span>
+      <span class="arrow">&rarr;</span>
+      <span>Core Post</span>
+      <span class="arrow">&rarr;</span>
+      <span>Formats</span>
+    </div>
+
+    <!-- SECTION 1: IDENTITY -->
+    <h2><span class="num">1</span> זיכרון — זהות היוצר + קהל היעד</h2>
+
+    <p>המשתמש מעלה קובץ חופשי (docx / pdf / md / txt) או ממלא ידנית. Claude מפרסר את הטקסט לשדות מובנים בעזרת הוראות היסק ודוגמת few-shot — כך שגם טקסט לא מסודר מתפרסר נכון.</p>
+
+    <div class="card card-accent">
+      <h3>Core Identity — מי אני (7 שדות)</h3>
+      <div class="field-list">
+        <span class="field-tag">niche</span>
+        <span class="field-tag">productName</span>
+        <span class="field-tag">whoIAm</span>
+        <span class="field-tag">whoIServe</span>
+        <span class="field-tag">howISound</span>
+        <span class="field-tag">slangExamples</span>
+        <span class="field-tag">whatINeverDo</span>
+      </div>
+    </div>
+
+    <div class="card card-accent">
+      <h3>Audience Identity — למי אני מדבר (21 שדות)</h3>
+      <div class="field-list">
+        <span class="field-tag">location</span>
+        <span class="field-tag">employment</span>
+        <span class="field-tag">education</span>
+        <span class="field-tag">income</span>
+        <span class="field-tag">behavioral</span>
+        <span class="field-tag">awarenessLevel</span>
+        <span class="field-tag">dailyPains</span>
+        <span class="field-tag">emotionalPains</span>
+        <span class="field-tag">unresolvedConsequences</span>
+        <span class="field-tag">fears</span>
+        <span class="field-tag">failedSolutions</span>
+        <span class="field-tag">limitingBeliefs</span>
+        <span class="field-tag">myths</span>
+        <span class="field-tag">dailyDesires</span>
+        <span class="field-tag">emotionalDesires</span>
+        <span class="field-tag">smallWins</span>
+        <span class="field-tag">idealSolution</span>
+        <span class="field-tag">bottomLine</span>
+        <span class="field-tag">crossAudienceQuotes</span>
+        <span class="field-tag">idealSolutionWords</span>
+        <span class="field-tag">identityStatements</span>
+      </div>
+    </div>
+
+    <p>כל הסוכנים שואבים מהזהות הזו — כך שכל תוכן יוצא <strong>בטון של היוצר</strong> ופונה <strong>לכאבים/רצונות של הקהל שלו</strong>.</p>
+
+    <div class="files-grid">
+      <a class="file-link" href="../src/lib/agents/identity-parser.ts"><span class="icon">📄</span> identity-parser.ts</a>
+      <a class="file-link" href="../src/lib/agents/prompt-helpers.ts"><span class="icon">📄</span> prompt-helpers.ts</a>
+      <a class="file-link" href="../src/app/api/parse-identity/route.ts"><span class="icon">📄</span> parse-identity/route.ts</a>
+      <a class="file-link" href="../src/app/api/reparse-identity/route.ts"><span class="icon">📄</span> reparse-identity/route.ts</a>
+    </div>
+
+    <hr class="divider">
+
+    <!-- SECTION 2: IDEAS -->
+    <h2><span class="num">2</span> רעיונות (Ideas Pipeline)</h2>
+
+    <p>פייפליין של 6 שלבים שמחפש השראה מיוצרים אמיתיים ומאומתים:</p>
+
+    <div class="card">
+      <div class="pipeline-step">
+        <div class="step-num">1</div>
+        <div class="step-content"><strong>Claude מציע handles</strong> — 12 יוצרים בינלאומיים + 5 ישראלים בנישה</div>
+      </div>
+      <div class="pipeline-step">
+        <div class="step-num">2</div>
+        <div class="step-content"><strong>חיפוש Serper</strong> — 8 חיפושי מאמרים: "top creators", "best influencers" + ישראל</div>
+      </div>
+      <div class="pipeline-step">
+        <div class="step-num">3</div>
+        <div class="step-content"><strong>חילוץ handles</strong> — מהמאמרים + חיפוש ישיר באינסטגרם</div>
+      </div>
+      <div class="pipeline-step">
+        <div class="step-num">4</div>
+        <div class="step-content"><strong>אימות עוקבים</strong> — מינימום 10K (IG / YouTube / TikTok / LinkedIn)</div>
+      </div>
+      <div class="pipeline-step">
+        <div class="step-num">5</div>
+        <div class="step-content"><strong>סינון נישה</strong> — Claude בודק: "היוצר באמת רלוונטי לנישה?"</div>
+      </div>
+      <div class="pipeline-step">
+        <div class="step-num">6</div>
+        <div class="step-content"><strong>ייצור 9 רעיונות</strong> — 7 מיוצרים מאומתים + 2 ממגמות. כל רעיון עם מקור + URL</div>
+      </div>
+    </div>
+
+    <div class="files-grid">
+      <a class="file-link" href="../src/app/api/ideas/route.ts"><span class="icon">📄</span> ideas/route.ts</a>
+    </div>
+
+    <hr class="divider">
+
+    <!-- SECTION 3: HOOKS -->
+    <h2><span class="num">3</span> הוקים (Hooks) — שני מסלולים</h2>
+
+    <h3>מסלול א׳ — הוק מרעיון ספציפי</h3>
+    <div class="card">
+      <p>המשתמש בוחר רעיון &rarr; מקבל 3+ הוקים מותאמים. הפרומפט מקבל:</p>
+      <ul>
+        <li>רעיון + תגובת המשתמש</li>
+        <li>זהות מלאה (core + audience)</li>
+        <li><strong>learningInsights</strong> — מה אהב/לא אהב בעבר (מ-learning_logs)</li>
+        <li><strong>מגמות</strong> — חיפוש Serper על הנושא הספציפי</li>
+        <li><strong>ספריית דוגמאות</strong> — 60+ הוקים ויראליים לפי נישה וקטגוריה</li>
+      </ul>
+    </div>
+
+    <div class="files-grid">
+      <a class="file-link" href="../src/lib/agents/hook-generator.ts"><span class="icon">📄</span> hook-generator.ts</a>
+      <a class="file-link" href="../src/lib/agents/great-hooks.ts"><span class="icon">📄</span> great-hooks.ts</a>
+      <a class="file-link" href="../src/app/api/hooks/route.ts"><span class="icon">📄</span> hooks/route.ts</a>
+    </div>
+
+    <h3>מסלול ב׳ — הוקים אוטומטיים (Homepage Hooks)</h3>
+    <div class="card">
+      <p>פייפליין דו-שלבי:</p>
+      <p><strong>שלב 1 — תכנון:</strong> Claude מייצר 15 angles מתוך 10 קטגוריות. כל angle כולל: קטגוריה, נושא ספציפי, כאב/רצון ממופה, ציטוט קהל.</p>
+      <p><strong>שלב 2 — כתיבה (streaming):</strong> לכל angle &rarr; הוק אחד עם תבנית מהקטגוריה. נשלח בזרימה ונשמר ב-DB.</p>
+
+      <h3>10 קטגוריות תוכן</h3>
+      <div class="category-grid">
+        <div class="cat-item"><span class="badge badge-awareness">awareness</span><br>myth_breaking</div>
+        <div class="cat-item"><span class="badge badge-awareness">awareness</span><br>common_mistakes</div>
+        <div class="cat-item"><span class="badge badge-awareness">awareness</span><br>diagnosis</div>
+        <div class="cat-item"><span class="badge badge-connection">connection</span><br>personal_story</div>
+        <div class="cat-item"><span class="badge badge-connection">connection</span><br>empowerment</div>
+        <div class="cat-item"><span class="badge badge-connection">connection</span><br>identification</div>
+        <div class="cat-item"><span class="badge badge-connection">connection</span><br>agenda</div>
+        <div class="cat-item"><span class="badge badge-authority">authority</span><br>lists</div>
+        <div class="cat-item"><span class="badge badge-authority">authority</span><br>real_reason</div>
+        <div class="cat-item"><span class="badge badge-authority">authority</span><br>how_to</div>
+      </div>
+    </div>
+
+    <div class="files-grid">
+      <a class="file-link" href="../src/lib/agents/hook-templates.ts"><span class="icon">📄</span> hook-templates.ts</a>
+      <a class="file-link" href="../src/app/api/homepage-hooks/route.ts"><span class="icon">📄</span> homepage-hooks/route.ts</a>
+    </div>
+
+    <hr class="divider">
+
+    <!-- SECTION 4: CORE POST -->
+    <h2><span class="num">4</span> מהוק לפוסט מלא</h2>
+
+    <div class="card">
+      <p>המשתמש בוחר הוק + כותב תגובה (הערך שהוא רוצה להעביר) &rarr; Claude מרחיב למבנה:</p>
+      <ul>
+        <li><strong>שורת הוק</strong> — כמו שהיא, בלי שינוי</li>
+        <li><strong>שורת סמכות</strong> — ניסיון, רקע, קרדיט</li>
+        <li><strong>גוף</strong> — 3-4 פסקאות ערך מבוסס על תגובת המשתמש</li>
+        <li><strong>CTA</strong> — קריאה לפעולה</li>
+      </ul>
+    </div>
+
+    <div class="files-grid">
+      <a class="file-link" href="../src/lib/agents/core-post-generator.ts"><span class="icon">📄</span> core-post-generator.ts</a>
+      <a class="file-link" href="../src/app/api/core-post/route.ts"><span class="icon">📄</span> core-post/route.ts</a>
+    </div>
+
+    <hr class="divider">
+
+    <!-- SECTION 5: FORMATS -->
+    <h2><span class="num">5</span> פורמטים — מפוסט לקונטנט</h2>
+
+    <p>הפוסט המלא מתפצל לפורמטים שונים. כולם נבנים עם factory אחיד (<code>createFormatRoute</code>):</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>פורמט</th>
+          <th>תיאור</th>
+          <th>קובץ פרומפט</th>
+          <th>קובץ route</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>קרוסלה</strong></td>
+          <td>6-10 שקפים</td>
+          <td><a class="file-link" href="../src/lib/agents/carousel-generator.ts"><span class="icon">📄</span> carousel-generator.ts</a></td>
+          <td><a class="file-link" href="../src/app/api/format/carousel/route.ts"><span class="icon">📄</span> carousel/route.ts</a></td>
+        </tr>
+        <tr>
+          <td><strong>פוסט תמונה</strong></td>
+          <td>טקסט לפוסט עם תמונה</td>
+          <td><a class="file-link" href="../src/lib/agents/image-post-generator.ts"><span class="icon">📄</span> image-post-generator.ts</a></td>
+          <td><a class="file-link" href="../src/app/api/format/image-post/route.ts"><span class="icon">📄</span> image-post/route.ts</a></td>
+        </tr>
+        <tr>
+          <td><strong>סטורי</strong></td>
+          <td>טקסט קצר לאינסטגרם סטורי</td>
+          <td><a class="file-link" href="../src/lib/agents/story-generator.ts"><span class="icon">📄</span> story-generator.ts</a></td>
+          <td><a class="file-link" href="../src/app/api/format/story/route.ts"><span class="icon">📄</span> story/route.ts</a></td>
+        </tr>
+        <tr>
+          <td><strong>ראש מדבר</strong></td>
+          <td>תסריט לווידאו</td>
+          <td><a class="file-link" href="../src/lib/agents/talking-head-generator.ts"><span class="icon">📄</span> talking-head-generator.ts</a></td>
+          <td><a class="file-link" href="../src/app/api/format/talking-head/route.ts"><span class="icon">📄</span> talking-head/route.ts</a></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="files-grid">
+      <a class="file-link" href="../src/lib/agents/create-format-route.ts"><span class="icon">📄</span> create-format-route.ts — Factory</a>
+    </div>
+
+    <hr class="divider">
+
+    <!-- SECTION 6: LEARNING -->
+    <h2><span class="num">6</span> לולאת למידה — המערכת לומדת מהמשתמש</h2>
+
+    <div class="card card-accent">
+      <h3>מתי נשמרת תובנה?</h3>
+      <p>המערכת לומדת <strong>מעריכות</strong> שהמשתמש עושה, לא מלחיצת כפתור "אהבתי". שני טריגרים:</p>
+
+      <div class="pipeline-step" style="margin-top: 1rem;">
+        <div class="step-num" style="border-color: var(--blue); color: var(--blue);">1</div>
+        <div class="step-content">
+          <strong>עריכת הוק → לחיצה על "ייצר פוסט"</strong><br>
+          אם המשתמש ערך את ההוק לפני שיצר ממנו פוסט, המערכת שולחת את הטקסט המקורי מול הטקסט הערוך ל-Claude Haiku, שמחלץ תובנה על ההעדפה (למשל: "מעדיף הוקים קצרים וישירים" או "מוריד אימוג'ים מההוק").
+        </div>
+      </div>
+
+      <div class="pipeline-step">
+        <div class="step-num" style="border-color: var(--purple); color: var(--purple);">2</div>
+        <div class="step-content">
+          <strong>עריכת פוסט ליבה → לחיצה על "שכפל"</strong><br>
+          אם המשתמש ערך את פוסט הליבה לפני שכפול לפורמטים, המערכת משווה את המקור מול העריכה ושומרת תובנה. למשל: "מקצר פסקאות ל-2 משפטים" או "מחליף CTA לשאלה במקום הנעה".
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>איך התובנות מוזרקות לפרומפט?</h3>
+      <ul>
+        <li><strong>עד 30 insights אחרונים</strong> לכל סוג תוכן (hook / core_post)</li>
+        <li>התובנות מופיעות בפרומפט כ-<strong>"preferred styles"</strong> — לא חוקים קשיחים אלא העדפות שמשפיעות על הטון, האורך, והסגנון</li>
+        <li><strong>דדופליקציה מהותית:</strong> Claude Haiku בודק אם תובנה חדשה כבר קיימת (לא לפי מילים, אלא לפי משמעות). אם כן — לא שומר כפילות</li>
+        <li>ככל שהמשתמש עורך יותר — המערכת מייצרת תוכן קרוב יותר לסגנון שלו, ולאורך זמן הוא עורך פחות</li>
+      </ul>
+    </div>
+
+    <div class="files-grid">
+      <a class="file-link" href="../src/app/api/learning-log/route.ts"><span class="icon">📄</span> learning-log/route.ts</a>
+      <a class="file-link" href="../src/lib/learning-insights.ts"><span class="icon">📄</span> learning-insights.ts</a>
+      <a class="file-link" href="../src/app/project/page.tsx"><span class="icon">📄</span> project/page.tsx — trigger points</a>
+    </div>
+
+    <hr class="divider">
+
+    <!-- SECTION 7: DIAGRAM -->
+    <h2><span class="num">7</span> תרשים מלא</h2>
+
+    <div class="diagram">
+      <div class="diagram-grid">
+
+        <!-- Row 1: File upload -->
+        <div class="d-row">
+          <div class="d-box" style="border-color: var(--text-muted); color: var(--text-muted);">
+            קובץ זהות<br><small style="opacity:0.6">docx / pdf / md / txt</small>
+          </div>
+          <div class="d-arrow">&rarr;</div>
+          <div class="d-box identity">
+            Identity Parser<br><small>few-shot + inference</small>
+          </div>
+        </div>
+
+        <div class="d-arrow-down">&darr;</div>
+
+        <!-- Row 2: Identity Store -->
+        <div class="d-row">
+          <div class="d-box identity" style="min-width: 320px;">
+            core_identity + audience_identity<br>
+            <small style="opacity: 0.7">all agents pull from here</small>
+          </div>
+        </div>
+
+        <div class="d-arrow-down">&darr;</div>
+
+        <!-- Row 3: Three pipelines -->
+        <div class="d-row" style="gap: 1.5rem;">
+          <div class="d-box ideas">
+            Ideas Pipeline<br><small>6 steps &rarr; 9 ideas</small>
+          </div>
+          <div class="d-box hooks">
+            Homepage Hooks<br><small>plan &rarr; write (x15)</small>
+          </div>
+          <div class="d-box hooks">
+            Hook from Idea<br><small>on-demand (x3+)</small>
+          </div>
+        </div>
+
+        <div class="d-arrow-down">&darr;</div>
+
+        <!-- Row 4: Hook selected -->
+        <div class="d-row">
+          <div class="d-box hooks" style="min-width: 240px;">
+            Hook Selected<br>
+            <small>+ user response (value to add)</small>
+          </div>
+        </div>
+
+        <div class="d-arrow-down">&darr;</div>
+
+        <!-- Row 5: Core Post -->
+        <div class="d-row">
+          <div class="d-box post" style="min-width: 240px;">
+            Core Post<br>
+            <small>hook + authority + body + CTA</small>
+          </div>
+        </div>
+
+        <div class="d-arrow-down">&darr;</div>
+
+        <!-- Row 6: Formats -->
+        <div class="d-row">
+          <div class="d-box format">Carousel</div>
+          <div class="d-box format">Image Post</div>
+          <div class="d-box format">Story</div>
+          <div class="d-box format">Talking Head</div>
+        </div>
+
+        <!-- Learning loop -->
+        <div style="margin-top: 2rem; width: 100%;">
+          <div class="d-row" style="gap: 1.5rem;">
+            <div class="d-box learning" style="min-width: 260px;">
+              Hook Edited<br>
+              <small>trigger: "Generate Post" click</small>
+            </div>
+            <div class="d-box learning" style="min-width: 260px;">
+              Core Post Edited<br>
+              <small>trigger: "Duplicate" click</small>
+            </div>
+          </div>
+          <div class="d-arrow-down" style="margin-top: 0.75rem;">&darr;</div>
+          <div class="d-row" style="margin-top: 0.75rem;">
+            <div class="d-box learning" style="min-width: 400px;">
+              Claude Haiku &rarr; Extract Insight &rarr; learning_logs<br>
+              <small>dedup + inject into future prompts as "preferred styles"</small>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <!-- SECTION 8: ALL FILES -->
+    <h2><span class="num">8</span> כל קבצי הסוכנים</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>קובץ</th>
+          <th>תפקיד</th>
+          <th>פונקציות מרכזיות</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><a class="file-link" href="../src/lib/agents/identity-parser.ts"><span class="icon">📄</span> identity-parser.ts</a></td>
+          <td>פרומפטים לפירסור זהות</td>
+          <td>CORE_IDENTITY_PARSE_PROMPT, AUDIENCE_IDENTITY_PARSE_PROMPT</td>
+        </tr>
+        <tr>
+          <td><a class="file-link" href="../src/lib/agents/prompt-helpers.ts"><span class="icon">📄</span> prompt-helpers.ts</a></td>
+          <td>בלוקים משותפים לכל פרומפט</td>
+          <td>buildIdentitySection, buildAudienceSection</td>
+        </tr>
+        <tr>
+          <td><a class="file-link" href="../src/lib/agents/hook-generator.ts"><span class="icon">📄</span> hook-generator.ts</a></td>
+          <td>פרומפט ליצירת הוקים</td>
+          <td>buildHookGeneratorPrompt, parseHooks</td>
+        </tr>
+        <tr>
+          <td><a class="file-link" href="../src/lib/agents/great-hooks.ts"><span class="icon">📄</span> great-hooks.ts</a></td>
+          <td>ספריית 60+ הוקים לפי נישה</td>
+          <td>GREAT_HOOKS_EXAMPLES</td>
+        </tr>
+        <tr>
+          <td><a class="file-link" href="../src/lib/agents/hook-templates.ts"><span class="icon">📄</span> hook-templates.ts</a></td>
+          <td>10 קטגוריות + תבניות</td>
+          <td>TEMPLATE_LIBRARY, getTemplatesByCategory</td>
+        </tr>
+        <tr>
+          <td><a class="file-link" href="../src/lib/agents/core-post-generator.ts"><span class="icon">📄</span> core-post-generator.ts</a></td>
+          <td>הרחבת הוק לפוסט מלא</td>
+          <td>buildCorePostPrompt</td>
+        </tr>
+        <tr>
+          <td><a class="file-link" href="../src/lib/agents/carousel-generator.ts"><span class="icon">📄</span> carousel-generator.ts</a></td>
+          <td>פירוק פוסט לשקפי קרוסלה</td>
+          <td>buildCarouselPrompt, parseCarouselResponse</td>
+        </tr>
+        <tr>
+          <td><a class="file-link" href="../src/lib/agents/image-post-generator.ts"><span class="icon">📄</span> image-post-generator.ts</a></td>
+          <td>טקסט לפוסט תמונה</td>
+          <td>buildImagePostPrompt</td>
+        </tr>
+        <tr>
+          <td><a class="file-link" href="../src/lib/agents/story-generator.ts"><span class="icon">📄</span> story-generator.ts</a></td>
+          <td>טקסט לסטורי</td>
+          <td>buildStoryPrompt</td>
+        </tr>
+        <tr>
+          <td><a class="file-link" href="../src/lib/agents/talking-head-generator.ts"><span class="icon">📄</span> talking-head-generator.ts</a></td>
+          <td>תסריט לווידאו</td>
+          <td>buildTalkingHeadPrompt</td>
+        </tr>
+        <tr>
+          <td><a class="file-link" href="../src/lib/agents/brand-style-analyzer.ts"><span class="icon">📄</span> brand-style-analyzer.ts</a></td>
+          <td>ניתוח סגנון ויזואלי מתמונות</td>
+          <td>analyzeBrandStyle</td>
+        </tr>
+        <tr>
+          <td><a class="file-link" href="../src/lib/agents/create-format-route.ts"><span class="icon">📄</span> create-format-route.ts</a></td>
+          <td>Factory ליצירת routes פורמט</td>
+          <td>createFormatRoute</td>
+        </tr>
+        <tr>
+          <td><a class="file-link" href="../src/lib/agents/types.ts"><span class="icon">📄</span> types.ts</a></td>
+          <td>TypeScript interfaces</td>
+          <td>CoreIdentity, AudienceIdentity, HookGeneratorInput</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <footer>
+      <p>NLCAI Agent Architecture &mdash; Generated April 2026</p>
+    </footer>
+
+  </div>
+</body>
+</html>
