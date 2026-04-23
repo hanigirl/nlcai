@@ -30,8 +30,8 @@ export default function Home() {
   const [generating, setGenerating] = useState(false)
   const [hooks, setHooks] = useState<string[]>([])
   const [hooksLoading, setHooksLoading] = useState(false)
-  const [visibleHooks, setVisibleHooks] = useState(0)
   const [nicheError, setNicheError] = useState("")
+  const hooksInitRef = useRef(false)
 
   useEffect(() => {
     try {
@@ -70,35 +70,22 @@ export default function Home() {
 
   // No useEffect for localStorage — saved explicitly in streamIdeas finally block
 
-  // Stagger hook reveal one by one
   useEffect(() => {
-    if (hooks.length === 0) {
-      setVisibleHooks(0)
-      return
-    }
-    setVisibleHooks(0)
-    let i = 0
-    const interval = setInterval(() => {
-      i++
-      setVisibleHooks(i)
-      if (i >= Math.min(hooks.length, 4)) clearInterval(interval)
-    }, 300)
-    return () => clearInterval(interval)
-  }, [hooks])
+    // Guard against Strict Mode double-run + async race. Without this, both
+    // effect invocations fly past the isFirstVisit check before either writes
+    // the flag, so both POST to /api/homepage-hooks and we get duplicate hooks.
+    if (hooksInitRef.current) return
+    hooksInitRef.current = true
 
-  useEffect(() => {
     const supabase = createClient()
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return
 
-      // One-time cleanup: delete old hooks without trend context
-      const didCleanup = localStorage.getItem("hooksCleanup_v3")
-      if (!didCleanup) {
-        await supabase.from("hooks").delete().eq("user_id", user.id).eq("is_used", false)
-        localStorage.removeItem("homepageHooks_v5")
-        localStorage.setItem("hooksCleanup_v3", "done")
-      } else {
-        // Try localStorage cache
+      // First-visit marker. On subsequent visits we only load existing hooks —
+      // NEVER auto-generate, NEVER delete. User can generate more from /hooks.
+      const isFirstVisit = !localStorage.getItem("hooksCleanup_v3")
+
+      if (!isFirstVisit) {
         try {
           const cached = localStorage.getItem("homepageHooks_v5")
           if (cached) {
@@ -110,7 +97,6 @@ export default function Home() {
           }
         } catch { /* ignore */ }
 
-        // Load existing hooks from DB
         const { data: dbHooks } = await supabase
           .from("hooks")
           .select("hook_text")
@@ -122,11 +108,13 @@ export default function Home() {
           const hookTexts = dbHooks.map((h: { hook_text: string }) => h.hook_text)
           setHooks(hookTexts)
           localStorage.setItem("homepageHooks_v5", JSON.stringify(hookTexts))
-          return
         }
+        return
       }
 
-      // No hooks — generate fresh via stream
+      // First visit only — auto-generate fresh hooks
+      localStorage.setItem("hooksCleanup_v3", "done")
+
       setHooksLoading(true)
       try {
         const res = await fetch("/api/homepage-hooks", {
@@ -231,7 +219,7 @@ export default function Home() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        const known = ["audience_missing", "credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "core_identity_missing", "unauthorized"]
+        const known = ["audience_missing", "credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "core_identity_missing", "unauthorized", "no_trends_found", "no_creator_content", "trend_search_failed", "search_not_configured"]
         const raw = data.error === "Unauthorized" ? "unauthorized" : data.error === "Core identity not found." ? "core_identity_missing" : data.error
         setIdeasError(known.includes(raw) ? raw : (raw || "generic"))
         return
@@ -258,7 +246,7 @@ export default function Home() {
             const idea = JSON.parse(data)
             if (idea.model_fallback) { setModelFallback(true); continue }
             if (idea.error) {
-              const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected"]
+              const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "no_ideas_generated", "all_ideas_duplicate"]
               setIdeasError(known.includes(idea.error) ? idea.error : (idea.error || "generic"))
               continue
             }
@@ -314,17 +302,40 @@ export default function Home() {
             ))}
           </div>
 
-          <h2 className="text-text-primary-default">
+          <h2
+            className="text-text-primary-default animate-in fade-in slide-in-from-top-3 duration-600"
+            style={{
+              animationDelay: "500ms",
+              animationFillMode: "backwards",
+              animationTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
+            }}
+          >
             היי {userName.split(" ")[0]},
             <br />
             מה ניצור היום?
           </h2>
-          <Typewriter className="text-p text-text-primary-default mt-4 h-6" />
+          <div
+            className="animate-in fade-in slide-in-from-top-3 duration-600"
+            style={{
+              animationDelay: "700ms",
+              animationFillMode: "backwards",
+              animationTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
+            }}
+          >
+            <Typewriter className="text-p text-text-primary-default mt-4 h-6" />
+          </div>
         </div>
 
         <div className="flex flex-col gap-10">
           {/* Section 1: Hooks */}
-          <div className="flex flex-col gap-4">
+          <div
+            className="flex flex-col gap-4 animate-in fade-in slide-in-from-top-4 duration-700"
+            style={{
+              animationDelay: "900ms",
+              animationFillMode: "backwards",
+              animationTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
+            }}
+          >
             <div className="flex items-center justify-between">
               <span className="text-xs-body text-text-neutral-default">
                 התחלה מ-הוק
@@ -343,12 +354,16 @@ export default function Home() {
                     </div>
                   ))
                 : Array.from({ length: 4 }).map((_, i) => {
-                    if (i < visibleHooks && hooks[i]) {
+                    // Render real hook as soon as it arrives (streamed or cached).
+                    // The per-item CSS fade-in animation gives a smooth entrance —
+                    // no separate "reveal one by one" state, which used to reset on
+                    // every stream update and cause a visible jump.
+                    if (hooks[i]) {
                       return (
                         <div
-                          key={i}
-                          className="animate-in fade-in slide-in-from-bottom-2 duration-300"
-                          style={{ animationFillMode: "backwards" }}
+                          key={`hook-${i}`}
+                          className="animate-hook-bump"
+                          style={{ animationDelay: `${i * 60}ms` }}
                         >
                           <HookCard
                             hookText={hooks[i]}
@@ -370,7 +385,14 @@ export default function Home() {
           </div>
 
           {/* Section 2: Idea textarea */}
-          <div className="flex flex-col gap-4">
+          <div
+            className="flex flex-col gap-4 animate-in fade-in slide-in-from-top-4 duration-700"
+            style={{
+              animationDelay: "1150ms",
+              animationFillMode: "backwards",
+              animationTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
+            }}
+          >
             <span className="text-xs-body text-text-neutral-default">
               התחלה מרעיון
             </span>
@@ -397,7 +419,14 @@ export default function Home() {
           </div>
 
           {/* Section 3: Ideas */}
-          <div className="flex flex-col items-center gap-4">
+          <div
+            className="flex flex-col items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-700"
+            style={{
+              animationDelay: "1400ms",
+              animationFillMode: "backwards",
+              animationTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
+            }}
+          >
             <div className="flex w-full items-center justify-between">
               <span className="text-xs-body text-text-neutral-default">
                 רעיונות מהשטח
@@ -411,18 +440,14 @@ export default function Home() {
               <div className="w-full rounded-xl border border-border-neutral-default bg-bg-surface p-4 text-center">
                 <p className="text-small text-text-neutral-default mb-2">{nicheError}</p>
                 <a href="/settings?tab=business" className="text-small-bold text-text-primary-default hover:underline">
-                  עדכני פרטים בהגדרות →
+                  עדכנו פרטים בהגדרות →
                 </a>
               </div>
             )}
 
             <div className="grid w-full grid-cols-3 gap-4">
               {ideas.slice(0, 9).map((note, i) => (
-                <div
-                  key={`${note.text}-${i}`}
-                  className="animate-in fade-in slide-in-from-bottom-3 duration-300 aspect-square"
-                  style={{ animationFillMode: "backwards" }}
-                >
+                <div key={`${note.text}-${i}`} className="aspect-square">
                   <StickyNote
                     text={note.text}
                     source={note.source}
@@ -465,7 +490,7 @@ export default function Home() {
               </Button>
             )}
             {ideasError && (() => {
-              const infoStyles = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "unauthorized"]
+              const infoStyles = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_ideas_generated", "all_ideas_duplicate", "trend_search_failed", "search_not_configured"]
               const isInfo = infoStyles.includes(ideasError)
               const config: Record<string, { message: string; action?: { href: string; label: string; external?: boolean } }> = {
                 credits_exhausted: {
@@ -473,7 +498,7 @@ export default function Home() {
                   action: { href: "https://console.anthropic.com/settings/billing", label: "לרכישת קרדיטים נוספים →", external: true },
                 },
                 anthropic_overloaded: {
-                  message: "השרתים של Anthropic עמוסים כרגע. נסי שוב בעוד דקה",
+                  message: "השרתים של Anthropic עמוסים כרגע. נסו שוב בעוד דקה",
                 },
                 anthropic_not_connected: {
                   message: "לא חובר מפתח Anthropic API. צריך לחבר אותו בהגדרות כדי להתחיל",
@@ -491,11 +516,31 @@ export default function Home() {
                   message: "נראה שהתנתקת. יש להתחבר מחדש",
                   action: { href: "/login", label: "למסך ההתחברות →" },
                 },
+                no_trends_found: {
+                  message: "לא מצאנו טרנדים חדשים בנישה שלכם כרגע. הוסיפו יוצרים מובילים כדי לקבל רעיונות גם מהם, או נסו שוב בעוד כמה דקות",
+                  action: { href: "/settings?tab=business", label: "להוספת יוצרים מובילים →" },
+                },
+                no_creator_content: {
+                  message: "לא מצאנו תוכן ויראלי אצל היוצרים שהוספתם וגם אין טרנדים רלוונטיים. בדקו שהקישורים תקינים או נסו יוצרים נוספים",
+                  action: { href: "/settings?tab=business", label: "לעדכון רשימת היוצרים →" },
+                },
+                no_ideas_generated: {
+                  message: "הסוכן סיים אבל לא החזיר אף רעיון. זה יכול לקרות כשאין מספיק חומר גלם — נסו שוב בעוד רגע",
+                },
+                all_ideas_duplicate: {
+                  message: "כל הרעיונות שהתקבלו כבר קיימים במחסן שלכם. נסו שוב — בדרך כלל ריצה חדשה מביאה נושאים חדשים",
+                },
+                trend_search_failed: {
+                  message: "חיפוש הטרנדים ברשת נכשל. נסו שוב בעוד רגע — אם זה חוזר כנראה יש בעיה בשירות החיפוש שלנו",
+                },
+                search_not_configured: {
+                  message: "שירות החיפוש לא מוגדר במערכת. צרו קשר עם התמיכה",
+                },
                 connection_error: {
-                  message: "בעיית חיבור לשרת. בדקי את החיבור לאינטרנט ונסי שוב",
+                  message: "בעיית חיבור לשרת. בדקו את החיבור לאינטרנט ונסו שוב",
                 },
                 generic: {
-                  message: "משהו השתבש ביצירת הרעיונות. נסי שוב בעוד רגע",
+                  message: "משהו השתבש ביצירת הרעיונות. נסו שוב בעוד רגע",
                 },
               }
               const c = config[ideasError] ?? { message: ideasError }

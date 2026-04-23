@@ -30,11 +30,16 @@ export function GeneratingStatus({
   }, [messages.length, intervalMs])
 
   return (
-    <p
-      key={index}
-      className={`text-small text-text-primary-default animate-in fade-in duration-300 ${className}`}
-    >
-      {messages[index]}
-    </p>
+    <div className={`flex flex-col gap-0.5 ${className}`}>
+      <p
+        key={index}
+        className="text-small text-text-primary-default animate-in fade-in duration-300"
+      >
+        {messages[index]}
+      </p>
+      <p className="text-xs-body text-text-neutral-default">
+        תהליך זה יכול לקחת מספר דקות
+      </p>
+    </div>
   )
 }

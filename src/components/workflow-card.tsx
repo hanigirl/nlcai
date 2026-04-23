@@ -244,8 +244,8 @@ export function WorkflowCard({
 
               <p className="text-small text-text-neutral-default">
                 {isRecording
-                  ? "מקליט... לחצי לעצור"
-                  : "לחצי להתחיל הקלטה"}
+                  ? "מקליט... לחצו לעצור"
+                  : "לחצו להתחיל הקלטה"}
               </p>
             </div>
           </div>

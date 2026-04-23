@@ -11,12 +11,21 @@ interface VerifiedCreator { handle: string; platform: string; followers: number;
 interface ContentItem { creator: string; platform: string; url: string; caption: string; hashtags: string[] }
 
 // ── Helpers ────────────────────────────────────────────
+class SearchQuotaExceededError extends Error {
+  constructor() { super("SEARCH_QUOTA_EXCEEDED") }
+}
+
 async function searchWeb(query: string, num = 10): Promise<SerperResult[]> {
   const res = await fetch("https://google.serper.dev/search", {
     method: "POST",
     headers: { "X-API-KEY": process.env.SERPER_API_KEY!, "Content-Type": "application/json" },
     body: JSON.stringify({ q: query, num }),
   })
+  // 402/403 from Serper = lifetime free credits exhausted (or key revoked).
+  // Surface as a distinct error so the UI can show a quota-specific message.
+  if (res.status === 402 || res.status === 403) {
+    throw new SearchQuotaExceededError()
+  }
   if (!res.ok) return []
   const data = await res.json()
   return (data.organic ?? []).map((r: Record<string, string>) => ({
@@ -142,374 +151,114 @@ export async function POST(req: NextRequest) {
     const client = new Anthropic({ apiKey })
 
     // ══════════════════════════════════════════════
-    // LOAD CACHE as base (always scan for new too)
+    // LOAD USER-SPECIFIED TOP CREATORS — the ONLY source of creators.
+    // If the user gave us a list, we search those creators' viral content.
+    // If not, we skip creators entirely and build ideas from trends only.
     // ══════════════════════════════════════════════
-    const { data: cachedCreators } = await supabase
-      .from("niche_creators")
-      .select("handle, platform, followers, bio, profile_url, verified_at")
+    const { data: userCreators } = await supabase
+      .from("user_top_creators")
+      .select("handle, platform, url")
       .eq("user_id", user.id)
-      .eq("niche", niche)
 
-    let verifiedCreators: VerifiedCreator[] = []
-    const cachedHandles = new Set<string>()
-
-    if (cachedCreators && cachedCreators.length > 0) {
-      verifiedCreators = cachedCreators.map((c: { handle: string; platform: string; followers: number; bio: string; profile_url: string }) => ({
-        handle: c.handle, platform: c.platform, followers: c.followers,
-        formatted: fmtFollowers(c.followers), bio: c.bio, profileUrl: c.profile_url,
-      }))
-      for (const c of verifiedCreators) cachedHandles.add(c.handle.toLowerCase())
-      console.log(`Ideas API: Loaded ${verifiedCreators.length} creators from cache`)
-    }
-
-    // Always scan for NEW creators (skip already cached ones)
-    {
-
-    // ══════════════════════════════════════════════
-    // STEP 1: Claude suggests known handles
-    // ══════════════════════════════════════════════
-    const handleMsg = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1024,
-      messages: [{
-        role: "user",
-        content: `Who are the biggest, most well-known content creators and thought leaders in the field of "${niche}"?
-
-I need two groups:
-
-**Group A — International (10-12 people):**
-People who are famous WORLDWIDE in ${niche}. They might be:
-- Educators who teach ${niche} on YouTube/Instagram/TikTok
-- Industry experts known for their knowledge and experience
-- Professionals who worked at top companies (Google, Apple, Spotify, Meta, etc.)
-- Authors of popular books/courses in ${niche}
-- Speakers at major conferences
-
-**Group B — Israel (3-5 people):**
-The top ${niche} creators/educators in Israel, posting in Hebrew or English.
-
-IMPORTANT: For each creator, list them on the platform where they have the MOST followers. Many big creators are huge on YouTube but small on Instagram — list them on YouTube in that case!
-If you know they're big on multiple platforms, list them on EACH platform separately.
-
-Return ONLY a JSON array with their exact social media handles:
-[{"handle": "exact_username", "platform": "instagram"}, {"handle": "exact_username", "platform": "youtube"}, ...]
-
-Platforms: "instagram", "youtube", "tiktok", "linkedin"
-Use exact handles WITHOUT @.`
-      }],
+    const verifiedCreators: VerifiedCreator[] = (userCreators ?? []).map((c) => {
+      const row = c as { handle: string; platform: string; url: string }
+      return {
+        handle: row.handle,
+        platform: row.platform,
+        followers: 0, // unknown — user-curated, we trust them regardless
+        formatted: "",
+        bio: "",
+        profileUrl: row.url,
+      }
     })
-    const handleText = handleMsg.content.find((b) => b.type === "text")?.text || "[]"
-    const handleCleaned = handleText.replace(/```json\s*/g, "").replace(/```\s*/g, "")
-    const handleMatch = handleCleaned.match(/\[[\s\S]*\]/)
-    const claudeHandles: CreatorCandidate[] = handleMatch ? JSON.parse(handleMatch[0]) : []
+    const hasCreators = verifiedCreators.length > 0
+    console.log(`Ideas API: ${hasCreators ? `${verifiedCreators.length} user creators` : "no user creators — trends-only mode"}`)
 
-    console.log(`Ideas API Step 1: Claude suggested ${claudeHandles.length} handles`)
 
     // ══════════════════════════════════════════════
-    // STEP 2: Serper finds "top creators" articles — 8 targeted searches
-    // ══════════════════════════════════════════════
-    const articleSearches = await Promise.all([
-      // International
-      searchWeb(`who are the most famous ${niche} experts educators worldwide`, 5),
-      searchWeb(`top ${niche} influencers instagram to follow 2026`, 5),
-      searchWeb(`best ${niche} youtube educators channels 2026`, 5),
-      searchWeb(`${niche} thought leaders linkedin most followed`, 5),
-      searchWeb(`${niche} tiktok creators educators popular 2026`, 5),
-      searchWeb(`most influential ${niche} professionals worked at Google Apple Spotify`, 5),
-      searchWeb(`top 10 ${niche} influencers most followers instagram`, 5),
-      searchWeb(`${niche} creators with most followers engagement 2026`, 5),
-      // Israel
-      searchWeb(`${niche} יוצרי תוכן מובילים ישראלים`, 5),
-      searchWeb(`Israel ${niche} influencers instagram creators`, 5),
-    ])
-    const articles = articleSearches.flat()
-
-    console.log(`Ideas API Step 2: Found ${articles.length} articles`)
-
-    // ══════════════════════════════════════════════
-    // STEP 3: Fetch full article content + extract handles
-    // ══════════════════════════════════════════════
-    // Prioritize articles with "top" / "best" / "must follow" in title
-    const scoredArticles = articles
-      .filter((a) => !a.link.includes("instagram.com") && !a.link.includes("youtube.com") && !a.link.includes("tiktok.com"))
-      .map((a) => {
-        let score = 0
-        const t = a.title.toLowerCase()
-        if (/top \d|best \d|must follow|\d+ .*(influencer|creator|designer|expert)/i.test(t)) score += 3
-        if (/follow|influential|famous/i.test(t)) score += 1
-        return { ...a, score }
-      })
-      .sort((a, b) => b.score - a.score)
-    const topArticles = scoredArticles.slice(0, 7)
-
-    const articleTexts = await Promise.all(topArticles.map((a) => fetchPageText(a.link)))
-
-    // Extract handles from articles
-    const articleHandles: CreatorCandidate[] = []
-    for (const text of articleTexts) {
-      // @username patterns
-      const atMatches = text.match(/@[\w.]{3,30}/g) || []
-      for (const m of atMatches) {
-        const clean = m.replace(/^@/, "")
-        if (!["instagram", "tiktok", "youtube", "linkedin", "twitter", "facebook"].includes(clean.toLowerCase())) {
-          articleHandles.push({ handle: clean, platform: "instagram" })
-        }
-      }
-      // instagram.com/username patterns
-      for (const m of text.matchAll(/instagram\.com\/([\w.]{3,30})/g)) {
-        if (!["reel", "p", "explore", "stories", "reels"].includes(m[1])) {
-          articleHandles.push({ handle: m[1], platform: "instagram" })
-        }
-      }
-      // youtube.com/@username patterns
-      for (const m of text.matchAll(/youtube\.com\/@([\w.-]{3,30})/g)) {
-        articleHandles.push({ handle: m[1], platform: "youtube" })
-      }
-      // tiktok.com/@username patterns
-      for (const m of text.matchAll(/tiktok\.com\/@([\w.]{3,30})/g)) {
-        articleHandles.push({ handle: m[1], platform: "tiktok" })
-      }
-      // linkedin.com/in/username patterns
-      for (const m of text.matchAll(/linkedin\.com\/in\/([\w-]{3,60})/g)) {
-        articleHandles.push({ handle: m[1], platform: "linkedin" })
-      }
-    }
-
-    // Also ask Claude to extract creator names from article text (catches names without @ or URLs)
-    const combinedArticleText = articleTexts.map((t, i) => `Article ${i + 1}: ${t.slice(0, 3000)}`).join("\n\n")
-    if (combinedArticleText.length > 100) {
-      try {
-        const extractMsg = await client.messages.create({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1024,
-          messages: [{
-            role: "user",
-            content: `These articles list top ${niche} creators/influencers. Extract ALL creator names and their Instagram handles from the text.
-
-${combinedArticleText.slice(0, 12000)}
-
-Return ONLY a JSON array of Instagram handles (best guess based on names):
-[{"handle": "username", "platform": "instagram"}, ...]`
-          }],
-        })
-        const eText = extractMsg.content.find((b) => b.type === "text")?.text || "[]"
-        const eCleaned = eText.replace(/```json\s*/g, "").replace(/```\s*/g, "")
-        const eMatch = eCleaned.match(/\[[\s\S]*\]/)
-        if (eMatch) {
-          const extracted: CreatorCandidate[] = JSON.parse(eMatch[0])
-          articleHandles.push(...extracted)
-        }
-      } catch { /* non-fatal */ }
-    }
-
-    // STEP 3b: Search Instagram directly for top profiles in the niche
-    const igDirectSearches = await Promise.all([
-      searchWeb(`site:instagram.com "${niche}" education tutorial followers`, 8),
-      searchWeb(`site:instagram.com ${niche} design tips`, 8),
-    ])
-    for (const r of igDirectSearches.flat()) {
-      const m = r.link.match(/instagram\.com\/([\w.]{3,30})\/?$/)
-      if (m && !["reel", "p", "explore", "stories", "reels"].includes(m[1])) {
-        articleHandles.push({ handle: m[1], platform: "instagram" })
-      }
-      // Also extract from reel URLs — the creator handle is in the title
-      if (r.link.includes("/reel/") || r.link.includes("/p/")) {
-        const titleMatch = r.title.match(/^(.+?)\s*[\|@(]/)
-        if (titleMatch) {
-          const possibleHandle = r.link.match(/instagram\.com\/([\w.]+)\/(?:reel|p)/)
-          if (possibleHandle) articleHandles.push({ handle: possibleHandle[1], platform: "instagram" })
-        }
-      }
-    }
-
-    // Merge Claude + article + IG direct handles, dedupe
-    const seen = new Set<string>()
-    const allCandidates: CreatorCandidate[] = []
-    for (const c of [...claudeHandles, ...articleHandles]) {
-      const key = `${c.handle.toLowerCase()}:${c.platform}`
-      if (!seen.has(key)) {
-        seen.add(key)
-        allCandidates.push(c)
-      }
-    }
-
-    console.log(`Ideas API Step 3: ${allCandidates.length} unique candidates (${claudeHandles.length} Claude + ${articleHandles.length} articles)`)
-
-    // ══════════════════════════════════════════════
-    // STEP 4: Verify follower counts
-    // ══════════════════════════════════════════════
-
-    const checks = await Promise.all(
-      allCandidates
-        .filter((c) => !cachedHandles.has(c.handle.toLowerCase())) // skip already cached
-        .slice(0, 25).map(async (c) => {
-        if (c.platform === "instagram") {
-          const data = await fetchInstagramProfile(c.handle)
-          if (data && data.followers >= MIN_FOLLOWERS) {
-            return { handle: c.handle, platform: "instagram", followers: data.followers, formatted: fmtFollowers(data.followers), bio: data.bio, profileUrl: `https://instagram.com/${c.handle}/` }
-          }
-        } else if (c.platform === "youtube") {
-          const data = await verifyYouTube(c.handle)
-          if (data && data.followers >= MIN_FOLLOWERS) {
-            return { handle: c.handle, platform: "youtube", followers: data.followers, formatted: fmtFollowers(data.followers), bio: data.bio, profileUrl: `https://youtube.com/@${c.handle}` }
-          }
-        } else if (c.platform === "tiktok") {
-          // Can't scrape TikTok directly, use Serper snippet
-          const results = await searchWeb(`site:tiktok.com/@${c.handle}`, 1)
-          if (results.length > 0) {
-            const text = `${results[0].title} ${results[0].snippet}`
-            const match = text.match(/([\d,.KkMm]+)\s*(followers|Followers)/i)
-            let followers = 0
-            if (match) {
-              const raw = match[1].replace(/,/g, "")
-              followers = parseInt(raw, 10)
-              if (/[Mm]/.test(raw)) followers = parseFloat(raw) * 1_000_000
-              else if (/[Kk]/.test(raw)) followers = parseFloat(raw) * 1_000
-            }
-            if (followers >= MIN_FOLLOWERS) {
-              return { handle: c.handle, platform: "tiktok", followers, formatted: fmtFollowers(followers), bio: results[0].snippet.slice(0, 200), profileUrl: `https://tiktok.com/@${c.handle}` }
-            }
-          }
-        } else if (c.platform === "linkedin") {
-          const results = await searchWeb(`site:linkedin.com/in/${c.handle}`, 1)
-          if (results.length > 0) {
-            const text = `${results[0].title} ${results[0].snippet}`
-            const match = text.match(/([\d,.KkMm]+)\s*(followers|Followers)/i)
-            let followers = 0
-            if (match) {
-              const raw = match[1].replace(/,/g, "")
-              followers = parseInt(raw, 10)
-              if (/[Mm]/.test(raw)) followers = parseFloat(raw) * 1_000_000
-              else if (/[Kk]/.test(raw)) followers = parseFloat(raw) * 1_000
-            }
-            if (followers >= MIN_FOLLOWERS) {
-              return { handle: c.handle, platform: "linkedin", followers, formatted: fmtFollowers(followers), bio: results[0].snippet.slice(0, 200), profileUrl: `https://linkedin.com/in/${c.handle}` }
-            }
-          }
-        }
-        return null
-      })
-    )
-
-    const passedChecks = checks.filter((c): c is VerifiedCreator => c !== null)
-
-    // ══════════════════════════════════════════════
-    // STEP 4b: Filter by niche relevance (bio check)
-    // ══════════════════════════════════════════════
-    if (passedChecks.length > 0) {
-      try {
-        const relevanceMsg = await client.messages.create({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1024,
-          messages: [{
-            role: "user",
-            content: `I have a list of social media creators. I need to know which ones are actually relevant to the niche "${niche}".
-
-For each creator, I'll give you their handle, platform, and bio. Return ONLY the handles that are clearly related to ${niche} based on their bio/description.
-
-Creators:
-${passedChecks.map((c) => `- @${c.handle} (${c.platform}): "${c.bio}"`).join("\n")}
-
-Return a JSON array of handles that ARE relevant to "${niche}":
-["handle1", "handle2", ...]
-
-Be strict: if the bio doesn't mention anything related to ${niche}, exclude them. Names/handles alone are not enough — the bio must show they actually work in or create content about ${niche}.`
-          }],
-        })
-        const relText = relevanceMsg.content.find((b) => b.type === "text")?.text || "[]"
-        const relCleaned = relText.replace(/```json\s*/g, "").replace(/```\s*/g, "")
-        const relMatch = relCleaned.match(/\[[\s\S]*\]/)
-        if (relMatch) {
-          const relevantHandles = new Set<string>(
-            (JSON.parse(relMatch[0]) as string[]).map((h: string) => h.toLowerCase().replace(/^@/, ""))
-          )
-          const beforeCount = passedChecks.length
-          const relevant = passedChecks.filter((c) => relevantHandles.has(c.handle.toLowerCase()))
-          console.log(`Ideas API Step 4b: Niche filter kept ${relevant.length}/${beforeCount} creators`)
-          for (const c of relevant) verifiedCreators.push(c)
-        } else {
-          // Fallback: keep all if parsing fails
-          for (const c of passedChecks) verifiedCreators.push(c)
-        }
-      } catch {
-        // Fallback: keep all if relevance check fails
-        for (const c of passedChecks) verifiedCreators.push(c)
-      }
-    }
-
-    // Count new creators found this time
-    const newCreators = verifiedCreators.filter((c) => !cachedHandles.has(c.handle.toLowerCase()))
-    console.log(`Ideas API Step 4: ${verifiedCreators.length} total creators (${newCreators.length} new, ${cachedHandles.size} from cache)`)
-
-    // Save new creators to cache (append, don't replace)
-    if (newCreators.length > 0) {
-      await supabase.from("niche_creators").upsert(
-        newCreators.map((c) => ({
-          user_id: user.id,
-          niche,
-          handle: c.handle,
-          platform: c.platform,
-          followers: c.followers,
-          bio: c.bio,
-          profile_url: c.profileUrl,
-        })),
-        { onConflict: "user_id,handle,platform" }
-      )
-      console.log(`Ideas API: Added ${newCreators.length} new creators to cache`)
-    }
-
-    } // end of scan block
-
-    // ══════════════════════════════════════════════
-    // STEP 5: Find content from verified creators
+    // STEP 5: Find VIRAL / high-engagement content from user-specified creators.
+    // Skipped entirely if the user didn't specify any creators.
+    // Virality hint: append "viral OR trending OR popular" to most queries; Serper
+    // already ranks by relevance+popularity, so the top results tend to be the
+    // most-engaged posts for that creator.
     // ══════════════════════════════════════════════
     const contentItems: ContentItem[] = []
 
-    const contentSearches = await Promise.all(
-      verifiedCreators.slice(0, 10).map(async (c) => {
-        if (c.platform === "instagram") {
-          const results = await searchWeb(`site:instagram.com/reel ${c.handle}`, 4)
-          const reels = results.filter((r) => r.link.includes("/reel/") || r.link.includes("/p/"))
-          for (const r of reels.slice(0, 3)) {
-            const meta = await fetchReelCaption(r.link)
-            if (meta) contentItems.push({ creator: c.handle, platform: "instagram", url: r.link, caption: meta.caption, hashtags: meta.hashtags })
+    if (hasCreators) {
+      await Promise.all(
+        verifiedCreators.slice(0, 10).map(async (c) => {
+          if (c.platform === "instagram") {
+            const results = await searchWeb(`site:instagram.com/reel ${c.handle} viral OR trending OR popular`, 6)
+            const reels = results.filter((r) => r.link.includes("/reel/") || r.link.includes("/p/"))
+            for (const r of reels.slice(0, 4)) {
+              const meta = await fetchReelCaption(r.link)
+              if (meta) contentItems.push({ creator: c.handle, platform: "instagram", url: r.link, caption: meta.caption, hashtags: meta.hashtags })
+            }
+          } else if (c.platform === "youtube") {
+            const results = await searchWeb(`site:youtube.com ${c.handle} most viewed OR popular`, 5)
+            const videos = results.filter((r) => r.link.includes("watch?v=") || r.link.includes("youtu.be"))
+            for (const r of videos.slice(0, 3)) {
+              contentItems.push({ creator: c.handle, platform: "youtube", url: r.link, caption: r.snippet, hashtags: [] })
+            }
+          } else if (c.platform === "tiktok") {
+            const results = await searchWeb(`site:tiktok.com/@${c.handle} video viral OR popular`, 5)
+            for (const r of results.slice(0, 3)) {
+              contentItems.push({ creator: c.handle, platform: "tiktok", url: r.link, caption: r.snippet, hashtags: [] })
+            }
+          } else if (c.platform === "linkedin") {
+            const results = await searchWeb(`site:linkedin.com/posts ${c.handle}`, 3)
+            for (const r of results.slice(0, 2)) {
+              contentItems.push({ creator: c.handle, platform: "linkedin", url: r.link, caption: r.snippet, hashtags: [] })
+            }
           }
-        } else if (c.platform === "youtube") {
-          const results = await searchWeb(`site:youtube.com ${c.handle} ${niche}`, 3)
-          const videos = results.filter((r) => r.link.includes("watch?v=") || r.link.includes("youtu.be"))
-          for (const r of videos.slice(0, 2)) {
-            contentItems.push({ creator: c.handle, platform: "youtube", url: r.link, caption: r.snippet, hashtags: [] })
-          }
-        } else if (c.platform === "tiktok") {
-          const results = await searchWeb(`site:tiktok.com/@${c.handle} video`, 3)
-          for (const r of results.slice(0, 2)) {
-            contentItems.push({ creator: c.handle, platform: "tiktok", url: r.link, caption: r.snippet, hashtags: [] })
-          }
-        } else if (c.platform === "linkedin") {
-          const results = await searchWeb(`site:linkedin.com/posts ${c.handle}`, 2)
-          for (const r of results.slice(0, 2)) {
-            contentItems.push({ creator: c.handle, platform: "linkedin", url: r.link, caption: r.snippet, hashtags: [] })
-          }
-        }
+        })
+      )
+    }
+
+    console.log(`Ideas API Step 5: ${contentItems.length} content items from user creators`)
+
+    // ══════════════════════════════════════════════
+    // STEP 5b: Search for trends.
+    // Pull more trend results when the user has no creators — trends are the
+    // only source of ideas in that mode, so we need enough material for 9 ideas.
+    // ══════════════════════════════════════════════
+    if (!process.env.SERPER_API_KEY) {
+      return NextResponse.json({ error: "search_not_configured" }, { status: 500 })
+    }
+
+    const trendQueries = hasCreators
+      ? [
+          searchWeb(`${niche} trending 2026`, 6),
+          searchWeb(`${niche} new tool method 2026`, 6),
+        ]
+      : [
+          searchWeb(`${niche} trending 2026`, 10),
+          searchWeb(`${niche} new tool method 2026`, 10),
+          searchWeb(`${niche} viral topic discussion 2026`, 10),
+          searchWeb(`${niche} latest news breakthrough 2026`, 10),
+        ]
+    let trendResults: SerperResult[] = []
+    try {
+      const trendResultsRaw = (await Promise.all(trendQueries)).flat()
+      const seenUrls = new Set<string>()
+      trendResults = trendResultsRaw.filter((r) => {
+        if (seenUrls.has(r.link)) return false
+        seenUrls.add(r.link)
+        return true
       })
-    )
+    } catch (err) {
+      if (err instanceof SearchQuotaExceededError) throw err
+      console.error("Ideas API: trend search failed", err)
+      return NextResponse.json({ error: "trend_search_failed" }, { status: 502 })
+    }
 
-    console.log(`Ideas API Step 5: ${contentItems.length} content items from verified creators`)
-
-    // ══════════════════════════════════════════════
-    // STEP 5b: Search for trends
-    // ══════════════════════════════════════════════
-    const trendResultsRaw = (await Promise.all([
-      searchWeb(`${niche} trending 2026`, 6),
-      searchWeb(`${niche} new tool method 2026`, 6),
-    ])).flat()
-    // Dedupe trends by URL
-    const seenUrls = new Set<string>()
-    const trendResults = trendResultsRaw.filter((r) => {
-      if (seenUrls.has(r.link)) return false
-      seenUrls.add(r.link)
-      return true
-    })
+    // Upfront validation — fail fast before calling Claude if we have no raw material.
+    if (!hasCreators && trendResults.length === 0) {
+      return NextResponse.json({ error: "no_trends_found" }, { status: 404 })
+    }
+    if (hasCreators && contentItems.length === 0 && trendResults.length === 0) {
+      return NextResponse.json({ error: "no_creator_content" }, { status: 404 })
+    }
 
     // ══════════════════════════════════════════════
     // BUILD CONTEXT
@@ -557,9 +306,59 @@ ${favoritedIdeas.map((f, i) => `${i + 1}. [${f.category || "ללא קטגורי�
       : ""
 
     // ══════════════════════════════════════════════
-    // STEP 6: Stream ideas from Claude
+    // STEP 6: Stream ideas from Claude.
+    // Two modes based on whether the user specified top creators:
+    //  - hasCreators → 7 ideas from those creators' viral posts + 2 from trends
+    //  - no creators → all 9 ideas from niche trends (creators section omitted)
     // ══════════════════════════════════════════════
-    const promptContent = `אתה חוקר תוכן. קיבלת מחקר מאומת: יוצרים עם עוקבים שנבדקו, תוכן אמיתי עם caption, וטרנדים.
+    const missionSection = hasCreators
+      ? `## יוצרים של המשתמש (פונים רק אליהם!):
+${creatorsSection}
+
+${contentSection ? `## תוכן ויראלי שמצאנו מהיוצרים האלה (caption נקרא!):\n${contentSection}` : ""}
+
+## טרנדים:
+${trendsSection}
+
+## המשימה — 9 רעיונות:
+
+**7 מיוצרים של המשתמש (תוכן ויראלי):**
+- **חובה** לבחור רעיונות מהסקשן "תוכן ויראלי" — אלו הפוסטים הכי מבוקשים של היוצרים.
+- אסור להשתמש ביוצרים שלא ברשימה "יוצרים של המשתמש". **רק יוצרים מהרשימה הזו.**
+- source = @שם_היוצר. profileUrl = לינק הפרופיל מהרשימה (תמיד!)
+- **url ו-profileUrl הם שני שדות שונים!**
+  - url = לינק לתוכן ספציפי (ריל/סרטון/פוסט) — **לא לפרופיל!**
+  - profileUrl = לינק לפרופיל של היוצר
+- אם יש תוכן עם caption — **קודם בדוק שזה לא פרסומי** (קורס, מבצע, פרס, קידום עצמי). אם זה פרסומי — דלג. אם חינוכי — url = הלינק לתוכן, תסכם את ה-caption
+- אם יש תוכן עם תגיות בלבד — url = הלינק לתוכן. ציין את התגיות
+- אם אין תוכן ספציפי לאיזשהו יוצר — דלג עליו. **אסור להמציא** caption/URLs.
+- מותר כמה רעיונות מאותו יוצר על תוכן שונה
+- הנושא חייב לנגוע בכאבי/רצונות הקהל
+- **גוון פלטפורמות** — לא רק אינסטגרם!
+
+**2 מטרנדים:**
+- url = לינק מהטרנדים. profileUrl = "". source = "טרנד"
+
+### פורמט:
+- עם caption: "@שם (platform) — [סיכום ה-caption: המסקנות והנקודות הספציפיות]."
+- עם תגיות: "@שם (platform) העלה תוכן. תגיות: #tag1 #tag2"
+- טרנד: "טרנד: [הנושא]. [סיכום מהמאמר]."`
+      : `## טרנדים:
+${trendsSection}
+
+## המשימה — 9 רעיונות **רק מטרנדים**:
+
+המשתמש לא הגדיר יוצרים מועדפים, אז כל 9 הרעיונות חייבים להיות מבוססים על הטרנדים למעלה.
+
+- כל רעיון: source = "טרנד". profileUrl = "". url = הלינק מהטרנדים.
+- כל רעיון על נושא שונה — אסור לחזור על אותו טרנד פעמיים.
+- הנושא חייב לנגוע בכאבי/רצונות הקהל.
+- תסכם ממש מה הטרנד אומר — לא רק כותרת כללית.
+
+### פורמט:
+- "טרנד: [הנושא]. [סיכום מהמאמר — נקודות ספציפיות, לא כללי]."`
+
+    const promptContent = `אתה חוקר תוכן. קיבלת מחקר: ${hasCreators ? "רשימת יוצרים שהמשתמש בחר, עם תוכן ויראלי מהפרופילים שלהם, וטרנדים" : "טרנדים בנישה"}.
 
 ## מי אני
 ${whoIAm}
@@ -573,44 +372,10 @@ ${audienceSection}
 ${previousSection}
 ${favoritesSection}
 
-## יוצרים מאומתים (${verifiedCreators.length} יוצרים, עוקבים נבדקו!):
-${creatorsSection || "לא נמצאו"}
-
-${contentSection ? `## תוכן אמיתי (caption נקרא!):\n${contentSection}` : ""}
-
-## טרנדים:
-${trendsSection}
-
-## המשימה — 9 רעיונות:
-
-**7 מיוצרים מאומתים:**
-- **העדף תמיד רעיונות שיש להם תוכן ספציפי (caption/תגיות) מהסקשן "תוכן אמיתי" למעלה.** אל תציג רק "יוצר מוביל, מתמחה ב..." אם יש לו ריל אמיתי עם caption!
-- השתמש **רק** ביוצרים מהרשימה למעלה
-- source = @שם_היוצר. profileUrl = לינק הפרופיל מהרשימה (תמיד!)
-- **url ו-profileUrl הם שני שדות שונים!**
-  - url = לינק לתוכן ספציפי (ריל/סרטון/פוסט) — **לא לפרופיל!**
-  - profileUrl = לינק לפרופיל של היוצר — **תמיד הפרופיל**
-- אם יש תוכן עם caption — **קודם בדוק שזה לא פרסומי** (קורס, מבצע, פרס, קידום עצמי). אם זה פרסומי — דלג. אם חינוכי — url = הלינק לתוכן, תסכם את ה-caption
-- אם יש תוכן עם תגיות בלבד — url = הלינק לתוכן. ציין את התגיות
-- אם אין תוכן ספציפי — url = "" (ריק!). ציין מה הנישה שלו לפי הביו. **אבל זה רק מוצא אחרון — תמיד העדף יוצרים שיש להם תוכן אמיתי!**
-- **לעולם אל תשים לינק לפרופיל בשדה url** — שדה url מיועד רק לתוכן ספציפי
-- **אסור להמציא** caption, מעורבות, או URLs
-- מותר כמה רעיונות מאותו יוצר על תוכן שונה
-- הנושא חייב לנגוע בכאבי/רצונות הקהל
-- **גוון פלטפורמות** — לא רק אינסטגרם!
-
-**2 מטרנדים:**
-- url = לינק מהטרנדים. profileUrl = "". source = "טרנד"
-
-### פורמט:
-- עם caption: "@שם (XK עוקבים, platform) — [סיכום ה-caption: המסקנות והנקודות הספציפיות]."
-- עם תגיות: "@שם (XK עוקבים, platform) העלה תוכן. תגיות: #tag1 #tag2"
-- בלי תוכן: "@שם (XK עוקבים, platform) — יוצר מוביל. [מה הביו אומר]." (url ריק!)
-- טרנד: "טרנד: [הנושא]. [סיכום מהמאמר]."
+${missionSection}
 
 **אסור:**
-- להמציא caption/מעורבות/URLs
-- לכלול יוצרים שלא ברשימה המאומתת
+- להמציא caption/מעורבות/URLs${hasCreators ? "\n- לכלול יוצרים שלא ברשימה שהמשתמש סיפק" : ""}
 - **תוכן פרסומי/מכירתי/קידומי** — דלג על כל תוכן שהוא: פרסומת למוצר, קידום קורס, הנחה/מבצע, "הירשם עכשיו", זכייה בפרס, שיתוף פעולה ממומן, סטודיו שמקדם את עצמו. **רק תוכן חינוכי, מקצועי, טיפים, או השראתי**
 - לכלול את אותו טרנד פעמיים — כל רעיון על נושא אחר
 
@@ -626,8 +391,10 @@ JSONL:
       handleToCreator.set(c.handle.toLowerCase(), c)
     }
     const contentUrlToCreator = new Map<string, string>()
+    const creatorsWithContent = new Set<string>()
     for (const ci of contentItems) {
       contentUrlToCreator.set(ci.url.toLowerCase().replace(/\/+$/, ""), ci.creator)
+      creatorsWithContent.add(ci.creator.toLowerCase())
     }
 
     function fixSourceUrlMatch(p: { text: string; source: string; url: string; profileUrl: string; category: string }) {
@@ -697,6 +464,16 @@ JSONL:
                       console.log(`Ideas API: SKIPPED duplicate`)
                       continue
                     }
+                    // Drop hallucinated creator ideas — if Claude assigned the
+                    // idea to a creator we never actually pulled content for,
+                    // the text/URL are fabricated. Better to show fewer, real
+                    // ideas than fake ones with mismatched links.
+                    const srcHandle = p.source.replace(/^@/, "").toLowerCase().trim()
+                    const isTrendSource = p.source === "טרנד" || srcHandle === "trend"
+                    if (!isTrendSource && !creatorsWithContent.has(srcHandle)) {
+                      console.log(`Ideas API: SKIPPED hallucinated idea for "${p.source}" — no content items for this creator`)
+                      continue
+                    }
                     sentTexts.add(key)
                     // Fix source/url/profileUrl mismatches before sending
                     const fixed = fixSourceUrlMatch(p)
@@ -712,9 +489,20 @@ JSONL:
           }
         }
 
+        const emitNoNewIdeasIfEmpty = () => {
+          // Claude finished cleanly but every returned idea was either malformed
+          // or a duplicate of previousIdeas — the user would otherwise see a
+          // "finished generating" with nothing new. Tell them explicitly.
+          if (sentTexts.size === 0) {
+            const code = fullText.trim().length === 0 ? "no_ideas_generated" : "all_ideas_duplicate"
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: code })}\n\n`))
+          }
+        }
+
         try {
           await runStream(PRIMARY_MODEL)
           console.log(`Ideas API: Stream complete. Total sent: ${sentTexts.size}. Full response length: ${fullText.length}`)
+          emitNoNewIdeasIfEmpty()
           controller.enqueue(encoder.encode("data: [DONE]\n\n"))
           controller.close()
         } catch (err) {
@@ -722,6 +510,7 @@ JSONL:
             try {
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
               await runStream(FALLBACK_MODEL)
+              emitNoNewIdeasIfEmpty()
               controller.enqueue(encoder.encode("data: [DONE]\n\n"))
               controller.close()
               return
@@ -749,6 +538,10 @@ JSONL:
       headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" },
     })
   } catch (error) {
+    if (error instanceof SearchQuotaExceededError) {
+      console.error("Ideas generation error: Serper search quota exhausted")
+      return NextResponse.json({ error: "search_quota_exceeded" }, { status: 402 })
+    }
     const msg = error instanceof Error ? error.message : String(error)
     console.error("Ideas generation error:", msg)
     const isCredits = /credit|billing|insufficient_quota|payment|402/.test(msg)

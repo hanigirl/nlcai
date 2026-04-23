@@ -10,6 +10,10 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Progress } from "@/components/ui/progress"
 import { createClient } from "@/lib/supabase/client"
+import { parseCreatorInput } from "@/lib/creator-url"
+import { CreatorsList } from "@/components/creators-list"
+import { ProductsList, type ProductEntry } from "@/components/products-list"
+import { toast } from "sonner"
 
 const GOOGLE_FONTS = [
   "Rubik", "Heebo", "Assistant", "Open Sans", "Noto Sans Hebrew", "Secular One",
@@ -22,7 +26,7 @@ const GOOGLE_FONTS = [
 ]
 
 type KeyName = "anthropic_api_key" | "heygen_api_key"
-type SettingsTab = "connections" | "business" | "products" | "media"
+type SettingsTab = "connections" | "business" | "products" | "creators" | "media"
 
 interface KeyConfig {
   key: KeyName
@@ -43,7 +47,7 @@ const KEYS: KeyConfig[] = [
   {
     key: "heygen_api_key",
     label: "HeyGen API Key",
-    placeholder: "הכנס את ה-API key שלך",
+    placeholder: "הכניסו את ה-API key שלכם",
     helpUrl: "https://app.heygen.com/settings?nav=API",
     helpLabel: "app.heygen.com",
   },
@@ -70,7 +74,9 @@ export default function SettingsPage() {
 }
 
 function SettingsPageInner() {
-  type Product = { id: string; name: string; type: "front" | "premium" | "lead_magnet"; landing_page_url: string; page_summary: string | null }
+  // Local alias for the shared ProductEntry — same shape, tagged so it's clear
+  // we're using the unified component in both onboarding and settings.
+  type Product = ProductEntry
 
   const searchParams = useSearchParams()
   const initialTab = (searchParams.get("tab") as SettingsTab) || "connections"
@@ -98,15 +104,19 @@ function SettingsPageInner() {
   const [businessExpertise, setBusinessExpertise] = useState("")
   const [savingBusiness, setSavingBusiness] = useState(false)
   const [businessSaved, setBusinessSaved] = useState(false)
-  const [styleFileName, setStyleFileName] = useState("")
   const [styleFileToUpload, setStyleFileToUpload] = useState<File | null>(null)
-  const [audienceFileName, setAudienceFileName] = useState("")
   const [audienceFileToUpload, setAudienceFileToUpload] = useState<File | null>(null)
-  const [uploadingFiles, setUploadingFiles] = useState(false)
+  const [uploadingStyle, setUploadingStyle] = useState(false)
+  const [uploadingAudience, setUploadingAudience] = useState(false)
   const [styleOriginalFile, setStyleOriginalFile] = useState<{ name: string; url: string } | null>(null)
   const [audienceOriginalFile, setAudienceOriginalFile] = useState<{ name: string; url: string } | null>(null)
   const styleFileRef = useRef<HTMLInputElement>(null)
   const audienceFileRef = useRef<HTMLInputElement>(null)
+
+  // Top creators (user-specified inspiration sources for the ideas pipeline)
+  const [topCreators, setTopCreators] = useState<{ id?: string; url: string }[]>([{ url: "" }])
+  const [savingCreators, setSavingCreators] = useState(false)
+  const [creatorsSaved, setCreatorsSaved] = useState(false)
 
   // Media tab state
   interface MediaItem { id: string; name: string; url: string }
@@ -179,6 +189,16 @@ function SettingsPageInner() {
         }
       }
 
+      // Load user's top creators
+      const { data: creatorRows } = await supabase
+        .from("user_top_creators")
+        .select("id, url")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: true })
+      if (creatorRows && creatorRows.length > 0) {
+        setTopCreators((creatorRows as { id: string; url: string }[]).map((c) => ({ id: c.id, url: c.url })))
+      }
+
       const { data: prods } = await supabase
         .from("products")
         .select("id, name, type, landing_page_url, page_summary")
@@ -188,8 +208,8 @@ function SettingsPageInner() {
           id: p.id as string,
           name: (p.name as string) || "",
           type: (p.type as "front" | "premium" | "lead_magnet") || "front",
-          landing_page_url: (p.landing_page_url as string) || "",
-          page_summary: (p.page_summary as string) || null,
+          landingPageUrl: (p.landing_page_url as string) || "",
+          pageSummary: (p.page_summary as string) || null,
         })))
       }
 
@@ -259,12 +279,12 @@ function SettingsPageInner() {
     if (toInsert.length > 0) {
       const { data: inserted } = await supabase
         .from("products")
-        .insert(toInsert.map((p) => ({ user_id: user.id, name: p.name, type: p.type, landing_page_url: p.landing_page_url || null })))
+        .insert(toInsert.map((p) => ({ user_id: user.id, name: p.name, type: p.type, landing_page_url: p.landingPageUrl || null })) as never)
         .select("id")
       if (inserted) {
         toInsert.forEach((p, i) => {
-          if (p.landing_page_url) {
-            fetch("/api/parse-product-page", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: p.landing_page_url, productId: (inserted[i] as { id: string }).id }) }).catch(() => {})
+          if (p.landingPageUrl) {
+            fetch("/api/parse-product-page", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: p.landingPageUrl, productId: (inserted[i] as { id: string }).id }) }).catch(() => {})
           }
         })
       }
@@ -400,31 +420,101 @@ function SettingsPageInner() {
     }
   }
 
-  const handleUploadFiles = async () => {
-    setUploadingFiles(true)
+  const handleSaveCreators = async () => {
+    setSavingCreators(true)
+    setCreatorsSaved(false)
     try {
-      if (styleFileToUpload) {
-        const formData = new FormData()
-        formData.append("file", styleFileToUpload)
-        formData.append("type", "core")
-        formData.append("manualFields", JSON.stringify({
-          productName: businessName,
-          niche: businessNiche,
-          whoIAm: businessExpertise,
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      const parsed = topCreators
+        .map((c) => parseCreatorInput(c.url))
+        .filter((p): p is NonNullable<typeof p> => p !== null)
+
+      // Replace the full list — authoritative save
+      await supabase.from("user_top_creators").delete().eq("user_id", user.id)
+      if (parsed.length > 0) {
+        const payload = parsed.map((p) => ({
+          user_id: user.id,
+          url: p.url,
+          handle: p.handle,
+          platform: p.platform,
         }))
-        await fetch("/api/parse-identity", { method: "POST", body: formData })
-        setStyleFileToUpload(null)
+        const { error } = await supabase.from("user_top_creators").insert(payload as never)
+        if (error) {
+          toast.error(`שגיאה בשמירה: ${error.message}`)
+          return
+        }
       }
 
-      if (audienceFileToUpload) {
-        const formData = new FormData()
-        formData.append("file", audienceFileToUpload)
-        formData.append("type", "audience")
-        await fetch("/api/parse-identity", { method: "POST", body: formData })
-        setAudienceFileToUpload(null)
-      }
+      setCreatorsSaved(true)
+      setTimeout(() => setCreatorsSaved(false), 2000)
     } finally {
-      setUploadingFiles(false)
+      setSavingCreators(false)
+    }
+  }
+
+  const refreshIdentityFile = async (category: "style_file" | "audience_file") => {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    const { data } = await supabase
+      .from("user_media")
+      .select("file_name, storage_path")
+      .eq("user_id", user.id)
+      .eq("category", category)
+      .maybeSingle()
+    const row = data as { file_name: string; storage_path: string } | null
+    if (!row) return
+    const { data: urlData } = supabase.storage.from("user-media").getPublicUrl(row.storage_path)
+    if (category === "style_file") {
+      setStyleOriginalFile({ name: row.file_name, url: urlData.publicUrl })
+    } else {
+      setAudienceOriginalFile({ name: row.file_name, url: urlData.publicUrl })
+    }
+  }
+
+  const handleUploadStyle = async () => {
+    if (!styleFileToUpload) return
+    const file = styleFileToUpload
+    setUploadingStyle(true)
+    toast.success("הקובץ עלה בהצלחה")
+    setTimeout(() => toast("מנתח קבצים"), 700)
+    try {
+      const formData = new FormData()
+      formData.append("file", file)
+      formData.append("type", "core")
+      formData.append("manualFields", JSON.stringify({
+        productName: businessName,
+        niche: businessNiche,
+        whoIAm: businessExpertise,
+      }))
+      await fetch("/api/parse-identity", { method: "POST", body: formData })
+      setStyleOriginalFile((prev) => ({ name: file.name, url: prev?.url ?? "" }))
+      setStyleFileToUpload(null)
+      await refreshIdentityFile("style_file")
+    } finally {
+      setUploadingStyle(false)
+    }
+  }
+
+  const handleUploadAudience = async () => {
+    if (!audienceFileToUpload) return
+    const file = audienceFileToUpload
+    setUploadingAudience(true)
+    toast.success("הקובץ עלה בהצלחה")
+    setTimeout(() => toast("מנתח קבצים"), 700)
+    try {
+      const formData = new FormData()
+      formData.append("file", file)
+      formData.append("type", "audience")
+      await fetch("/api/parse-identity", { method: "POST", body: formData })
+      setAudienceOriginalFile((prev) => ({ name: file.name, url: prev?.url ?? "" }))
+      setAudienceFileToUpload(null)
+      await refreshIdentityFile("audience_file")
+    } finally {
+      setUploadingAudience(false)
     }
   }
 
@@ -432,6 +522,7 @@ function SettingsPageInner() {
     { id: "connections", label: "חיבורים" },
     { id: "business", label: "מידע על העסק" },
     { id: "products", label: "מוצרים" },
+    { id: "creators", label: "יוצרים מובילים" },
     { id: "media", label: "מדיה" },
   ]
 
@@ -447,7 +538,10 @@ function SettingsPageInner() {
       { id: "files", label: "קבצים להעלאה", icon: Upload },
     ],
     products: [
-      { id: "list", label: "המוצרים שלך", icon: Type },
+      { id: "list", label: "המוצרים שלכם", icon: Type },
+    ],
+    creators: [
+      { id: "list", label: "היוצרים שלכם", icon: Type },
     ],
     media: [
       { id: "fonts", label: "פונטים", icon: Type },
@@ -552,7 +646,7 @@ function SettingsPageInner() {
                               </Button>
                             </div>
                             <p className="text-xs-body text-text-neutral-default">
-                              מצא את ה-API key שלך ב-{" "}
+                              מצאו את ה-API key שלכם ב-{" "}
                               <a href={cfg.helpUrl} target="_blank" rel="noopener noreferrer" className="text-text-primary-default font-semibold hover:underline">{cfg.helpLabel}</a>
                             </p>
                           </div>
@@ -588,7 +682,7 @@ function SettingsPageInner() {
                     <Textarea
                       value={businessExpertise}
                       onChange={(e) => setBusinessExpertise(e.target.value)}
-                      placeholder="ספרי על הניסיון והמומחיות שלך"
+                      placeholder="ספרו על הניסיון והמומחיות שלכם"
                       className="min-h-[200px] rounded-xl"
                     />
                   </div>
@@ -611,11 +705,16 @@ function SettingsPageInner() {
                   )}
                   <div
                     className="relative cursor-pointer"
-                    onClick={() => styleFileRef.current?.click()}
+                    onClick={() => {
+                      if (styleFileRef.current) {
+                        styleFileRef.current.value = ""
+                        styleFileRef.current.click()
+                      }
+                    }}
                   >
                     <Input
-                      placeholder={styleOriginalFile ? "העלה קובץ חדש לעדכון" : "העלה קובץ סגנון כתיבה"}
-                      value={styleFileName}
+                      placeholder="העלה קובץ סגנון כתיבה"
+                      value={styleFileToUpload?.name ?? styleOriginalFile?.name ?? ""}
                       readOnly
                       className="cursor-pointer pe-10 pointer-events-none"
                     />
@@ -624,16 +723,33 @@ function SettingsPageInner() {
                       ref={styleFileRef}
                       type="file"
                       className="hidden"
-                      accept=".pdf,.docx,.doc,.txt,.md,.rtf"
+                      accept=".docx"
+                      onClick={(e) => e.stopPropagation()}
                       onChange={(e) => {
                         const f = e.target.files?.[0]
-                        if (f) {
-                          setStyleFileName(f.name)
-                          setStyleFileToUpload(f)
-                        }
+                        if (f) setStyleFileToUpload(f)
                       }}
                     />
                   </div>
+                  <p className="text-xs-body text-text-neutral-default text-start">
+                    במידה ואין לכם קובץ כזה{" "}
+                    <a
+                      href="https://gemini.google.com/gem/dc85c1254c9e?usp=sharing"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-text-primary-default font-semibold hover:underline"
+                    >
+                      יוצרים אותו כאן
+                    </a>
+                  </p>
+                  <Button
+                    onClick={handleUploadStyle}
+                    disabled={!styleFileToUpload || uploadingStyle}
+                    className="w-fit gap-2"
+                  >
+                    {uploadingStyle && <Loader2 className="size-4 animate-spin" />}
+                    שמור ונתח
+                  </Button>
                 </div>
 
                 {/* Audience file */}
@@ -651,11 +767,16 @@ function SettingsPageInner() {
                   )}
                   <div
                     className="relative cursor-pointer"
-                    onClick={() => audienceFileRef.current?.click()}
+                    onClick={() => {
+                      if (audienceFileRef.current) {
+                        audienceFileRef.current.value = ""
+                        audienceFileRef.current.click()
+                      }
+                    }}
                   >
                     <Input
-                      placeholder={audienceOriginalFile ? "העלה קובץ חדש לעדכון" : "העלה קובץ ניתוח קהל יעד"}
-                      value={audienceFileName}
+                      placeholder="העלה קובץ ניתוח קהל יעד"
+                      value={audienceFileToUpload?.name ?? audienceOriginalFile?.name ?? ""}
                       readOnly
                       className="cursor-pointer pe-10 pointer-events-none"
                     />
@@ -664,31 +785,45 @@ function SettingsPageInner() {
                       ref={audienceFileRef}
                       type="file"
                       className="hidden"
-                      accept=".pdf,.docx,.doc,.txt,.md,.rtf"
+                      accept=".docx"
+                      onClick={(e) => e.stopPropagation()}
                       onChange={(e) => {
                         const f = e.target.files?.[0]
-                        if (f) {
-                          setAudienceFileName(f.name)
-                          setAudienceFileToUpload(f)
-                        }
+                        if (f) setAudienceFileToUpload(f)
                       }}
                     />
                   </div>
+                  <p className="text-xs-body text-text-neutral-default text-start">
+                    אם אין לכם ניתוח קהל יעד{" "}
+                    <a
+                      href="https://gemini.google.com/gem/e4e3d302fdd7?usp=sharing"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-text-primary-default font-semibold hover:underline"
+                    >
+                      יוצרים את זה כאן
+                    </a>
+                  </p>
+                  <Button
+                    onClick={handleUploadAudience}
+                    disabled={!audienceFileToUpload || uploadingAudience}
+                    className="w-fit gap-2"
+                  >
+                    {uploadingAudience && <Loader2 className="size-4 animate-spin" />}
+                    שמור ונתח
+                  </Button>
                 </div>
 
                   </>
                 )}
 
-                {/* Single save button at bottom */}
-                <Button onClick={async () => {
-                  await handleSaveBusiness()
-                  if (styleFileToUpload || audienceFileToUpload) {
-                    await handleUploadFiles()
-                  }
-                }} disabled={savingBusiness || uploadingFiles} className="w-fit gap-2">
-                  {(savingBusiness || uploadingFiles) ? <Loader2 className="size-4 animate-spin" /> : businessSaved ? <Check className="size-4" /> : null}
-                  {uploadingFiles ? "מנתח קבצים..." : savingBusiness ? "שומר..." : businessSaved ? "נשמר!" : "שמור"}
-                </Button>
+                {/* Save button for about/you sub-sections */}
+                {activeSubSection !== "files" && (
+                  <Button onClick={handleSaveBusiness} disabled={savingBusiness} className="w-fit gap-2">
+                    {savingBusiness ? <Loader2 className="size-4 animate-spin" /> : businessSaved ? <Check className="size-4" /> : null}
+                    {savingBusiness ? "שומר..." : businessSaved ? "נשמר!" : "שמור"}
+                  </Button>
+                )}
                 </div>
               </div>
             )}
@@ -698,38 +833,40 @@ function SettingsPageInner() {
               <div className="flex gap-8">
                 <SubNav sections={SUB_SECTIONS.products} active={activeSubSection} onChange={setActiveSubSection} />
                 <div className="flex-1 min-w-0 max-w-lg flex flex-col gap-4">
-                {products.length === 0 && (
-                  <p className="text-small text-text-neutral-default">לא נמצאו מוצרים. הוסיפי מוצרים כדי ליצור תוכן מותאם.</p>
+                {!loading && products.length === 0 && (
+                  <p className="text-small text-text-neutral-default">לא נמצאו מוצרים. הוסיפו מוצרים כדי ליצור תוכן מותאם.</p>
                 )}
-                <div className="flex flex-col gap-3">
-                  {products.map((product, i) => (
-                    <div key={product.id || i} className="group flex flex-col gap-2 rounded-2xl border border-border-neutral-default bg-bg-surface px-3 py-3">
-                      <div className="flex items-center gap-2">
-                        <Input placeholder="שם המוצר" value={product.name} onChange={(e) => { const u = [...products]; u[i] = { ...u[i], name: e.target.value }; setProducts(u) }} className="flex-1 border-none bg-transparent shadow-none" />
-                        <div className="relative">
-                          <select value={product.type} onChange={(e) => { const u = [...products]; u[i] = { ...u[i], type: e.target.value as "front" | "premium" | "lead_magnet" }; setProducts(u) }} className="h-10 rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 px-3 text-small text-text-primary-default appearance-none cursor-pointer pe-8" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23808080' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: "no-repeat", backgroundPosition: "left 0.5rem center" }}>
-                            <option value="front">פרונט</option>
-                            <option value="premium">פרימיום</option>
-                            <option value="lead_magnet">מגנט לידים</option>
-                          </select>
-                        </div>
-                        <button type="button" onClick={() => setProducts(products.filter((_, j) => j !== i))} className="opacity-0 group-hover:opacity-100 transition-opacity p-1">
-                          <Trash2 className="size-4 text-text-neutral-default hover:text-button-destructive-default" />
-                        </button>
-                      </div>
-                      <Input dir="ltr" placeholder="לינק לדף המוצר (אופציונלי)" value={product.landing_page_url} onChange={(e) => { const u = [...products]; u[i] = { ...u[i], landing_page_url: e.target.value }; setProducts(u) }} className="border-none bg-white dark:bg-gray-10 shadow-none text-sm" />
-                      {product.page_summary && <p className="text-xs text-text-neutral-default px-1">{product.page_summary}</p>}
-                    </div>
-                  ))}
-                </div>
-                <Button variant="outline" onClick={() => setProducts([...products, { id: crypto.randomUUID(), name: "", type: "front", landing_page_url: "", page_summary: null }])} className="w-full h-12 rounded-2xl border-border-neutral-default text-text-neutral-default gap-2">
-                  <Plus className="size-4" />
-                  הוספת מוצר חדש
-                </Button>
+                <ProductsList products={products} onChange={setProducts} />
                 <Button onClick={handleSaveProducts} disabled={savingProducts} className="w-fit self-end gap-2">
                   {savingProducts && <Loader2 className="size-4 animate-spin" />}
                   שמור מוצרים
                 </Button>
+                </div>
+              </div>
+            )}
+
+            {/* ==================== CREATORS TAB ==================== */}
+            {activeTab === "creators" && (
+              <div className="flex gap-8">
+                <SubNav sections={SUB_SECTIONS.creators} active={activeSubSection} onChange={setActiveSubSection} />
+                <div className="flex-1 min-w-0 max-w-lg flex flex-col gap-4">
+                  <div>
+                    <h3 className="text-p-bold text-text-primary-default">היוצרים שמעניינים אתכם</h3>
+                    <p className="text-small text-text-neutral-default mt-1">
+                      היוצרים שהבוט ישאב מהם רעיונות לתכנים — מכל מקום בעולם, כולל יוצרים מהארץ. הבוט יסרוק את הפוסטים הויראליים שלהם.
+                      <br />
+                      הטרנדים בנישה שהבוט מחפש לבד — משלימים ללא יוצרים מסוימים, ומגיעים רק מהרשת הגלובלית (לא מטרנדים מקומיים).
+                    </p>
+                  </div>
+                  <CreatorsList
+                    creators={topCreators}
+                    onChange={setTopCreators}
+                    addButtonLabel="הוספת יוצר"
+                  />
+                  <Button onClick={handleSaveCreators} disabled={savingCreators} className="w-fit gap-2">
+                    {savingCreators ? <Loader2 className="size-4 animate-spin" /> : creatorsSaved ? <Check className="size-4" /> : null}
+                    {savingCreators ? "שומר..." : creatorsSaved ? "נשמר!" : "שמור"}
+                  </Button>
                 </div>
               </div>
             )}
@@ -752,7 +889,7 @@ function SettingsPageInner() {
                     <div className="flex flex-col gap-5">
                       <div>
                         <h3 className="text-p-bold text-text-primary-default">פונטים</h3>
-                        <p className="text-small text-text-neutral-default mt-1">העלי את הפונטים שאת עובדת איתם, או בחרי מ-Google Fonts. עד 5 פונטים.</p>
+                        <p className="text-small text-text-neutral-default mt-1">העלו את הפונטים שאתם עובדים איתם, או בחרו מ-Google Fonts. עד 5 פונטים.</p>
                       </div>
 
                       {fontItems.length >= 5 ? (

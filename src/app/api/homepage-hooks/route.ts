@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { TEMPLATE_LIBRARY, getTemplatesByCategory, type TemplateCategory } from "@/lib/agents/hook-templates"
+import { polishHookForHebrew } from "@/lib/agents/hook-hebrew-polish"
 
 interface PlanItem {
   category: TemplateCategory
@@ -173,8 +174,9 @@ ${audienceIdentity.limiting_beliefs}
     }
 
     // ============= PIPELINE STEP 1 — PLANNING =============
-    // Generate 15 angle plans: { category, angle, target_emotion, audience_quote, specific_topic }
-    const HOOK_COUNT = 15
+    // Generate 20 angle plans: { category, angle, target_emotion, audience_quote, specific_topic }
+    // Home page shows the first 4; the rest live in /hooks as the user's hook inventory.
+    const HOOK_COUNT = 20
 
     const categoriesCatalog = TEMPLATE_LIBRARY
       .map((g) => `- ${g.category} (${g.contentType}, "${g.label}"): ${g.goal}`)
@@ -203,7 +205,7 @@ ${categoriesCatalog}
 החזר JSON תקין בלבד (בלי markdown, בלי הסברים). מערך של ${HOOK_COUNT} אובייקטים בפורמט הזה:
 [
   {
-    "category": "myth_breaking" | "common_mistakes" | "diagnosis" | "personal_story" | "empowerment" | "identification" | "agenda" | "lists" | "real_reason" | "how_to",
+    "category": "myth_breaking" | "common_mistakes" | "diagnosis" | "personal_story" | "empowerment" | "identification" | "agenda" | "lists" | "real_reason" | "how_to" | "discovery" | "one_shift" | "comparisons" | "day_in_life" | "challenge",
     "specific_topic": "הנושא הקונקרטי (כלי/שיטה/בעיה ספציפית)",
     "target_pain_or_desire": "הכאב/רצון של הקהל שהזווית נוגעת בו",
     "audience_quote": "ציטוט/ביטוי בשפת הקהל שיופיע בהוק",
@@ -257,7 +259,7 @@ ${categoriesCatalog}
             const templates = getTemplatesByCategory(plan.category)
             if (templates.length === 0) continue
 
-            const writePrompt = `אתה כותב הוקים ויראליים בעברית NATIVE לישראלים.
+            const writePrompt = `אתה כותב הוקים ויראליים בעברית יומיומית, קלילה ותקנית — עברית "עמך" שאנשים באמת מדברים בה.
 
 ## הזווית שאת/ה כותב/ת לפיה
 נושא ספציפי: ${plan.specific_topic}
@@ -265,21 +267,27 @@ ${categoriesCatalog}
 ביטוי בשפת הקהל: "${plan.audience_quote}"
 תיאור הזווית: ${plan.angle_summary}
 
-## הטון של היוצר
-${coreIdentity.who_i_am}
-איך אני נשמע/ת: ${coreIdentity.how_i_sound}
-${coreIdentity.slang_examples ? `סלנג: ${coreIdentity.slang_examples}` : ""}
-מה אני אף פעם לא עושה: ${coreIdentity.what_i_never_do}
-
 ## תבניות לבחירה (חובה לבחור אחת מהן ולמלא את ה-slots)
 ${templates.map((t, i) => `${i + 1}. ${t}`).join("\n")}
 
 ## הוראות
-- בחר/י תבנית אחת מהרשימה למעלה.
+- **קודם הזווית, אחר כך התבנית.** התמקד/י בלמצוא את הניסוח החזק ביותר לזווית, ואז התאם/י את התבנית הכי מתאימה וחזקה מהרשימה.
+- **התבנית חייבת להתאים לנישה ולקהל של היוצר.** לא כל תבנית מתאימה לכל תחום — אם תבנית נשמעת מאולצת או רחוקה מהעולם של היוצר, בחר/י אחרת מהרשימה.
 - מלא/י את ה-slots ({...}) עם תוכן ספציפי לפי הזווית והנושא.
-- הוק יחיד, משפט אחד עד שניים, פאנצ'י, NATIVE עברית.
-- בלי "וואו" — תגיד "אמאלה". בלי "מדהים" — תגיד "תותח/חבל על הזמן". בלי תרגומים מאנגלית.
-- אסור להמציא תבנית חדשה. רק להתאים אחת מהקיימות.
+- הוק יחיד, משפט אחד עד שניים, פאנצ'י.
+- אסור להמציא תבנית חדשה. רק להתאים אחת מהקיימות. מותר שאותה תבנית תחזור על עצמה בין הוקים שונים.
+
+## שפה — עברית "עמך", לא תרגום מאנגלית
+- כתוב בעברית יומיומית וקלילה שאנשים באמת מדברים — לא עברית מתורגמת, לא עברית מגושמת, לא עברית "ספרותית".
+- לפני כל ניסוח — שאל/י את עצמך: "איך ישראלי באמת אומר את זה בעברית?" אם התשובה לא זורמת על הלשון — נסח/י מחדש.
+- אסור תרגום ישיר מאנגלית (hack/viral/content/game changer/mindset/journey וכו׳) — תמצא/י את המקבילה העברית היומיומית או שכתוב/י אחרת לגמרי.
+- עברית תקנית בכתיב (בלי שגיאות, בלי Franglish) אבל בטון של שיחה רגילה, לא של מאמר.
+- אם מילה נשמעת כמו תרגום מאנגלית — היא כנראה תרגום. מצא/י ניסוח ישראלי.
+
+## חובה — פניה לקהל
+- **תמיד ברבים** (אתם/לכם/שלכם/תעשו/תצפו). אסור להשתמש בלשון נקבה יחיד (את/לך/שלך/תעשי) או זכר יחיד (אתה/תעשה).
+- גם אם התבנית או הדוגמה מופיעה בנקבה יחיד — תמיר/י אותה לרבים בהוק הסופי.
+- פעלים בגוף ראשון של היוצר (אני עשיתי/נרפאתי) — שמור/י ניטרליים מגדרית: "אני עשיתי", "נרפאתי", "עברתי" (לא "עשיתי/עברתי" בנקבה נטיית נוכחת בלבד).
 
 ## פלט
 משפט אחד בלבד — ההוק עצמו, בלי הסברים, בלי מספור, בלי גרשיים.`
@@ -317,6 +325,13 @@ ${templates.map((t, i) => `${i + 1}. ${t}`).join("\n")}
               .replace(/["'״׳"]+$/, "")
               .trim()
 
+            if (hookText.length <= 10) continue
+
+            // Hebrew polish pass — rewrite anything that reads like a translation
+            // from English into natural Israeli speech. Always uses Haiku (fast
+            // + cheap for a narrow editing task). Falls back to the unpolished
+            // hook if the editor errors.
+            hookText = await polishHookForHebrew(client, hookText, FALLBACK_MODEL)
             if (hookText.length <= 10) continue
 
             const { data: row } = await supabase.from("hooks").insert({

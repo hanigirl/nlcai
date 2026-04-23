@@ -9,6 +9,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Input } from "@/components/ui/input"
 import { StickyNote } from "@/components/sticky-note"
 import { useAutoAnimate } from "@formkit/auto-animate/react"
+import { createClient } from "@/lib/supabase/client"
+import { toast } from "sonner"
 
 interface IdeaNote {
   text: string
@@ -42,6 +44,30 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString("he-IL", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, ".")
 }
 
+// Strip a leading "<source>:" / "טרנד:" label from the idea body — the source
+// is already shown as the bottom-left tag, so repeating it in the copy is noise.
+// Case-insensitive and tries both with/without the "@" prefix, so "MDS: ..." and
+// "@mds: ..." both match when the stored source is "@MDS".
+// Safety: if stripping would leave an empty body, return the original text so
+// the note still has a description to show.
+function stripSourcePrefix(text: string, source: string): string {
+  const t = text.trimStart()
+  const clean = source.replace(/^@/, "").trim()
+  const labels = [source, `@${clean}`, clean, "טרנד"].filter((l) => l.length > 0)
+  const seps = [": ", ":", " - ", " — ", " – "]
+  const lower = t.toLowerCase()
+  for (const label of labels) {
+    for (const sep of seps) {
+      const prefix = (label + sep).toLowerCase()
+      if (lower.startsWith(prefix)) {
+        const stripped = t.slice(prefix.length).trimStart()
+        if (stripped.length > 0) return stripped
+      }
+    }
+  }
+  return t
+}
+
 export default function IdeasPage() {
   const router = useRouter()
   const [ideas, setIdeas] = useState<IdeaNote[]>([])
@@ -56,7 +82,8 @@ export default function IdeasPage() {
   const [creatorFilter, setCreatorFilter] = useState("all")
   const [showCreatorDropdown, setShowCreatorDropdown] = useState(false)
   const [showFavorites, setShowFavorites] = useState(false)
-  const [favorites, setFavorites] = useState<Set<number>>(new Set())
+  // Keyed by trimmed idea text — stable across re-ordering when new ideas are prepended
+  const [favorites, setFavorites] = useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = useState("")
   const [gridRef] = useAutoAnimate({ duration: 400, easing: "ease-out" })
   const generatingRef = useRef(false)
@@ -106,46 +133,61 @@ export default function IdeasPage() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(clean))
   }, [dedupe])
 
-  // Load from localStorage — once
+  // Load from localStorage + DB favorites — once
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY)
+    const load = async () => {
       let loadedIdeas: IdeaNote[] = []
-      if (saved) {
-        loadedIdeas = dedupe(JSON.parse(saved))
-        setIdeas(loadedIdeas)
-        ideasRef.current = loadedIdeas
-      }
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY)
+        if (saved) {
+          loadedIdeas = dedupe(JSON.parse(saved))
+        }
 
-      // Try to load saved session keys
-      const savedSession = localStorage.getItem(SESSION_KEYS_STORAGE)
-      if (savedSession) {
-        const sessionArr = JSON.parse(savedSession) as string[]
-        // Verify saved session keys still exist in loaded ideas
-        const loadedKeys = new Set(loadedIdeas.map((i) => i.text.trim()))
-        const validKeys = sessionArr.filter((k) => loadedKeys.has(k))
-        if (validKeys.length > 0) {
-          sessionKeysRef.current = new Set(validKeys)
+        const savedSession = localStorage.getItem(SESSION_KEYS_STORAGE)
+        if (savedSession) {
+          const sessionArr = JSON.parse(savedSession) as string[]
+          const loadedKeys = new Set(loadedIdeas.map((i) => i.text.trim()))
+          const validKeys = sessionArr.filter((k) => loadedKeys.has(k))
+          if (validKeys.length > 0) {
+            sessionKeysRef.current = new Set(validKeys)
+          } else if (loadedIdeas.length > 0) {
+            sessionKeysRef.current = new Set(loadedIdeas.slice(0, 9).map((i) => i.text.trim()))
+          }
         } else if (loadedIdeas.length > 0) {
-          // Fallback: take the most recent ideas (top of the array, since we prepend)
           sessionKeysRef.current = new Set(loadedIdeas.slice(0, 9).map((i) => i.text.trim()))
         }
-        setSessionTick((t) => t + 1)
-      } else if (loadedIdeas.length > 0) {
-        // No saved session — assume the top of the array is "new"
-        sessionKeysRef.current = new Set(loadedIdeas.slice(0, 9).map((i) => i.text.trim()))
-        setSessionTick((t) => t + 1)
-      }
+      } catch { /* ignore */ }
 
-      const favs = localStorage.getItem("ideaFavorites_v2")
-      if (favs) setFavorites(new Set(JSON.parse(favs)))
-    } catch { /* ignore */ }
-    setLoading(false)
+      // Load favorites from DB (persists across devices/logins)
+      try {
+        const supabase = createClient()
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) {
+          const { data: favsData } = await supabase
+            .from("idea_favorites")
+            .select("idea_text, idea_data")
+            .eq("user_id", user.id)
+          if (favsData) {
+            const favTexts = new Set(favsData.map((f) => (f as { idea_text: string }).idea_text))
+            setFavorites(favTexts)
+            // Rehydrate any DB-favorited ideas that aren't in localStorage (e.g. fresh device)
+            const localKeys = new Set(loadedIdeas.map((i) => i.text.trim()))
+            const missing = favsData
+              .filter((f) => !localKeys.has((f as { idea_text: string }).idea_text))
+              .map((f) => (f as { idea_data: Record<string, unknown> }).idea_data as unknown as IdeaNote)
+              .filter((i) => i && i.text)
+            if (missing.length > 0) loadedIdeas = dedupe([...loadedIdeas, ...missing])
+          }
+        }
+      } catch { /* ignore */ }
+
+      setIdeas(loadedIdeas)
+      ideasRef.current = loadedIdeas
+      setSessionTick((t) => t + 1)
+      setLoading(false)
+    }
+    load()
   }, [dedupe])
-
-  useEffect(() => {
-    localStorage.setItem("ideaFavorites_v2", JSON.stringify([...favorites]))
-  }, [favorites])
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -159,13 +201,46 @@ export default function IdeasPage() {
     return () => document.removeEventListener("click", handler)
   }, [showCategoryDropdown, showCreatorDropdown])
 
-  const toggleFavorite = (index: number) => {
+  const toggleFavorite = async (idea: IdeaNote) => {
+    const key = idea.text.trim()
+    const wasFav = favorites.has(key)
+    // Optimistic update
     setFavorites((prev) => {
       const next = new Set(prev)
-      if (next.has(index)) next.delete(index)
-      else next.add(index)
+      if (wasFav) next.delete(key)
+      else next.add(key)
       return next
     })
+
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      setFavorites((prev) => {
+        const next = new Set(prev)
+        if (wasFav) next.add(key)
+        else next.delete(key)
+        return next
+      })
+      return
+    }
+
+    const { error } = wasFav
+      ? await supabase.from("idea_favorites").delete().eq("user_id", user.id).eq("idea_text", key)
+      : await supabase.from("idea_favorites").insert({
+          user_id: user.id,
+          idea_text: key,
+          idea_data: idea as unknown as Record<string, unknown>,
+        } as never)
+
+    if (error) {
+      setFavorites((prev) => {
+        const next = new Set(prev)
+        if (wasFav) next.add(key)
+        else next.delete(key)
+        return next
+      })
+      toast.error("שגיאה בשמירת המועדף")
+    }
   }
 
   const isTrend = (idea: IdeaNote) => idea.source === "טרנד" || idea.source.toLowerCase() === "trend" || idea.text.startsWith("טרנד:")
@@ -193,8 +268,8 @@ export default function IdeasPage() {
 
   // Filter ideas — favorites overrides all other filters
   const filtered = useMemo(() => {
-    return ideas.filter((idea, i) => {
-      if (showFavorites) return favorites.has(i)
+    return ideas.filter((idea) => {
+      if (showFavorites) return favorites.has(idea.text.trim())
       if (typeFilter === "creators" && !isCreator(idea)) return false
       if (typeFilter === "trends" && !isTrend(idea)) return false
       if (creatorFilter !== "all" && idea.source !== creatorFilter) return false
@@ -243,7 +318,7 @@ export default function IdeasPage() {
 
     // Collect favorited ideas to signal preference
     const favoritedIdeas = currentIdeas
-      .map((idea, i) => favorites.has(i) ? { text: idea.text, source: idea.source, category: idea.category } : null)
+      .map((idea) => favorites.has(idea.text.trim()) ? { text: idea.text, source: idea.source, category: idea.category } : null)
       .filter(Boolean)
 
     try {
@@ -259,12 +334,14 @@ export default function IdeasPage() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        setError(data.error === "credits_exhausted" ? "credits_exhausted" : (data.error || "שגיאה ביצירת רעיונות"))
+        const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "unauthorized", "no_trends_found", "no_creator_content", "trend_search_failed", "search_not_configured", "search_quota_exceeded"]
+        const raw = data.error
+        setError(known.includes(raw) ? raw : (raw || "generic"))
         return
       }
 
       const reader = res.body?.getReader()
-      if (!reader) return
+      if (!reader) { setError("connection_error"); return }
 
       const decoder = new TextDecoder()
       let buffer = ""
@@ -282,6 +359,11 @@ export default function IdeasPage() {
           if (!data || data === "[DONE]") continue
           try {
             const idea = JSON.parse(data)
+            if (idea.error) {
+              const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "no_ideas_generated", "all_ideas_duplicate"]
+              setError(known.includes(idea.error) ? idea.error : (idea.error || "generic"))
+              continue
+            }
             if (!idea.text) continue
             // Use FULL text as dedup key (not just first 60 chars)
             const key = idea.text.trim()
@@ -310,23 +392,26 @@ export default function IdeasPage() {
   }
 
   const renderIdea = (idea: IdeaNote, originalIndex: number) => {
-    const isFav = favorites.has(originalIndex)
+    const isFav = favorites.has(idea.text.trim())
+    const displayText = stripSourcePrefix(idea.text, idea.source)
     if (viewMode === "grid") {
       return (
-        <div key={`${idea.text.slice(0, 20)}-${originalIndex}`} className="aspect-square relative group">
+        <div key={`${idea.text.slice(0, 20)}-${originalIndex}`} className="aspect-square">
           <StickyNote
-            text={idea.text}
+            text={displayText}
             source={idea.source}
             url={idea.url}
             profileUrl={idea.profileUrl}
             onClick={() => router.push(`/project?idea=${encodeURIComponent(idea.text)}`)}
+            overlay={
+              <button
+                onClick={(e) => { e.stopPropagation(); toggleFavorite(idea) }}
+                className={`absolute top-2 left-2 p-1 rounded-full transition-opacity ${isFav ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+              >
+                <Star className={`size-3.5 ${isFav ? "fill-yellow-50 text-yellow-50" : "text-yellow-30 hover:text-yellow-10"}`} />
+              </button>
+            }
           />
-          <button
-            onClick={(e) => { e.stopPropagation(); toggleFavorite(originalIndex) }}
-            className={`absolute top-2 left-2 p-1 rounded-full transition-opacity ${isFav ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
-          >
-            <Star className={`size-3.5 ${isFav ? "fill-yellow-50 text-yellow-50" : "text-yellow-30 hover:text-yellow-10"}`} />
-          </button>
         </div>
       )
     }
@@ -337,14 +422,14 @@ export default function IdeasPage() {
         className="flex items-start gap-4 rounded-xl bg-bg-surface-hover hover:bg-bg-surface-primary-default-80 p-4 cursor-pointer transition-colors group"
       >
         <div className="flex-1 min-w-0" dir="rtl">
-          <p className="text-small text-text-primary-default line-clamp-2">{idea.text}</p>
+          <p className="text-small text-text-primary-default line-clamp-2">{displayText}</p>
           <div className="flex items-center gap-3 mt-2">
             <span className="text-xs-body text-yellow-30">{idea.source}</span>
             {idea.category && <span className="text-xs-body text-text-neutral-default">· {idea.category}</span>}
           </div>
         </div>
         <button
-          onClick={(e) => { e.stopPropagation(); toggleFavorite(originalIndex) }}
+          onClick={(e) => { e.stopPropagation(); toggleFavorite(idea) }}
           className={`p-1 shrink-0 transition-opacity ${isFav ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
         >
           <Star className={`size-3.5 ${isFav ? "fill-yellow-50 text-yellow-50" : "text-yellow-30"}`} />
@@ -524,28 +609,67 @@ export default function IdeasPage() {
           </div>
         </div>
 
-        {error && (
-          <div className={`w-full rounded-xl border p-4 text-center mb-6 ${
-            error === "credits_exhausted" || error === "anthropic_overloaded" ? "border-yellow-50 bg-yellow-95" : "border-border-neutral-default bg-bg-surface"
-          }`}>
-            {error === "credits_exhausted" ? (
-              <>
-                <p className="text-small text-text-primary-default mb-1">
-                  לא הצלחנו לייצר את התכנים כי נגמרו לך הקרדיטים של Anthropic
-                </p>
-                <a href="https://console.anthropic.com/settings/billing" target="_blank" rel="noopener noreferrer" className="text-small-bold text-text-primary-default hover:underline">
-                  לרכישת קרדיטים נוספים →
-                </a>
-              </>
-            ) : error === "anthropic_overloaded" ? (
-              <p className="text-small text-text-primary-default">
-                השרתים של Anthropic עמוסים כרגע. נסי שוב בעוד דקה
+        {error && (() => {
+          const infoCodes = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_ideas_generated", "all_ideas_duplicate", "trend_search_failed", "search_not_configured", "search_quota_exceeded"]
+          const isInfo = infoCodes.includes(error)
+          const config: Record<string, { message: string; action?: { href: string; label: string; external?: boolean } }> = {
+            credits_exhausted: {
+              message: "לא הצלחנו לייצר את התכנים כי נגמרו לכם הקרדיטים של Anthropic",
+              action: { href: "https://console.anthropic.com/settings/billing", label: "לרכישת קרדיטים נוספים →", external: true },
+            },
+            anthropic_overloaded: { message: "השרתים של Anthropic עמוסים כרגע. נסו שוב בעוד דקה" },
+            anthropic_not_connected: {
+              message: "לא חובר מפתח Anthropic API. צריך לחבר אותו בהגדרות כדי להתחיל",
+              action: { href: "/settings?tab=connections", label: "לחיבור מפתח API →" },
+            },
+            audience_missing: {
+              message: "לא הצלחנו לקרוא את ניתוח קהל היעד. יש לעדכן את הקובץ בהגדרות",
+              action: { href: "/settings?tab=business", label: "לעמוד ההגדרות →" },
+            },
+            core_identity_missing: {
+              message: "חסרה זהות ליבה. יש להשלים את תהליך ה־onboarding",
+              action: { href: "/onboarding", label: "להשלמת onboarding →" },
+            },
+            unauthorized: {
+              message: "נראה שהתנתקת. יש להתחבר מחדש",
+              action: { href: "/login", label: "למסך ההתחברות →" },
+            },
+            no_trends_found: {
+              message: "לא מצאנו טרנדים חדשים בנישה שלכם כרגע. הוסיפו יוצרים מובילים כדי לקבל רעיונות גם מהם, או נסו שוב בעוד כמה דקות",
+              action: { href: "/settings?tab=business", label: "להוספת יוצרים מובילים →" },
+            },
+            no_creator_content: {
+              message: "לא מצאנו תוכן ויראלי אצל היוצרים שהוספתם וגם אין טרנדים רלוונטיים. בדקו שהקישורים תקינים או נסו יוצרים נוספים",
+              action: { href: "/settings?tab=business", label: "לעדכון רשימת היוצרים →" },
+            },
+            no_ideas_generated: { message: "הסוכן סיים אבל לא החזיר אף רעיון. זה יכול לקרות כשאין מספיק חומר גלם — נסו שוב בעוד רגע" },
+            all_ideas_duplicate: { message: "כל הרעיונות שהתקבלו כבר קיימים במחסן שלכם. נסו שוב — בדרך כלל ריצה חדשה מביאה נושאים חדשים" },
+            trend_search_failed: { message: "חיפוש הטרנדים ברשת נכשל. נסו שוב בעוד רגע — אם זה חוזר כנראה יש בעיה בשירות החיפוש שלנו" },
+            search_not_configured: { message: "שירות החיפוש לא מוגדר במערכת. צרו קשר עם התמיכה" },
+            search_quota_exceeded: { message: "נגמרה מכסת החיפושים של הרעיונות, פנו לשירות שלנו לטיפול בתקלה" },
+            connection_error: { message: "בעיית חיבור לשרת. בדקו את החיבור לאינטרנט ונסו שוב" },
+            generic: { message: "משהו השתבש ביצירת הרעיונות. נסו שוב בעוד רגע" },
+          }
+          const c = config[error] ?? { message: error }
+          return (
+            <div className={`w-full rounded-xl border p-4 text-center mb-6 ${
+              isInfo ? "border-yellow-50 bg-yellow-95" : "border-border-neutral-default bg-bg-surface"
+            }`}>
+              <p className={`text-small ${isInfo ? "text-text-primary-default" : "text-button-destructive-default"} mb-1`}>
+                {c.message}
               </p>
-            ) : (
-              <p className="text-small text-button-destructive-default">{error}</p>
-            )}
-          </div>
-        )}
+              {c.action && (
+                <a
+                  href={c.action.href}
+                  {...(c.action.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+                  className="text-small-bold text-text-primary-default hover:underline"
+                >
+                  {c.action.label}
+                </a>
+              )}
+            </div>
+          )
+        })()}
 
         {loading && (
           <div className="grid grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
@@ -559,7 +683,7 @@ export default function IdeasPage() {
               <Lightbulb className="size-10 text-text-neutral-default mx-auto mb-3" />
               <p className="text-p text-text-neutral-default">עדיין אין רעיונות</p>
               <p className="text-small text-text-primary-disabled mt-1">
-                לחצי על ״זרוק לי עוד רעיונות״ כדי לייצר רעיונות מהשטח
+                לחצו על ״זרוק לי עוד רעיונות״ כדי לייצר רעיונות מהשטח
               </p>
             </div>
           </div>

@@ -3,19 +3,24 @@
 import { useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Image from "next/image"
-import { ArrowLeft, Paperclip, Plus, Trash2, Loader2, Link2 } from "lucide-react"
+import { ArrowLeft, Paperclip, Loader2, Link2 } from "lucide-react"
 import logoNew from "../../../images/logo-new.png"
 import onboardingHero from "../../../images/onboarding-hero.png"
 import { createClient } from "@/lib/supabase/client"
+import { parseCreatorInput } from "@/lib/creator-url"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
+import { CreatorsList } from "@/components/creators-list"
+import { ProductsList, type ProductEntry } from "@/components/products-list"
+import { toast } from "sonner"
 
 const STEPS = [
   { id: "connections", label: "חיבור חשבונות" },
-  { id: "business", label: "העסק שלך" },
+  { id: "business", label: "העסק שלכם" },
   { id: "audience", label: "קהל היעד" },
-  { id: "products", label: "המוצרים שלך" },
+  { id: "creators", label: "יוצרים מובילים" },
+  { id: "products", label: "המוצרים שלכם" },
 ]
 
 export default function OnboardingPage() {
@@ -37,10 +42,11 @@ export default function OnboardingPage() {
   const [audienceFile, setAudienceFile] = useState<File | null>(null)
   const audienceFileRef = useRef<HTMLInputElement>(null)
 
-  // Step 4 - Products
-  const [productsList, setProductsList] = useState<
-    { name: string; type: "front" | "premium" | "lead_magnet"; url: string }[]
-  >([])
+  // Step 4 - Top creators (user-specified inspiration sources).
+  const [creatorsList, setCreatorsList] = useState<{ url: string }[]>([{ url: "" }])
+
+  // Step 5 - Products
+  const [productsList, setProductsList] = useState<ProductEntry[]>([])
 
 
   const [saving, setSaving] = useState(false)
@@ -57,6 +63,9 @@ export default function OnboardingPage() {
       return !!audienceFile
     }
     if (currentStep === 3) {
+      return creatorsList.some((c) => c.url.trim())
+    }
+    if (currentStep === 4) {
       return productsList.length > 0 && productsList.every((p) => p.name.trim())
     }
     return false
@@ -111,6 +120,9 @@ export default function OnboardingPage() {
         if (resData.warning) {
           alert(resData.warning)
         }
+        if (styleFile) {
+          toast.success("הקובץ עלה בהצלחה")
+        }
         setCurrentStep(2)
       } else if (currentStep === 2) {
         // Audience step — parse audience file
@@ -131,7 +143,38 @@ export default function OnboardingPage() {
         if (resData.warning) {
           alert(resData.warning)
         }
+        if (audienceFile) {
+          toast.success("הקובץ עלה בהצלחה")
+        }
         setCurrentStep(3)
+      } else if (currentStep === 3) {
+        // Creators step — save user-specified top creators
+        const supabase = createClient()
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) {
+          const parsed = creatorsList
+            .map((c) => parseCreatorInput(c.url))
+            .filter((p): p is NonNullable<typeof p> => p !== null)
+          if (parsed.length > 0) {
+            // Replace any existing selections so the list is authoritative
+            await supabase.from("user_top_creators").delete().eq("user_id", user.id)
+            const payload = parsed.map((p) => ({
+              user_id: user.id,
+              url: p.url,
+              handle: p.handle,
+              platform: p.platform,
+            }))
+            const { error: insErr } = await supabase
+              .from("user_top_creators")
+              .insert(payload as never)
+            if (insErr) {
+              console.error("Failed to insert creators:", insErr)
+              alert(`שגיאה בשמירת היוצרים: ${insErr.message}`)
+              return
+            }
+          }
+        }
+        setCurrentStep(4)
       } else {
         // Products step (last) — save products + mark onboarding complete
         const supabase = createClient()
@@ -143,11 +186,11 @@ export default function OnboardingPage() {
             user_id: user.id,
             name: p.name,
             type: p.type,
-            landing_page_url: p.url || null,
+            landing_page_url: p.landingPageUrl || null,
           }))
           const { data: insertedProducts, error: insertError } = await supabase
             .from("products")
-            .insert(insertPayload)
+            .insert(insertPayload as never)
             .select("id")
 
           if (insertError) {
@@ -159,7 +202,7 @@ export default function OnboardingPage() {
           // Parse product pages in the background (don't block navigation)
           if (insertedProducts) {
             const productsWithUrls = productsList
-              .map((p, i) => ({ url: p.url, productId: (insertedProducts[i] as { id: string }).id }))
+              .map((p, i) => ({ url: p.landingPageUrl, productId: (insertedProducts[i] as { id: string }).id }))
               .filter((p) => p.url)
 
             for (const { url, productId } of productsWithUrls) {
@@ -175,7 +218,7 @@ export default function OnboardingPage() {
         await supabase.auth.updateUser({
           data: { onboarding_completed: true },
         })
-        router.push("/")
+        router.push("/welcome")
       }
     } finally {
       setSaving(false)
@@ -197,7 +240,7 @@ export default function OnboardingPage() {
         </div>
 
         {/* Progress wizard */}
-        <div className="w-full max-w-lg mb-10 flex items-center justify-center gap-3">
+        <div className="w-full max-w-2xl mb-10 flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
           {STEPS.map((step, i) => (
             <div key={step.id} className="flex items-center gap-3">
               <span
@@ -224,11 +267,11 @@ export default function OnboardingPage() {
           {currentStep === 0 && (
             <>
               <div className="text-center mb-2">
-                <h3 className="text-text-primary-default mb-2">
+                <h3 className="text-text-primary-default text-center leading-tight mb-2">
                   וולקאם לנקסט לבל של יצירת תוכן
                 </h3>
                 <p className="text-small text-text-neutral-default">
-                  חברי את חשבונות ה-AI שלך כדי להתחיל ליצור תוכן.
+                  חברו את חשבונות ה-AI שלכם כדי להתחיל ליצור תוכן.
                   <br />
                   אפשר לדלג ולחבר מאוחר יותר בהגדרות.
                 </p>
@@ -246,7 +289,7 @@ export default function OnboardingPage() {
                   onChange={(e) => setAnthropicKey(e.target.value)}
                 />
                 <p className="text-xs-body text-text-neutral-default">
-                  מצא את ה-API key שלך ב-{" "}
+                  מצאו את ה-API key שלכם ב-{" "}
                   <a
                     href="https://console.anthropic.com/settings/keys"
                     target="_blank"
@@ -265,12 +308,12 @@ export default function OnboardingPage() {
                 </label>
                 <Input
                   dir="ltr"
-                  placeholder="הכנס את ה-API key שלך"
+                  placeholder="הכניסו את ה-API key שלכם"
                   value={heygenKey}
                   onChange={(e) => setHeygenKey(e.target.value)}
                 />
                 <p className="text-xs-body text-text-neutral-default">
-                  מצא את ה-API key שלך ב-{" "}
+                  מצאו את ה-API key שלכם ב-{" "}
                   <a
                     href="https://app.heygen.com/settings?nav=API"
                     target="_blank"
@@ -288,13 +331,13 @@ export default function OnboardingPage() {
           {currentStep === 1 && (
             <>
               <div className="text-center mb-2">
-                <h3 className="text-text-primary-default mb-2">
-                  ספרי לנו על העסק שלך
+                <h3 className="text-text-primary-default text-center leading-tight mb-2">
+                  ספרו לנו על העסק שלכם
                 </h3>
                 <p className="text-small text-text-neutral-default">
-                  כדי לקחת את יצירת התוכן שלך לנקסט לבל
+                  כדי לקחת את יצירת התוכן שלכם לנקסט לבל
                   <br />
-                  אנחנו צריכים למלא כמה פרטים עליך ועל העסק שלך
+                  אנחנו צריכים למלא כמה פרטים עליכם ועל העסק שלכם
                 </p>
               </div>
 
@@ -313,7 +356,7 @@ export default function OnboardingPage() {
               />
 
               <Textarea
-                placeholder="כתוב על הניסיון והמומחיות שלך *"
+                placeholder="כתבו על הניסיון והמומחיות שלכם *"
                 value={expertise}
                 onChange={(e) => setExpertise(e.target.value)}
                 required
@@ -326,7 +369,7 @@ export default function OnboardingPage() {
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <Input
-                    placeholder="העלה קובץ סגנון כתיבה *"
+                    placeholder="העלו קובץ סגנון כתיבה *"
                     value={styleFile?.name ?? ""}
                     readOnly
                     className="cursor-pointer pe-10 pointer-events-none"
@@ -336,13 +379,18 @@ export default function OnboardingPage() {
                     ref={fileInputRef}
                     type="file"
                     className="hidden"
-                    accept=".pdf,.docx,.doc,.txt,.md,.rtf"
+                    accept=".docx"
                     onChange={(e) => setStyleFile(e.target.files?.[0] ?? null)}
                   />
                 </div>
                 <p className="text-xs-body text-text-neutral-default text-start">
-                  במידה ואין לך קובץ כזה{" "}
-                  <a href="#" className="text-text-primary-default font-semibold hover:underline">
+                  במידה ואין לכם קובץ כזה{" "}
+                  <a
+                    href="https://gemini.google.com/gem/dc85c1254c9e?usp=sharing"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-text-primary-default font-semibold hover:underline"
+                  >
                     יוצרים אותו כאן
                   </a>
                 </p>
@@ -354,8 +402,8 @@ export default function OnboardingPage() {
           {currentStep === 2 && (
             <>
               <div className="text-center mb-2">
-                <h3 className="text-text-primary-default mb-2">
-                  ספרי לנו על קהל היעד שלך
+                <h3 className="text-text-primary-default text-center leading-tight mb-2">
+                  ספרו לנו על קהל היעד שלכם
                 </h3>
                 <p className="text-small text-text-neutral-default">
                   ככל שנבין יותר את הקהל, כך התוכן ידבר אליו טוב יותר
@@ -378,13 +426,18 @@ export default function OnboardingPage() {
                     ref={audienceFileRef}
                     type="file"
                     className="hidden"
-                    accept=".pdf,.docx,.doc,.txt,.md,.rtf"
+                    accept=".docx"
                     onChange={(e) => setAudienceFile(e.target.files?.[0] ?? null)}
                   />
                 </div>
                 <p className="text-xs-body text-text-neutral-default text-start">
-                  אם אין לך ניתוח קהל יעד{" "}
-                  <a href="#" className="text-text-primary-default font-semibold hover:underline">
+                  אם אין לכם ניתוח קהל יעד{" "}
+                  <a
+                    href="https://gemini.google.com/gem/e4e3d302fdd7?usp=sharing"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-text-primary-default font-semibold hover:underline"
+                  >
                     יוצרים את זה כאן
                   </a>
                 </p>
@@ -392,97 +445,47 @@ export default function OnboardingPage() {
             </>
           )}
 
-          {/* Step 4 - Products */}
+          {/* Step 4 - Top creators */}
           {currentStep === 3 && (
             <>
               <div className="text-center mb-2">
-                <h3 className="text-text-primary-default mb-2">
-                  המוצרים שלך
+                <h3 className="text-text-primary-default text-center leading-tight mb-2">
+                  יוצרים מובילים שמעניינים אתכם
                 </h3>
                 <p className="text-small text-text-neutral-default">
-                  מה שמות המוצרים שיש לך בעסק? מאיזה סוג הם?
+                  מאילו יוצרים תרצו לקבל השראה לתכנים?
+                  <br />
+                  אנחנו נחפש את הפוסטים הויראליים שלהם ונביא מהם רעיונות.
                 </p>
               </div>
 
-              {/* Product list */}
-              <div className="flex flex-col gap-3">
-                {productsList.map((product, i) => (
-                  <div
-                    key={i}
-                    className="group flex flex-col gap-2 rounded-2xl bg-bg-surface px-3 py-3"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Input
-                        placeholder="שם המוצר *"
-                        value={product.name}
-                        onChange={(e) => {
-                          const updated = [...productsList]
-                          updated[i].name = e.target.value
-                          setProductsList(updated)
-                        }}
-                        required
-                        className="flex-1 border-none bg-transparent shadow-none"
-                      />
+              <CreatorsList
+                creators={creatorsList}
+                onChange={setCreatorsList}
+                showRequiredAsterisk
+              />
+            </>
+          )}
 
-                      <select
-                        value={product.type}
-                        onChange={(e) => {
-                          const updated = [...productsList]
-                          updated[i].type = e.target.value as "front" | "premium" | "lead_magnet"
-                          setProductsList(updated)
-                        }}
-                        className="h-10 rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 px-3 text-small text-text-primary-default appearance-none cursor-pointer pe-8"
-                        style={{
-                          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23808080' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
-                          backgroundRepeat: "no-repeat",
-                          backgroundPosition: "left 0.5rem center",
-                        }}
-                      >
-                        <option value="front">פרונט</option>
-                        <option value="premium">פרימיום</option>
-                        <option value="lead_magnet">מגנט לידים</option>
-                      </select>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setProductsList(productsList.filter((_, j) => j !== i))
-                        }
-                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1"
-                      >
-                        <Trash2 className="size-4 text-text-neutral-default hover:text-button-destructive-default" />
-                      </button>
-                    </div>
-
-                    <Input
-                      dir="ltr"
-                      placeholder="לינק לדף המוצר (אופציונלי)"
-                      value={product.url}
-                      onChange={(e) => {
-                        const updated = [...productsList]
-                        updated[i].url = e.target.value
-                        setProductsList(updated)
-                      }}
-                      className="border-none bg-white dark:bg-gray-10 shadow-none text-sm"
-                    />
-                  </div>
-                ))}
+          {/* Step 5 - Products */}
+          {currentStep === 4 && (
+            <>
+              <div className="text-center mb-2">
+                <h3 className="text-text-primary-default text-center leading-tight mb-2">
+                  המוצרים שלכם
+                </h3>
+                <p className="text-small text-text-neutral-default">
+                  איזה מוצרים אתם מציעים כיום? הדביקו את שם המוצר ולינק לדף מכירה.
+                  <br />
+                  זה יעזור לנו לדייק עבורכם את ההוקים.
+                </p>
               </div>
 
-              {/* Add product button */}
-              <Button
-                variant="outline"
-                onClick={() =>
-                  setProductsList([
-                    ...productsList,
-                    { name: "", type: "front", url: "" },
-                  ])
-                }
-                className="w-full h-12 rounded-2xl border-border-neutral-default text-text-neutral-default gap-2"
-              >
-                <Plus className="size-4" />
-                הוספת מוצר חדש
-              </Button>
+              <ProductsList
+                products={productsList}
+                onChange={setProductsList}
+                requireName
+              />
             </>
           )}
 

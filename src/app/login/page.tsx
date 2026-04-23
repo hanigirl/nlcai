@@ -36,21 +36,21 @@ function validateEmail(email: string): boolean {
 
 function getHebrewError(errorMessage: string): string {
   if (errorMessage.includes("Invalid login credentials")) {
-    return "המייל או הסיסמא שהזנת לא נכונים";
+    return "המייל או הסיסמא שהזנתם לא נכונים";
   }
   if (errorMessage.includes("Email not confirmed")) {
-    return "המייל עדיין לא אומת. בדקי את תיבת המייל שלך";
+    return "המייל עדיין לא אומת. בדקו את תיבת המייל שלכם";
   }
   if (errorMessage.includes("User already registered")) {
-    return "כבר קיים חשבון עם המייל הזה. נסי להתחבר";
+    return "כבר קיים חשבון עם המייל הזה. נסו להתחבר";
   }
   if (errorMessage.includes("Email rate limit exceeded") || errorMessage.includes("rate limit")) {
-    return "יותר מדי ניסיונות. נסי שוב בעוד כמה דקות";
+    return "יותר מדי ניסיונות. נסו שוב בעוד כמה דקות";
   }
   if (errorMessage.includes("Password should be at least")) {
     return "הסיסמא צריכה להכיל לפחות 6 תווים";
   }
-  return "משהו השתבש. נסי שוב";
+  return "משהו השתבש. נסו שוב";
 }
 
 export default function LoginPage() {
@@ -87,7 +87,7 @@ function LoginPageInner() {
     setIsSignUp(false);
     if (err === "expired") {
       setMessage({
-        text: "הקישור פג תוקף. הזיני את המייל שלך ונשלח מייל אימות חדש.",
+        text: "הקישור פג תוקף. הזינו את המייל שלכם ונשלח מייל אימות חדש.",
         type: "error",
         action: {
           label: "לשלוח מייל אימות חדש",
@@ -96,7 +96,7 @@ function LoginPageInner() {
       });
     } else if (err === "used") {
       setMessage({
-        text: "הקישור כבר שומש. אם כבר אימתת את המייל — נסי להתחבר. אחרת, נשלח מייל חדש.",
+        text: "הקישור כבר שומש. אם כבר אימתתם את המייל — נסו להתחבר. אחרת, נשלח מייל חדש.",
         type: "error",
         action: {
           label: "לשלוח מייל אימות חדש",
@@ -105,7 +105,7 @@ function LoginPageInner() {
       });
     } else {
       setMessage({
-        text: "הקישור לא תקף. נסי להתחבר, או לבקש מייל אימות חדש.",
+        text: "הקישור לא תקף. נסו להתחבר, או לבקש מייל אימות חדש.",
         type: "error",
         action: {
           label: "לשלוח מייל אימות חדש",
@@ -162,46 +162,56 @@ function LoginPageInner() {
 
       // Supabase quirk on existing emails: signUp for BOTH confirmed and unconfirmed
       // existing users returns success with data.user but identities=[] (obfuscated for
-      // security). We can't distinguish confirmed from unconfirmed from the signUp response
-      // — confirmed_at is always null in the spoofed payload.
+      // anti-enumeration). We can't tell confirmed from unconfirmed from the signUp
+      // response — confirmed_at is always null in the spoofed payload.
       //
-      // Strategy: whenever we detect "exists" (identities=[]), try resend.
-      //  - If user is UNCONFIRMED → resend succeeds → email goes out.
-      //  - If user is CONFIRMED → resend returns error like "already confirmed" / "already registered"
-      //     → we route them to login.
+      // We also can't use resend as an oracle: for a confirmed email, recent Supabase
+      // returns success (no error) to avoid leaking enumeration info, so resend-succeeded
+      // does NOT imply the user was unconfirmed.
+      //
+      // Reliable probe: signInWithPassword. Its errors are not obfuscated:
+      //   - success                       → confirmed + correct password
+      //   - "Email not confirmed"         → unconfirmed → resend confirmation
+      //   - "Invalid login credentials"   → confirmed + wrong password
+      //
+      // We do NOT auto-sign-in on a password match. The user came to *register*
+      // with a (possibly new) first/last name — silently handing them an existing
+      // account under a different identity is wrong. For any confirmed-account case
+      // we always route them to the login screen with a clear message.
       const userExistsAlready = !error && data?.user && data.user.identities && data.user.identities.length === 0;
 
       if (userExistsAlready) {
-        const { error: resendErr } = await supabase.auth.resend({
-          type: "signup",
-          email,
-          options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
-        });
-        if (!resendErr) {
-          // Resend succeeded — user was unconfirmed, email is on its way.
-          setMessage({
-            text: "המייל הזה כבר נרשם אצלנו אך לא אומת. שלחנו מייל אימות חדש — בדקי את התיבה (וגם בספאם).",
-            type: "success",
+        const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
+        // If the password happened to match, Supabase created a session we don't want.
+        if (!signInErr) await supabase.auth.signOut();
+
+        if (signInErr?.message.includes("Email not confirmed")) {
+          const { error: resendErr } = await supabase.auth.resend({
+            type: "signup",
+            email,
+            options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
           });
-        } else {
-          const rmsg = resendErr.message.toLowerCase();
-          const isAlreadyConfirmed = rmsg.includes("already") || rmsg.includes("confirmed") || rmsg.includes("registered");
-          if (isAlreadyConfirmed) {
-            // User is fully registered — send them to login.
-            setIsSignUp(false);
-            setPassword("");
-            setMessage({
-              text: "המייל הזה כבר רשום ומאומת במערכת. נסי להתחבר עם הסיסמא שלך.",
-              type: "error",
-              action: {
-                label: "שכחתי סיסמא",
-                onClick: () => handleResetPassword(emailRef.current),
-              },
-            });
-          } else {
-            // Rate-limit or other — show the error.
+          if (resendErr) {
             setMessage({ text: getHebrewError(resendErr.message), type: "error" });
+          } else {
+            setMessage({
+              text: "המייל הזה כבר נרשם אצלנו אך לא אומת. שלחנו מייל אימות חדש — בדקו את התיבה (וגם בספאם).",
+              type: "success",
+            });
           }
+        } else {
+          // Either correct-password or wrong-password for a confirmed account —
+          // both mean "the email is already registered". Route to login.
+          setIsSignUp(false);
+          setPassword("");
+          setMessage({
+            text: "המייל הזה כבר רשום במערכת. נסו להתחבר עם הסיסמא שלכם.",
+            type: "error",
+            action: {
+              label: "שכחתי סיסמא",
+              onClick: () => handleResetPassword(emailRef.current),
+            },
+          });
         }
       } else if (error) {
         // Fallback — rare cases where Supabase returns a proper error instead of the "identities=[]" shape.
@@ -209,7 +219,7 @@ function LoginPageInner() {
           setIsSignUp(false);
           setPassword("");
           setMessage({
-            text: "המייל הזה כבר רשום במערכת. נסי להתחבר עם הסיסמא שלך.",
+            text: "המייל הזה כבר רשום במערכת. נסו להתחבר עם הסיסמא שלכם.",
             type: "error",
             action: {
               label: "שכחתי סיסמא",
@@ -221,7 +231,7 @@ function LoginPageInner() {
         }
       } else {
         setMessage({
-          text: "שלחנו לך מייל אימות. בדקי את תיבת המייל שלך (גם בספאם) כדי להשלים את ההרשמה",
+          text: "שלחנו לכם מייל אימות. בדקו את תיבת המייל שלכם (גם בספאם) כדי להשלים את ההרשמה",
           type: "success",
         });
       }
@@ -233,7 +243,7 @@ function LoginPageInner() {
       if (error) {
         if (error.message.includes("Email not confirmed")) {
           setMessage({
-            text: "המייל עדיין לא אומת. בדקי את תיבת המייל שלך.",
+            text: "המייל עדיין לא אומת. בדקו את תיבת המייל שלכם.",
             type: "error",
             action: {
               label: "לשלוח מייל אימות חדש",
@@ -242,7 +252,7 @@ function LoginPageInner() {
           });
         } else if (error.message.includes("Invalid login credentials")) {
           setMessage({
-            text: "המייל או הסיסמא שהזנת לא נכונים.",
+            text: "המייל או הסיסמא שהזנתם לא נכונים.",
             type: "error",
             action: {
               label: "שכחתי סיסמא",
@@ -262,7 +272,7 @@ function LoginPageInner() {
 
   async function handleResendConfirmation(targetEmail: string) {
     if (!targetEmail || !validateEmail(targetEmail)) {
-      setMessage({ text: "הזיני כתובת מייל תקינה ואז לחצי לשליחה מחדש", type: "error" });
+      setMessage({ text: "הזינו כתובת מייל תקינה ואז לחצו לשליחה מחדש", type: "error" });
       return;
     }
     setLoading(true);
@@ -276,7 +286,7 @@ function LoginPageInner() {
       setMessage({ text: getHebrewError(error.message), type: "error" });
     } else {
       setMessage({
-        text: "שלחנו מייל אימות חדש. בדקי את תיבת המייל שלך (גם בספאם).",
+        text: "שלחנו מייל אימות חדש. בדקו את תיבת המייל שלכם (גם בספאם).",
         type: "success",
       });
     }
@@ -284,7 +294,7 @@ function LoginPageInner() {
 
   async function handleResetPassword(targetEmail: string) {
     if (!targetEmail || !validateEmail(targetEmail)) {
-      setMessage({ text: "הזיני את כתובת המייל שלך ואז לחצי על 'שכחתי סיסמא'", type: "error" });
+      setMessage({ text: "הזינו את כתובת המייל שלכם ואז לחצו על 'שכחתי סיסמא'", type: "error" });
       return;
     }
     setLoading(true);
@@ -296,7 +306,7 @@ function LoginPageInner() {
       setMessage({ text: getHebrewError(error.message), type: "error" });
     } else {
       setMessage({
-        text: "שלחנו לך מייל לאיפוס סיסמא. בדקי את תיבת המייל שלך (גם בספאם).",
+        text: "שלחנו לכם מייל לאיפוס סיסמא. בדקו את תיבת המייל שלכם (גם בספאם).",
         type: "success",
       });
     }
@@ -314,7 +324,7 @@ function LoginPageInner() {
       },
     });
     if (error) {
-      setMessage({ text: "ההתחברות עם Google נכשלה. נסי שוב", type: "error" });
+      setMessage({ text: "ההתחברות עם Google נכשלה. נסו שוב", type: "error" });
     }
   }
 
@@ -336,7 +346,7 @@ function LoginPageInner() {
         <Card className="w-full max-w-md border-border-neutral-default rounded-3xl">
           <CardHeader className="items-center pb-2">
             <CardTitle className="text-2xl text-text-primary-default text-center">
-              {isSignUp ? "וולקאם לנקסט לבל של התכנים שלך" : "טוב לראות אותך שוב..."}
+              {isSignUp ? "וולקאם לנקסט לבל של התכנים שלכם" : "טוב לראות אתכם שוב..."}
             </CardTitle>
           </CardHeader>
 
@@ -477,7 +487,7 @@ function LoginPageInner() {
 
             {/* Toggle sign up / sign in */}
             <p className="mt-6 text-center text-small text-text-neutral-default">
-              {isSignUp ? "כבר יש לך חשבון?" : "אין לך חשבון?"}{" "}
+              {isSignUp ? "כבר יש לכם חשבון?" : "אין לכם חשבון?"}{" "}
               <button
                 onClick={() => {
                   setIsSignUp(!isSignUp);

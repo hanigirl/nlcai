@@ -134,6 +134,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: postError?.message ?? "Failed to save" }, { status: 500 })
     }
 
+    // Mark the source hook as used
+    if (hookText) {
+      await supabase
+        .from("hooks")
+        .update({ is_used: true } as never)
+        .eq("user_id", user.id)
+        .eq("hook_text", hookText)
+    }
+
     // Save format variants if provided
     if (formatPosts && Object.keys(formatPosts).length > 0) {
       const variants = Object.entries(formatPosts)

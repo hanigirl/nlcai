@@ -7,16 +7,17 @@ import { AppShell } from "@/components/app-shell"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ConfirmModal } from "@/components/confirm-modal"
 import { HookCard } from "@/components/hook-card"
 import { GeneratingStatus } from "@/components/generating-status"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
-import { useAutoAnimate } from "@formkit/auto-animate/react"
 
 interface HookItem {
   id: string
   hook_text: string
   is_used: boolean
+  is_favorite: boolean
   created_at: string
 }
 
@@ -89,15 +90,15 @@ export default function HooksPage() {
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [skeletonCount, setSkeletonCount] = useState(0)
+  const [sessionHookIds, setSessionHookIds] = useState<string[]>([])
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [products, setProducts] = useState<{ id: string; name: string }[]>([])
   const [filter, setFilter] = useState("all")
   const [showProductDropdown, setShowProductDropdown] = useState(false)
   const [showFavorites, setShowFavorites] = useState(false)
-  const [favorites, setFavorites] = useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = useState("")
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
-  const [sessionGridRef] = useAutoAnimate({ duration: 500, easing: "ease-out" })
 
   const loadHooks = async () => {
     const supabase = createClient()
@@ -107,7 +108,7 @@ export default function HooksPage() {
     const [{ data: hooksData }, { data: prodsData }] = await Promise.all([
       supabase
         .from("hooks")
-        .select("id, hook_text, is_used, created_at")
+        .select("id, hook_text, is_used, is_favorite, created_at")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false }),
       supabase
@@ -123,10 +124,6 @@ export default function HooksPage() {
 
   useEffect(() => {
     loadHooks()
-    try {
-      const favs = localStorage.getItem("hookFavorites")
-      if (favs) setFavorites(new Set(JSON.parse(favs)))
-    } catch { /* ignore */ }
   }, [])
 
   // Close dropdown on outside click
@@ -141,42 +138,66 @@ export default function HooksPage() {
     return () => document.removeEventListener("click", handler)
   }, [showProductDropdown])
 
-  const toggleFavorite = (id: string) => {
-    setFavorites((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      localStorage.setItem("hookFavorites", JSON.stringify([...next]))
-      return next
-    })
+  const toggleFavorite = async (id: string) => {
+    const current = hooks.find((h) => h.id === id)
+    if (!current) return
+    const next = !current.is_favorite
+    setHooks((prev) => prev.map((h) => h.id === id ? { ...h, is_favorite: next } : h))
+    const supabase = createClient()
+    const { error } = await supabase
+      .from("hooks")
+      .update({ is_favorite: next } as never)
+      .eq("id", id)
+    if (error) {
+      setHooks((prev) => prev.map((h) => h.id === id ? { ...h, is_favorite: !next } : h))
+      toast.error("שגיאה בשמירת המועדף")
+    }
   }
 
   const handleGenerateMore = async () => {
     setGenerating(true)
     setSkeletonCount(20)
-    let newCount = 0
+    setSessionHookIds([])
 
-    await streamHooks(
-      (hook) => {
-        setHooks((prev) => [hook, ...prev])
-        newCount++
-        setSkeletonCount(Math.max(0, 20 - newCount))
-      },
-      () => {
-        setSkeletonCount(0)
-        setGenerating(false)
-        localStorage.removeItem("homepageHooks_v5")
-      },
-      (msg) => {
-        if (msg === "audience_missing") {
-          toast.error("לא הצלחנו לקרוא את ניתוח קהל היעד. יש לעדכן את הקובץ בהגדרות.")
-        } else {
-          toast.error(msg || "שגיאה ביצירת הוקים")
-        }
-        setSkeletonCount(0)
-        setGenerating(false)
-      },
-    )
+    // ⚠️ DUMMY MODE — for testing the streaming/animation UI without hitting the API
+    const DUMMY_HOOKS = [
+      "3 דברים שאף אחד לא סיפר לכם על חוסר זמן בעבודה",
+      "אם אתם עדיין מתכננים את היום ביומן רגיל, אתם מפסידים שעות",
+      "הסיבה האמיתית שהפוסטים שלכם לא מקבלים לייקים",
+      "תפסיקו להגיב לכל מייל ברגע שהוא נכנס",
+      "X טעויות שהורגות לכם את הקריירה ב-Figma",
+      "איך להגיע ל-1000 עוקבים בלי לפרסם כל יום",
+      "הקובץ הזה ב-Notion שינה לי את כל היום",
+      "אני בן 35 ואני לא מתבייש להגיד שאני לא מבין AI",
+      "ב-60 שניות אני אלמד אתכם פרומפט אחד שמשנה הכל",
+      "תפסיקו להשתמש בChatGPT בשביל זה",
+      "פשוט גיליתי כלי שיחסוך לכם 10 שעות בשבוע",
+      "אם אתם מקדמים מוצר ולא עושים את זה — אין סיכוי שתמכרו",
+      "כל מה שצריך כדי להיות מעצב מעולה זה להתמקד ב-3 דברים בלבד",
+      "אמרו לכם 'תהיו עצמכם'. זה שקר",
+      "כסף יכול לקנות לכם זמן, אבל לא יכול לקנות לכם תשוקה",
+      "ניסיתי לעבוד 4 שעות ביום במשך חודש — הנה מה שקרה",
+      "יום בחיים של מעצב UX — מהדורת חברת סטארטאפ",
+      "עברתי מהזמנה אחת בחודש ל-15 הזמנות, עם שיטה אחת",
+      "ה-3 שינויים שעשיתי בתיק העבודות שהביאו לי לקוחות פרימיום",
+      "אם אתם רוצים שיוכרו אתכם בתעשייה, פשוט תעתיקו את זה",
+    ]
+
+    for (let i = 0; i < DUMMY_HOOKS.length; i++) {
+      await new Promise((r) => setTimeout(r, 700))
+      const fakeHook = {
+        id: `dummy-${Date.now()}-${i}`,
+        hook_text: DUMMY_HOOKS[i],
+        is_used: false,
+        is_favorite: false,
+        created_at: new Date().toISOString(),
+      }
+      setHooks((prev) => [fakeHook, ...prev])
+      setSessionHookIds((prev) => [...prev, fakeHook.id])
+      setSkeletonCount(Math.max(0, 20 - (i + 1)))
+    }
+    setSkeletonCount(0)
+    setGenerating(false)
   }
 
   const handleDelete = async (id: string) => {
@@ -187,7 +208,7 @@ export default function HooksPage() {
     setTimeout(() => {
       setHooks((prev) => prev.filter((h) => h.id !== id))
       setDeletingId(null)
-      toast("ההוק נמחק בהצלחה")
+      toast.success("ההוק נמחק בהצלחה")
     }, 450)
   }
 
@@ -207,14 +228,14 @@ export default function HooksPage() {
       }
     }
     setHooks((prev) => prev.map((h) => h.id === id ? { ...h, hook_text: newText } : h))
-    toast("ההוק עודכן בהצלחה")
+    toast.success("ההוק עודכן בהצלחה")
   }
 
   const matchesProduct = (hook: HookItem, productName: string) =>
     hook.hook_text.toLowerCase().includes(productName.toLowerCase())
 
   const filtered = hooks.filter((hook) => {
-    if (showFavorites) return favorites.has(hook.id)
+    if (showFavorites) return hook.is_favorite
     if (filter === "general") return !products.some((p) => matchesProduct(hook, p.name))
     if (filter !== "all") return matchesProduct(hook, filter)
     if (searchQuery.trim()) {
@@ -229,15 +250,37 @@ export default function HooksPage() {
     return d.toLocaleDateString("he-IL", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, ".")
   }
 
-  // Group by date
+  const todayDateLabel = formatDate(new Date().toISOString())
+
+  // Group by date — hooks within each group sorted newest first,
+  // groups themselves keyed by an ISO day so we can sort chronologically.
   const groupedByDate = (() => {
-    const groups: Record<string, HookItem[]> = {}
-    filtered.forEach((hook) => {
-      const date = formatDate(hook.created_at)
-      if (!groups[date]) groups[date] = []
-      groups[date].push(hook)
-    })
-    return groups
+    const sorted = [...filtered].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    )
+    const groups = new Map<string, HookItem[]>()
+    // Ensure today's section appears (with skeletons) even if no hooks exist yet
+    if (skeletonCount > 0) {
+      const t = new Date()
+      const todayKey = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`
+      groups.set(todayKey, [])
+    }
+    for (const hook of sorted) {
+      const d = new Date(hook.created_at)
+      const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+      const existing = groups.get(dayKey)
+      if (existing) existing.push(hook)
+      else groups.set(dayKey, [hook])
+    }
+    // Map iteration preserves insertion order; since `sorted` is desc by time,
+    // groups are already inserted newest day first.
+    const result: Record<string, HookItem[]> = {}
+    for (const [dayKey, items] of groups) {
+      const label = items.length > 0 ? formatDate(items[0].created_at) : todayDateLabel
+      result[label] = items
+      void dayKey
+    }
+    return result
   })()
 
   return (
@@ -378,50 +421,62 @@ export default function HooksPage() {
               <Anchor className="size-10 text-text-neutral-default mx-auto mb-3" />
               <p className="text-p text-text-neutral-default">עדיין אין הוקים</p>
               <p className="text-small text-text-primary-disabled mt-1">
-                לחצי על ״ייצר לי עוד הוקים״ או צרי פוסט מהעמוד הראשי
+                לחצו על ״ייצר לי עוד הוקים״ או צרו פוסט מהעמוד הראשי
               </p>
             </div>
           </div>
         )}
 
-        {/* Skeletons while generating — always on top */}
-        {skeletonCount > 0 && (
-          <>
-            {generating && <GeneratingStatus className="mb-2" />}
-            <div className={`mb-8 ${viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" : "flex flex-col gap-2"}`}>
-              {Array.from({ length: skeletonCount }).map((_, i) => (
-                <HookSkeleton key={`gen-skel-${i}`} />
-              ))}
-            </div>
-          </>
-        )}
-
         {/* Grouped by date */}
         {!loading && Object.keys(groupedByDate).length > 0 && (
           <div className="flex flex-col gap-8">
-            {Object.entries(groupedByDate).map(([date, items]) => (
-              <section key={date}>
-                <p className="text-small text-text-neutral-default mb-4">{date}</p>
-                <div ref={sessionGridRef} className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" : "flex flex-col gap-2"}>
-                  {items.map((hook) => (
-                    <div
-                      key={hook.id}
-                      className={`transition-all duration-400 ease-out ${deletingId === hook.id ? "opacity-0 translate-y-6 scale-95" : ""}`}
-                    >
-                      <HookCard
-                        hookText={hook.hook_text}
-                        onNavigate={() => router.push(`/project?hook=${encodeURIComponent(hook.hook_text)}`)}
-                        onEdit={!hook.is_used ? (newText) => handleEdit(hook.id, newText) : undefined}
-                        onDelete={() => handleDelete(hook.id)}
-                        onToggleFavorite={() => toggleFavorite(hook.id)}
-                        isFavorite={favorites.has(hook.id)}
-                        used={hook.is_used}
-                      />
-                    </div>
-                  ))}
+            {Object.entries(groupedByDate).map(([date, items]) => {
+              const isToday = date === todayDateLabel
+              const sessionItems = isToday
+                ? sessionHookIds.map((id) => items.find((h) => h.id === id)).filter(Boolean) as HookItem[]
+                : []
+              const sessionIdSet = new Set(sessionHookIds)
+              const restItems = isToday ? items.filter((h) => !sessionIdSet.has(h.id)) : items
+              const renderHookCard = (hook: HookItem, opts?: { staggerIndex?: number }) => (
+                <div
+                  key={hook.id}
+                  style={opts?.staggerIndex !== undefined ? { animationDelay: `${Math.min(opts.staggerIndex * 25, 500)}ms` } : undefined}
+                  className={`transition-all duration-400 ease-out animate-hook-bump ${deletingId === hook.id ? "opacity-0 translate-y-6 scale-95" : ""}`}
+                >
+                  <HookCard
+                    hookText={hook.hook_text}
+                    onNavigate={() => router.push(`/project?hook=${encodeURIComponent(hook.hook_text)}`)}
+                    onEdit={!hook.is_used ? (newText) => handleEdit(hook.id, newText) : undefined}
+                    onDelete={() => setPendingDeleteId(hook.id)}
+                    onToggleFavorite={() => toggleFavorite(hook.id)}
+                    isFavorite={hook.is_favorite}
+                    used={hook.is_used}
+                  />
                 </div>
-              </section>
-            ))}
+              )
+              return (
+                <section key={date}>
+                  <div className="flex items-center gap-3 mb-4">
+                    <p className="text-small text-text-neutral-default">{date}</p>
+                    {isToday && generating && <GeneratingStatus />}
+                  </div>
+                  <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" : "flex flex-col gap-2"}>
+                    {/* Per-slot rendering: each slot is either a hook (once arrived) or a skeleton.
+                        The slot index is stable, so the skeleton at slot N becomes the hook at slot N
+                        without other slots shifting positions. */}
+                    {(isToday && (sessionItems.length > 0 || skeletonCount > 0)) && (
+                      Array.from({ length: sessionItems.length + skeletonCount }).map((_, i) => {
+                        const hook = sessionItems[i]
+                        if (hook) return renderHookCard(hook)
+                        return <HookSkeleton key={`gen-skel-${i}`} />
+                      })
+                    )}
+                    {/* Other today hooks (or all hooks for non-today dates) */}
+                    {restItems.map((hook, idx) => renderHookCard(hook, { staggerIndex: idx }))}
+                  </div>
+                </section>
+              )
+            })}
           </div>
         )}
 
@@ -432,6 +487,17 @@ export default function HooksPage() {
           </div>
         )}
       </div>
+
+      {/* Delete confirmation dialog */}
+      <ConfirmModal
+        open={!!pendingDeleteId}
+        onOpenChange={(open) => { if (!open) setPendingDeleteId(null) }}
+        title="בטוח למחוק את ההוק?"
+        description="הפעולה הזו תמחק את ההוק מהמחסן"
+        confirmLabel="כן, תמחק"
+        cancelLabel="לא, חזור למחסן"
+        onConfirm={() => { if (pendingDeleteId) handleDelete(pendingDeleteId) }}
+      />
     </AppShell>
   )
 }

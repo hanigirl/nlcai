@@ -32,6 +32,8 @@ export default function RootLayout({
           <Toaster
             position="bottom-center"
             dir="rtl"
+            expand
+            gap={10}
             toastOptions={{
               style: {
                 background: "#1a1a1a",
@@ -40,6 +42,7 @@ export default function RootLayout({
                 borderRadius: "12px",
                 fontSize: "14px",
               },
+              className: "silky-toast",
             }}
           />
         </ThemeProvider>

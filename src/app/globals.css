@@ -65,6 +65,18 @@
   --color-red-60: #F43E3E;
   --color-red-50: #F20D0D;
 
+  /* Primitive tokens: Green */
+  --color-green-95: #E8F5E9;
+  --color-green-90: #C8E6C9;
+  --color-green-80: #A5D6A7;
+  --color-green-70: #81C784;
+  --color-green-60: #66BB6A;
+  --color-green-50: #4CAF50;
+  --color-green-40: #43A047;
+  --color-green-30: #388E3C;
+  --color-green-20: #2E7D32;
+  --color-green-10: #1B5E20;
+
   /* Primitive tokens: Gray */
   --color-gray-98: #FAFAFA;
   --color-gray-95: #F2F2F2;
@@ -99,6 +111,9 @@
   --color-bg-surface-primary-default-80: var(--sem-bg-surface-primary-80);
   --color-bg-surface-hover: var(--sem-bg-surface-hover);
 
+  --color-bg-surface-success-default: var(--sem-bg-surface-success);
+  --color-text-success-default: var(--sem-text-success);
+
   --color-border-neutral-default: var(--sem-border-neutral);
 }
 
@@ -123,6 +138,8 @@
   --sem-bg-surface-primary: #FFF9E5;
   --sem-bg-surface-primary-80: #FFE799;
   --sem-bg-surface-hover: #FFF3CC;
+  --sem-bg-surface-success: #2E7D32;
+  --sem-text-success: #FFFFFF;
   --sem-border-neutral: #E6E6E6;
 
   --radius: 0.625rem;
@@ -294,5 +311,51 @@
     opacity: 1;
     transform: rotate(0deg) scale(1) translateY(0);
   }
+}
+
+.silky-toast[data-sonner-toast] {
+  transition:
+    transform 550ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 450ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 400ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 200ms !important;
+}
+
+[data-sonner-toast][data-type="success"] {
+  background: var(--color-bg-surface-success-default) !important;
+  color: var(--color-text-success-default) !important;
+}
+
+[data-sonner-toast][data-type="success"] [data-icon] {
+  color: var(--color-text-success-default) !important;
+}
+
+@keyframes hook-bump-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.55);
+  }
+  20% {
+    opacity: 1;
+    transform: scale(1.09);
+  }
+  45% {
+    transform: scale(0.965);
+  }
+  68% {
+    transform: scale(1.022);
+  }
+  85% {
+    transform: scale(0.994);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@utility animate-hook-bump {
+  animation: hook-bump-in 680ms cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+  transform-origin: center;
+  will-change: transform, opacity;
 }
 

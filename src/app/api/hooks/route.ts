@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { buildHookGeneratorPrompt, parseHooks } from "@/lib/agents/hook-generator"
+import { polishHookForHebrew } from "@/lib/agents/hook-hebrew-polish"
 import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
@@ -136,7 +137,15 @@ export async function POST(req: NextRequest) {
     }
 
     const textBlock = message.content.find((b) => b.type === "text")
-    const hooks = parseHooks(textBlock?.text ?? "", count)
+    const rawHooks = parseHooks(textBlock?.text ?? "", count)
+
+    // Hebrew polish pass — rewrite anything that reads like a translation
+    // from English into natural Israeli speech. Runs in parallel across the
+    // batch on Haiku (fast + cheap for a narrow editing task). Each item
+    // falls back to its unpolished form on error.
+    const hooks = await Promise.all(
+      rawHooks.map((h) => polishHookForHebrew(client, h, FALLBACK_MODEL))
+    )
 
     return NextResponse.json({ hooks, model_fallback: modelFallback })
   } catch (error) {

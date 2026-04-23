@@ -79,11 +79,36 @@ export interface Hook {
   hook_text: string;
   is_selected: boolean;
   is_used: boolean;
+  is_favorite: boolean;
   display_order: number;
   status: GenerationStatus;
   created_at: string;
   updated_at: string;
 }
+
+export interface IdeaFavorite {
+  id: string;
+  user_id: string;
+  idea_text: string;
+  idea_data: Record<string, unknown>;
+  created_at: string;
+}
+
+export type IdeaFavoriteInsert = Pick<IdeaFavorite, "user_id" | "idea_text"> &
+  Partial<Pick<IdeaFavorite, "idea_data">>;
+
+export type CreatorPlatform = "instagram" | "youtube" | "tiktok" | "linkedin" | "other";
+
+export interface UserTopCreator {
+  id: string;
+  user_id: string;
+  url: string;
+  handle: string;
+  platform: CreatorPlatform;
+  created_at: string;
+}
+
+export type UserTopCreatorInsert = Pick<UserTopCreator, "user_id" | "url" | "handle" | "platform">;
 
 export interface CorePost {
   id: string;
@@ -224,7 +249,7 @@ export type AudienceIdentityInsert = Pick<AudienceIdentity, "user_id"> &
 export type UserUpdate = Partial<Pick<User, "email" | "full_name" | "avatar_url" | "plan">>;
 export type ProjectUpdate = Partial<Pick<Project, "title">>;
 export type IdeaUpdate = Partial<Pick<Idea, "brief" | "expansion">>;
-export type HookUpdate = Partial<Pick<Hook, "hook_text" | "is_selected" | "is_used" | "display_order" | "status">>;
+export type HookUpdate = Partial<Pick<Hook, "hook_text" | "is_selected" | "is_used" | "is_favorite" | "display_order" | "status">>;
 export type CorePostUpdate = Partial<Pick<CorePost, "body" | "title" | "hook_text" | "user_response" | "status">>;
 export type FormatVariantUpdate = Partial<Pick<FormatVariant, "body" | "is_edited">>;
 export type MediaAssetUpdate = Partial<Pick<MediaAsset, "asset_type" | "url" | "provider" | "provider_ref_id" | "status" | "metadata">>;
@@ -289,6 +314,16 @@ export interface Database {
       user_media: {
         Row: UserMedia;
         Insert: UserMediaInsert;
+        Update: never;
+      };
+      idea_favorites: {
+        Row: IdeaFavorite;
+        Insert: IdeaFavoriteInsert;
+        Update: never;
+      };
+      user_top_creators: {
+        Row: UserTopCreator;
+        Insert: UserTopCreatorInsert;
         Update: never;
       };
     };

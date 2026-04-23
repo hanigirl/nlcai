@@ -26,7 +26,7 @@ async function extractContent(file: File, buffer: Buffer): Promise<FileContent> 
       const result = await mammoth.extractRawText({ buffer })
       const text = result.value?.trim()
       if (!text) {
-        return { kind: "unsupported", message: "הקובץ נראה ריק. נסי להעלות שוב." }
+        return { kind: "unsupported", message: "הקובץ נראה ריק. נסו להעלות שוב." }
       }
       return { kind: "text", text }
     } catch (err) {
@@ -41,12 +41,12 @@ async function extractContent(file: File, buffer: Buffer): Promise<FileContent> 
       const extracted = await extractor.extract(buffer)
       const text = extracted.getBody()?.trim()
       if (!text) {
-        return { kind: "unsupported", message: "הקובץ נראה ריק. שמרי אותו כ-docx או pdf ונסי שוב." }
+        return { kind: "unsupported", message: "הקובץ נראה ריק. שמרו אותו כ-docx או pdf ונסו שוב." }
       }
       return { kind: "text", text }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      return { kind: "unsupported", message: `לא הצלחנו לקרוא את קובץ ה-doc (${msg}). שמרי אותו כ-docx או pdf ונסי שוב.` }
+      return { kind: "unsupported", message: `לא הצלחנו לקרוא את קובץ ה-doc (${msg}). שמרו אותו כ-docx או pdf ונסו שוב.` }
     }
   }
 

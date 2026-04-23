@@ -503,7 +503,7 @@ function ProjectPageInner() {
         {apiNotConnected && (
           <div dir="rtl" className="mx-6 mt-6 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4 flex items-center justify-between">
             <p className="text-small text-text-neutral-default">
-              חבר את חשבון Claude שלך כדי ליצור תוכן
+              חברו את חשבון Claude שלכם כדי ליצור תוכן
             </p>
             <Link href="/settings" className="text-small font-semibold text-text-primary-default hover:underline">
               עבור להגדרות
@@ -528,7 +528,7 @@ function ProjectPageInner() {
                     <Textarea
                       value={idea}
                       onChange={(e) => setIdea(e.target.value)}
-                      placeholder="כתבי או ערכי את הרעיון..."
+                      placeholder="כתבו או ערכו את הרעיון..."
                       className="min-h-[120px] text-small text-text-primary-default border-none bg-transparent shadow-none p-0 resize-none focus-visible:ring-0"
                     />
                   </div>
@@ -560,15 +560,15 @@ function ProjectPageInner() {
                   <div className="px-6 flex flex-col gap-2 items-center">
                     {error === "anthropic_overloaded" ? (
                       <>
-                        <span className="text-small text-text-primary-default">השרתים של Anthropic עמוסים כרגע. נסי שוב בעוד דקה</span>
+                        <span className="text-small text-text-primary-default">השרתים של Anthropic עמוסים כרגע. נסו שוב בעוד דקה</span>
                         <Button size="sm" onClick={() => { setError(""); handleGenerateHooks() }} className="gap-1.5">
                           <Sparkles className="size-3.5" />
-                          נסי שוב
+                          נסו שוב
                         </Button>
                       </>
                     ) : error === "credits_exhausted" ? (
                       <>
-                        <span className="text-small text-text-primary-default">נגמרו לך הקרדיטים של Anthropic</span>
+                        <span className="text-small text-text-primary-default">נגמרו לכם הקרדיטים של Anthropic</span>
                         <a href="https://console.anthropic.com/settings/billing" target="_blank" rel="noopener noreferrer" className="text-small-bold text-text-primary-default hover:underline">
                           לרכישת קרדיטים →
                         </a>
@@ -619,8 +619,8 @@ function ProjectPageInner() {
                   </div>
                   <div className="flex flex-col items-start">
                     <WorkflowCard
-                      title="מה תרצה להגיד על זה?"
-                      subtitle="מה הניסיון האישי שלך? למה זה שונה ממה שהיה עד עכשיו?"
+                      title="מה תרצו להגיד על זה?"
+                      subtitle="מה הניסיון האישי שלכם? למה זה שונה ממה שהיה עד עכשיו?"
                       buttonLabel="אפשר גם להקליט"
                       submitLabel="תייצר לי פוסט ליבה"
                       warningText={corePost ? "ג׳ינרוט מחדש יבטל את הפוסט הנוכחי" : undefined}
@@ -653,7 +653,7 @@ function ProjectPageInner() {
                     <Textarea
                       value={editableHook}
                       onChange={(e) => setEditableHook(e.target.value)}
-                      placeholder="כתבי או ערכי את ההוק..."
+                      placeholder="כתבו או ערכו את ההוק..."
                       className="min-h-[120px] text-small text-text-primary-default border-none bg-transparent shadow-none p-0 resize-none focus-visible:ring-0"
                     />
                   </div>
@@ -668,8 +668,8 @@ function ProjectPageInner() {
               {/* Workflow card */}
               <div className="flex flex-col items-start">
                 <WorkflowCard
-                  title="מה תרצה להגיד על זה?"
-                  subtitle="מה הניסיון האישי שלך? למה זה שונה ממה שהיה עד עכשיו?"
+                  title="מה תרצו להגיד על זה?"
+                  subtitle="מה הניסיון האישי שלכם? למה זה שונה ממה שהיה עד עכשיו?"
                   buttonLabel="אפשר גם להקליט"
                   submitLabel="תייצר לי פוסט ליבה"
                   active={activeCard === "response"}
@@ -1039,7 +1039,7 @@ function FormatTree({
                     className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
                   >
                     <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface-primary-default-80">
-                      <span className="text-p-bold text-text-primary-default">הוידאו שלך</span>
+                      <span className="text-p-bold text-text-primary-default">הוידאו שלכם</span>
                       <Video className="size-4 text-text-neutral-default" />
                     </div>
                     <div className="px-6 flex flex-col gap-4">
@@ -1193,7 +1193,7 @@ function CarouselResultCard({
         className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
       >
         <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface-primary-default-80">
-          <span className="text-p-bold text-text-primary-default">הקרוסלה שלך</span>
+          <span className="text-p-bold text-text-primary-default">הקרוסלה שלכם</span>
           <Layers className="size-4 text-text-neutral-default" />
         </div>
         <div className="px-6 flex flex-col items-center gap-4">
