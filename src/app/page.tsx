@@ -48,22 +48,42 @@ export default function Home() {
       // ignore
     }
 
-    // First visit — no cached ideas, auto-generate
+    // No cached ideas locally. Before auto-generating, check whether this user
+    // has already used the system (existing core_identity older than 2 min,
+    // OR any saved favorites). If so, this is a returning user with cleared
+    // localStorage — DO NOT auto-generate. They can hit "עוד רעיונות" from /ideas
+    // when they want fresh content. Auto-generation is reserved for the truly
+    // first-time experience right after onboarding.
     const supabase = createClient()
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return
-      const { data: core } = await supabase
-        .from("core_identities")
-        .select("niche")
-        .eq("user_id", user.id)
-        .single<{ niche: string | null }>()
+      const [{ data: core }, { count: favCount }] = await Promise.all([
+        supabase
+          .from("core_identities")
+          .select("niche, created_at")
+          .eq("user_id", user.id)
+          .single<{ niche: string | null; created_at: string }>(),
+        supabase
+          .from("idea_favorites")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", user.id),
+      ])
 
       if (!core?.niche?.trim()) {
         setNicheError("אין מספיק פרטים על הנישה שלך")
         return
       }
 
-      // Auto-generate ideas via stream
+      const coreAgeMs = core.created_at ? Date.now() - new Date(core.created_at).getTime() : 0
+      const isReturningUser = (favCount ?? 0) > 0 || coreAgeMs > 2 * 60 * 1000
+
+      if (isReturningUser) {
+        // Established user with no local cache — leave the ideas section empty.
+        // They can manually generate from /ideas if they want.
+        return
+      }
+
+      // Genuine first visit (just onboarded, no favorites yet) — auto-generate.
       streamIdeas([])
     })
   }, [])
@@ -81,38 +101,40 @@ export default function Home() {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return
 
-      // First-visit marker. On subsequent visits we only load existing hooks —
-      // NEVER auto-generate, NEVER delete. User can generate more from /hooks.
-      const isFirstVisit = !localStorage.getItem("hooksCleanup_v3")
-
-      if (!isFirstVisit) {
-        try {
-          const cached = localStorage.getItem("homepageHooks_v5")
-          if (cached) {
-            const parsed: string[] = JSON.parse(cached)
-            if (parsed.length > 0) {
-              setHooks(parsed)
-              return
-            }
+      // Try cache first (fast path).
+      try {
+        const cached = localStorage.getItem("homepageHooks_v5")
+        if (cached) {
+          const parsed: string[] = JSON.parse(cached)
+          if (parsed.length > 0) {
+            setHooks(parsed)
+            // Mark this device as having seen hooks — purely informational; the
+            // real "have I generated already?" answer comes from the DB below.
+            localStorage.setItem("hooksCleanup_v3", "done")
+            return
           }
-        } catch { /* ignore */ }
-
-        const { data: dbHooks } = await supabase
-          .from("hooks")
-          .select("hook_text")
-          .eq("user_id", user.id)
-          .eq("is_used", false)
-          .order("display_order", { ascending: true })
-
-        if (dbHooks && dbHooks.length > 0) {
-          const hookTexts = dbHooks.map((h: { hook_text: string }) => h.hook_text)
-          setHooks(hookTexts)
-          localStorage.setItem("homepageHooks_v5", JSON.stringify(hookTexts))
         }
+      } catch { /* ignore */ }
+
+      // No cache — check the DB. If the user already has hooks, load them and
+      // never auto-regenerate. The DB is the source of truth: localStorage can
+      // be cleared, the user can switch browsers/devices, etc.
+      const { data: dbHooks } = await supabase
+        .from("hooks")
+        .select("hook_text")
+        .eq("user_id", user.id)
+        .eq("is_used", false)
+        .order("display_order", { ascending: true })
+
+      if (dbHooks && dbHooks.length > 0) {
+        const hookTexts = (dbHooks as Array<{ hook_text: string }>).map((h) => h.hook_text)
+        setHooks(hookTexts)
+        localStorage.setItem("homepageHooks_v5", JSON.stringify(hookTexts))
+        localStorage.setItem("hooksCleanup_v3", "done")
         return
       }
 
-      // First visit only — auto-generate fresh hooks
+      // True first visit: no hooks anywhere for this user. Auto-generate.
       localStorage.setItem("hooksCleanup_v3", "done")
 
       setHooksLoading(true)
