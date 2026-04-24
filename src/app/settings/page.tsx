@@ -25,7 +25,7 @@ const GOOGLE_FONTS = [
   "Plus Jakarta Sans", "Figtree", "Geist", "Satoshi",
 ]
 
-type KeyName = "anthropic_api_key" | "heygen_api_key"
+type KeyName = "anthropic_api_key" | "heygen_api_key" | "apify_api_key"
 type SettingsTab = "connections" | "business" | "products" | "creators" | "media"
 
 interface KeyConfig {
@@ -50,6 +50,13 @@ const KEYS: KeyConfig[] = [
     placeholder: "הכניסו את ה-API key שלכם",
     helpUrl: "https://app.heygen.com/settings?nav=API",
     helpLabel: "app.heygen.com",
+  },
+  {
+    key: "apify_api_key",
+    label: "Apify API Key",
+    placeholder: "apify_api_...",
+    helpUrl: "https://console.apify.com/settings/integrations",
+    helpLabel: "console.apify.com",
   },
 ]
 
@@ -92,10 +99,12 @@ function SettingsPageInner() {
   const [storedKeys, setStoredKeys] = useState<Record<KeyName, string | null>>({
     anthropic_api_key: null,
     heygen_api_key: null,
+    apify_api_key: null,
   })
   const [inputValues, setInputValues] = useState<Record<KeyName, string>>({
     anthropic_api_key: "",
     heygen_api_key: "",
+    apify_api_key: "",
   })
 
   // Business tab state
@@ -147,7 +156,7 @@ function SettingsPageInner() {
       if (!user) return
       const { data } = await supabase
         .from("users")
-        .select("anthropic_api_key, heygen_api_key, brand_style")
+        .select("anthropic_api_key, heygen_api_key, apify_api_key, brand_style")
         .eq("id", user.id)
         .single()
       const row = data as Record<string, unknown> | null
@@ -155,6 +164,7 @@ function SettingsPageInner() {
         setStoredKeys({
           anthropic_api_key: (row.anthropic_api_key as string) ?? null,
           heygen_api_key: (row.heygen_api_key as string) ?? null,
+          apify_api_key: (row.apify_api_key as string) ?? null,
         })
         if (row.brand_style) setStyleAnalyzed(true)
       }
@@ -531,6 +541,7 @@ function SettingsPageInner() {
     connections: [
       { id: "claude", label: "Claude", icon: Link2 },
       { id: "heygen", label: "HeyGen", icon: Link2 },
+      { id: "apify", label: "Apify", icon: Link2 },
     ],
     business: [
       { id: "about", label: "על העסק", icon: Type },
@@ -622,7 +633,12 @@ function SettingsPageInner() {
               <div className="flex gap-8">
                 <SubNav sections={SUB_SECTIONS.connections} active={activeSubSection} onChange={setActiveSubSection} />
                 <div className="flex-1 min-w-0 max-w-lg">
-                  {KEYS.filter((cfg) => (activeSubSection === "claude" ? cfg.key === "anthropic_api_key" : cfg.key === "heygen_api_key")).map((cfg) => {
+                  {KEYS.filter((cfg) => {
+                    if (activeSubSection === "claude") return cfg.key === "anthropic_api_key"
+                    if (activeSubSection === "heygen") return cfg.key === "heygen_api_key"
+                    if (activeSubSection === "apify") return cfg.key === "apify_api_key"
+                    return false
+                  }).map((cfg) => {
                     const stored = storedKeys[cfg.key]
                     const isSaving = saving === cfg.key
                     return (
@@ -853,9 +869,7 @@ function SettingsPageInner() {
                   <div>
                     <h3 className="text-p-bold text-text-primary-default">היוצרים שמעניינים אתכם</h3>
                     <p className="text-small text-text-neutral-default mt-1">
-                      היוצרים שהבוט ישאב מהם רעיונות לתכנים — מכל מקום בעולם, כולל יוצרים מהארץ. הבוט יסרוק את הפוסטים הויראליים שלהם.
-                      <br />
-                      הטרנדים בנישה שהבוט מחפש לבד — משלימים ללא יוצרים מסוימים, ומגיעים רק מהרשת הגלובלית (לא מטרנדים מקומיים).
+                      אנחנו נייצר לכם רעיונות לתכנים בהשראת היוצרים המובילים בנישה שלכם שתשימו פה (מומלץ)
                     </p>
                   </div>
                   <CreatorsList

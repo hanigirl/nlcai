@@ -12,6 +12,7 @@ import { HookCard } from "@/components/hook-card"
 import { GeneratingStatus } from "@/components/generating-status"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
+import { useHookGeneration } from "@/components/hook-generation-provider"
 
 interface HookItem {
   id: string
@@ -19,6 +20,7 @@ interface HookItem {
   is_used: boolean
   is_favorite: boolean
   created_at: string
+  product_ids?: string[]
 }
 
 function HookSkeleton() {
@@ -33,64 +35,21 @@ function HookSkeleton() {
   )
 }
 
-async function streamHooks(
-  onHook: (hook: HookItem) => void,
-  onDone: () => void,
-  onError: (msg: string) => void,
-) {
-  // Load field ideas from localStorage to pass to hooks API
-  let fieldIdeas: string[] = []
-  try {
-    const saved = localStorage.getItem("generatedIdeas_v23")
-    if (saved) fieldIdeas = JSON.parse(saved).map((i: { text: string }) => i.text)
-  } catch { /* ignore */ }
-
-  const res = await fetch("/api/homepage-hooks", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fieldIdeas }),
-  })
-
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}))
-    onError(data.error || "שגיאה ביצירת הוקים")
-    return
-  }
-
-  const reader = res.body?.getReader()
-  if (!reader) { onError("שגיאה בחיבור"); return }
-
-  const decoder = new TextDecoder()
-  let buffer = ""
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split("\n\n")
-    buffer = lines.pop() || ""
-
-    for (const line of lines) {
-      const data = line.replace(/^data: /, "").trim()
-      if (!data || data === "[DONE]") { if (data === "[DONE]") onDone(); continue }
-      try {
-        const parsed = JSON.parse(data)
-        if (parsed.error) { onError(parsed.error); continue }
-        if (parsed.hook_text) onHook(parsed as HookItem)
-      } catch { /* skip */ }
-    }
-  }
-  onDone()
-}
-
 export default function HooksPage() {
   const router = useRouter()
+  const {
+    isGenerating: generating,
+    progress,
+    total,
+    sessionHookIds,
+    startGeneration,
+    subscribeHook,
+    subscribeDone,
+  } = useHookGeneration()
+  const skeletonCount = generating ? Math.max(0, total - progress) : 0
+
   const [hooks, setHooks] = useState<HookItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [generating, setGenerating] = useState(false)
-  const [skeletonCount, setSkeletonCount] = useState(0)
-  const [sessionHookIds, setSessionHookIds] = useState<string[]>([])
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [products, setProducts] = useState<{ id: string; name: string }[]>([])
@@ -108,7 +67,7 @@ export default function HooksPage() {
     const [{ data: hooksData }, { data: prodsData }] = await Promise.all([
       supabase
         .from("hooks")
-        .select("id, hook_text, is_used, is_favorite, created_at")
+        .select("id, hook_text, is_used, is_favorite, created_at, product_ids")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false }),
       supabase
@@ -125,6 +84,25 @@ export default function HooksPage() {
   useEffect(() => {
     loadHooks()
   }, [])
+
+  // Stream incoming hooks into the local list + session IDs while this page is
+  // mounted. The provider owns the fetch and keeps running even if we unmount
+  // (user navigated away) — in that case these subscriptions are torn down and
+  // the provider just updates its own state + the persistent toast.
+  useEffect(() => {
+    const unsub = subscribeHook((hook) => {
+      setHooks((prev) => prev.some((h) => h.id === hook.id) ? prev : [hook as HookItem, ...prev])
+    })
+    return unsub
+  }, [subscribeHook])
+
+  useEffect(() => {
+    const unsub = subscribeDone(() => {
+      // Re-sync from DB so product_ids + any missed hooks are picked up.
+      loadHooks()
+    })
+    return unsub
+  }, [subscribeDone])
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -154,50 +132,11 @@ export default function HooksPage() {
     }
   }
 
-  const handleGenerateMore = async () => {
-    setGenerating(true)
-    setSkeletonCount(20)
-    setSessionHookIds([])
-
-    // ⚠️ DUMMY MODE — for testing the streaming/animation UI without hitting the API
-    const DUMMY_HOOKS = [
-      "3 דברים שאף אחד לא סיפר לכם על חוסר זמן בעבודה",
-      "אם אתם עדיין מתכננים את היום ביומן רגיל, אתם מפסידים שעות",
-      "הסיבה האמיתית שהפוסטים שלכם לא מקבלים לייקים",
-      "תפסיקו להגיב לכל מייל ברגע שהוא נכנס",
-      "X טעויות שהורגות לכם את הקריירה ב-Figma",
-      "איך להגיע ל-1000 עוקבים בלי לפרסם כל יום",
-      "הקובץ הזה ב-Notion שינה לי את כל היום",
-      "אני בן 35 ואני לא מתבייש להגיד שאני לא מבין AI",
-      "ב-60 שניות אני אלמד אתכם פרומפט אחד שמשנה הכל",
-      "תפסיקו להשתמש בChatGPT בשביל זה",
-      "פשוט גיליתי כלי שיחסוך לכם 10 שעות בשבוע",
-      "אם אתם מקדמים מוצר ולא עושים את זה — אין סיכוי שתמכרו",
-      "כל מה שצריך כדי להיות מעצב מעולה זה להתמקד ב-3 דברים בלבד",
-      "אמרו לכם 'תהיו עצמכם'. זה שקר",
-      "כסף יכול לקנות לכם זמן, אבל לא יכול לקנות לכם תשוקה",
-      "ניסיתי לעבוד 4 שעות ביום במשך חודש — הנה מה שקרה",
-      "יום בחיים של מעצב UX — מהדורת חברת סטארטאפ",
-      "עברתי מהזמנה אחת בחודש ל-15 הזמנות, עם שיטה אחת",
-      "ה-3 שינויים שעשיתי בתיק העבודות שהביאו לי לקוחות פרימיום",
-      "אם אתם רוצים שיוכרו אתכם בתעשייה, פשוט תעתיקו את זה",
-    ]
-
-    for (let i = 0; i < DUMMY_HOOKS.length; i++) {
-      await new Promise((r) => setTimeout(r, 700))
-      const fakeHook = {
-        id: `dummy-${Date.now()}-${i}`,
-        hook_text: DUMMY_HOOKS[i],
-        is_used: false,
-        is_favorite: false,
-        created_at: new Date().toISOString(),
-      }
-      setHooks((prev) => [fakeHook, ...prev])
-      setSessionHookIds((prev) => [...prev, fakeHook.id])
-      setSkeletonCount(Math.max(0, 20 - (i + 1)))
-    }
-    setSkeletonCount(0)
-    setGenerating(false)
+  const handleGenerateMore = () => {
+    // Provider owns the fetch + state + toast. Incoming hooks arrive via
+    // subscribeHook (above) while this page is mounted; if user navigates,
+    // the provider keeps going and the toast persists at the bottom.
+    startGeneration()
   }
 
   const handleDelete = async (id: string) => {
@@ -231,19 +170,30 @@ export default function HooksPage() {
     toast.success("ההוק עודכן בהצלחה")
   }
 
-  const matchesProduct = (hook: HookItem, productName: string) =>
-    hook.hook_text.toLowerCase().includes(productName.toLowerCase())
-
+  // filter values:
+  //  "all"       — show everything (subject to search/favorites)
+  //  "general"   — hooks that weren't tagged to any product (general brand voice)
+  //  <productId> — hooks whose product_ids array contains this uuid
   const filtered = hooks.filter((hook) => {
     if (showFavorites) return hook.is_favorite
-    if (filter === "general") return !products.some((p) => matchesProduct(hook, p.name))
-    if (filter !== "all") return matchesProduct(hook, filter)
+    const tags = hook.product_ids ?? []
+    if (filter === "general") {
+      if (tags.length > 0) return false
+    } else if (filter !== "all") {
+      if (!tags.includes(filter)) return false
+    }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
       if (!hook.hook_text.toLowerCase().includes(q)) return false
     }
     return true
   })
+
+  const filterLabel = filter === "all"
+    ? "מוצרים"
+    : filter === "general"
+      ? "כללי"
+      : products.find((p) => p.id === filter)?.name ?? "מוצרים"
 
   const formatDate = (iso: string) => {
     const d = new Date(iso)
@@ -320,7 +270,7 @@ export default function HooksPage() {
                     : "bg-white dark:bg-gray-10 text-gray-50 hover:bg-gray-95 dark:hover:bg-gray-20"
                 }`}
               >
-                {filter === "all" ? "מוצרים" : filter === "general" ? "כללי" : filter}
+                {filterLabel}
                 <ChevronDown className="size-3" />
               </button>
               {showProductDropdown && (
@@ -335,11 +285,11 @@ export default function HooksPage() {
                   {products.map((p) => (
                     <button
                       key={p.id}
-                      onClick={() => { setFilter(p.name); setShowProductDropdown(false); setShowFavorites(false) }}
+                      onClick={() => { setFilter(p.id); setShowProductDropdown(false); setShowFavorites(false) }}
                       className="flex items-center justify-between w-full px-3 py-2 text-small text-text-primary-default hover:bg-gray-95 dark:hover:bg-gray-20 transition-colors"
                     >
                       {p.name}
-                      {filter === p.name && <Check className="size-3" />}
+                      {filter === p.id && <Check className="size-3" />}
                     </button>
                   ))}
                   <button
@@ -445,7 +395,7 @@ export default function HooksPage() {
                 >
                   <HookCard
                     hookText={hook.hook_text}
-                    onNavigate={() => router.push(`/project?hook=${encodeURIComponent(hook.hook_text)}`)}
+                    onNavigate={() => router.push(`/project?hook=${encodeURIComponent(hook.hook_text)}&hook_id=${hook.id}`)}
                     onEdit={!hook.is_used ? (newText) => handleEdit(hook.id, newText) : undefined}
                     onDelete={() => setPendingDeleteId(hook.id)}
                     onToggleFavorite={() => toggleFavorite(hook.id)}
@@ -456,7 +406,7 @@ export default function HooksPage() {
               )
               return (
                 <section key={date}>
-                  <div className="flex items-center gap-3 mb-4">
+                  <div className="flex flex-col gap-2 mb-4">
                     <p className="text-small text-text-neutral-default">{date}</p>
                     {isToday && generating && <GeneratingStatus />}
                   </div>

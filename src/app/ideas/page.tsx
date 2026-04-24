@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Lightbulb, Loader2, Sparkles, LayoutGrid, List, Star, Search, ChevronDown, Check } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
@@ -280,7 +281,7 @@ export default function IdeasPage() {
       }
       return true
     })
-  }, [ideas, showFavorites, typeFilter, categoryFilter, searchQuery, favorites])
+  }, [ideas, showFavorites, typeFilter, creatorFilter, categoryFilter, searchQuery, favorites])
 
   // Split into "session" (חדש) and grouped by date
   const { sessionIdeas, dateGroups } = useMemo(() => {
@@ -327,6 +328,16 @@ export default function IdeasPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           previousIdeas: currentIdeas.map((i) => i.text),
+          // Every content URL ever shown on this device — localStorage-backed,
+          // never expires. Server uses this to filter contentItems + trends so
+          // no post is ever shown twice.
+          previousUrls: Array.from(
+            new Set(
+              currentIdeas
+                .map((i) => i.url)
+                .filter((u): u is string => !!u && u.trim().length > 0),
+            ),
+          ),
           existingCategories: [...new Set(currentIdeas.map((i) => i.category).filter(Boolean))],
           favoritedIdeas,
         }),
@@ -334,7 +345,7 @@ export default function IdeasPage() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "unauthorized", "no_trends_found", "no_creator_content", "trend_search_failed", "search_not_configured", "search_quota_exceeded"]
+        const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_fresh_content", "trend_search_failed", "search_not_configured", "search_quota_exceeded", "apify_quota_exceeded"]
         const raw = data.error
         setError(known.includes(raw) ? raw : (raw || "generic"))
         return
@@ -442,16 +453,25 @@ export default function IdeasPage() {
     <AppShell>
       <div className="max-w-[1200px] mx-auto" dir="rtl">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-2">
+        <div className="flex items-start justify-between mb-6 gap-4">
+          <div className="flex items-start gap-2">
             <img src="/images/idea-min.png" alt="" className="w-[48px] h-[48px]" />
-            <h2 className="text-text-primary-default">רעיונות מהשטח</h2>
+            <div>
+              <h2 className="text-text-primary-default">רעיונות מהשטח</h2>
+              <p className="text-small text-text-neutral-default mt-1">
+                אפשר לייצר רעיונות לתכנים מהיוצרים המובילים שבחרתם. אפשר לערוך אותם תמיד ב
+                <Link href="/settings?tab=creators" className="text-text-primary-default underline hover:no-underline">
+                  הגדרות
+                </Link>
+                .
+              </p>
+            </div>
           </div>
           <Button
             size="sm"
             onClick={handleGenerateMore}
             disabled={generating}
-            className="gap-1.5"
+            className="gap-1.5 shrink-0"
           >
             {generating ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
             {generating ? "מייצר רעיונות..." : "זרוק לי עוד רעיונות"}
@@ -610,7 +630,7 @@ export default function IdeasPage() {
         </div>
 
         {error && (() => {
-          const infoCodes = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_ideas_generated", "all_ideas_duplicate", "trend_search_failed", "search_not_configured", "search_quota_exceeded"]
+          const infoCodes = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_fresh_content", "no_ideas_generated", "all_ideas_duplicate", "trend_search_failed", "search_not_configured", "search_quota_exceeded", "apify_quota_exceeded"]
           const isInfo = infoCodes.includes(error)
           const config: Record<string, { message: string; action?: { href: string; label: string; external?: boolean } }> = {
             credits_exhausted: {
@@ -642,11 +662,19 @@ export default function IdeasPage() {
               message: "לא מצאנו תוכן ויראלי אצל היוצרים שהוספתם וגם אין טרנדים רלוונטיים. בדקו שהקישורים תקינים או נסו יוצרים נוספים",
               action: { href: "/settings?tab=business", label: "לעדכון רשימת היוצרים →" },
             },
+            no_fresh_content: {
+              message: "כל התוכן שיש לנו כרגע מהיוצרים שלכם ומהטרנדים כבר הוצג לכם. נסו שוב בעוד כמה שעות — ייטען תוכן חדש מהיוצרים, או הוסיפו יוצרים נוספים",
+              action: { href: "/settings?tab=business", label: "להוספת יוצרים נוספים →" },
+            },
             no_ideas_generated: { message: "הסוכן סיים אבל לא החזיר אף רעיון. זה יכול לקרות כשאין מספיק חומר גלם — נסו שוב בעוד רגע" },
             all_ideas_duplicate: { message: "כל הרעיונות שהתקבלו כבר קיימים במחסן שלכם. נסו שוב — בדרך כלל ריצה חדשה מביאה נושאים חדשים" },
             trend_search_failed: { message: "חיפוש הטרנדים ברשת נכשל. נסו שוב בעוד רגע — אם זה חוזר כנראה יש בעיה בשירות החיפוש שלנו" },
             search_not_configured: { message: "שירות החיפוש לא מוגדר במערכת. צרו קשר עם התמיכה" },
             search_quota_exceeded: { message: "נגמרה מכסת החיפושים של הרעיונות, פנו לשירות שלנו לטיפול בתקלה" },
+            apify_quota_exceeded: {
+              message: "נגמרה מכסת ה-Apify שלכם (האחראי על משיכת הפוסטים מהיוצרים). אפשר לבדוק את יתרת הקרדיטים ולשדרג ב-Apify או להמתין לחידוש החודשי",
+              action: { href: "https://console.apify.com/billing", label: "לבדיקת יתרת Apify →", external: true },
+            },
             connection_error: { message: "בעיית חיבור לשרת. בדקו את החיבור לאינטרנט ונסו שוב" },
             generic: { message: "משהו השתבש ביצירת הרעיונות. נסו שוב בעוד רגע" },
           }

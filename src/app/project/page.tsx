@@ -61,6 +61,7 @@ function ProjectPageInner() {
   const searchParams = useSearchParams()
   const initialIdea = searchParams.get("idea") ?? ""
   const hookParam = searchParams.get("hook") ?? ""
+  const hookIdParam = searchParams.get("hook_id") ?? ""
   const postId = searchParams.get("post_id") ?? ""
   const flow: Flow = postId ? "saved" : hookParam ? "hook" : "idea"
 
@@ -384,7 +385,18 @@ function ProjectPageInner() {
       body: JSON.stringify({
         idea,
         count: 10,
-        fieldIdeas: (() => { try { const s = localStorage.getItem("generatedIdeas_v23"); return s ? JSON.parse(s).map((i: { text: string }) => i.text) : [] } catch { return [] } })(),
+        fieldIdeas: (() => {
+          try {
+            const s = localStorage.getItem("generatedIdeas_v23")
+            if (!s) return []
+            return JSON.parse(s).map((i: { text: string; source?: string; category?: string; url?: string }) => ({
+              text: i.text,
+              source: i.source,
+              category: i.category,
+              url: i.url,
+            }))
+          } catch { return [] }
+        })(),
       }),
     })
       .then((res) => res.json())
@@ -448,6 +460,7 @@ function ProjectPageInner() {
           body: JSON.stringify({
             body: data.post,
             hookText: activeHook,
+            hookId: hookIdParam || undefined,
             userResponse: response,
             videoUrl: thVideoUrl && !thVideoUrl.startsWith("blob:") ? thVideoUrl : undefined,
           }),
@@ -1016,12 +1029,17 @@ function FormatTree({
                   />
                   <Button
                     variant="outline"
-                    disabled
-                    onClick={(e) => e.stopPropagation()}
+                    disabled={fid !== "talking_head"}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (fid === "talking_head") onSelectFormat(fid)
+                    }}
                     className="w-full rounded-[10px] border-border-neutral-default text-text-primary-default text-small gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Icon className="size-4" />
-                    ערוך מדיה ל{format.label} (בקרוב)
+                    {fid === "talking_head"
+                      ? `ערוך מדיה ל${format.label}`
+                      : `ערוך מדיה ל${format.label} (בקרוב)`}
                   </Button>
                 </div>
               </div>

@@ -19,12 +19,25 @@ export type TemplateCategory =
   | "day_in_life"
   | "challenge"
 
+// A template is either a plain pattern string (implicit high priority — opens a
+// curiosity gap, teases the answer without delivering it) or an object with an
+// explicit low-priority marker (for templates that tend to give away the
+// punchline and should be reached for last). The writer surfaces high first.
+export type HookTemplate = string | { text: string; priority: "low" }
+
 export interface TemplateGroup {
   category: TemplateCategory
   contentType: "awareness" | "connection" | "authority"
   label: string // Hebrew label
   goal: string // What this category achieves
-  templates: string[] // Pattern strings with {slot} placeholders
+  templates: HookTemplate[] // Pattern strings with {slot} placeholders
+}
+
+export function templateText(t: HookTemplate): string {
+  return typeof t === "string" ? t : t.text
+}
+export function templatePriority(t: HookTemplate): "high" | "low" {
+  return typeof t === "string" ? "high" : t.priority
 }
 
 export const TEMPLATE_LIBRARY: TemplateGroup[] = [
@@ -35,16 +48,16 @@ export const TEMPLATE_LIBRARY: TemplateGroup[] = [
     goal: "לגרום לקהל לערער על אמונה רווחת",
     templates: [
       "X דברים שאף אחד לא סיפר לכם על {בעיה / נושא}",
-      "\"{עצה נפוצה}\" לא באמת {יפתור לכם את הבעיה}",
-      "{מיתוס} נשמע טוב, אבל זה ממש לא נכון",
-      "\"{מיתוס}\"? ממש לא",
-      "אתם לא צריכים {מה שהקהל חושב שהוא צריך} כדי להגיע ל{מטרה}",
-      "הנה למה {עצה פופולרית} זה רעיון ממש גרוע",
-      "{בעיה} לא {נפתרת מעצה נפוצה}",
-      "{דבר נפוץ} זה שקר לגמרי",
+      { text: "\"{עצה נפוצה}\" לא באמת {יפתור לכם את הבעיה}", priority: "low" },
+      { text: "{מיתוס} נשמע טוב, אבל זה ממש לא נכון", priority: "low" },
+      { text: "\"{מיתוס}\"? ממש לא", priority: "low" },
+      { text: "אתם לא צריכים {מה שהקהל חושב שהוא צריך} כדי להגיע ל{מטרה}", priority: "low" },
+      { text: "הנה למה {עצה פופולרית} זה רעיון ממש גרוע", priority: "low" },
+      { text: "{בעיה} לא {נפתרת מעצה נפוצה}", priority: "low" },
+      { text: "{דבר נפוץ} זה שקר לגמרי", priority: "low" },
       "אם אתם באמת {תוצאה רצויה}, למה אתם לא עושים {אמונה נפוצה}?",
-      "אמרו לכם '{קלישאה מוכרת}'. זה שקר",
-      "אני לא מאמין/ה ב{אמונה נפוצה} — אני מאמין/ה ב{אמונה שלי}",
+      { text: "אמרו לכם '{קלישאה מוכרת}'. זה שקר", priority: "low" },
+      { text: "אני לא מאמין/ה ב{אמונה נפוצה} — אני מאמין/ה ב{אמונה שלי}", priority: "low" },
     ],
   },
   {
@@ -59,14 +72,14 @@ export const TEMPLATE_LIBRARY: TemplateGroup[] = [
       "אם אתם עושים {טעות פופולרית}, אל תופתעו כש{כאב}",
       "X טעויות ש{קהל יעד} עושים כש{מנסים להשיג מטרה}",
       "תפסיקו {לעשות פעולה} על {טעות נפוצה}",
-      "{טעות נפוצה} תהרוס לכם את כל הסיכויים {להגיע למטרה}",
-      "{פתרון נפוץ} לא {פותר בעיה}, אלא רק מחמיר אותה",
+      { text: "{טעות נפוצה} תהרוס לכם את כל הסיכויים {להגיע למטרה}", priority: "low" },
+      { text: "{פתרון נפוץ} לא {פותר בעיה}, אלא רק מחמיר אותה", priority: "low" },
       "יש לכם {בעיה} ואתם {עושים את הפעולה הנפוצה הזאת}?",
       "X {מה} ש{גורמים לכאב/בעיה}",
       "תימנעו מ{פעולה} במיוחד כש{מתי}",
       "X {דברים} שאסור לכם {לעשות} לעולם",
-      "אתם רודפים אחרי ה{דבר} הלא נכון ב{תחום}",
-      "כל מי ש{עושה פעולה} פעם אחת ב{תקופה} פשוט {תוצאה גרועה}",
+      { text: "אתם רודפים אחרי ה{דבר} הלא נכון ב{תחום}", priority: "low" },
+      { text: "כל מי ש{עושה פעולה} פעם אחת ב{תקופה} פשוט {תוצאה גרועה}", priority: "low" },
       "תפסיקו להשתמש ב{דבר} בשביל {תוצאה}",
       "אתם לא גרועים ב{פעולה} — פשוט אף פעם לא לימדו אתכם איך לעשות {פעולה} נכון",
     ],
@@ -82,7 +95,7 @@ export const TEMPLATE_LIBRARY: TemplateGroup[] = [
       "X סימנים ש{זה לא מה שהם מספרים לעצמם} אלא {מה שהם חוששים ממנו}",
       "אם {קורה/לא קורה משהו} זה אומר {בעיה חמורה}",
       "אם אתם {בעיה} זה לא בגלל ש{דיאגנוזה לא נכונה}",
-      "אתם לא {מה שהם חושבים שהבעיה שלהם}, אתם פשוט {הבעיה האמיתית}",
+      { text: "אתם לא {מה שהם חושבים שהבעיה שלהם}, אתם פשוט {הבעיה האמיתית}", priority: "low" },
       "אם {זה קורה לכם}, אז {זה אומר שיש לכם את הבעיה הבאה}",
       "X סימנים מובהקים שאתם {עושים את זה}",
       "X סימנים שיש לכם {בעיה} ואתם בכלל לא מודעים",
@@ -129,8 +142,8 @@ export const TEMPLATE_LIBRARY: TemplateGroup[] = [
     goal: "לתת לקהל תחושת כוח ושליטה",
     templates: [
       "אז אמרו לכם ש{יש לכם בעיה שאי אפשר לפתור}",
-      "אתם לא {בעיה שהקהל חושב שיש לו}, אתם {בעיה קלילה יותר שקל לפתור}",
-      "{זהות/מקצוע} בלי {משהו מעורר מחלוקת} הוא {משהו שלילי}",
+      { text: "אתם לא {בעיה שהקהל חושב שיש לו}, אתם {בעיה קלילה יותר שקל לפתור}", priority: "low" },
+      { text: "{זהות/מקצוע} בלי {משהו מעורר מחלוקת} הוא {משהו שלילי}", priority: "low" },
     ],
   },
   {
@@ -150,11 +163,11 @@ export const TEMPLATE_LIBRARY: TemplateGroup[] = [
     goal: "להציב עמדה ברורה ולמשוך את הקהל הנכון",
     templates: [
       "רק לא עוד {משהו שהקהל לא רוצה לעשות}",
-      "אם אתם לא {מה} אין סיכוי ש{תגיעו לתוצאה}",
-      "{מי} לא יכול {להשיג תוצאה רצויה}",
+      { text: "אם אתם לא {מה} אין סיכוי ש{תגיעו לתוצאה}", priority: "low" },
+      { text: "{מי} לא יכול {להשיג תוצאה רצויה}", priority: "low" },
       "כל {מי} צריך {מה}",
-      "{מי} שלא מפחד {לעשות משהו יוצא דופן} הוא {משהו שהקהל רוצה להיות}",
-      "זה יותר קל להיות {שלילי} מאשר {חיובי}",
+      { text: "{מי} שלא מפחד {לעשות משהו יוצא דופן} הוא {משהו שהקהל רוצה להיות}", priority: "low" },
+      { text: "זה יותר קל להיות {שלילי} מאשר {חיובי}", priority: "low" },
       "{קהל יעד} — אם אתם רציניים לגבי לעלות לרמה הבאה",
       "אתם רוצים להיות הראשונים במשפחה שלכם ש{תוצאה רצויה}?",
       "אם אתם רוצים להגיע ל{כאב}, פשוט תדלגו על הסרטון הזה",
@@ -194,7 +207,7 @@ export const TEMPLATE_LIBRARY: TemplateGroup[] = [
     templates: [
       "\"אני {עושה הכל נכון} ועדיין {יש בעיה/כאב}\"",
       "{מה} זה אחת התגליות הכי טובות בהיסטוריה של האנושות",
-      "אתם משתמשים ב{דבר} בצורה לא נכונה",
+      { text: "אתם משתמשים ב{דבר} בצורה לא נכונה", priority: "low" },
       "הסיבה האמיתית למה {יש לכם בעיה/כאב}",
     ],
   },
@@ -290,8 +303,18 @@ export const TEMPLATE_LIBRARY: TemplateGroup[] = [
   },
 ]
 
-export function getTemplatesByCategory(category: TemplateCategory): string[] {
+export function getTemplatesByCategory(category: TemplateCategory): HookTemplate[] {
   return TEMPLATE_LIBRARY.find((g) => g.category === category)?.templates ?? []
+}
+
+// Returns templates sorted so curiosity-gap (high) patterns come first; the writer
+// is steered to reach for those. Low-priority templates (those that deliver the
+// punchline in the hook itself) stay available but at the bottom of the list.
+export function getTemplatesByCategorySorted(category: TemplateCategory): HookTemplate[] {
+  const templates = getTemplatesByCategory(category)
+  const high = templates.filter((t) => templatePriority(t) === "high")
+  const low = templates.filter((t) => templatePriority(t) === "low")
+  return [...high, ...low]
 }
 
 export function getCategoryLabel(category: TemplateCategory): string {

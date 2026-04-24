@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Rubik } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "sonner";
+import { HookGenerationProvider } from "@/components/hook-generation-provider";
 import "./globals.css";
 
 const rubik = Rubik({
@@ -28,7 +29,9 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          {children}
+          <HookGenerationProvider>
+            {children}
+          </HookGenerationProvider>
           <Toaster
             position="bottom-center"
             dir="rtl"

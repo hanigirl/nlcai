@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { buildHookGeneratorPrompt, parseHooks } from "@/lib/agents/hook-generator"
 import { polishHookForHebrew } from "@/lib/agents/hook-hebrew-polish"
+import { judgeHook } from "@/lib/agents/hook-judge"
 import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
@@ -24,7 +25,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { idea, userResponse, productName, count = 3, fieldIdeas = [] } = await req.json()
+    const { idea, userResponse, productName, count = 3, fieldIdeas: rawFieldIdeas = [] } = await req.json()
+    // Accept both legacy string[] and new structured shape {text, source, category, url}
+    type FieldIdea = { text: string; source?: string; category?: string; url?: string }
+    const fieldIdeas: FieldIdea[] = (rawFieldIdeas as unknown[])
+      .map((x) => (typeof x === "string" ? { text: x } : (x as FieldIdea)))
+      .filter((i): i is FieldIdea => !!i?.text)
 
     if (!idea) {
       return NextResponse.json(
@@ -33,12 +39,16 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Fetch core identity, audience identity & trending context
-    const [{ data: coreIdentity }, { data: audienceIdentity }, learningInsights] = await Promise.all([
+    // Fetch core identity, audience identity, favorites & trending context
+    const [{ data: coreIdentity }, { data: audienceIdentity }, { data: favoritedRows }, learningInsights] = await Promise.all([
       supabase.from("core_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("audience_identities").select("*").eq("user_id", user.id).single(),
+      supabase.from("idea_favorites").select("idea_text").eq("user_id", user.id),
       fetchLearningInsights(supabase, user.id, "hook"),
     ])
+    const favoritedTexts = new Set(
+      ((favoritedRows as { idea_text: string }[] | null) ?? []).map((r) => r.idea_text.trim()),
+    )
 
     if (!audienceIdentity || !audienceIdentity.daily_pains) {
       return NextResponse.json({ error: "audience_missing" }, { status: 400 })
@@ -104,10 +114,28 @@ export async function POST(req: NextRequest) {
       // non-fatal
     }
 
-    // Add field ideas
-    if (fieldIdeas.length > 0) {
-      trendContext += `\n\nרעיונות מהשטח — תוכן ויראלי שנמצא מיוצרים מובילים בנישה:\n${fieldIdeas.slice(0, 10).map((t: string, i: number) => `${i + 1}. ${t}`).join("\n")}`
+    // Split field ideas into labeled sections (favorites / viral creators / trends)
+    // so the hook generator can prioritize them explicitly.
+    const annotated = fieldIdeas.map((i) => ({ ...i, isFavorited: favoritedTexts.has(i.text.trim()) }))
+    const favoriteIdeas = annotated.filter((i) => i.isFavorited)
+    const creatorIdeas = annotated.filter((i) => !i.isFavorited && i.source && i.source !== "טרנד")
+    const trendIdeas = annotated.filter((i) => !i.isFavorited && (!i.source || i.source === "טרנד"))
+    const fmtIdea = (i: typeof annotated[number], n: number) => {
+      const parts = [`${n}. ${i.text}`]
+      if (i.source && i.source !== "טרנד") parts.push(`(מ-${i.source})`)
+      if (i.category) parts.push(`[${i.category}]`)
+      return parts.join(" ")
     }
+    if (favoriteIdeas.length > 0) {
+      trendContext += `\n\n## ⭐ רעיונות מועדפים של המשתמש (עדיפות עליונה — אם אחד מהם מתכתב עם הרעיון הנוכחי, השתמש בו ישירות לזווית):\n${favoriteIdeas.slice(0, 10).map((i, n) => fmtIdea(i, n + 1)).join("\n")}`
+    }
+    if (creatorIdeas.length > 0) {
+      trendContext += `\n\n## 🔥 תוכן ויראלי מהיוצרים של המשתמש:\n${creatorIdeas.slice(0, 10).map((i, n) => fmtIdea(i, n + 1)).join("\n")}`
+    }
+    if (trendIdeas.length > 0) {
+      trendContext += `\n\n## 📈 טרנדים בנישה:\n${trendIdeas.slice(0, 8).map((i, n) => fmtIdea(i, n + 1)).join("\n")}`
+    }
+    console.log(`Hooks API: ${fieldIdeas.length} field ideas received — ${favoriteIdeas.length} favorited, ${creatorIdeas.length} from creators, ${trendIdeas.length} trends`)
 
     const prompt = buildHookGeneratorPrompt({
       idea,
@@ -118,6 +146,7 @@ export async function POST(req: NextRequest) {
       count,
       learningInsights,
       trendContext,
+      hasFavorites: favoriteIdeas.length > 0,
     })
 
     const client = new Anthropic({ apiKey })
@@ -139,12 +168,28 @@ export async function POST(req: NextRequest) {
     const textBlock = message.content.find((b) => b.type === "text")
     const rawHooks = parseHooks(textBlock?.text ?? "", count)
 
-    // Hebrew polish pass — rewrite anything that reads like a translation
-    // from English into natural Israeli speech. Runs in parallel across the
-    // batch on Haiku (fast + cheap for a narrow editing task). Each item
-    // falls back to its unpolished form on error.
+    // Judge pass — enforces the same quality bar as /api/homepage-hooks.
+    // Track whether the judge rewrote, so we can skip redundant polish below.
+    const judged = await Promise.all(
+      rawHooks.map(async (h) => {
+        const result = await judgeHook(client, {
+          hook: h,
+          template: "", // Per-idea flow doesn't commit to a template slot
+          specificTopic: idea,
+          targetPainOrDesire: userResponse || idea,
+          programmaticIssues: [],
+        })
+        return { text: result.valid ? h : result.rewritten, rewrote: !result.valid }
+      }),
+    )
+
+    // Polish only when judge accepted the original. Judge rewrites come from
+    // Opus 4.7 and are already natural Hebrew — skipping the Sonnet polish
+    // on those saves 3-6s per hook with no quality loss.
     const hooks = await Promise.all(
-      rawHooks.map((h) => polishHookForHebrew(client, h, FALLBACK_MODEL))
+      judged.map(({ text, rewrote }) =>
+        rewrote ? Promise.resolve(text) : polishHookForHebrew(client, text, PRIMARY_MODEL),
+      ),
     )
 
     return NextResponse.json({ hooks, model_fallback: modelFallback })

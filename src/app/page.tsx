@@ -120,7 +120,14 @@ export default function Home() {
         const res = await fetch("/api/homepage-hooks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fieldIdeas: ideas.map((i) => i.text) }),
+          body: JSON.stringify({
+            fieldIdeas: ideas.map((i) => ({
+              text: i.text,
+              source: i.source,
+              category: i.category,
+              url: i.url,
+            })),
+          }),
         })
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}))
@@ -302,7 +309,7 @@ export default function Home() {
             ))}
           </div>
 
-          <h2
+          <h1
             className="text-text-primary-default animate-in fade-in slide-in-from-top-3 duration-600"
             style={{
               animationDelay: "500ms",
@@ -313,7 +320,7 @@ export default function Home() {
             היי {userName.split(" ")[0]},
             <br />
             מה ניצור היום?
-          </h2>
+          </h1>
           <div
             className="animate-in fade-in slide-in-from-top-3 duration-600"
             style={{

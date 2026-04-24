@@ -30,6 +30,7 @@ export default function OnboardingPage() {
   // Step 1 - Connections
   const [anthropicKey, setAnthropicKey] = useState("")
   const [heygenKey, setHeygenKey] = useState("")
+  const [apifyKey, setApifyKey] = useState("")
 
   // Step 2 - Business
   const [businessName, setBusinessName] = useState("")
@@ -83,6 +84,7 @@ export default function OnboardingPage() {
           const updates: Record<string, string> = {}
           if (anthropicKey.trim()) updates.anthropic_api_key = anthropicKey.trim()
           if (heygenKey.trim()) updates.heygen_api_key = heygenKey.trim()
+          if (apifyKey.trim()) updates.apify_api_key = apifyKey.trim()
           if (Object.keys(updates).length > 0) {
             const { error } = await supabase.from("users").update(updates as never).eq("id", user.id)
             if (error) {
@@ -321,6 +323,31 @@ export default function OnboardingPage() {
                     className="text-text-primary-default font-semibold hover:underline"
                   >
                     app.heygen.com
+                  </a>
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="text-small-bold text-text-primary-default flex items-center gap-2">
+                  <Link2 className="size-4" />
+                  Apify API Key
+                </label>
+                <Input
+                  dir="ltr"
+                  placeholder="apify_api_..."
+                  value={apifyKey}
+                  onChange={(e) => setApifyKey(e.target.value)}
+                />
+                <p className="text-xs-body text-text-neutral-default">
+                  משמש לחיפוש פוסטים של היוצרים שתבחרו באינסטגרם, יוטיוב וטיקטוק.
+                  מצאו את ה-API key שלכם ב-{" "}
+                  <a
+                    href="https://console.apify.com/settings/integrations"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-text-primary-default font-semibold hover:underline"
+                  >
+                    console.apify.com
                   </a>
                 </p>
               </div>

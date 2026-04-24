@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
-import { TEMPLATE_LIBRARY, getTemplatesByCategory, type TemplateCategory } from "@/lib/agents/hook-templates"
+import { TEMPLATE_LIBRARY, getTemplatesByCategorySorted, templateText, templatePriority, type TemplateCategory, type HookTemplate } from "@/lib/agents/hook-templates"
 import { polishHookForHebrew } from "@/lib/agents/hook-hebrew-polish"
+import { judgeHook, validateHookLocally } from "@/lib/agents/hook-judge"
+import { classifyHooksByProduct } from "@/lib/agents/hook-product-classifier"
 
 interface PlanItem {
   category: TemplateCategory
@@ -24,10 +26,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ hooks: DUMMY_HOOKS })
     }
 
-    let fieldIdeas: string[] = []
+    // Field ideas now carry full structure (text, source, category, url) so we
+    // can bias by creator/trend and cross-check favorites. Older clients may
+    // still send plain strings — normalize both shapes.
+    type FieldIdea = { text: string; source?: string; category?: string; url?: string }
+    let fieldIdeas: FieldIdea[] = []
     try {
       const body = await req.json()
-      fieldIdeas = body.fieldIdeas ?? []
+      const raw = body.fieldIdeas ?? []
+      fieldIdeas = raw
+        .map((x: unknown) =>
+          typeof x === "string"
+            ? { text: x }
+            : (x as FieldIdea),
+        )
+        .filter((i: FieldIdea) => !!i?.text)
     } catch { /* no body */ }
 
     const supabase = await createClient()
@@ -37,12 +50,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const [{ data: coreIdentity }, { data: audienceIdentity }, { data: products }, learningInsights] = await Promise.all([
+    const [{ data: coreIdentity }, { data: audienceIdentity }, { data: products }, { data: favoritedRows }, learningInsights] = await Promise.all([
       supabase.from("core_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("audience_identities").select("*").eq("user_id", user.id).single(),
-      supabase.from("products").select("name, type, page_summary").eq("user_id", user.id),
+      supabase.from("products").select("id, name, type, page_summary").eq("user_id", user.id),
+      supabase.from("idea_favorites").select("idea_text").eq("user_id", user.id),
       fetchLearningInsights(supabase, user.id, "hook"),
     ])
+
+    // Build favorite-text lookup once, use it to flag incoming fieldIdeas.
+    const favoritedTexts = new Set(
+      ((favoritedRows as { idea_text: string }[] | null) ?? []).map((r) => r.idea_text.trim()),
+    )
+    type AnnotatedIdea = FieldIdea & { isFavorited: boolean }
+    const annotated: AnnotatedIdea[] = fieldIdeas.map((i) => ({
+      ...i,
+      isFavorited: favoritedTexts.has(i.text.trim()),
+    }))
+    const favoriteIdeas = annotated.filter((i) => i.isFavorited)
+    const creatorIdeas = annotated.filter((i) => !i.isFavorited && i.source && i.source !== "טרנד")
+    const trendIdeas = annotated.filter((i) => !i.isFavorited && (!i.source || i.source === "טרנד"))
+    console.log(`Homepage Hooks: ${fieldIdeas.length} field ideas received — ${favoriteIdeas.length} favorited, ${creatorIdeas.length} from creators, ${trendIdeas.length} trends (total favorites in DB: ${favoritedTexts.size})`)
 
     if (!coreIdentity) {
       return NextResponse.json(
@@ -168,9 +196,22 @@ ${audienceIdentity.limiting_beliefs}
       // non-fatal
     }
 
-    // Add field ideas (from "רעיונות מהשטח")
-    if (fieldIdeas.length > 0) {
-      trendContext += `\n\nרעיונות מהשטח — תוכן ויראלי שנמצא מיוצרים מובילים בנישה:\n${fieldIdeas.slice(0, 15).map((t, i) => `${i + 1}. ${t}`).join("\n")}`
+    // Add field ideas — split into labeled sections so the planner can bias by source
+    // and so favorites get hard quota treatment in the instructions below.
+    const fmtIdea = (i: AnnotatedIdea, n: number) => {
+      const parts = [`${n}. ${i.text}`]
+      if (i.source && i.source !== "טרנד") parts.push(`(מ-${i.source})`)
+      if (i.category) parts.push(`[${i.category}]`)
+      return parts.join(" ")
+    }
+    if (favoriteIdeas.length > 0) {
+      trendContext += `\n\n## ⭐ רעיונות מועדפים של המשתמש — נושאים שהוא סימן במיוחד (עדיפות עליונה!):\n${favoriteIdeas.slice(0, 10).map((i, n) => fmtIdea(i, n + 1)).join("\n")}`
+    }
+    if (creatorIdeas.length > 0) {
+      trendContext += `\n\n## 🔥 תוכן ויראלי מהיוצרים של המשתמש:\n${creatorIdeas.slice(0, 15).map((i, n) => fmtIdea(i, n + 1)).join("\n")}`
+    }
+    if (trendIdeas.length > 0) {
+      trendContext += `\n\n## 📈 טרנדים בנישה (להשלמה):\n${trendIdeas.slice(0, 10).map((i, n) => fmtIdea(i, n + 1)).join("\n")}`
     }
 
     // ============= PIPELINE STEP 1 — PLANNING =============
@@ -182,6 +223,28 @@ ${audienceIdentity.limiting_beliefs}
       .map((g) => `- ${g.category} (${g.contentType}, "${g.label}"): ${g.goal}`)
       .join("\n")
 
+    // Hard quota — aggressive. User marked these as favorites, and their creator
+    // viral posts are the highest-signal source. Plans should be saturated from
+    // them before falling back to generic audience content.
+    //   - Favorites: 3 plans per favorite, capped at 15 (so at least 5 slots
+    //     remain for other coverage).
+    //   - Creator viral: fills whatever remains, up to their count.
+    //   - Trends: pure top-up if creator content is thin.
+    //   - Audience-only: the very last resort.
+    const favoriteQuota = Math.min(favoriteIdeas.length * 3, 15)
+    const creatorQuota = Math.min(creatorIdeas.length, Math.max(HOOK_COUNT - favoriteQuota - 2, 0))
+    const trendQuota = Math.min(trendIdeas.length, Math.max(HOOK_COUNT - favoriteQuota - creatorQuota, 0))
+    const audienceOnly = Math.max(HOOK_COUNT - favoriteQuota - creatorQuota - trendQuota, 0)
+    console.log(`Homepage Hooks: quota — ${favoriteQuota} favorites + ${creatorQuota} creators + ${trendQuota} trends + ${audienceOnly} audience-only (of ${HOOK_COUNT})`)
+    const quotaSection = (favoriteIdeas.length > 0 || creatorIdeas.length > 0 || trendIdeas.length > 0)
+      ? `
+## 🎯 חובה — מכסת הוקים ממחקר מהשטח (רצפה, לא תקרה — מותר יותר, אסור פחות):
+${favoriteIdeas.length > 0 ? `- **${favoriteQuota} מתוך ${HOOK_COUNT} זוויות חייבות להיות על הרעיונות המועדפים** ⭐ — המשתמש סימן אותם במפורש. תשתמש/י בנושא הספציפי של כל מועדף (לא בגרסה גנרית שלו) ותייצר/י ממנו כמה זוויות שונות.` : ""}
+${creatorIdeas.length > 0 ? `- **${creatorQuota} זוויות חייבות להיות על תוכן ויראלי מהיוצרים** 🔥 — קח/י פוסט ספציפי, הזווית שלו, ובנה/י ממנו הוק בקול של המשתמש. ציין/י ב-angle_summary "בהשראת @שם_היוצר".` : ""}
+${trendIdeas.length > 0 ? `- **${trendQuota} זוויות יכולות להיות על טרנדים** 📈 — רק אם לא נשאר מקום ממועדפים/יוצרים.` : ""}
+- רק ${audienceOnly} זוויות מותר להבסיס אך ורק על מחקר הקהל ללא מקור מ-⭐/🔥/📈.
+` : ""
+
     const planningPrompt = `אתה אסטרטג שיווק שמתכנן זוויות תוכן עבור יוצרי קונטנט בישראל.
 
 ## המטרה
@@ -191,18 +254,20 @@ ${identitySection}
 ${audienceSection}
 ${productsSection}
 ${trendContext ? `## מחקר מהשטח:\n${trendContext}\n` : ""}
-
+${quotaSection}
 ## קטגוריות הוקים זמינות (תבחר אחת לכל זווית):
 ${categoriesCatalog}
 
 ## הוראות
-1. הפק ${HOOK_COUNT} זוויות שונות. גוון בין הקטגוריות — תכלול awareness, connection, ו-authority. אל תיצמד לקטגוריה אחת.
-2. לכל זווית — בחר נושא ספציפי מהמחקר/קהל היעד (כלי, שיטה, כאב ספציפי, רצון). אסור גנרי.
-3. השתמש בשפת הקהל מ-cross_audience_quotes ו-identity_statements.
-4. הזווית צריכה להיות מובחנת — לא חפיפה בין שתי זוויות.
+1. הפק ${HOOK_COUNT} זוויות שונות. **גוון קשיח בין הקטגוריות** — תכלול לפחות **8 קטגוריות שונות** מתוך 15 הקטגוריות הזמינות. אסור יותר מ-3 זוויות באותה קטגוריה (שומר על מגוון תבניות בכתיבה).
+2. פיזור חובה: חייב לכלול לפחות 3 קטגוריות מ-awareness (myth_breaking/common_mistakes/diagnosis), לפחות 2 מ-connection (personal_story/empowerment/identification/agenda), ולפחות 3 מ-authority (lists/real_reason/how_to/discovery/one_shift/comparisons/day_in_life/challenge).
+3. לכל זווית — בחר נושא ספציפי מהמחקר/קהל היעד (כלי, שיטה, כאב ספציפי, רצון). אסור גנרי.
+4. השתמש בשפת הקהל מ-cross_audience_quotes ו-identity_statements.
+5. הזווית צריכה להיות מובחנת — לא חפיפה בין שתי זוויות.
+6. **הקפד על המכסה של הרעיונות המועדפים והוויראליים** — זו דרישה קשיחה, לא המלצה.
 
-## פלט
-החזר JSON תקין בלבד (בלי markdown, בלי הסברים). מערך של ${HOOK_COUNT} אובייקטים בפורמט הזה:
+## פלט — קריטי!
+⚠️ **התשובה שלך חייבת להיות JSON array בלבד.** ללא טקסט לפני או אחרי, ללא \`\`\`json fences, ללא הסברים, ללא כותרות markdown. **התו הראשון בתשובה חייב להיות \`[\` והאחרון \`]\`**. מערך של ${HOOK_COUNT} אובייקטים בדיוק:
 [
   {
     "category": "myth_breaking" | "common_mistakes" | "diagnosis" | "personal_story" | "empowerment" | "identification" | "agenda" | "lists" | "real_reason" | "how_to" | "discovery" | "one_shift" | "comparisons" | "day_in_life" | "challenge",
@@ -222,14 +287,23 @@ ${categoriesCatalog}
       const tryModel = async (model: string) => {
         const res = await client.messages.create({
           model,
-          max_tokens: 4096,
+          // 20 Hebrew plans × ~5 fields each = easily 6-8K output tokens once
+          // character-heavy Hebrew is token-counted. 4096 was truncating the
+          // JSON mid-string. 8192 is safely within Sonnet 4.6 + Haiku 4.5 caps.
+          max_tokens: 8192,
           messages: [{ role: "user", content: planningPrompt }],
         })
         const text = res.content.find((b) => b.type === "text")?.text ?? ""
-        // Extract JSON array from response (in case model wraps it)
-        const jsonMatch = text.match(/\[[\s\S]*\]/)
-        if (!jsonMatch) throw new Error("No JSON in plan response")
-        return JSON.parse(jsonMatch[0]) as PlanItem[]
+        const parsed = extractJsonArray(text)
+        if (!parsed) {
+          console.error(`Homepage Hooks: plan response not parseable. First 800 chars: ${text.slice(0, 800)}`)
+          // Surface the first 300 chars so we can see it in the browser console
+          // without hunting for server logs. Strip newlines so the error line
+          // stays readable.
+          const preview = text.slice(0, 300).replace(/\s+/g, " ").trim()
+          throw new Error(`No JSON in plan response. Claude returned: ${preview}`)
+        }
+        return parsed as PlanItem[]
       }
       try {
         return { plans: await tryModel(PRIMARY_MODEL), fallback: false }
@@ -239,112 +313,243 @@ ${categoriesCatalog}
       }
     }
 
+    // Try several strategies to recover a JSON array from Claude's response.
+    // Returns null if nothing parses cleanly.
+    function extractJsonArray(text: string): unknown[] | null {
+      const trimmed = text.trim()
+      // 1. Direct parse — cleanest case
+      if (trimmed.startsWith("[")) {
+        try { return JSON.parse(trimmed) } catch { /* fall through */ }
+      }
+      // 2. Strip ```json ... ``` fences
+      const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
+      if (fenced) {
+        try { return JSON.parse(fenced[1]) } catch { /* fall through */ }
+      }
+      // 3. Find the widest [...] substring and try it
+      const firstBracket = trimmed.indexOf("[")
+      const lastBracket = trimmed.lastIndexOf("]")
+      if (firstBracket >= 0 && lastBracket > firstBracket) {
+        try { return JSON.parse(trimmed.slice(firstBracket, lastBracket + 1)) } catch { /* fall through */ }
+      }
+      return null
+    }
+
+    // Parse the structured write-step response. Same tolerance as extractJsonArray
+    // but for a single {...} object — writer may wrap in markdown or add prose.
+    function parseDraftJson(text: string): { template_index?: number; slot_fills?: Record<string, string>; hook?: string } | null {
+      const trimmed = text.trim()
+      const attempts: string[] = []
+      if (trimmed.startsWith("{")) attempts.push(trimmed)
+      const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
+      if (fenced) attempts.push(fenced[1])
+      const firstBrace = trimmed.indexOf("{")
+      const lastBrace = trimmed.lastIndexOf("}")
+      if (firstBrace >= 0 && lastBrace > firstBrace) attempts.push(trimmed.slice(firstBrace, lastBrace + 1))
+      for (const attempt of attempts) {
+        try { return JSON.parse(attempt) } catch { /* fall through */ }
+      }
+      return null
+    }
+
+    // Strip leading numbering / bullets / wrapping quotes / newlines from a raw hook.
+    function cleanRawHook(text: string): string {
+      return text
+        .split("\n")[0]
+        .trim()
+        .replace(/^\d+[\.\)]\s*/, "")
+        .replace(/^["'״׳"\-*•]+/, "")
+        .replace(/["'״׳"]+$/, "")
+        .trim()
+    }
+
     const encoder = new TextEncoder()
     const stream = new ReadableStream({
       async start(controller) {
         let hookCount = 0
         let usedFallback = false
+        // Collected as hooks stream out, so we can batch-classify by product at the end.
+        const generatedHooks: Array<{ id: string; text: string }> = []
+
+        // Defensive wrapper: if the client navigated away, `controller.enqueue`
+        // throws (controller is closed). We swallow it so the generation loop
+        // continues to completion. DB inserts still happen; user sees the
+        // full batch when they return to /hooks.
+        let clientConnected = true
+        const safeEnqueue = (chunk: Uint8Array) => {
+          if (!clientConnected) return
+          try {
+            controller.enqueue(chunk)
+          } catch {
+            clientConnected = false
+            console.log("Homepage Hooks: client disconnected — continuing generation on server")
+          }
+        }
+        const safeClose = () => {
+          if (!clientConnected) return
+          try { controller.close() } catch { /* already closed */ }
+        }
 
         try {
           // ============= STEP 1: PLANNING =============
           const { plans, fallback } = await planWithFallback()
           if (fallback) {
             usedFallback = true
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
           }
+          console.log(`Homepage Hooks: planning done — ${plans.length} plans, fallback=${fallback}`)
 
-          // ============= STEP 2: WRITING — one hook per plan, sequentially streamed =============
-          for (const plan of plans) {
-            if (hookCount >= HOOK_COUNT) break
-            const templates = getTemplatesByCategory(plan.category)
-            if (templates.length === 0) continue
+          // ============= STEP 2: WRITING — parallel batches of 5, streamed as each completes =============
+          // Pipeline per hook (runs concurrently in batches):
+          //   write (structured JSON) → programmatic check → judge → polish → insert → stream
+          //   If judge rewrite still fails programmatic check, skip the plan.
+          //
+          // Parallelizing cuts total time from ~12min (serial) to ~2min for 20 hooks.
+          // Batch size 5 keeps us well under Anthropic tier-1 rate limits (4k req/min;
+          // 5 plans × 3 Claude calls = 15 concurrent — safe).
+          let skipped = 0
+          // 10 × 3 concurrent Claude calls = 30 at peak, safely within Tier 1
+          // Anthropic limits (4000 req/min, 80K in-tok/min; our burst ~30-40K).
+          // If hitting 429s, drop back to 5-7.
+          const BATCH_SIZE = 10
 
-            const writePrompt = `אתה כותב הוקים ויראליים בעברית יומיומית, קלילה ותקנית — עברית "עמך" שאנשים באמת מדברים בה.
+          interface DraftHook { template_index?: number; slot_fills?: Record<string, string>; hook?: string }
 
-## הזווית שאת/ה כותב/ת לפיה
-נושא ספציפי: ${plan.specific_topic}
-כאב/רצון של הקהל: ${plan.target_pain_or_desire}
-ביטוי בשפת הקהל: "${plan.audience_quote}"
-תיאור הזווית: ${plan.angle_summary}
+          const processOnePlan = async (plan: PlanItem, planIdx: number): Promise<void> => {
+            const templates: HookTemplate[] = getTemplatesByCategorySorted(plan.category)
+            if (templates.length === 0) return
 
-## תבניות לבחירה (חובה לבחור אחת מהן ולמלא את ה-slots)
-${templates.map((t, i) => `${i + 1}. ${t}`).join("\n")}
+            const highCount = templates.filter((t) => templatePriority(t) === "high").length
+            const formatTemplatesForPrompt = () => templates.map((t, i) => {
+              const tag = templatePriority(t) === "low" ? "  [עדיפות נמוכה — השתמש רק אם אין תבנית מתאימה יותר]" : ""
+              return `${i}. ${templateText(t)}${tag}`
+            }).join("\n")
 
-## הוראות
-- **קודם הזווית, אחר כך התבנית.** התמקד/י בלמצוא את הניסוח החזק ביותר לזווית, ואז התאם/י את התבנית הכי מתאימה וחזקה מהרשימה.
-- **התבנית חייבת להתאים לנישה ולקהל של היוצר.** לא כל תבנית מתאימה לכל תחום — אם תבנית נשמעת מאולצת או רחוקה מהעולם של היוצר, בחר/י אחרת מהרשימה.
-- מלא/י את ה-slots ({...}) עם תוכן ספציפי לפי הזווית והנושא.
-- הוק יחיד, משפט אחד עד שניים, פאנצ'י.
-- אסור להמציא תבנית חדשה. רק להתאים אחת מהקיימות. מותר שאותה תבנית תחזור על עצמה בין הוקים שונים.
+            const writePrompt = `אתה כותב הוק אחד לסרטון קצר בעברית ישראלית. אתה **חייב** לבחור אחת מהתבניות ברשימה ולמלא את ה-slots שלה.
 
-## שפה — עברית "עמך", לא תרגום מאנגלית
-- כתוב בעברית יומיומית וקלילה שאנשים באמת מדברים — לא עברית מתורגמת, לא עברית מגושמת, לא עברית "ספרותית".
-- לפני כל ניסוח — שאל/י את עצמך: "איך ישראלי באמת אומר את זה בעברית?" אם התשובה לא זורמת על הלשון — נסח/י מחדש.
-- אסור תרגום ישיר מאנגלית (hack/viral/content/game changer/mindset/journey וכו׳) — תמצא/י את המקבילה העברית היומיומית או שכתוב/י אחרת לגמרי.
-- עברית תקנית בכתיב (בלי שגיאות, בלי Franglish) אבל בטון של שיחה רגילה, לא של מאמר.
-- אם מילה נשמעת כמו תרגום מאנגלית — היא כנראה תרגום. מצא/י ניסוח ישראלי.
+## הזווית
+- **נושא:** ${plan.specific_topic}
+- **כאב/רצון:** ${plan.target_pain_or_desire}
+- **איך הקהל מדבר על זה:** "${plan.audience_quote}"
+- **תיאור הזווית:** ${plan.angle_summary}
 
-## חובה — פניה לקהל
-- **תמיד ברבים** (אתם/לכם/שלכם/תעשו/תצפו). אסור להשתמש בלשון נקבה יחיד (את/לך/שלך/תעשי) או זכר יחיד (אתה/תעשה).
-- גם אם התבנית או הדוגמה מופיעה בנקבה יחיד — תמיר/י אותה לרבים בהוק הסופי.
-- פעלים בגוף ראשון של היוצר (אני עשיתי/נרפאתי) — שמור/י ניטרליים מגדרית: "אני עשיתי", "נרפאתי", "עברתי" (לא "עשיתי/עברתי" בנקבה נטיית נוכחת בלבד).
+## תבניות (${highCount} הראשונות בעדיפות גבוהה, כלומר פותחות סקרנות — עדיף לבחור מהן):
+${formatTemplatesForPrompt()}
 
-## פלט
-משפט אחד בלבד — ההוק עצמו, בלי הסברים, בלי מספור, בלי גרשיים.`
+## הכלל החשוב ביותר: פער סקרנות
+ההוק **שומר את התשובה סגורה**. הוא מבטיח ערך, לא מוסר אותו. אם אחרי קריאה הקורא כבר יודע את התובנה — אין סיבה לצפות.
+- ❌ "מעצבים שמפחדים מ-AI מפספסים מה שהוא לא יכול לעשות" — התשובה כבר שם.
+- ✅ "3 דברים שAI עדיין לא יודע לעשות ב-2026" — מבטיח רשימה, לא מוסר אותה.
+- ❌ "הסיבה שפוסטים לא מקבלים לייקים זה שהם לא קוראים" — נמסר.
+- ✅ "הסיבה האמיתית שהפוסטים שלכם לא מקבלים לייקים — והיא לא מה שחשבתם" — לולאה.
 
-            // Write the hook (Sonnet → Haiku fallback)
-            let hookText = ""
-            const writeWithFallback = async () => {
-              try {
-                const res = await client.messages.create({
-                  model: usedFallback ? FALLBACK_MODEL : PRIMARY_MODEL,
-                  max_tokens: 200,
-                  messages: [{ role: "user", content: writePrompt }],
-                })
-                hookText = (res.content.find((b) => b.type === "text")?.text ?? "").trim()
-              } catch (err) {
-                if (!isOverloadError(err) || usedFallback) throw err
-                usedFallback = true
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
-                const res = await client.messages.create({
-                  model: FALLBACK_MODEL,
-                  max_tokens: 200,
-                  messages: [{ role: "user", content: writePrompt }],
-                })
-                hookText = (res.content.find((b) => b.type === "text")?.text ?? "").trim()
+## כללים נוספים
+1. **אורך**: עד 15 מילים, משפט אחד.
+2. **פניה לקהל ברבים בלבד** (אתם/לכם/שלכם). אסור לערבב יחיד ורבים באותו הוק.
+3. **נושא + פועל תואמים** במין ובמספר.
+4. **קונקרטי לנישה** — אזכר את המילה הספציפית מהנושא, לא גנרי.
+5. **עברית ישראלית טבעית** — לא תרגום מאנגלית, לא מטאפורות מתורגמות.
+6. **AI = זכר** ("הוא", "שיודע", לא "היא"/"שיודעת").
+
+## פורמט הפלט — JSON בלבד
+התו הראשון חייב להיות \`{\` והאחרון \`}\`. בלי markdown, בלי הסברים.
+
+\`\`\`json
+{
+  "template_index": 0,
+  "slot_fills": { "X": "3", "נושא": "Figma auto-layout" },
+  "hook": "3 דברים ב-Figma auto-layout שחוסכים לכם שעה ביום"
+}
+\`\`\`
+
+- \`template_index\` = מספר התבנית שבחרת (0-${templates.length - 1}).
+- \`slot_fills\` = המילים שמילאת ב-slots (אובייקט).
+- \`hook\` = ההוק המלא אחרי מילוי, בדיוק כפי שיוצג לקורא.`
+
+            // Write the hook — Sonnet with Haiku overload fallback
+            let draft: DraftHook | null = null
+            const doCall = async (model: string) => {
+              const res = await client.messages.create({
+                model,
+                max_tokens: 600,
+                messages: [{ role: "user", content: writePrompt }],
+              })
+              const raw = res.content.find((b) => b.type === "text")?.text ?? ""
+              draft = parseDraftJson(raw)
+            }
+            try {
+              await doCall(usedFallback ? FALLBACK_MODEL : PRIMARY_MODEL)
+            } catch (err) {
+              if (!isOverloadError(err) || usedFallback) {
+                skipped++
+                console.warn(`Homepage Hooks: writer crashed for "${plan.specific_topic}":`, err)
+                return
+              }
+              usedFallback = true
+              safeEnqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
+              await doCall(FALLBACK_MODEL)
+            }
+
+            if (!draft || !(draft as DraftHook).hook || typeof (draft as DraftHook).hook !== "string" || ((draft as DraftHook).hook!).trim().length <= 10) {
+              skipped++
+              console.warn(`Homepage Hooks: writer returned no usable hook for "${plan.specific_topic}" — skipping`)
+              return
+            }
+            const d = draft as DraftHook
+            let hookText = cleanRawHook(d.hook!)
+
+            const templateIdx = Number.isInteger(d.template_index) ? d.template_index! : 0
+            const chosenTemplate = templates[templateIdx] ?? templates[0]
+            const chosenTemplateText = templateText(chosenTemplate)
+
+            // Programmatic check — deterministic, cheap.
+            let issues = validateHookLocally(hookText, plan.specific_topic)
+
+            // Judge (Opus) — always. Catches curiosity-gap + logic failures code can't.
+            const judgeResult = await judgeHook(client, {
+              hook: hookText,
+              template: chosenTemplateText,
+              specificTopic: plan.specific_topic,
+              targetPainOrDesire: plan.target_pain_or_desire,
+              programmaticIssues: issues,
+            })
+
+            const judgeRewrote = !judgeResult.valid
+            if (judgeRewrote) {
+              console.log(`Homepage Hooks: judge rewrote "${hookText.slice(0, 40)}..." — issues: ${judgeResult.issues.join("; ")}`)
+              hookText = judgeResult.rewritten
+              issues = validateHookLocally(hookText, plan.specific_topic)
+              if (issues.length > 0) {
+                skipped++
+                console.warn(`Homepage Hooks: skipping "${plan.specific_topic}" — judge rewrite still failed: ${issues.join(", ")}`)
+                return
               }
             }
-            await writeWithFallback()
 
-            // Clean up — strip wrapping quotes / bullets / numbering / multi-line
-            hookText = hookText
-              .split("\n")[0]
-              .trim()
-              .replace(/^\d+[\.\)]\s*/, "")
-              .replace(/^["'״׳"\-*•]+/, "")
-              .replace(/["'״׳"]+$/, "")
-              .trim()
+            if (hookText.length <= 10) { skipped++; return }
 
-            if (hookText.length <= 10) continue
-
-            // Hebrew polish pass — rewrite anything that reads like a translation
-            // from English into natural Israeli speech. Always uses Haiku (fast
-            // + cheap for a narrow editing task). Falls back to the unpolished
-            // hook if the editor errors.
-            hookText = await polishHookForHebrew(client, hookText, FALLBACK_MODEL)
-            if (hookText.length <= 10) continue
+            // Polish only if judge accepted the original. When judge rewrote,
+            // the Opus output is already clean natural Hebrew — running the
+            // Sonnet polish on top is redundant and occasionally re-edits
+            // something Opus got right.
+            if (!judgeRewrote) {
+              hookText = await polishHookForHebrew(client, hookText, PRIMARY_MODEL)
+              if (hookText.length <= 10) { skipped++; return }
+            }
 
             const { data: row } = await supabase.from("hooks").insert({
               user_id: userId,
               hook_text: hookText,
-              display_order: hookCount,
+              display_order: planIdx, // plan order preserved even in parallel execution
               status: "completed",
               is_selected: false,
               is_used: false,
             } as Record<string, unknown>).select("id").single()
 
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-              id: row?.id || crypto.randomUUID(),
+            const hookId = row?.id || crypto.randomUUID()
+            generatedHooks.push({ id: hookId, text: hookText })
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+              id: hookId,
               hook_text: hookText,
               is_used: false,
               created_at: new Date().toISOString(),
@@ -352,12 +557,50 @@ ${templates.map((t, i) => `${i + 1}. ${t}`).join("\n")}
             hookCount++
           }
 
-          controller.enqueue(encoder.encode("data: [DONE]\n\n"))
-          controller.close()
+          // Run plans in batches of BATCH_SIZE, all plans in a batch concurrently.
+          // Each batch waits for all its plans to finish before the next starts —
+          // that keeps concurrent Claude calls bounded and the stream ordered by
+          // batch (plans within a batch may arrive in any order, which is fine).
+          for (let i = 0; i < plans.length && hookCount < HOOK_COUNT; i += BATCH_SIZE) {
+            const batch = plans.slice(i, i + BATCH_SIZE)
+            await Promise.all(batch.map((plan, j) => processOnePlan(plan, i + j)))
+          }
+
+          console.log(`Homepage Hooks: generation complete — ${hookCount} hooks streamed/inserted (${skipped} skipped as unrecoverable)`)
+
+          // Batch-classify all generated hooks against the user's products.
+          // One Haiku call, ~$0.01. Writes product_ids back to DB. Client
+          // picks it up when it reloads via loadHooks() after [DONE].
+          const productList = (products as Array<{ id: string; name: string; page_summary: string }> | null) ?? []
+          if (generatedHooks.length > 0 && productList.length > 0) {
+            try {
+              const classification = await classifyHooksByProduct(client, {
+                hooks: generatedHooks,
+                products: productList.map((p) => ({ id: p.id, name: p.name, summary: p.page_summary })),
+              })
+              // Parallel DB updates — one per hook.
+              await Promise.all(
+                generatedHooks.map((h) => {
+                  const productIds = classification[h.id] ?? []
+                  return supabase
+                    .from("hooks")
+                    .update({ product_ids: productIds } as never)
+                    .eq("id", h.id)
+                }),
+              )
+              console.log(`Homepage Hooks: classified ${generatedHooks.length} hooks across ${productList.length} products`)
+            } catch (err) {
+              console.error("Homepage Hooks: classification failed — hooks ship without product tags:", err)
+            }
+          }
+
+          safeEnqueue(encoder.encode("data: [DONE]\n\n"))
+          safeClose()
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`))
-          controller.close()
+          console.error(`Homepage Hooks: generation failed at hook ${hookCount} —`, msg)
+          safeEnqueue(encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`))
+          safeClose()
         }
       },
     })

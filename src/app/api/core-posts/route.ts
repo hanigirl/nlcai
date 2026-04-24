@@ -79,9 +79,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, hookText, userResponse, formatPosts, videoUrl } = (await req.json()) as {
+    const { body, hookText, hookId, userResponse, formatPosts, videoUrl } = (await req.json()) as {
       body: string
       hookText: string
+      hookId?: string
       userResponse: string
       formatPosts?: Record<string, string>
       videoUrl?: string
@@ -134,8 +135,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: postError?.message ?? "Failed to save" }, { status: 500 })
     }
 
-    // Mark the source hook as used
-    if (hookText) {
+    // Mark the source hook as used. When we have a stable id, also sync the
+    // hook_text back — if the user edited the hook on the project page, the
+    // inventory should reflect the version they actually used.
+    if (hookId) {
+      const hookUpdate: { is_used: boolean; hook_text?: string } = { is_used: true }
+      if (hookText) hookUpdate.hook_text = hookText
+      await supabase
+        .from("hooks")
+        .update(hookUpdate as never)
+        .eq("user_id", user.id)
+        .eq("id", hookId)
+    } else if (hookText) {
       await supabase
         .from("hooks")
         .update({ is_used: true } as never)

@@ -10,9 +10,25 @@ interface CreatorCandidate { handle: string; platform: string }
 interface VerifiedCreator { handle: string; platform: string; followers: number; formatted: string; bio: string; profileUrl: string }
 interface ContentItem { creator: string; platform: string; url: string; caption: string; hashtags: string[] }
 
+type CreatorPlatform = "instagram" | "youtube" | "tiktok"
+// A normalized post from Apify — same shape across the three platforms so the
+// per-creator platform-picking logic can treat them uniformly.
+interface ApifyPost {
+  handle: string
+  platform: CreatorPlatform
+  url: string
+  caption: string
+  hashtags: string[]
+  engagement: number // likes + comments (views deliberately excluded — cross-platform comparable)
+}
+
 // ── Helpers ────────────────────────────────────────────
 class SearchQuotaExceededError extends Error {
   constructor() { super("SEARCH_QUOTA_EXCEEDED") }
+}
+
+class ApifyQuotaExceededError extends Error {
+  constructor() { super("APIFY_QUOTA_EXCEEDED") }
 }
 
 async function searchWeb(query: string, num = 10): Promise<SerperResult[]> {
@@ -31,6 +47,139 @@ async function searchWeb(query: string, num = 10): Promise<SerperResult[]> {
   return (data.organic ?? []).map((r: Record<string, string>) => ({
     title: r.title, link: r.link, snippet: r.snippet, date: r.date,
   }))
+}
+
+// One shared caller for all three Apify actors. Uses the run-sync-get-dataset-items
+// endpoint so we get parsed dataset items back in a single round-trip (no polling).
+// 402 → the user's own Apify free-tier credit is exhausted; surfaced as a
+// distinct error so the UI can show the Hebrew quota banner.
+// The token is per-user (BYOK) — passed in by the caller after a successful
+// getUserApiKey(supabase, "apify_api_key") lookup.
+async function callApify<T>(actor: string, input: Record<string, unknown>, token: string): Promise<T[]> {
+  try {
+    const res = await fetch(
+      `https://api.apify.com/v2/acts/${actor}/run-sync-get-dataset-items?token=${token}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        signal: AbortSignal.timeout(90_000),
+      },
+    )
+    if (res.status === 402) throw new ApifyQuotaExceededError()
+    if (!res.ok) {
+      console.error(`Apify ${actor} failed: ${res.status} ${await res.text().catch(() => "")}`)
+      return []
+    }
+    return (await res.json()) as T[]
+  } catch (err) {
+    if (err instanceof ApifyQuotaExceededError) throw err
+    console.error(`Apify ${actor} error:`, err)
+    return []
+  }
+}
+
+async function fetchInstagramPosts(handles: string[], token: string): Promise<ApifyPost[]> {
+  if (handles.length === 0) return []
+  // apify~instagram-profile-scraper returns one PROFILE per handle, with a nested
+  // latestPosts[] array. We unwrap and flatten. resultsLimit controls posts-per-profile;
+  // we keep top 3 per creator downstream so 5 is plenty (and keeps CU burn low).
+  type RawPost = { url?: string; caption?: string; likesCount?: number; commentsCount?: number; hashtags?: string[]; ownerUsername?: string }
+  type RawProfile = { username?: string; latestPosts?: RawPost[] }
+  const profiles = await callApify<RawProfile>("apify~instagram-profile-scraper", {
+    usernames: handles.map((h) => h.replace(/^@/, "").trim()),
+    resultsLimit: 5,
+  }, token)
+  const out: ApifyPost[] = []
+  for (const prof of profiles) {
+    const owner = (prof.username || "").toLowerCase()
+    if (!owner || !prof.latestPosts) continue
+    for (const p of prof.latestPosts) {
+      if (!p.url) continue
+      out.push({
+        handle: (p.ownerUsername || owner).toLowerCase(),
+        platform: "instagram",
+        url: p.url,
+        caption: p.caption ?? "",
+        hashtags: p.hashtags ?? [],
+        engagement: (p.likesCount ?? 0) + (p.commentsCount ?? 0),
+      })
+    }
+  }
+  return out
+}
+
+async function fetchYoutubePosts(handles: string[], token: string): Promise<ApifyPost[]> {
+  if (handles.length === 0) return []
+  type Raw = {
+    channelName?: string
+    channelUrl?: string
+    inputUrl?: string
+    title?: string
+    description?: string
+    url?: string
+    likes?: number
+    commentsCount?: number
+  }
+  const cleanHandles = handles.map((h) => h.replace(/^@/, "").trim().toLowerCase())
+  const items = await callApify<Raw>("streamers~youtube-scraper", {
+    startUrls: cleanHandles.map((h) => ({ url: `https://www.youtube.com/@${h}/videos` })),
+    maxResults: 5,
+  }, token)
+  return items
+    .filter((i) => i.url)
+    .map((i) => {
+      // YT actor returns channelName as display name ("Dan Shur"), which rarely
+      // equals the @handle. Prefer channelUrl/inputUrl which contain `/@handle`.
+      // Fall back to channelName only as last resort.
+      const channelUrl = (i.channelUrl || i.inputUrl || "").toLowerCase()
+      const urlMatch = channelUrl.match(/\/@([\w.-]+)/)
+      let matched: string | null = urlMatch ? urlMatch[1] : null
+
+      if (!matched && i.channelName) {
+        const normName = i.channelName.replace(/^@/, "").toLowerCase()
+        const normNoSpace = normName.replace(/\s+/g, "")
+        matched =
+          cleanHandles.find((h) => h === normName || h === normNoSpace) ??
+          cleanHandles.find((h) => normName.includes(h) || normNoSpace.includes(h)) ??
+          null
+      }
+      // If still no match but we only sent 1 handle, attribute to it — it's the
+      // only channel we asked for, so any returned video belongs to it.
+      if (!matched && cleanHandles.length === 1) matched = cleanHandles[0]
+
+      if (!matched) return null
+
+      const caption = `${i.title ?? ""}${i.description ? " — " + i.description.slice(0, 400) : ""}`.trim()
+      return {
+        handle: matched,
+        platform: "youtube" as const,
+        url: i.url!,
+        caption,
+        hashtags: [],
+        engagement: (i.likes ?? 0) + (i.commentsCount ?? 0),
+      } as ApifyPost
+    })
+    .filter((p): p is ApifyPost => p !== null)
+}
+
+async function fetchTiktokPosts(handles: string[], token: string): Promise<ApifyPost[]> {
+  if (handles.length === 0) return []
+  type Raw = { authorMeta?: { name?: string }; webVideoUrl?: string; text?: string; diggCount?: number; commentCount?: number; hashtags?: Array<{ name?: string } | string> }
+  const items = await callApify<Raw>("clockworks~free-tiktok-scraper", {
+    profiles: handles.map((h) => h.replace(/^@/, "").trim()),
+    resultsPerPage: 5,
+  }, token)
+  return items
+    .filter((i) => i.authorMeta?.name && i.webVideoUrl)
+    .map((i) => ({
+      handle: i.authorMeta!.name!.toLowerCase(),
+      platform: "tiktok" as const,
+      url: i.webVideoUrl!,
+      caption: i.text ?? "",
+      hashtags: (i.hashtags ?? []).map((h) => (typeof h === "string" ? h : h.name ?? "")).filter(Boolean),
+      engagement: (i.diggCount ?? 0) + (i.commentCount ?? 0),
+    }))
 }
 
 async function fetchPageText(url: string): Promise<string> {
@@ -121,14 +270,20 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     let previousIdeas: string[] = []
+    let previousUrls: string[] = []
     let existingCategories: string[] = []
     let favoritedIdeas: { text: string; source: string; category?: string }[] = []
     try {
       const body = await req.json()
       previousIdeas = body.previousIdeas ?? []
+      previousUrls = body.previousUrls ?? []
       existingCategories = body.existingCategories ?? []
       favoritedIdeas = body.favoritedIdeas ?? []
     } catch { /* no body */ }
+    // URL dedup: every content URL the user has been shown (creator posts + trend
+    // links). Never expires — once shown, excluded forever on this device.
+    const normalizeUrl = (u: string) => u.toLowerCase().replace(/\/+$/, "").trim()
+    const seenUrls = new Set(previousUrls.filter(Boolean).map(normalizeUrl))
 
     const [{ data: coreIdentity }, { data: audienceIdentity }] = await Promise.all([
       supabase.from("core_identities").select("*").eq("user_id", user.id).single(),
@@ -176,46 +331,168 @@ export async function POST(req: NextRequest) {
 
 
     // ══════════════════════════════════════════════
-    // STEP 5: Find VIRAL / high-engagement content from user-specified creators.
-    // Skipped entirely if the user didn't specify any creators.
-    // Virality hint: append "viral OR trending OR popular" to most queries; Serper
-    // already ranks by relevance+popularity, so the top results tend to be the
-    // most-engaged posts for that creator.
+    // STEP 5: Pull recent posts for each user-specified creator from ALL THREE
+    // platforms (Instagram, YouTube, TikTok), score engagement, pick the one
+    // the creator is strongest on right now, and use that platform's top posts
+    // as the raw material for ideas. This overrides the "platform" the user
+    // originally saved in user_top_creators — that was just their entry point.
+    //
+    // LinkedIn stays on Serper (worse Apify coverage, rare in user_top_creators).
     // ══════════════════════════════════════════════
     const contentItems: ContentItem[] = []
 
     if (hasCreators) {
-      await Promise.all(
-        verifiedCreators.slice(0, 10).map(async (c) => {
-          if (c.platform === "instagram") {
-            const results = await searchWeb(`site:instagram.com/reel ${c.handle} viral OR trending OR popular`, 6)
-            const reels = results.filter((r) => r.link.includes("/reel/") || r.link.includes("/p/"))
-            for (const r of reels.slice(0, 4)) {
-              const meta = await fetchReelCaption(r.link)
-              if (meta) contentItems.push({ creator: c.handle, platform: "instagram", url: r.link, caption: meta.caption, hashtags: meta.hashtags })
-            }
-          } else if (c.platform === "youtube") {
-            const results = await searchWeb(`site:youtube.com ${c.handle} most viewed OR popular`, 5)
-            const videos = results.filter((r) => r.link.includes("watch?v=") || r.link.includes("youtu.be"))
-            for (const r of videos.slice(0, 3)) {
-              contentItems.push({ creator: c.handle, platform: "youtube", url: r.link, caption: r.snippet, hashtags: [] })
-            }
-          } else if (c.platform === "tiktok") {
-            const results = await searchWeb(`site:tiktok.com/@${c.handle} video viral OR popular`, 5)
-            for (const r of results.slice(0, 3)) {
-              contentItems.push({ creator: c.handle, platform: "tiktok", url: r.link, caption: r.snippet, hashtags: [] })
-            }
-          } else if (c.platform === "linkedin") {
-            const results = await searchWeb(`site:linkedin.com/posts ${c.handle}`, 3)
-            for (const r of results.slice(0, 2)) {
-              contentItems.push({ creator: c.handle, platform: "linkedin", url: r.link, caption: r.snippet, hashtags: [] })
-            }
+      const topCreators = verifiedCreators.slice(0, 10)
+      const multiPlatformCreators = topCreators.filter((c) => c.platform !== "linkedin")
+      const linkedinCreators = topCreators.filter((c) => c.platform === "linkedin")
+      // IG + TikTok handles are usually shared across platforms, so we query every
+      // non-LinkedIn creator on both. YouTube handles are NOT shared (YT uses
+      // channel-specific @handles), so if we query IG handles on YT we get
+      // unrelated trending videos back (a known Apify fallback). Only query YT
+      // for creators the user explicitly declared as "youtube".
+      const apifyHandles = multiPlatformCreators.map((c) => c.handle)
+      const youtubeHandles = multiPlatformCreators.filter((c) => c.platform === "youtube").map((c) => c.handle)
+
+      // BYOK — each user brings their own Apify token. If they haven't
+      // connected one yet, we skip IG/YT/TT silently: LinkedIn via Serper
+      // and trend-only ideas still produce useful output, and the onboarding /
+      // settings UI nudges them to connect.
+      let apifyToken: string | null = null
+      try {
+        apifyToken = await getUserApiKey(supabase, "apify_api_key")
+      } catch {
+        apifyToken = null
+      }
+
+      if (apifyToken) {
+        console.log(`Ideas API Step 5: apify token present — IG/TT handles: [${apifyHandles.join(", ")}] | YT handles (declared youtube only): [${youtubeHandles.join(", ") || "none"}]`)
+      } else {
+        console.log("Ideas API Step 5: user has no Apify token — skipping cross-platform creator search (LinkedIn + trends will still run)")
+      }
+      // allSettled instead of all — one actor hitting 402 (quota) must NOT kill
+      // the other two. We track quota exhaustion separately and only fail the
+      // whole request if ALL three hit quota and contentItems stays empty.
+      const quotaExhaustedOn: CreatorPlatform[] = []
+      const platformError: Partial<Record<CreatorPlatform, string>> = {}
+      const safeFetch = async <T extends ApifyPost>(
+        platform: CreatorPlatform,
+        fn: () => Promise<T[]>,
+      ): Promise<T[]> => {
+        try {
+          return await fn()
+        } catch (err) {
+          if (err instanceof ApifyQuotaExceededError) {
+            quotaExhaustedOn.push(platform)
+            console.error(`Ideas API Step 5: ${platform} hit Apify quota (402) — continuing with other platforms`)
+            return []
           }
+          platformError[platform] = err instanceof Error ? err.message : String(err)
+          console.error(`Ideas API Step 5: ${platform} fetch failed:`, err)
+          return []
+        }
+      }
+      const [igPosts, ytPosts, ttPosts] = apifyToken
+        ? await Promise.all([
+            safeFetch("instagram", () => fetchInstagramPosts(apifyHandles, apifyToken!)),
+            safeFetch("youtube", () => fetchYoutubePosts(youtubeHandles, apifyToken!)),
+            safeFetch("tiktok", () => fetchTiktokPosts(apifyHandles, apifyToken!)),
+          ])
+        : [[], [], []] as [ApifyPost[], ApifyPost[], ApifyPost[]]
+      if (apifyToken) {
+        const uniq = (posts: ApifyPost[]) => Array.from(new Set(posts.map((p) => p.handle)))
+        console.log(`Ideas API Step 5: apify returned — IG ${igPosts.length} posts [${uniq(igPosts).join(", ")}] | YT ${ytPosts.length} posts [${uniq(ytPosts).join(", ")}] | TT ${ttPosts.length} posts [${uniq(ttPosts).join(", ")}]`)
+        if (quotaExhaustedOn.length > 0) {
+          console.warn(`Ideas API Step 5: quota exhausted on [${quotaExhaustedOn.join(", ")}]`)
+        }
+      }
+      // If every apify actor we actually called hit quota, surface a clear error
+      // up the stack so the UI can tell the user to top up Apify. We count YT
+      // only if we actually queried it (i.e. the user has declared youtube creators).
+      const attemptedPlatforms = apifyToken
+        ? (youtubeHandles.length > 0 ? 3 : 2)
+        : 0
+      if (attemptedPlatforms > 0 && quotaExhaustedOn.length === attemptedPlatforms) {
+        throw new ApifyQuotaExceededError()
+      }
+
+      // Group by (handle → platform → posts[])
+      const byCreator = new Map<string, Map<CreatorPlatform, ApifyPost[]>>()
+      for (const p of [...igPosts, ...ytPosts, ...ttPosts]) {
+        const handleKey = p.handle.toLowerCase()
+        if (!byCreator.has(handleKey)) byCreator.set(handleKey, new Map())
+        const platMap = byCreator.get(handleKey)!
+        if (!platMap.has(p.platform)) platMap.set(p.platform, [])
+        platMap.get(p.platform)!.push(p)
+      }
+
+      // For each creator: max engagement per platform → winning platform → posts sorted desc.
+      // We build ONE list per creator (full depth, engagement-sorted) so we can round-robin later.
+      const creatorLists: ContentItem[][] = []
+      for (const c of multiPlatformCreators) {
+        const handleKey = c.handle.replace(/^@/, "").toLowerCase()
+        const platMap = byCreator.get(handleKey)
+        if (!platMap || platMap.size === 0) {
+          console.log(`Ideas API Step 5: no Apify posts for @${c.handle} on any platform — skipping`)
+          continue
+        }
+        let winner: CreatorPlatform | null = null
+        let winnerScore = -1
+        for (const [platform, posts] of platMap) {
+          const maxEng = posts.reduce((m, p) => Math.max(m, p.engagement), 0)
+          if (maxEng > winnerScore) {
+            winnerScore = maxEng
+            winner = platform
+          }
+        }
+        if (!winner) continue
+        c.platform = winner // update so the prompt to Claude reflects the discovered platform
+        const sorted = platMap.get(winner)!.sort((a, b) => b.engagement - a.engagement)
+        creatorLists.push(sorted.map((p) => ({
+          creator: c.handle,
+          platform: winner!,
+          url: p.url,
+          caption: p.caption,
+          hashtags: p.hashtags,
+        })))
+        console.log(`Ideas API Step 5: @${c.handle} strongest on ${winner} (${winnerScore} eng) — ${sorted.length} posts available`)
+      }
+
+      // LinkedIn still goes through Serper — narrow coverage on Apify side.
+      // Collect as a separate creator list so LinkedIn creators also participate in round-robin.
+      const linkedinLists = await Promise.all(
+        linkedinCreators.map(async (c) => {
+          const results = await searchWeb(`site:linkedin.com/posts ${c.handle}`, 3)
+          return results.slice(0, 2).map((r) => ({
+            creator: c.handle,
+            platform: "linkedin" as const,
+            url: r.link,
+            caption: r.snippet,
+            hashtags: [] as string[],
+          }))
         })
       )
+      for (const list of linkedinLists) if (list.length > 0) creatorLists.push(list)
+
+      // Round-robin interleave across creators so the ordered list is:
+      //   A#1 (viral), B#1, C#1, A#2, B#2, C#2, ...
+      // Each creator's list is already engagement-sorted; creator order follows the
+      // DB insertion order in user_top_creators (which is the user's own priority).
+      const interleaved: ContentItem[] = []
+      const maxDepth = creatorLists.reduce((m, l) => Math.max(m, l.length), 0)
+      for (let d = 0; d < maxDepth; d++) {
+        for (const list of creatorLists) {
+          if (list[d]) interleaved.push(list[d])
+        }
+      }
+      // URL-dedup against everything the user has ever been shown on this device.
+      for (const item of interleaved) {
+        if (!seenUrls.has(normalizeUrl(item.url))) contentItems.push(item)
+      }
+      const droppedAsSeen = interleaved.length - contentItems.length
+      console.log(`Ideas API Step 5: interleaved ${interleaved.length} posts from ${creatorLists.length} creators → ${contentItems.length} fresh after URL dedup (dropped ${droppedAsSeen} as already-seen)`)
     }
 
-    console.log(`Ideas API Step 5: ${contentItems.length} content items from user creators`)
+    console.log(`Ideas API Step 5: ${contentItems.length} fresh content items from user creators`)
 
     // ══════════════════════════════════════════════
     // STEP 5b: Search for trends.
@@ -240,10 +517,12 @@ export async function POST(req: NextRequest) {
     let trendResults: SerperResult[] = []
     try {
       const trendResultsRaw = (await Promise.all(trendQueries)).flat()
-      const seenUrls = new Set<string>()
+      const dedupWithinBatch = new Set<string>()
       trendResults = trendResultsRaw.filter((r) => {
-        if (seenUrls.has(r.link)) return false
-        seenUrls.add(r.link)
+        if (dedupWithinBatch.has(r.link)) return false
+        dedupWithinBatch.add(r.link)
+        // Also drop trend links the user has already been shown on this device.
+        if (seenUrls.has(normalizeUrl(r.link))) return false
         return true
       })
     } catch (err) {
@@ -254,10 +533,16 @@ export async function POST(req: NextRequest) {
 
     // Upfront validation — fail fast before calling Claude if we have no raw material.
     if (!hasCreators && trendResults.length === 0) {
-      return NextResponse.json({ error: "no_trends_found" }, { status: 404 })
+      // If the user has no creators and all trend URLs were already seen, this is
+      // the "everything's exhausted" case.
+      const code = seenUrls.size > 0 ? "no_fresh_content" : "no_trends_found"
+      return NextResponse.json({ error: code }, { status: 404 })
     }
     if (hasCreators && contentItems.length === 0 && trendResults.length === 0) {
-      return NextResponse.json({ error: "no_creator_content" }, { status: 404 })
+      // Creator content + trends both empty. If seenUrls is non-empty, user has
+      // simply exhausted everything we can currently pull — surface that specifically.
+      const code = seenUrls.size > 0 ? "no_fresh_content" : "no_creator_content"
+      return NextResponse.json({ error: code }, { status: 404 })
     }
 
     // ══════════════════════════════════════════════
@@ -307,48 +592,50 @@ ${favoritedIdeas.map((f, i) => `${i + 1}. [${f.category || "ללא קטגורי�
 
     // ══════════════════════════════════════════════
     // STEP 6: Stream ideas from Claude.
-    // Two modes based on whether the user specified top creators:
-    //  - hasCreators → 7 ideas from those creators' viral posts + 2 from trends
-    //  - no creators → all 9 ideas from niche trends (creators section omitted)
+    // Creators always come first. Trends only fill the remainder when we don't have
+    // enough fresh creator content to reach 9 ideas.
+    //  - contentItems ≥ 9 → 9 creators, 0 trends
+    //  - 0 < contentItems < 9 → N creators, (9-N) trends
+    //  - contentItems === 0 → 9 trends (fallback)
     // ══════════════════════════════════════════════
-    const missionSection = hasCreators
+    const creatorQuota = Math.min(9, contentItems.length)
+    const trendQuota = 9 - creatorQuota
+    console.log(`Ideas API Step 6: quota — ${creatorQuota} creators + ${trendQuota} trends (contentItems=${contentItems.length}, trendResults=${trendResults.length}, seenUrls=${seenUrls.size})`)
+    const missionSection = hasCreators && contentItems.length > 0
       ? `## יוצרים של המשתמש (פונים רק אליהם!):
 ${creatorsSection}
 
-${contentSection ? `## תוכן ויראלי שמצאנו מהיוצרים האלה (caption נקרא!):\n${contentSection}` : ""}
+## תוכן ויראלי שמצאנו מהיוצרים האלה (caption נקרא! הרשימה כבר ממוינת — ויראליות-ראשונה ומפוזרת בין היוצרים):
+${contentSection}
+${trendQuota > 0 ? `\n## טרנדים (להשלמה בלבד):\n${trendsSection}\n` : ""}
+## המשימה — 9 רעיונות (${creatorQuota} מיוצרים${trendQuota > 0 ? ` + ${trendQuota} מטרנדים` : ""}):
 
-## טרנדים:
-${trendsSection}
-
-## המשימה — 9 רעיונות:
-
-**7 מיוצרים של המשתמש (תוכן ויראלי):**
-- **חובה** לבחור רעיונות מהסקשן "תוכן ויראלי" — אלו הפוסטים הכי מבוקשים של היוצרים.
+**${creatorQuota} מיוצרים של המשתמש — עדיפות עליונה!**
+- **השתמש ברעיונות לפי הסדר שהם מופיעים בסקשן "תוכן ויראלי"** — הם כבר ממוינים ויראליות-ראשונה ומפוזרים בין היוצרים. קח את ה-${creatorQuota} הראשונים שמתאימים.
+- אם פוסט ספציפי פרסומי (קורס, מבצע, פרס, קידום עצמי) — דלג עליו והמשך לבא בתור.
 - אסור להשתמש ביוצרים שלא ברשימה "יוצרים של המשתמש". **רק יוצרים מהרשימה הזו.**
 - source = @שם_היוצר. profileUrl = לינק הפרופיל מהרשימה (תמיד!)
 - **url ו-profileUrl הם שני שדות שונים!**
   - url = לינק לתוכן ספציפי (ריל/סרטון/פוסט) — **לא לפרופיל!**
   - profileUrl = לינק לפרופיל של היוצר
-- אם יש תוכן עם caption — **קודם בדוק שזה לא פרסומי** (קורס, מבצע, פרס, קידום עצמי). אם זה פרסומי — דלג. אם חינוכי — url = הלינק לתוכן, תסכם את ה-caption
-- אם יש תוכן עם תגיות בלבד — url = הלינק לתוכן. ציין את התגיות
-- אם אין תוכן ספציפי לאיזשהו יוצר — דלג עליו. **אסור להמציא** caption/URLs.
-- מותר כמה רעיונות מאותו יוצר על תוכן שונה
-- הנושא חייב לנגוע בכאבי/רצונות הקהל
-- **גוון פלטפורמות** — לא רק אינסטגרם!
-
-**2 מטרנדים:**
+- **אסור להמציא** caption/URLs — רק מה שמופיע בסקשן "תוכן ויראלי".
+- הנושא חייב לנגוע בכאבי/רצונות הקהל.
+${trendQuota > 0 ? `\n**${trendQuota} מטרנדים (רק להשלמה — כשלא מספיק תוכן טרי מהיוצרים):**
 - url = לינק מהטרנדים. profileUrl = "". source = "טרנד"
-
-### פורמט:
-- עם caption: "@שם (platform) — [סיכום ה-caption: המסקנות והנקודות הספציפיות]."
-- עם תגיות: "@שם (platform) העלה תוכן. תגיות: #tag1 #tag2"
+` : ""}
+### פורמט ה-text:
+**אל תתחיל את ה-text בשם היוצר או בפלטפורמה** — שם היוצר כבר מוצג בתחתית הסטיקי נוט. התחל ישר מהתוכן.
+- עם caption: "[סיכום ה-caption: המסקנות והנקודות הספציפיות]."
+- עם תגיות: "העלה תוכן בנושא [X]. תגיות: #tag1 #tag2"
 - טרנד: "טרנד: [הנושא]. [סיכום מהמאמר]."`
       : `## טרנדים:
 ${trendsSection}
 
 ## המשימה — 9 רעיונות **רק מטרנדים**:
 
-המשתמש לא הגדיר יוצרים מועדפים, אז כל 9 הרעיונות חייבים להיות מבוססים על הטרנדים למעלה.
+${hasCreators
+  ? "לא הצלחנו למשוך תוכן ויראלי מהיוצרים שהמשתמש הגדיר כרגע — אז כל 9 הרעיונות חייבים להיות מבוססים על הטרנדים למעלה."
+  : "המשתמש לא הגדיר יוצרים מועדפים, אז כל 9 הרעיונות חייבים להיות מבוססים על הטרנדים למעלה."}
 
 - כל רעיון: source = "טרנד". profileUrl = "". url = הלינק מהטרנדים.
 - כל רעיון על נושא שונה — אסור לחזור על אותו טרנד פעמיים.
@@ -475,6 +762,13 @@ JSONL:
                       continue
                     }
                     sentTexts.add(key)
+                    // Strip leading "@handle (platform) —" / "@handle (platform)" prefix
+                    // if Claude slipped one in — the sticky-note footer already shows
+                    // the creator, so it's redundant on the body text.
+                    p.text = p.text
+                      .replace(/^@?[\w.-]+\s*\((instagram|tiktok|youtube|linkedin)\)\s*[—–-]\s*/i, "")
+                      .replace(/^@?[\w.-]+\s*\((instagram|tiktok|youtube|linkedin)\)\s+/i, "")
+                      .trim()
                     // Fix source/url/profileUrl mismatches before sending
                     const fixed = fixSourceUrlMatch(p)
                     console.log(`Ideas API: SENT idea ${sentTexts.size}: ${key.slice(0, 40)}`)
@@ -538,6 +832,10 @@ JSONL:
       headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" },
     })
   } catch (error) {
+    if (error instanceof ApifyQuotaExceededError) {
+      console.error("Ideas generation error: Apify cross-platform quota exhausted")
+      return NextResponse.json({ error: "apify_quota_exceeded" }, { status: 402 })
+    }
     if (error instanceof SearchQuotaExceededError) {
       console.error("Ideas generation error: Serper search quota exhausted")
       return NextResponse.json({ error: "search_quota_exceeded" }, { status: 402 })

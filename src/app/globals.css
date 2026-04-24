@@ -243,29 +243,36 @@
   }
 
   h1 {
-    font-size: 48px;
-    line-height: 48px;
-    letter-spacing: -0.576px;
-    font-weight: 600;
-  }
-  h2 {
     font-size: 32px;
     line-height: 32px;
     letter-spacing: -0.384px;
     font-weight: 600;
   }
-  h3 {
+  h2 {
     font-size: 24px;
     line-height: 24px;
     letter-spacing: -0.288px;
     font-weight: 600;
   }
-  h4 {
+  h3 {
     font-size: 20px;
     line-height: 20px;
     letter-spacing: -0.24px;
     font-weight: 600;
   }
+  h4 {
+    font-size: 16px;
+    line-height: 16px;
+    letter-spacing: -0.192px;
+    font-weight: 600;
+  }
+}
+
+@utility text-display {
+  font-size: 48px;
+  line-height: 48px;
+  letter-spacing: -0.576px;
+  font-weight: 600;
 }
 
 @utility text-p-bold {
