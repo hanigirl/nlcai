@@ -95,7 +95,7 @@ function SettingsPageInner() {
   const [saving, setSaving] = useState<KeyName | null>(null)
   const [reparsing, setReparsing] = useState(false)
   const [products, setProducts] = useState<Product[]>([])
-  const [savingProducts, setSavingProducts] = useState(false)
+  const [savingProductIndex, setSavingProductIndex] = useState<number | null>(null)
   const [storedKeys, setStoredKeys] = useState<Record<KeyName, string | null>>({
     anthropic_api_key: null,
     heygen_api_key: null,
@@ -124,8 +124,7 @@ function SettingsPageInner() {
 
   // Top creators (user-specified inspiration sources for the ideas pipeline)
   const [topCreators, setTopCreators] = useState<{ id?: string; url: string }[]>([{ url: "" }])
-  const [savingCreators, setSavingCreators] = useState(false)
-  const [creatorsSaved, setCreatorsSaved] = useState(false)
+  const [savingCreatorIndex, setSavingCreatorIndex] = useState<number | null>(null)
 
   // Media tab state
   interface MediaItem { id: string; name: string; url: string }
@@ -214,13 +213,20 @@ function SettingsPageInner() {
         .select("id, name, type, landing_page_url, page_summary")
         .eq("user_id", user.id)
       if (prods) {
-        setProducts(prods.map((p: Record<string, unknown>) => ({
-          id: p.id as string,
-          name: (p.name as string) || "",
-          type: (p.type as "front" | "premium" | "lead_magnet") || "front",
-          landingPageUrl: (p.landing_page_url as string) || "",
-          pageSummary: (p.page_summary as string) || null,
-        })))
+        setProducts(prods.map((p: Record<string, unknown>) => {
+          const url = (p.landing_page_url as string) || ""
+          const summary = (p.page_summary as string) || null
+          const noSalesPage = !url && !!summary
+          return {
+            id: p.id as string,
+            name: (p.name as string) || "",
+            type: (p.type as "front" | "premium" | "lead_magnet") || "front",
+            landingPageUrl: url,
+            pageSummary: summary,
+            noSalesPage,
+            manualSummary: noSalesPage ? (summary ?? "") : "",
+          }
+        }))
       }
 
       // Load user media from Supabase
@@ -279,27 +285,54 @@ function SettingsPageInner() {
   }
 
   // --- Product handlers ---
-  const handleSaveProducts = async () => {
-    setSavingProducts(true)
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    await supabase.from("products").delete().eq("user_id", user.id)
-    const toInsert = products.filter((p) => p.name.trim())
-    if (toInsert.length > 0) {
-      const { data: inserted } = await supabase
-        .from("products")
-        .insert(toInsert.map((p) => ({ user_id: user.id, name: p.name, type: p.type, landing_page_url: p.landingPageUrl || null })) as never)
-        .select("id")
-      if (inserted) {
-        toInsert.forEach((p, i) => {
-          if (p.landingPageUrl) {
-            fetch("/api/parse-product-page", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: p.landingPageUrl, productId: (inserted[i] as { id: string }).id }) }).catch(() => {})
-          }
-        })
+  const handleSaveProduct = async (index: number) => {
+    const p = products[index]
+    if (!p || !p.name.trim()) return
+    setSavingProductIndex(index)
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const id = p.id ?? (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : "")
+      const payload = {
+        id,
+        user_id: user.id,
+        name: p.name,
+        type: p.type,
+        landing_page_url: p.noSalesPage ? null : (p.landingPageUrl || null),
+        page_summary: p.noSalesPage ? (p.manualSummary?.trim() || null) : null,
+      }
+      const { error } = await supabase.from("products").upsert(payload as never, { onConflict: "id" })
+      if (error) {
+        toast.error(`שגיאה בשמירת המוצר: ${error.message}`)
+        return
+      }
+      // Sync the canonical id back into local state so subsequent saves update the same row.
+      setProducts((prev) => prev.map((pr, i) => i === index ? { ...pr, id } : pr))
+      if (!p.noSalesPage && p.landingPageUrl) {
+        fetch("/api/parse-product-page", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: p.landingPageUrl, productId: id }),
+        }).catch(() => {})
+      }
+      toast.success("המוצר נשמר")
+    } finally {
+      setSavingProductIndex(null)
+    }
+  }
+
+  const handleRemoveProduct = async (index: number) => {
+    const p = products[index]
+    if (!p) return
+    if (p.id) {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        await supabase.from("products").delete().eq("id", p.id).eq("user_id", user.id)
       }
     }
-    setSavingProducts(false)
+    setProducts((prev) => prev.filter((_, i) => i !== index))
   }
 
   // --- Media upload helpers ---
@@ -430,39 +463,52 @@ function SettingsPageInner() {
     }
   }
 
-  const handleSaveCreators = async () => {
-    setSavingCreators(true)
-    setCreatorsSaved(false)
+  const handleSaveCreator = async (index: number) => {
+    const c = topCreators[index]
+    if (!c || !c.url.trim()) return
+    const parsed = parseCreatorInput(c.url)
+    if (!parsed) {
+      toast.error("הקישור לא תקין")
+      return
+    }
+    setSavingCreatorIndex(index)
     try {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
-
-      const parsed = topCreators
-        .map((c) => parseCreatorInput(c.url))
-        .filter((p): p is NonNullable<typeof p> => p !== null)
-
-      // Replace the full list — authoritative save
-      await supabase.from("user_top_creators").delete().eq("user_id", user.id)
-      if (parsed.length > 0) {
-        const payload = parsed.map((p) => ({
-          user_id: user.id,
-          url: p.url,
-          handle: p.handle,
-          platform: p.platform,
-        }))
-        const { error } = await supabase.from("user_top_creators").insert(payload as never)
-        if (error) {
-          toast.error(`שגיאה בשמירה: ${error.message}`)
-          return
-        }
+      const id = c.id ?? (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : "")
+      const payload = {
+        id,
+        user_id: user.id,
+        url: parsed.url,
+        handle: parsed.handle,
+        platform: parsed.platform,
       }
-
-      setCreatorsSaved(true)
-      setTimeout(() => setCreatorsSaved(false), 2000)
+      const { error } = await supabase
+        .from("user_top_creators")
+        .upsert(payload as never, { onConflict: "id" })
+      if (error) {
+        toast.error(`שגיאה בשמירה: ${error.message}`)
+        return
+      }
+      setTopCreators((prev) => prev.map((cr, i) => i === index ? { ...cr, id, url: parsed.url } : cr))
+      toast.success("היוצר נשמר")
     } finally {
-      setSavingCreators(false)
+      setSavingCreatorIndex(null)
     }
+  }
+
+  const handleRemoveCreator = async (index: number) => {
+    const c = topCreators[index]
+    if (!c) return
+    if (c.id) {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        await supabase.from("user_top_creators").delete().eq("id", c.id).eq("user_id", user.id)
+      }
+    }
+    setTopCreators((prev) => prev.filter((_, i) => i !== index))
   }
 
   const refreshIdentityFile = async (category: "style_file" | "audience_file") => {
@@ -483,6 +529,37 @@ function SettingsPageInner() {
     } else {
       setAudienceOriginalFile({ name: row.file_name, url: urlData.publicUrl })
     }
+  }
+
+  const handleRemoveIdentityFile = (category: "style_file" | "audience_file") => {
+    // Optimistic update — clear UI immediately, delete in background
+    if (category === "style_file") {
+      setStyleOriginalFile(null)
+      setStyleFileToUpload(null)
+    } else {
+      setAudienceOriginalFile(null)
+      setAudienceFileToUpload(null)
+    }
+    toast.success("הקובץ נמחק")
+
+    void (async () => {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data } = await supabase
+        .from("user_media")
+        .select("id, storage_path")
+        .eq("user_id", user.id)
+        .eq("category", category)
+        .maybeSingle()
+
+      if (data) {
+        const row = data as { id: string; storage_path: string }
+        await supabase.storage.from("user-media").remove([row.storage_path])
+        await supabase.from("user_media").delete().eq("id", row.id)
+      }
+    })()
   }
 
   const handleUploadStyle = async () => {
@@ -648,7 +725,7 @@ function SettingsPageInner() {
                           {stored && <span className="text-xs-body text-text-neutral-default font-mono">{maskKey(stored)}</span>}
                         </div>
                         {stored ? (
-                          <Button variant="outline" onClick={() => handleDisconnect(cfg.key)} disabled={isSaving} className="w-fit gap-2 border-button-destructive-default text-button-destructive-default hover:bg-red-95">
+                          <Button size="sm" variant="outline" onClick={() => handleDisconnect(cfg.key)} disabled={isSaving} className="w-fit gap-2 border-button-destructive-default text-button-destructive-default hover:bg-red-95">
                             {isSaving ? <Loader2 className="size-4 animate-spin" /> : <Unlink className="size-4" />}
                             נתק
                           </Button>
@@ -656,7 +733,7 @@ function SettingsPageInner() {
                           <div className="flex flex-col gap-2">
                             <div className="flex gap-2">
                               <Input dir="ltr" placeholder={cfg.placeholder} value={inputValues[cfg.key]} onChange={(e) => setInputValues((prev) => ({ ...prev, [cfg.key]: e.target.value }))} className="flex-1" />
-                              <Button onClick={() => handleConnect(cfg.key)} disabled={!inputValues[cfg.key].trim() || isSaving} className="gap-2">
+                              <Button size="sm" onClick={() => handleConnect(cfg.key)} disabled={!inputValues[cfg.key].trim() || isSaving} className="gap-2">
                                 {isSaving ? <Loader2 className="size-4 animate-spin" /> : <Link2 className="size-4" />}
                                 חבר
                               </Button>
@@ -710,14 +787,24 @@ function SettingsPageInner() {
                 <div className="flex flex-col gap-2">
                   <label className="text-small-bold text-text-primary-default">סגנון כתיבה</label>
                   {styleOriginalFile && !styleFileToUpload && (
-                    <a
-                      href={styleOriginalFile.url}
-                      download={styleOriginalFile.name}
-                      className="flex items-center gap-2 w-fit rounded-lg bg-bg-surface px-3 py-2 text-small text-text-primary-default hover:bg-bg-surface-hover transition-colors"
-                    >
-                      <Download className="size-3.5 text-text-neutral-default" />
-                      {styleOriginalFile.name}
-                    </a>
+                    <div className="flex items-center gap-1 w-fit rounded-lg bg-bg-surface ps-3 pe-1 py-1 text-small text-text-primary-default">
+                      <a
+                        href={styleOriginalFile.url}
+                        download={styleOriginalFile.name}
+                        className="flex items-center gap-2 hover:underline"
+                      >
+                        <Download className="size-3.5 text-text-neutral-default" />
+                        {styleOriginalFile.name}
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveIdentityFile("style_file")}
+                        className="p-1 rounded hover:bg-bg-surface-hover transition-colors"
+                        aria-label="הסר קובץ"
+                      >
+                        <X className="size-3.5 text-text-neutral-default hover:text-button-destructive-default" />
+                      </button>
+                    </div>
                   )}
                   <div
                     className="relative cursor-pointer"
@@ -729,8 +816,8 @@ function SettingsPageInner() {
                     }}
                   >
                     <Input
-                      placeholder="העלה קובץ סגנון כתיבה"
-                      value={styleFileToUpload?.name ?? styleOriginalFile?.name ?? ""}
+                      placeholder={styleOriginalFile && !styleFileToUpload ? "החלפת קובץ" : "העלה קובץ סגנון כתיבה"}
+                      value={styleFileToUpload?.name ?? ""}
                       readOnly
                       className="cursor-pointer pe-10 pointer-events-none"
                     />
@@ -739,7 +826,7 @@ function SettingsPageInner() {
                       ref={styleFileRef}
                       type="file"
                       className="hidden"
-                      accept=".docx"
+                      accept=".docx,.md,text/markdown"
                       onClick={(e) => e.stopPropagation()}
                       onChange={(e) => {
                         const f = e.target.files?.[0]
@@ -757,8 +844,11 @@ function SettingsPageInner() {
                     >
                       יוצרים אותו כאן
                     </a>
+                    {" · "}
+                    ניתן להעלות קבצי doc, docx, md
                   </p>
                   <Button
+                    size="sm"
                     onClick={handleUploadStyle}
                     disabled={!styleFileToUpload || uploadingStyle}
                     className="w-fit gap-2"
@@ -772,14 +862,24 @@ function SettingsPageInner() {
                 <div className="flex flex-col gap-2">
                   <label className="text-small-bold text-text-primary-default">ניתוח קהל יעד</label>
                   {audienceOriginalFile && !audienceFileToUpload && (
-                    <a
-                      href={audienceOriginalFile.url}
-                      download={audienceOriginalFile.name}
-                      className="flex items-center gap-2 w-fit rounded-lg bg-bg-surface px-3 py-2 text-small text-text-primary-default hover:bg-bg-surface-hover transition-colors"
-                    >
-                      <Download className="size-3.5 text-text-neutral-default" />
-                      {audienceOriginalFile.name}
-                    </a>
+                    <div className="flex items-center gap-1 w-fit rounded-lg bg-bg-surface ps-3 pe-1 py-1 text-small text-text-primary-default">
+                      <a
+                        href={audienceOriginalFile.url}
+                        download={audienceOriginalFile.name}
+                        className="flex items-center gap-2 hover:underline"
+                      >
+                        <Download className="size-3.5 text-text-neutral-default" />
+                        {audienceOriginalFile.name}
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveIdentityFile("audience_file")}
+                        className="p-1 rounded hover:bg-bg-surface-hover transition-colors"
+                        aria-label="הסר קובץ"
+                      >
+                        <X className="size-3.5 text-text-neutral-default hover:text-button-destructive-default" />
+                      </button>
+                    </div>
                   )}
                   <div
                     className="relative cursor-pointer"
@@ -791,8 +891,8 @@ function SettingsPageInner() {
                     }}
                   >
                     <Input
-                      placeholder="העלה קובץ ניתוח קהל יעד"
-                      value={audienceFileToUpload?.name ?? audienceOriginalFile?.name ?? ""}
+                      placeholder={audienceOriginalFile && !audienceFileToUpload ? "החלפת קובץ" : "העלה קובץ ניתוח קהל יעד"}
+                      value={audienceFileToUpload?.name ?? ""}
                       readOnly
                       className="cursor-pointer pe-10 pointer-events-none"
                     />
@@ -801,7 +901,7 @@ function SettingsPageInner() {
                       ref={audienceFileRef}
                       type="file"
                       className="hidden"
-                      accept=".docx"
+                      accept=".docx,.md,text/markdown"
                       onClick={(e) => e.stopPropagation()}
                       onChange={(e) => {
                         const f = e.target.files?.[0]
@@ -819,8 +919,11 @@ function SettingsPageInner() {
                     >
                       יוצרים את זה כאן
                     </a>
+                    {" · "}
+                    ניתן להעלות קבצי doc, docx, md
                   </p>
                   <Button
+                    size="sm"
                     onClick={handleUploadAudience}
                     disabled={!audienceFileToUpload || uploadingAudience}
                     className="w-fit gap-2"
@@ -835,7 +938,7 @@ function SettingsPageInner() {
 
                 {/* Save button for about/you sub-sections */}
                 {activeSubSection !== "files" && (
-                  <Button onClick={handleSaveBusiness} disabled={savingBusiness} className="w-fit gap-2">
+                  <Button size="sm" onClick={handleSaveBusiness} disabled={savingBusiness} className="w-fit gap-2">
                     {savingBusiness ? <Loader2 className="size-4 animate-spin" /> : businessSaved ? <Check className="size-4" /> : null}
                     {savingBusiness ? "שומר..." : businessSaved ? "נשמר!" : "שמור"}
                   </Button>
@@ -852,11 +955,13 @@ function SettingsPageInner() {
                 {!loading && products.length === 0 && (
                   <p className="text-small text-text-neutral-default">לא נמצאו מוצרים. הוסיפו מוצרים כדי ליצור תוכן מותאם.</p>
                 )}
-                <ProductsList products={products} onChange={setProducts} />
-                <Button onClick={handleSaveProducts} disabled={savingProducts} className="w-fit self-end gap-2">
-                  {savingProducts && <Loader2 className="size-4 animate-spin" />}
-                  שמור מוצרים
-                </Button>
+                <ProductsList
+                  products={products}
+                  onChange={setProducts}
+                  onSaveProduct={handleSaveProduct}
+                  onRemoveProduct={handleRemoveProduct}
+                  savingIndex={savingProductIndex}
+                />
                 </div>
               </div>
             )}
@@ -876,11 +981,10 @@ function SettingsPageInner() {
                     creators={topCreators}
                     onChange={setTopCreators}
                     addButtonLabel="הוספת יוצר"
+                    onSaveCreator={handleSaveCreator}
+                    onRemoveCreator={handleRemoveCreator}
+                    savingIndex={savingCreatorIndex}
                   />
-                  <Button onClick={handleSaveCreators} disabled={savingCreators} className="w-fit gap-2">
-                    {savingCreators ? <Loader2 className="size-4 animate-spin" /> : creatorsSaved ? <Check className="size-4" /> : null}
-                    {savingCreators ? "שומר..." : creatorsSaved ? "נשמר!" : "שמור"}
-                  </Button>
                 </div>
               </div>
             )}
@@ -1088,6 +1192,7 @@ function SettingsPageInner() {
 
                       {coverItems.length >= 3 && !analyzingStyle && (
                         <Button
+                          size="sm"
                           variant="outline"
                           onClick={async () => {
                             const allUrls = coverItems.map((c) => c.url)

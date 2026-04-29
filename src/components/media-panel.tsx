@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import Image from "next/image"
 import { X, Smartphone, Video, Layers, Image as ImageIcon, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, Upload, ChevronLeft, ChevronRight, type LucideIcon } from "lucide-react"
+import { toast } from "sonner"
 
 import { AvatarPicker, type Avatar } from "@/components/avatar-picker"
 import { Button } from "@/components/ui/button"
@@ -467,6 +468,15 @@ function TalkingHeadFlow({
   }
 
   const processVideoFile = async (file: File) => {
+    // Hard size cap — match the bucket's 50MB default so the user gets a
+    // clear error instead of an opaque silent failure mid-upload.
+    const MAX_VIDEO_MB = 50
+    const sizeMb = file.size / 1024 / 1024
+    if (sizeMb > MAX_VIDEO_MB) {
+      toast.error(`הקובץ גדול מדי (${sizeMb.toFixed(1)}MB). מקסימום ${MAX_VIDEO_MB}MB.`, { duration: 6000 })
+      return
+    }
+
     const localUrl = URL.createObjectURL(file)
     setUploadedVideoUrl(localUrl)
     onVideoUrlChange(localUrl)
@@ -476,26 +486,104 @@ function TalkingHeadFlow({
     const frameDataUrl = await extractFrameFromFile(file)
     if (frameDataUrl) onVideoFrameChange?.(frameDataUrl)
 
-    // Save thumbnail (not the full video) to Supabase Storage
-    if (frameDataUrl) {
-      try {
-        const { createClient } = await import("@/lib/supabase/client")
-        const supabase = createClient()
-        const { data: { user } } = await supabase.auth.getUser()
-        if (user) {
+    // Upload the actual video file to Supabase Storage so it survives a
+    // refresh. Use XHR (not the supabase-js client) because XHR exposes
+    // upload.progress events — supabase-js's storage upload has no progress
+    // callback, so we'd otherwise have a multi-second silent wait where the
+    // user can't tell if the upload is alive.
+    const sizeMbStr = sizeMb.toFixed(1)
+    const renderProgress = (pct: number, loadedMb?: string) => (
+      <div className="flex flex-col gap-1.5 w-full" dir="rtl">
+        <div className="flex items-center justify-between text-xs text-text-primary-default">
+          <span>מעלה וידאו...</span>
+          <span className="text-text-neutral-default">
+            {loadedMb ? `${loadedMb} / ${sizeMbStr}MB · ${pct}%` : `${pct}%`}
+          </span>
+        </div>
+        <div className="w-full h-1.5 bg-gray-95 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-yellow-50 transition-[width] duration-150 ease-out"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+    )
+    const uploadToast = toast.loading(renderProgress(0), { duration: Infinity })
+    try {
+      const { createClient } = await import("@/lib/supabase/client")
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!user || !session) {
+        toast.error("לא מזוהה משתמש. רעננו ונסו שוב.", { id: uploadToast })
+        return
+      }
+      const ext = file.name.split(".").pop()?.toLowerCase() || "mp4"
+      const safeExt = /^[a-z0-9]{2,5}$/.test(ext) ? ext : "mp4"
+      const storagePath = `${user.id}/video/${crypto.randomUUID()}.${safeExt}`
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+
+      const { ok, error: uploadErrMsg } = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        const xhr = new XMLHttpRequest()
+        xhr.open("POST", `${supabaseUrl}/storage/v1/object/user-media/${storagePath}`)
+        xhr.setRequestHeader("Authorization", `Bearer ${session.access_token}`)
+        xhr.setRequestHeader("apikey", anonKey)
+        xhr.setRequestHeader("Content-Type", file.type || "video/mp4")
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100)
+            const loadedMb = (e.loaded / 1024 / 1024).toFixed(1)
+            toast.loading(renderProgress(pct, loadedMb), { id: uploadToast, duration: Infinity })
+          }
+        }
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve({ ok: true })
+          } else {
+            let msg = `Status ${xhr.status}`
+            try {
+              const r = JSON.parse(xhr.responseText)
+              msg = r.message || r.error || msg
+            } catch { /* not JSON */ }
+            resolve({ ok: false, error: msg })
+          }
+        }
+        xhr.onerror = () => resolve({ ok: false, error: "שגיאת רשת" })
+        xhr.send(file)
+      })
+
+      if (ok) {
+        const videoUrl = supabase.storage.from("user-media").getPublicUrl(storagePath).data.publicUrl
+        toast.success("וידאו נשמר", { id: uploadToast })
+        // Replace the blob URL with the persistent storage URL — this is
+        // what the parent's auto-save useEffect will PATCH onto the post.
+        onVideoUrlChange(videoUrl)
+      } else {
+        // Upload failed. Fall back to thumbnail-only persistence so the card
+        // at least re-appears after refresh, even if as a static image.
+        console.error("[upload] video upload failed:", uploadErrMsg)
+        toast.error(`העלאת הוידאו נכשלה: ${uploadErrMsg}`, { id: uploadToast, duration: 8000 })
+        if (frameDataUrl) {
           const base64 = frameDataUrl.split(",")[1]
           const binaryStr = atob(base64)
           const bytes = new Uint8Array(binaryStr.length)
           for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
-          const storagePath = `${user.id}/video-thumb/${crypto.randomUUID()}.jpg`
-          const { error } = await supabase.storage.from("user-media").upload(storagePath, bytes, { contentType: "image/jpeg" })
-          if (!error) {
-            const thumbUrl = supabase.storage.from("user-media").getPublicUrl(storagePath).data.publicUrl
-            // Save thumbnail URL as the "video" reference — lightweight
+          const thumbPath = `${user.id}/video-thumb/${crypto.randomUUID()}.jpg`
+          const { error: thumbErr } = await supabase.storage
+            .from("user-media")
+            .upload(thumbPath, bytes, { contentType: "image/jpeg" })
+          if (!thumbErr) {
+            const thumbUrl = supabase.storage.from("user-media").getPublicUrl(thumbPath).data.publicUrl
             onVideoUrlChange(thumbUrl)
+          } else {
+            console.error("[upload] thumbnail also failed:", thumbErr)
           }
         }
-      } catch { /* keep local URL for this session */ }
+      }
+    } catch (err) {
+      console.error("[upload] unexpected error:", err)
+      toast.error(`שגיאה בהעלאה: ${err instanceof Error ? err.message : String(err)}`, { id: uploadToast })
     }
 
     // Generate cover with video frame as thumbnail
@@ -616,19 +704,20 @@ function TalkingHeadFlow({
           <div className="flex flex-col items-center gap-2">
             <p className="text-xs text-text-neutral-default">סרטון</p>
             <div className="w-[80px] aspect-[9/16] rounded-lg overflow-hidden bg-gray-95 relative">
-              {liftedVideoUrl.startsWith("blob:") ? (
-                <video
-                  src={liftedVideoUrl}
-                  controls={false}
-                  playsInline
-                  muted
-                  className="w-full h-full object-cover cursor-pointer"
-                  onClick={(e) => { const v = e.target as HTMLVideoElement; if (v.paused) v.play(); else v.pause() }}
-                />
-              ) : (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={liftedVideoUrl} alt="video" className="w-full h-full object-cover" />
-              )}
+              {/* Same <video> element for blob and remote URLs. The previous
+                  `<img>` fallback for non-blob URLs left the preview blank,
+                  because an mp4 URL can't render as an image. The `#t=0.001`
+                  fragment forces the browser to seek to the first frame so
+                  it's shown as a static preview while paused. */}
+              <video
+                src={liftedVideoUrl.startsWith("blob:") ? liftedVideoUrl : `${liftedVideoUrl}#t=0.001`}
+                controls={false}
+                playsInline
+                muted
+                preload="metadata"
+                className="w-full h-full object-cover cursor-pointer"
+                onClick={(e) => { const v = e.target as HTMLVideoElement; if (v.paused) v.play(); else v.pause() }}
+              />
             </div>
           </div>
 

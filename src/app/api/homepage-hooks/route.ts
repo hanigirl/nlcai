@@ -279,7 +279,11 @@ ${categoriesCatalog}
 ]`
 
     // ============= PIPELINE EXECUTION =============
-    const client = new Anthropic({ apiKey })
+    // Tight per-call timeout + lower retry count so a hung Anthropic request
+    // (overload retry storm) can't stall the batch for the SDK's 10-minute
+    // default. Each plan does write→judge→polish, so 90s × 3 = 4.5min worst
+    // case per plan, well under what the user perceives as "stuck".
+    const client = new Anthropic({ apiKey, timeout: 90000, maxRetries: 1 })
     const userId = user.id
 
     // Helper — call with Sonnet → Haiku fallback
@@ -415,7 +419,22 @@ ${categoriesCatalog}
 
           interface DraftHook { template_index?: number; slot_fills?: Record<string, string>; hook?: string }
 
+          // Boundary wrapper: any unexpected throw inside a single plan
+          // (writer fallback that throws non-overload, DB error, etc.) must NOT
+          // crash the surrounding `Promise.all` and stall the stream after a
+          // partial batch. We swallow the error, increment `skipped`, and let
+          // the rest of the batch finish.
           const processOnePlan = async (plan: PlanItem, planIdx: number): Promise<void> => {
+            try {
+              await processOnePlanUnsafe(plan, planIdx)
+            } catch (err) {
+              skipped++
+              const msg = err instanceof Error ? err.message : String(err)
+              console.warn(`Homepage Hooks: plan "${plan.specific_topic}" crashed unexpectedly — ${msg}`)
+            }
+          }
+
+          const processOnePlanUnsafe = async (plan: PlanItem, planIdx: number): Promise<void> => {
             const templates: HookTemplate[] = getTemplatesByCategorySorted(plan.category)
             if (templates.length === 0) return
 
@@ -425,7 +444,7 @@ ${categoriesCatalog}
               return `${i}. ${templateText(t)}${tag}`
             }).join("\n")
 
-            const writePrompt = `אתה כותב הוק אחד לסרטון קצר בעברית ישראלית. אתה **חייב** לבחור אחת מהתבניות ברשימה ולמלא את ה-slots שלה.
+            const writePrompt = `אתה כותב הוק אחד לסרטון קצר בעברית ישראלית.
 
 ## הזווית
 - **נושא:** ${plan.specific_topic}
@@ -433,21 +452,35 @@ ${categoriesCatalog}
 - **איך הקהל מדבר על זה:** "${plan.audience_quote}"
 - **תיאור הזווית:** ${plan.angle_summary}
 
-## תבניות (${highCount} הראשונות בעדיפות גבוהה, כלומר פותחות סקרנות — עדיף לבחור מהן):
-${formatTemplatesForPrompt()}
+## מה הופך הוק לטוב — שלוש העמודות
+ההוק חייב להחזיק את כל השלוש. אם הוא נכשל באחת — שכתב.
 
-## הכלל החשוב ביותר: פער סקרנות
-ההוק **שומר את התשובה סגורה**. הוא מבטיח ערך, לא מוסר אותו. אם אחרי קריאה הקורא כבר יודע את התובנה — אין סיבה לצפות.
-- ❌ "מעצבים שמפחדים מ-AI מפספסים מה שהוא לא יכול לעשות" — התשובה כבר שם.
+### 1. נוגע בכאב/רצון ספציפי של הקהל
+לא כאב גנרי. הכאב/רצון הספציפי מהזווית למעלה — הקורא חייב להרגיש "זה אני, זה בדיוק מה שעובר עליי".
+
+### 2. מעורר סקרנות אמיתית
+לולאה פתוחה במוח של הקורא — שאלה שדורשת תשובה, הבטחה שדורשת אימות, סתירה שדורשת הסבר. הקורא חייב להרגיש *צורך* לדעת מה הלאה.
+
+### 3. הפאנץ׳ **לא** בתוך ההוק (הכלל הקריטי)
+ההוק **מבטיח** ערך — לא **מוסר** אותו. אם אחרי קריאת ההוק הקורא כבר יודע את התובנה/התשובה/הטיפ — אין שום סיבה לצפות בסרטון.
+- ❌ "מעצבים שמפחדים מ-AI מפספסים מה שהוא לא יכול לעשות" — התזה כבר שם.
 - ✅ "3 דברים שAI עדיין לא יודע לעשות ב-2026" — מבטיח רשימה, לא מוסר אותה.
 - ❌ "הסיבה שפוסטים לא מקבלים לייקים זה שהם לא קוראים" — נמסר.
 - ✅ "הסיבה האמיתית שהפוסטים שלכם לא מקבלים לייקים — והיא לא מה שחשבתם" — לולאה.
+
+**מבחן הפאנץ׳**: אם הקורא יכול לסגור את האפליקציה אחרי ההוק ולפעול לפי מה שכתוב בו — הפאנץ׳ דלף החוצה. שכתב.
+
+## תבניות לעזר — לא חובה!
+התבניות למטה הן מסגרות מוכחות שעוזרות לפתוח סקרנות. **מותר לבחור מהן, ומותר *לא* לבחור.** אם יש לך זווית או ניסוח חזק יותר שעומד בשלוש העמודות בצורה טובה יותר — כתוב אותו ישירות (free-form). אל תכופף הוק חזק לתוך תבנית מוחלשת.
+
+תבניות זמינות (${highCount} הראשונות בעדיפות גבוהה — נוטות לפתוח סקרנות בצורה טובה):
+${formatTemplatesForPrompt()}
 
 ## כללים נוספים
 1. **אורך**: עד 15 מילים, משפט אחד.
 2. **פניה לקהל ברבים בלבד** (אתם/לכם/שלכם). אסור לערבב יחיד ורבים באותו הוק.
 3. **נושא + פועל תואמים** במין ובמספר.
-4. **קונקרטי לנישה** — אזכר את המילה הספציפית מהנושא, לא גנרי.
+4. **המילה הספציפית מהנושא חייבת להופיע בהוק** — קח לפחות מילה אחת משמעותית (3+ אותיות, לא מילת קישור) מתוך \`${plan.specific_topic}\` ושים אותה בהוק עצמו, מילה במילה. זה תקף **גם** ב-free-form. בלי זה ההוק נדחה אוטומטית כ-off_topic.
 5. **עברית ישראלית טבעית** — לא תרגום מאנגלית, לא מטאפורות מתורגמות.
 6. **AI = זכר** ("הוא", "שיודע", לא "היא"/"שיודעת").
 
@@ -462,9 +495,9 @@ ${formatTemplatesForPrompt()}
 }
 \`\`\`
 
-- \`template_index\` = מספר התבנית שבחרת (0-${templates.length - 1}).
-- \`slot_fills\` = המילים שמילאת ב-slots (אובייקט).
-- \`hook\` = ההוק המלא אחרי מילוי, בדיוק כפי שיוצג לקורא.`
+- \`template_index\` = מספר התבנית שבחרת (0-${templates.length - 1}). אם כתבת **free-form** בלי תבנית — שים \`-1\`.
+- \`slot_fills\` = המילים שמילאת ב-slots (אובייקט). ב-free-form אפשר אובייקט ריק \`{}\`.
+- \`hook\` = ההוק המלא, בדיוק כפי שיוצג לקורא. **זה השדה היחיד שמשנה לקורא — ההוק עצמו חייב לעמוד בשלוש העמודות, גם אם בחרת free-form.**`
 
             // Write the hook — Sonnet with Haiku overload fallback
             let draft: DraftHook | null = null
@@ -499,8 +532,9 @@ ${formatTemplatesForPrompt()}
             let hookText = cleanRawHook(d.hook!)
 
             const templateIdx = Number.isInteger(d.template_index) ? d.template_index! : 0
-            const chosenTemplate = templates[templateIdx] ?? templates[0]
-            const chosenTemplateText = templateText(chosenTemplate)
+            const isFreeForm = templateIdx < 0
+            const chosenTemplate = isFreeForm ? null : (templates[templateIdx] ?? templates[0])
+            const chosenTemplateText = chosenTemplate ? templateText(chosenTemplate) : "free-form (ללא תבנית)"
 
             // Programmatic check — deterministic, cheap.
             let issues = validateHookLocally(hookText, plan.specific_topic)

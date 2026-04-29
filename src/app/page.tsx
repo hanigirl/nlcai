@@ -103,7 +103,7 @@ export default function Home() {
 
       // Try cache first (fast path).
       try {
-        const cached = localStorage.getItem("homepageHooks_v5")
+        const cached = localStorage.getItem("homepageHooks_v6")
         if (cached) {
           const parsed: string[] = JSON.parse(cached)
           if (parsed.length > 0) {
@@ -119,17 +119,21 @@ export default function Home() {
       // No cache — check the DB. If the user already has hooks, load them and
       // never auto-regenerate. The DB is the source of truth: localStorage can
       // be cleared, the user can switch browsers/devices, etc.
+      // Show the 4 most-recently-generated hooks so the homepage reflects the
+      // user's freshest batch (display_order resets per batch, so we order by
+      // created_at desc instead).
       const { data: dbHooks } = await supabase
         .from("hooks")
         .select("hook_text")
         .eq("user_id", user.id)
         .eq("is_used", false)
-        .order("display_order", { ascending: true })
+        .order("created_at", { ascending: false })
+        .limit(4)
 
       if (dbHooks && dbHooks.length > 0) {
         const hookTexts = (dbHooks as Array<{ hook_text: string }>).map((h) => h.hook_text)
         setHooks(hookTexts)
-        localStorage.setItem("homepageHooks_v5", JSON.stringify(hookTexts))
+        localStorage.setItem("homepageHooks_v6", JSON.stringify(hookTexts))
         localStorage.setItem("hooksCleanup_v3", "done")
         return
       }
@@ -184,7 +188,9 @@ export default function Home() {
           }
         }
         if (streamed.length > 0) {
-          localStorage.setItem("homepageHooks_v5", JSON.stringify(streamed))
+          // Cache only the 4 most-recent (last to stream in) so the homepage
+          // matches what the DB returns on next load.
+          localStorage.setItem("homepageHooks_v6", JSON.stringify(streamed.slice(-4)))
         }
       } catch { /* ignore */ }
       setHooksLoading(false)

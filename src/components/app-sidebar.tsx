@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Home, FileText, Image, Settings, Anchor, Lightbulb } from "lucide-react"
+import { Home, FileText, Image, Settings, Anchor, Lightbulb, CalendarDays } from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
@@ -39,6 +39,11 @@ const navItems = [
     label: "מדיה",
     href: "/media",
     icon: Image,
+  },
+  {
+    label: "לוח שנה",
+    href: "/calendar",
+    icon: CalendarDays,
   },
   {
     label: "הגדרות",

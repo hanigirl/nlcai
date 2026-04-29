@@ -54,4 +54,29 @@ function TooltipContent({
   )
 }
 
-export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider }
+// Convenience wrapper for the most common pattern in this codebase: an
+// icon-only button (or any single trigger element) that should reveal a short
+// label on hover/focus. Drop-in usage:
+//   <TooltipLabel label="הורד">
+//     <Button variant="outline" ...><Download /></Button>
+//   </TooltipLabel>
+function TooltipLabel({
+  label,
+  children,
+  side = "top",
+}: {
+  label: string
+  children: React.ReactElement
+  side?: "top" | "bottom" | "left" | "right"
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side={side} sideOffset={6}>
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider, TooltipLabel }

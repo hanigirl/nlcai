@@ -1,6 +1,6 @@
 "use client"
 
-import { Plus, Trash2 } from "lucide-react"
+import { Plus, Trash2, Loader2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 
@@ -15,6 +15,9 @@ interface CreatorsListProps {
   showRequiredAsterisk?: boolean
   addButtonLabel?: string
   addButtonFullWidth?: boolean
+  onSaveCreator?: (index: number) => Promise<void> | void
+  onRemoveCreator?: (index: number) => Promise<void> | void
+  savingIndex?: number | null
 }
 
 export function CreatorsList({
@@ -23,6 +26,9 @@ export function CreatorsList({
   showRequiredAsterisk = false,
   addButtonLabel = "הוספת יוצר נוסף",
   addButtonFullWidth = true,
+  onSaveCreator,
+  onRemoveCreator,
+  savingIndex = null,
 }: CreatorsListProps) {
   const updateAt = (i: number, url: string) => {
     const updated = [...creators]
@@ -31,6 +37,10 @@ export function CreatorsList({
   }
 
   const removeAt = (i: number) => {
+    if (onRemoveCreator) {
+      void onRemoveCreator(i)
+      return
+    }
     onChange(creators.filter((_, j) => j !== i))
   }
 
@@ -45,28 +55,47 @@ export function CreatorsList({
         {creators.map((creator, i) => (
           <div
             key={creator.id ?? `new-${i}`}
-            className="group flex items-center gap-2 rounded-2xl bg-bg-surface px-3 py-2 animate-hook-bump"
+            className="group flex flex-col gap-2 rounded-2xl bg-bg-surface px-3 py-2 animate-hook-bump"
           >
-            <span className="text-small text-text-neutral-default whitespace-nowrap select-none">
-              שם החשבון/יוצר
-              {showRequiredAsterisk && (
-                <span className="text-button-destructive-default"> *</span>
+            <div className="flex items-start gap-2">
+              <span className="text-small text-text-neutral-default whitespace-nowrap select-none pt-2.5">
+                קישור לחשבון היוצר
+                {showRequiredAsterisk && (
+                  <span className="text-button-destructive-default"> *</span>
+                )}
+              </span>
+              <div className="flex-1 flex flex-col gap-1">
+                <Input
+                  dir="ltr"
+                  value={creator.url}
+                  onChange={(e) => updateAt(i, e.target.value)}
+                  className="bg-white dark:bg-gray-10 shadow-none"
+                />
+                <p className="text-xs-body text-text-neutral-default px-1">
+                  איסטגרם, טיקטוק או יוטיוב של היוצר
+                </p>
+              </div>
+              {creators.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => removeAt(i)}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity p-1 mt-2"
+                >
+                  <Trash2 className="size-4 text-text-neutral-default hover:text-button-destructive-default" />
+                </button>
               )}
-            </span>
-            <Input
-              dir="ltr"
-              value={creator.url}
-              onChange={(e) => updateAt(i, e.target.value)}
-              className="flex-1 bg-white dark:bg-gray-10 shadow-none"
-            />
-            {creators.length > 1 && (
-              <button
-                type="button"
-                onClick={() => removeAt(i)}
-                className="opacity-0 group-hover:opacity-100 transition-opacity p-1"
+            </div>
+
+            {onSaveCreator && (
+              <Button
+                size="sm"
+                onClick={() => void onSaveCreator(i)}
+                disabled={savingIndex === i || !creator.url.trim()}
+                className="self-end mt-1"
               >
-                <Trash2 className="size-4 text-text-neutral-default hover:text-button-destructive-default" />
-              </button>
+                {savingIndex === i && <Loader2 className="size-3.5 animate-spin" />}
+                שמור
+              </Button>
             )}
           </div>
         ))}

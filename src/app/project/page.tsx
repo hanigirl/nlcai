@@ -1,16 +1,20 @@
 "use client"
 
 import { useState, useEffect, useRef, Suspense } from "react"
-import { useSearchParams } from "next/navigation"
+import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
-import { Loader2, Smartphone, Video, Layers, Image, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, type LucideIcon } from "lucide-react"
+import { Loader2, Smartphone, Video, Layers, Image, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, type LucideIcon } from "lucide-react"
+import { toast } from "sonner"
 import { AppShell } from "@/components/app-shell"
 import { InfiniteCanvas } from "@/components/infinite-canvas"
 import { WorkflowCard } from "@/components/workflow-card"
 import { SelectionCard } from "@/components/selection-card"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
+import { TooltipLabel } from "@/components/ui/tooltip"
 import { MediaPanel } from "@/components/media-panel"
+import { ConfirmModal } from "@/components/confirm-modal"
 import type { Avatar } from "@/components/avatar-picker"
 import type { SlideData } from "@/lib/carousel-templates"
 
@@ -59,6 +63,7 @@ export default function ProjectPage() {
 
 function ProjectPageInner() {
   const searchParams = useSearchParams()
+  const router = useRouter()
   const initialIdea = searchParams.get("idea") ?? ""
   const hookParam = searchParams.get("hook") ?? ""
   const hookIdParam = searchParams.get("hook_id") ?? ""
@@ -94,6 +99,14 @@ function ProjectPageInner() {
   const [thSourceMode, setThSourceMode] = useState<"choose" | "upload" | "avatar">("choose")
   const [thCoverImage, setThCoverImage] = useState<string | null>(null)
   const [thCoverLoading, setThCoverLoading] = useState(false)
+  // Confirmation modal — opened from the trash icon on the video card. The
+  // actual delete only fires after the user clicks "כן, למחוק". The cover has
+  // no standalone delete action; it lives and dies with the video.
+  const [pendingVideoDelete, setPendingVideoDelete] = useState(false)
+  // Video-card skeleton state. The DB load + heygen-embed conversion can take
+  // a couple of seconds; without this the talking_head card just doesn't
+  // render at all during that gap and the page looks like it has no video.
+  const [thVideoLoading, setThVideoLoading] = useState(!!postId)
   const [coverText, setCoverText] = useState("")
   const [thVideoFrameDataUrl, setThVideoFrameDataUrl] = useState<string | null>(null)
   const thVideoCardRef = useRef<HTMLDivElement>(null)
@@ -112,6 +125,14 @@ function ProjectPageInner() {
   const [savedPostLoading, setSavedPostLoading] = useState(!!postId)
   const [savedHookText, setSavedHookText] = useState("")
 
+  // Keep savedPostId in sync with the URL's post_id. After a recovery navigate
+  // (router.replace below) the URL gains a post_id but savedPostId would stay
+  // null otherwise — that breaks the videoUrl/cover auto-save useEffects which
+  // gate on savedPostId.
+  useEffect(() => {
+    if (postId && !savedPostId) setSavedPostId(postId)
+  }, [postId, savedPostId])
+
   // Persist canvas state across refresh — keyed by URL params so different sessions don't bleed
   const CANVAS_KEY = "canvasState_v1"
   const sessionKey = `${flow}|${initialIdea}|${hookParam}|${postId}`
@@ -125,6 +146,16 @@ function ProjectPageInner() {
       if (!raw) return
       const saved = JSON.parse(raw)
       if (saved?.sessionKey !== sessionKey) return
+      // Recovery: if we previously auto-saved a post under this hook flow but
+      // the URL doesn't carry post_id (e.g. the tab was opened before the URL
+      // sync was wired up), navigate to the saved-flow URL so the DB load fires
+      // and restores avatar video, cover, and format variants.
+      if (typeof saved.savedPostId === "string" && saved.savedPostId && !postId) {
+        const params = new URLSearchParams(window.location.search)
+        params.set("post_id", saved.savedPostId)
+        router.replace(`${window.location.pathname}?${params.toString()}`)
+        return
+      }
       if (typeof saved.idea === "string") setIdea(saved.idea)
       if (Array.isArray(saved.hooks)) setHooks(saved.hooks)
       if (saved.selectedHook === null || typeof saved.selectedHook === "number") setSelectedHook(saved.selectedHook)
@@ -142,7 +173,7 @@ function ProjectPageInner() {
       if (Array.isArray(saved.originalHooks)) setOriginalHooks(saved.originalHooks)
       if (typeof saved.originalCorePost === "string") setOriginalCorePost(saved.originalCorePost)
     } catch { /* corrupted state, ignore */ }
-  }, [sessionKey])
+  }, [sessionKey, postId, router])
 
   // Save canvas state on changes (debounced)
   useEffect(() => {
@@ -155,12 +186,16 @@ function ProjectPageInner() {
           showFormats, selectedFormats, duplicatedFormats, formatPosts,
           editableHook, coverText, thTranscript, thSourceMode,
           savedHookText, originalHooks, originalCorePost,
+          // Persist the auto-saved post id so a refresh on a tab whose URL
+          // hasn't been synced yet (e.g. opened before the URL-sync was wired
+          // up) can still recover the saved post via the restore effect above.
+          savedPostId,
         }
         localStorage.setItem(CANVAS_KEY, JSON.stringify(state))
       } catch { /* quota exceeded or other; ignore */ }
     }, 300)
     return () => clearTimeout(t)
-  }, [sessionKey, idea, hooks, selectedHook, response, corePost, showFormats, selectedFormats, duplicatedFormats, formatPosts, editableHook, coverText, thTranscript, thSourceMode, savedHookText, originalHooks, originalCorePost])
+  }, [sessionKey, idea, hooks, selectedHook, response, corePost, showFormats, selectedFormats, duplicatedFormats, formatPosts, editableHook, coverText, thTranscript, thSourceMode, savedHookText, originalHooks, originalCorePost, savedPostId])
 
   // Extract a frame from a video URL as a data URL
   const extractVideoFrame = (videoSrc: string): Promise<string | null> => {
@@ -256,8 +291,11 @@ function ProjectPageInner() {
             setShowFormats(true)
           }
 
-          // Restore saved cover if exists
+          // Restore saved cover if exists. Flip thCoverLoading on while we
+          // fetch + decode so the cover area shows a skeleton instead of
+          // empty space (the fetch + FileReader takes ~1s on slow networks).
           if (data.post.coverUrl) {
+            setThCoverLoading(true)
             fetch(data.post.coverUrl as string)
               .then((r) => r.blob())
               .then((blob) => {
@@ -266,10 +304,12 @@ function ProjectPageInner() {
                   const dataUrl = reader.result as string
                   const base64 = dataUrl.split(",")[1]
                   if (base64) setThCoverImage(base64)
+                  setThCoverLoading(false)
                 }
+                reader.onerror = () => setThCoverLoading(false)
                 reader.readAsDataURL(blob)
               })
-              .catch(() => {})
+              .catch(() => setThCoverLoading(false))
           }
 
           // Load video thumbnail as data URL for cover regeneration
@@ -286,6 +326,11 @@ function ProjectPageInner() {
                 })
                 .catch(() => {})
             }
+          }
+
+          // No video in DB — clear the skeleton so the layout collapses.
+          if (!data.post.videoUrl) {
+            setThVideoLoading(false)
           }
 
           // Restore video URL and auto-generate cover if no saved cover
@@ -334,9 +379,15 @@ function ProjectPageInner() {
           }
         }
       })
-      .catch(() => {})
+      .catch(() => setThVideoLoading(false))
       .finally(() => setSavedPostLoading(false))
   }, [flow, postId])
+
+  // Once the video URL lands in state (from any path — DB load, heygen
+  // conversion, or a fresh upload), the skeleton placeholder can stand down.
+  useEffect(() => {
+    if (thVideoUrl) setThVideoLoading(false)
+  }, [thVideoUrl])
 
   // Auto-save video URL when it changes
   useEffect(() => {
@@ -467,7 +518,19 @@ function ProjectPageInner() {
         })
           .then((res) => res.json())
           .then((saveData) => {
-            if (saveData.id) setSavedPostId(saveData.id)
+            if (saveData.id) {
+              setSavedPostId(saveData.id)
+              // Update URL with post_id so a refresh re-loads this exact post
+              // (incl. avatar video, cover, formats). replaceState avoids a
+              // Next.js navigation — current in-memory `flow` stays at "hook",
+              // but on refresh `useSearchParams` reads post_id and switches to
+              // the "saved" flow which re-fetches the row from DB.
+              const url = new URL(window.location.href)
+              if (!url.searchParams.get("post_id")) {
+                url.searchParams.set("post_id", saveData.id)
+                window.history.replaceState({}, "", url.toString())
+              }
+            }
           })
           .catch(() => {})
       }
@@ -714,7 +777,7 @@ function ProjectPageInner() {
               )}
 
               {postLoading && (
-                <div className="flex items-center mt-[55px]">
+                <div className="flex items-center mt-[29px]">
                   <div className="flex items-center gap-2 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
                     <Loader2 className="size-5 animate-spin text-yellow-50" />
                     <span className="text-small text-text-neutral-default">כותב את הפוסט...</span>
@@ -867,26 +930,14 @@ function ProjectPageInner() {
                           onSelectFormat={handleFormatCardClick}
                           hookText={activeHook}
                           thVideoUrl={thVideoUrl}
+                          thVideoLoading={thVideoLoading}
                           thVideoCardRef={thVideoCardRef}
                           onThReRecord={() => {
                             setThAudioBlob(null)
                             setThTranscript("")
                             setSelectedFormatCard("talking_head")
                           }}
-                          onThDelete={() => {
-                            setThVideoUrl(null)
-                            setThAudioBlob(null)
-                            setThTranscript("")
-                            setThCoverImage(null)
-                            // Delete from DB
-                            if (savedPostId) {
-                              fetch(`/api/core-posts/${savedPostId}`, {
-                                method: "PATCH",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ deleteVideo: true }),
-                              }).catch(() => {})
-                            }
-                          }}
+                          onThDelete={() => setPendingVideoDelete(true)}
                           thCoverImage={thCoverImage}
                           thCoverLoading={thCoverLoading}
                           coverText={coverText}
@@ -910,6 +961,87 @@ function ProjectPageInner() {
 
         </div>
       </InfiniteCanvas>
+
+      <ConfirmModal
+        open={pendingVideoDelete}
+        onOpenChange={(open) => { if (!open) setPendingVideoDelete(false) }}
+        title="בטוח למחוק את הסרטון?"
+        description="פעולה זו תמחק את הסרטון הקיים ולא בטוח שאפשר יהיה לגשת אליו שוב."
+        confirmLabel="כן, למחוק"
+        cancelLabel="לא, אל תמחק"
+        onConfirm={async () => {
+          // Snapshot before the delete: video URL + cover base64. The cover
+          // travels with the video — they're shown together, deleted together,
+          // restored together. If the cover hasn't streamed into local state
+          // yet (slow initial fetch), grab it now from DB so the undo path
+          // has something to put back.
+          const prevVideoUrl = thVideoUrl
+          let prevCoverImage = thCoverImage
+          if (!prevCoverImage && savedPostId) {
+            try {
+              const r = await fetch(`/api/core-posts/${savedPostId}`)
+              const d = await r.json()
+              if (d?.post?.coverUrl) {
+                const cr = await fetch(d.post.coverUrl as string)
+                const blob = await cr.blob()
+                prevCoverImage = await new Promise<string | null>((resolve) => {
+                  const fr = new FileReader()
+                  fr.onload = () => {
+                    const dataUrl = fr.result as string
+                    resolve(dataUrl.split(",")[1] || null)
+                  }
+                  fr.onerror = () => resolve(null)
+                  fr.readAsDataURL(blob)
+                })
+              }
+            } catch { /* couldn't pre-fetch cover — restore will skip it */ }
+          }
+          if (savedPostId) {
+            // Await so the modal stays open (with spinner) until the DB
+            // deletes actually complete. Otherwise a quick refresh would race
+            // the in-flight PATCH and the assets would re-appear after reload.
+            try {
+              await fetch(`/api/core-posts/${savedPostId}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ deleteVideo: true, deleteCover: true }),
+              })
+            } catch { /* swallow — UI state is cleared regardless */ }
+          }
+          setThVideoUrl(null)
+          setThAudioBlob(null)
+          setThTranscript("")
+          setThCoverImage(null)
+
+          toast("הסרטון נמחק", {
+            duration: 30_000,
+            className: "toast-destructive",
+            action: prevVideoUrl ? {
+              label: "שיחזור",
+              onClick: async () => {
+                setThVideoUrl(prevVideoUrl)
+                if (prevCoverImage) setThCoverImage(prevCoverImage)
+                if (savedPostId) {
+                  try {
+                    await fetch(`/api/core-posts/${savedPostId}`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        videoUrl: prevVideoUrl,
+                        ...(prevCoverImage ? { coverBase64: prevCoverImage } : {}),
+                      }),
+                    })
+                    toast.success("הסרטון שוחזר")
+                  } catch {
+                    toast.error("השחזור נכשל")
+                  }
+                }
+              },
+            } : undefined,
+          })
+        }}
+      />
+
     </AppShell>
   )
 }
@@ -924,6 +1056,7 @@ function FormatTree({
   onSelectFormat,
   hookText,
   thVideoUrl,
+  thVideoLoading,
   thVideoCardRef,
   onThReRecord,
   onThDelete,
@@ -945,6 +1078,7 @@ function FormatTree({
   onSelectFormat: (fid: string) => void
   hookText: string
   thVideoUrl: string | null
+  thVideoLoading: boolean
   thVideoCardRef: React.RefObject<HTMLDivElement | null>
   onThReRecord: () => void
   onThDelete: () => void
@@ -1019,30 +1153,64 @@ function FormatTree({
                   <Icon className="size-4 text-text-neutral-default" />
                 </div>
                 <div className="px-6 flex flex-col gap-3">
-                  <Textarea
-                    value={formatPosts[fid] ?? ""}
-                    onFocus={() => onActiveChange(`format-${fid}`)}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => onPostChange(fid, e.target.value)}
-                    className="min-h-[200px] rounded-[10px] border-border-neutral-default bg-white dark:bg-gray-10 resize-none shadow-none text-small leading-relaxed select-text"
-                  />
+                  <div className="relative group">
+                    <Textarea
+                      value={formatPosts[fid] ?? ""}
+                      onFocus={() => onActiveChange(`format-${fid}`)}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => onPostChange(fid, e.target.value)}
+                      className="min-h-[200px] rounded-[10px] border-border-neutral-default bg-white dark:bg-gray-10 resize-none shadow-none text-small leading-relaxed select-text"
+                    />
+                    <CopyButton text={formatPosts[fid] ?? ""} />
+                  </div>
                   <Button
                     variant="outline"
-                    disabled={fid !== "talking_head"}
+                    // talking_head only — disabled once a video exists, since
+                    // editing then happens via the video card's "עריכת סרטון"
+                    // button below. Other formats are still "(בקרוב)".
+                    disabled={fid !== "talking_head" || !!thVideoUrl}
                     onClick={(e) => {
                       e.stopPropagation()
-                      if (fid === "talking_head") onSelectFormat(fid)
+                      if (fid === "talking_head" && !thVideoUrl) onSelectFormat(fid)
                     }}
                     className="w-full rounded-[10px] border-border-neutral-default text-text-primary-default text-small gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Icon className="size-4" />
                     {fid === "talking_head"
-                      ? `ערוך מדיה ל${format.label}`
-                      : `ערוך מדיה ל${format.label} (בקרוב)`}
+                      ? `עריכת מדיה ל${format.label}`
+                      : `עריכת מדיה ל${format.label} (בקרוב)`}
                   </Button>
                 </div>
               </div>
+
+              {/* Video skeleton — placeholder while the saved post is being
+                  loaded from DB and we don't yet know if there is a video.
+                  Same shape as the real card so the layout doesn't jump. */}
+              {fid === "talking_head" && !thVideoUrl && thVideoLoading && (
+                <>
+                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <div
+                    dir="rtl"
+                    className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
+                  >
+                    <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface-primary-default-80">
+                      <span className="text-p-bold text-text-primary-default">הוידאו שלכם</span>
+                      <Video className="size-4 text-text-neutral-default" />
+                    </div>
+                    <div className="px-6 flex flex-col gap-4">
+                      <div className="flex justify-center">
+                        <Skeleton className="w-[200px] aspect-[9/16] rounded-xl" />
+                      </div>
+                      <div className="flex gap-3 w-full items-center">
+                        <Skeleton className="flex-1 h-11 rounded-[12px]" />
+                        <Skeleton className="w-11 h-11 rounded-[12px]" />
+                        <Skeleton className="w-11 h-11 rounded-[12px]" />
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
 
               {/* Video result below talking_head card */}
               {fid === "talking_head" && thVideoUrl && (
@@ -1065,36 +1233,82 @@ function FormatTree({
                         <VideoPlayer url={thVideoUrl} />
                       </div>
                       <div className="flex gap-3 w-full items-center">
-                        {thVideoUrl.startsWith("blob:") && (
-                          <Button asChild className="flex-1">
-                            <a href={thVideoUrl} download="video.mp4">
-                              הורד וידאו
-                            </a>
-                          </Button>
-                        )}
                         <Button variant="outline" className="flex-1" onClick={onThReRecord}>
-                          {thVideoUrl.startsWith("blob:") ? "הקלט מחדש" : "החלף סרטון"}
+                          עריכת סרטון
                         </Button>
-                        <button
-                          onClick={onThDelete}
-                          className="flex items-center justify-center size-9 shrink-0 rounded-lg hover:bg-red-95 transition-colors cursor-pointer"
-                          title="מחק וידאו"
-                        >
-                          <Trash2 className="size-4 text-button-destructive-default" />
-                        </button>
+                        <TooltipLabel label="הורד וידאו">
+                          <Button
+                            variant="outline"
+                            type="button"
+                            aria-label="הורד וידאו"
+                            className="w-11 px-0"
+                            onClick={async () => {
+                              if (!thVideoUrl) return
+                              try {
+                                const res = await fetch(thVideoUrl)
+                                if (!res.ok) throw new Error("fetch_failed")
+                                const blob = await res.blob()
+                                const objectUrl = URL.createObjectURL(blob)
+                                const a = document.createElement("a")
+                                a.href = objectUrl
+                                a.download = `video-${Date.now()}.mp4`
+                                document.body.appendChild(a)
+                                a.click()
+                                a.remove()
+                                URL.revokeObjectURL(objectUrl)
+                              } catch {
+                                // CORS-blocked or network failure — fall back to a new tab
+                                // so the user can right-click → save manually.
+                                window.open(thVideoUrl, "_blank")
+                              }
+                            }}
+                          >
+                            <Download className="size-4" />
+                          </Button>
+                        </TooltipLabel>
+                        <TooltipLabel label="מחק וידאו">
+                          <button
+                            type="button"
+                            onClick={onThDelete}
+                            aria-label="מחק וידאו"
+                            className="flex items-center justify-center size-9 shrink-0 rounded-lg hover:bg-red-95 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="size-4 text-button-destructive-default" />
+                          </button>
+                        </TooltipLabel>
                       </div>
                     </div>
                   </div>
                 </>
               )}
 
-              {/* Cover loading indicator */}
+              {/* Cover skeleton — shows while the cover is generating or being
+                  fetched from DB after a refresh. Same shape as the real cover
+                  card so the layout doesn't jump when content arrives. */}
               {fid === "talking_head" && thCoverLoading && !thCoverImage && (
                 <>
                   <div className="w-[2px] h-7 bg-gray-80" />
-                  <div dir="rtl" className="flex items-center gap-2 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4 w-full">
-                    <Loader2 className="size-4 animate-spin text-text-neutral-default" />
-                    <span className="text-sm text-text-neutral-default">מייצר קאבר...</span>
+                  <div
+                    dir="rtl"
+                    className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
+                  >
+                    <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface">
+                      <span className="text-p-bold text-text-primary-default">קאבר</span>
+                      <Image className="size-4 text-text-neutral-default" />
+                    </div>
+                    <div className="px-6 flex flex-col gap-4">
+                      <div className="flex flex-col gap-1.5">
+                        <Skeleton className="h-3 w-20 rounded" />
+                        <div className="flex gap-2">
+                          <Skeleton className="flex-1 h-9 rounded-lg" />
+                          <Skeleton className="h-9 w-14 rounded-[8px]" />
+                        </div>
+                      </div>
+                      <div className="flex justify-center">
+                        <Skeleton className="w-[200px] aspect-[9/16] rounded-xl" />
+                      </div>
+                      <Skeleton className="w-full h-11 rounded-[12px]" />
+                    </div>
                   </div>
                 </>
               )}
@@ -1137,12 +1351,20 @@ function FormatTree({
                           />
                         </div>
                       </div>
-                      <Button asChild className="w-full gap-2">
-                        <a href={`data:image/png;base64,${thCoverImage}`} download="reel-cover.png">
-                          <Download className="size-4" />
-                          הורד קאבר
-                        </a>
-                      </Button>
+                      <div className="flex items-center justify-center">
+                        <TooltipLabel label="הורד קאבר">
+                          <Button
+                            asChild
+                            variant="outline"
+                            aria-label="הורד קאבר"
+                            className="w-11 px-0"
+                          >
+                            <a href={`data:image/png;base64,${thCoverImage}`} download="reel-cover.png">
+                              <Download className="size-4" />
+                            </a>
+                          </Button>
+                        </TooltipLabel>
+                      </div>
                     </div>
                   </div>
                 </>
@@ -1272,6 +1494,10 @@ function CarouselResultCard({
 function VideoPlayer({ url }: { url: string }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [playing, setPlaying] = useState(false)
+  // Skeleton overlay until the underlying media (img / video) fires its
+  // load event. Without this the card shows an empty gray rectangle while
+  // the source is fetched from Supabase Storage on a fresh refresh.
+  const [mediaLoaded, setMediaLoaded] = useState(false)
 
   const toggle = () => {
     const v = videoRef.current
@@ -1284,14 +1510,40 @@ function VideoPlayer({ url }: { url: string }) {
   const isThumbnail = url.includes("/video-thumb/") || url.match(/\.(jpg|jpeg|png|webp)(\?|$)/i)
   const isBlob = url.startsWith("blob:")
 
+  // Reset + ensure-loaded logic when the URL changes. Some browsers don't
+  // fire onLoadedData reliably for cached videos (the data is already there
+  // before React's listeners attach), and iframes for embeds don't always
+  // fire onLoad either. Belt-and-suspenders: check readyState on attach,
+  // and force-clear after a timeout so the skeleton can never get stuck.
+  useEffect(() => {
+    setMediaLoaded(false)
+    const v = videoRef.current
+    if (v && v.readyState >= 2) {
+      setMediaLoaded(true)
+      return
+    }
+    const t = setTimeout(() => setMediaLoaded(true), 4000)
+    return () => clearTimeout(t)
+  }, [url])
+
+  // When mediaLoaded, do NOT keep `animate-pulse` on the element — its
+  // @keyframes drives `opacity` directly and overrides the static
+  // `opacity-0`, leaving the skeleton visibly pulsing on top of an already
+  // playable video. Render the pulse only while loading.
+  const skeleton = mediaLoaded ? null : (
+    <div className="absolute inset-0 z-10 animate-pulse bg-accent" />
+  )
+
   if (isEmbed) {
     return (
       <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden bg-gray-95">
+        {skeleton}
         <iframe
           src={url}
           className="w-full h-full"
           allow="encrypted-media; fullscreen;"
           allowFullScreen
+          onLoad={() => setMediaLoaded(true)}
         />
       </div>
     )
@@ -1301,9 +1553,16 @@ function VideoPlayer({ url }: { url: string }) {
   if (isThumbnail && !isBlob) {
     return (
       <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden bg-gray-95">
+        {skeleton}
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={url} alt="video thumbnail" className="w-full h-full object-cover" />
-        <div className="absolute inset-0 flex items-center justify-center">
+        <img
+          src={url}
+          alt="video thumbnail"
+          className="w-full h-full object-cover"
+          onLoad={() => setMediaLoaded(true)}
+          onError={() => setMediaLoaded(true)}
+        />
+        <div className={`absolute inset-0 flex items-center justify-center transition-opacity ${mediaLoaded ? "opacity-100" : "opacity-0"}`}>
           <div className="size-12 rounded-full bg-black/40 flex items-center justify-center backdrop-blur-sm">
             <Play className="size-5 text-white ms-0.5" />
           </div>
@@ -1315,18 +1574,60 @@ function VideoPlayer({ url }: { url: string }) {
   // Playable video (blob or direct mp4)
   return (
     <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden bg-gray-95 cursor-pointer" onClick={toggle} onMouseDown={(e) => e.stopPropagation()}>
+      {skeleton}
       <video
         ref={videoRef}
         src={url}
         className="w-full h-full object-cover"
         playsInline
+        preload="metadata"
         onEnded={() => setPlaying(false)}
+        onLoadedMetadata={() => setMediaLoaded(true)}
+        onLoadedData={() => setMediaLoaded(true)}
+        onCanPlay={() => setMediaLoaded(true)}
+        onError={() => setMediaLoaded(true)}
       />
-      <div className={`absolute inset-0 flex items-center justify-center transition-opacity ${playing ? "opacity-0 hover:opacity-100" : "opacity-100"}`}>
+      <div className={`absolute inset-0 flex items-center justify-center transition-opacity ${mediaLoaded ? (playing ? "opacity-0 hover:opacity-100" : "opacity-100") : "opacity-0"}`}>
         <div className="size-12 rounded-full bg-black/40 flex items-center justify-center backdrop-blur-sm">
           {playing ? <Pause className="size-5 text-white" /> : <Play className="size-5 text-white ms-0.5" />}
         </div>
       </div>
     </div>
+  )
+}
+
+// Hover-revealed copy button anchored to the top-right (start side in RTL) of
+// each format card's textarea. One-click clipboard copy with a 1.5s checkmark
+// confirmation, replacing the previous "select-text + cmd+C" flow.
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  const handleClick = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!text.trim()) return
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      toast.success("הועתק ללוח")
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      toast.error("ההעתקה נכשלה")
+    }
+  }
+  return (
+    <TooltipLabel label={copied ? "הועתק" : "העתק"}>
+      <button
+        type="button"
+        onClick={handleClick}
+        onMouseDown={(e) => e.stopPropagation()}
+        aria-label="העתק טקסט"
+        className="absolute top-2 start-2 z-10 size-7 rounded-md border border-border-neutral-default bg-white dark:bg-gray-10 flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity hover:bg-gray-95 dark:hover:bg-gray-20 cursor-pointer"
+      >
+        {copied ? (
+          <Check className="size-3.5 text-button-primary-default" />
+        ) : (
+          <Copy className="size-3.5 text-text-neutral-default" />
+        )}
+      </button>
+    </TooltipLabel>
   )
 }

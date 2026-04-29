@@ -337,6 +337,46 @@
   color: var(--color-text-success-default) !important;
 }
 
+/* Red state — used for both error toasts (data-type="error") and for
+   destructive confirmations like "הסרטון נמחק" (className "toast-destructive").
+   Matches the visual weight of the success state so the system reads as
+   coherent. White text on a deep red surface. */
+[data-sonner-toast][data-type="error"],
+[data-sonner-toast].toast-destructive {
+  background: #C62828 !important;
+  color: #FFFFFF !important;
+}
+
+[data-sonner-toast][data-type="error"] [data-icon],
+[data-sonner-toast].toast-destructive [data-icon] {
+  color: #FFFFFF !important;
+}
+
+/* Toast action ("שיחזור" / "Undo" link). Sonner's default is a small filled
+   button — we want a flat underlined link in the same color as the toast text.
+   `margin-inline-start: auto` pushes it to the visual end of the row (the
+   left side in RTL), and the font-size matches sonner's description size so
+   the link sits inline with the secondary text. */
+[data-sonner-toast] [data-button] {
+  background: transparent !important;
+  color: inherit !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  margin-inline-start: auto !important;
+  height: auto !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  text-decoration: underline !important;
+  text-underline-offset: 2px !important;
+  cursor: pointer !important;
+}
+
+[data-sonner-toast] [data-button]:hover {
+  background: transparent !important;
+  opacity: 0.85;
+}
+
 @keyframes hook-bump-in {
   0% {
     opacity: 0;

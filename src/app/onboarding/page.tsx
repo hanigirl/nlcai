@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import Image from "next/image"
 import { ArrowLeft, Paperclip, Loader2, Link2 } from "lucide-react"
 import logoNew from "../../../images/logo-new.png"
@@ -25,7 +25,12 @@ const STEPS = [
 
 export default function OnboardingPage() {
   const router = useRouter()
-  const [currentStep, setCurrentStep] = useState(0)
+  const searchParams = useSearchParams()
+  const stepParam = searchParams.get("step")
+  const initialStep = stepParam
+    ? Math.max(0, Math.min(STEPS.length - 1, parseInt(stepParam, 10) || 0))
+    : 0
+  const [currentStep, setCurrentStep] = useState(initialStep)
 
   // Step 1 - Connections
   const [anthropicKey, setAnthropicKey] = useState("")
@@ -188,7 +193,8 @@ export default function OnboardingPage() {
             user_id: user.id,
             name: p.name,
             type: p.type,
-            landing_page_url: p.landingPageUrl || null,
+            landing_page_url: p.noSalesPage ? null : (p.landingPageUrl || null),
+            page_summary: p.noSalesPage ? (p.manualSummary?.trim() || null) : null,
           }))
           const { data: insertedProducts, error: insertError } = await supabase
             .from("products")
@@ -204,8 +210,8 @@ export default function OnboardingPage() {
           // Parse product pages in the background (don't block navigation)
           if (insertedProducts) {
             const productsWithUrls = productsList
-              .map((p, i) => ({ url: p.landingPageUrl, productId: (insertedProducts[i] as { id: string }).id }))
-              .filter((p) => p.url)
+              .map((p, i) => ({ url: p.landingPageUrl, productId: (insertedProducts[i] as { id: string }).id, skip: p.noSalesPage }))
+              .filter((p) => !p.skip && p.url)
 
             for (const { url, productId } of productsWithUrls) {
               fetch("/api/parse-product-page", {
@@ -270,12 +276,10 @@ export default function OnboardingPage() {
             <>
               <div className="text-center mb-2">
                 <h3 className="text-text-primary-default text-center leading-tight mb-2">
-                  וולקאם לנקסט לבל של יצירת תוכן
+                  מחברים את הכלים ומתחילים
                 </h3>
                 <p className="text-small text-text-neutral-default">
-                  חברו את חשבונות ה-AI שלכם כדי להתחיל ליצור תוכן.
-                  <br />
-                  אפשר לדלג ולחבר מאוחר יותר בהגדרות.
+                  חיבור הכלים הכרחי כדי לאפשר למערכת ליצר עבורכם תוכן מנצח
                 </p>
               </div>
 
@@ -306,11 +310,34 @@ export default function OnboardingPage() {
               <div className="flex flex-col gap-2">
                 <label className="text-small-bold text-text-primary-default flex items-center gap-2">
                   <Link2 className="size-4" />
-                  HeyGen API Key
+                  Apify API Key
                 </label>
                 <Input
                   dir="ltr"
-                  placeholder="הכניסו את ה-API key שלכם"
+                  placeholder="apify_api_..."
+                  value={apifyKey}
+                  onChange={(e) => setApifyKey(e.target.value)}
+                />
+                <p className="text-xs-body text-text-neutral-default">
+                  מצאו את ה-API key שלכם ב-{" "}
+                  <a
+                    href="https://console.apify.com/settings/integrations"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-text-primary-default font-semibold hover:underline"
+                  >
+                    console.apify.com
+                  </a>
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="text-small-bold text-text-primary-default flex items-center gap-2">
+                  <Link2 className="size-4" />
+                  HeyGen API Key (אופציונאלי)
+                </label>
+                <Input
+                  dir="ltr"
                   value={heygenKey}
                   onChange={(e) => setHeygenKey(e.target.value)}
                 />
@@ -323,31 +350,6 @@ export default function OnboardingPage() {
                     className="text-text-primary-default font-semibold hover:underline"
                   >
                     app.heygen.com
-                  </a>
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <label className="text-small-bold text-text-primary-default flex items-center gap-2">
-                  <Link2 className="size-4" />
-                  Apify API Key
-                </label>
-                <Input
-                  dir="ltr"
-                  placeholder="apify_api_..."
-                  value={apifyKey}
-                  onChange={(e) => setApifyKey(e.target.value)}
-                />
-                <p className="text-xs-body text-text-neutral-default">
-                  משמש לחיפוש פוסטים של היוצרים שתבחרו באינסטגרם, יוטיוב וטיקטוק.
-                  מצאו את ה-API key שלכם ב-{" "}
-                  <a
-                    href="https://console.apify.com/settings/integrations"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-text-primary-default font-semibold hover:underline"
-                  >
-                    console.apify.com
                   </a>
                 </p>
               </div>
@@ -406,7 +408,7 @@ export default function OnboardingPage() {
                     ref={fileInputRef}
                     type="file"
                     className="hidden"
-                    accept=".docx"
+                    accept=".docx,.md,text/markdown"
                     onChange={(e) => setStyleFile(e.target.files?.[0] ?? null)}
                   />
                 </div>
@@ -420,6 +422,8 @@ export default function OnboardingPage() {
                   >
                     יוצרים אותו כאן
                   </a>
+                  {" · "}
+                  ניתן להעלות קבצי doc, docx, md
                 </p>
               </div>
             </>
@@ -453,7 +457,7 @@ export default function OnboardingPage() {
                     ref={audienceFileRef}
                     type="file"
                     className="hidden"
-                    accept=".docx"
+                    accept=".docx,.md,text/markdown"
                     onChange={(e) => setAudienceFile(e.target.files?.[0] ?? null)}
                   />
                 </div>
@@ -467,6 +471,8 @@ export default function OnboardingPage() {
                   >
                     יוצרים את זה כאן
                   </a>
+                  {" · "}
+                  ניתן להעלות קבצי doc, docx, md
                 </p>
               </div>
             </>

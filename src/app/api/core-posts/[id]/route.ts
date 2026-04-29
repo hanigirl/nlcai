@@ -102,13 +102,14 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, formatPosts, videoUrl, deleteVideo, coverBase64, coverText } = (await req.json()) as {
+    const { body, formatPosts, videoUrl, deleteVideo, coverBase64, coverText, deleteCover } = (await req.json()) as {
       body?: string
       formatPosts?: Record<string, string>
       videoUrl?: string
       deleteVideo?: boolean
       coverBase64?: string
       coverText?: string
+      deleteCover?: boolean
     }
 
     // Update core post body if provided
@@ -162,6 +163,25 @@ export async function PATCH(
           .delete()
           .eq("format_variant_id", variantRow.id)
           .eq("asset_type", "video")
+      }
+    }
+
+    // Delete cover if requested
+    if (deleteCover) {
+      const { data: thVariant } = await supabase
+        .from("format_variants")
+        .select("id")
+        .eq("core_post_id", id)
+        .eq("format", "talking_head")
+        .single()
+
+      if (thVariant) {
+        const variantRow = thVariant as unknown as { id: string }
+        await supabase
+          .from("media_assets")
+          .delete()
+          .eq("format_variant_id", variantRow.id)
+          .eq("asset_type", "cover")
       }
     }
 
