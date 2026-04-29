@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { Suspense, useState, useRef } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Image from "next/image"
 import { ArrowLeft, Paperclip, Loader2, Link2 } from "lucide-react"
@@ -24,6 +24,14 @@ const STEPS = [
 ]
 
 export default function OnboardingPage() {
+  return (
+    <Suspense fallback={null}>
+      <OnboardingPageInner />
+    </Suspense>
+  )
+}
+
+function OnboardingPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const stepParam = searchParams.get("step")
