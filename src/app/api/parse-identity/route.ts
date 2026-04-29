@@ -95,6 +95,7 @@ export async function POST(req: NextRequest) {
 
     let parsed: Record<string, string> = {}
     let aiError: string | null = null
+    let fileSaveError: string | null = null
     let fileContent: FileContent | null = null
     let fileBuffer: Buffer | null = null
 
@@ -125,22 +126,30 @@ export async function POST(req: NextRequest) {
           await supabase.from("user_media").delete().eq("user_id", user.id).eq("category", category)
         }
 
-        // Upload new file
-        await supabase.storage.from("user-media").upload(storagePath, fileBuffer, {
+        // Upload new file — supabase returns {error} instead of throwing, must check
+        const { error: storageErr } = await supabase.storage.from("user-media").upload(storagePath, fileBuffer, {
           contentType: file.type || "application/octet-stream",
         })
-
-        // Record in user_media
-        await supabase.from("user_media").insert({
-          user_id: user.id,
-          category,
-          file_name: file.name,
-          storage_path: storagePath,
-          metadata: {},
-        })
+        if (storageErr) {
+          fileSaveError = `storage upload failed: ${storageErr.message}`
+          console.error("[parse-identity]", fileSaveError)
+        } else {
+          // Record in user_media — also returns {error} silently
+          const { error: insertErr } = await supabase.from("user_media").insert({
+            user_id: user.id,
+            category,
+            file_name: file.name,
+            storage_path: storagePath,
+            metadata: {},
+          } as never)
+          if (insertErr) {
+            fileSaveError = `user_media insert failed: ${insertErr.message}`
+            console.error("[parse-identity]", fileSaveError)
+          }
+        }
       } catch (err) {
-        console.error("Failed to save original file to storage:", err)
-        // Non-fatal — continue with parsing
+        fileSaveError = err instanceof Error ? err.message : String(err)
+        console.error("[parse-identity] file save threw:", fileSaveError)
       }
     }
 
@@ -225,7 +234,12 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: error.message }, { status: 500 })
       }
 
-      return NextResponse.json({ parsed: { ...parsed, ...manual }, saved: row, ...(aiError ? { warning: `הקובץ לא נותח (${aiError}), השדות הידניים נשמרו` } : {}) })
+      return NextResponse.json({
+        parsed: { ...parsed, ...manual },
+        saved: row,
+        ...(aiError ? { warning: `הקובץ לא נותח (${aiError}), השדות הידניים נשמרו` } : {}),
+        ...(fileSaveError ? { fileSaveError } : {}),
+      })
     } else {
       const row = {
         user_id: user.id,
@@ -261,7 +275,12 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: error.message }, { status: 500 })
       }
 
-      return NextResponse.json({ parsed, saved: row, ...(aiError ? { warning: `הקובץ לא נותח (${aiError}), הנתונים לא נשמרו מהקובץ` } : {}) })
+      return NextResponse.json({
+        parsed,
+        saved: row,
+        ...(aiError ? { warning: `הקובץ לא נותח (${aiError}), הנתונים לא נשמרו מהקובץ` } : {}),
+        ...(fileSaveError ? { fileSaveError } : {}),
+      })
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

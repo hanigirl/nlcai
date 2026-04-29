@@ -16,10 +16,15 @@ export default function DebugDbPage() {
         return
       }
 
-      const [core, audience, products] = await Promise.all([
+      const [core, audience, products, media] = await Promise.all([
         supabase.from("core_identities").select("*").eq("user_id", user.id).single(),
         supabase.from("audience_identities").select("*").eq("user_id", user.id).single(),
         supabase.from("products").select("*").eq("user_id", user.id),
+        supabase
+          .from("user_media")
+          .select("id, category, file_name, storage_path, created_at")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false }),
       ])
 
       setData({
@@ -27,6 +32,7 @@ export default function DebugDbPage() {
         core_identity: core.data ?? core.error,
         audience_identity: audience.data ?? audience.error,
         products: products.data ?? products.error,
+        user_media: media.data ?? media.error,
       })
     }
     load()

@@ -135,7 +135,9 @@ function OnboardingPageInner() {
         if (resData.warning) {
           alert(resData.warning)
         }
-        if (styleFile) {
+        if (resData.fileSaveError) {
+          toast.error(`הקובץ לא נשמר: ${resData.fileSaveError}`)
+        } else if (styleFile) {
           toast.success("הקובץ עלה בהצלחה")
         }
         setCurrentStep(2)
@@ -158,7 +160,9 @@ function OnboardingPageInner() {
         if (resData.warning) {
           alert(resData.warning)
         }
-        if (audienceFile) {
+        if (resData.fileSaveError) {
+          toast.error(`הקובץ לא נשמר: ${resData.fileSaveError}`)
+        } else if (audienceFile) {
           toast.success("הקובץ עלה בהצלחה")
         }
         setCurrentStep(3)

@@ -577,7 +577,11 @@ function SettingsPageInner() {
         niche: businessNiche,
         whoIAm: businessExpertise,
       }))
-      await fetch("/api/parse-identity", { method: "POST", body: formData })
+      const res = await fetch("/api/parse-identity", { method: "POST", body: formData })
+      const resData = await res.json().catch(() => ({}))
+      if (resData.fileSaveError) {
+        toast.error(`הקובץ לא נשמר: ${resData.fileSaveError}`)
+      }
       setStyleOriginalFile((prev) => ({ name: file.name, url: prev?.url ?? "" }))
       setStyleFileToUpload(null)
       await refreshIdentityFile("style_file")
@@ -596,7 +600,11 @@ function SettingsPageInner() {
       const formData = new FormData()
       formData.append("file", file)
       formData.append("type", "audience")
-      await fetch("/api/parse-identity", { method: "POST", body: formData })
+      const res = await fetch("/api/parse-identity", { method: "POST", body: formData })
+      const resData = await res.json().catch(() => ({}))
+      if (resData.fileSaveError) {
+        toast.error(`הקובץ לא נשמר: ${resData.fileSaveError}`)
+      }
       setAudienceOriginalFile((prev) => ({ name: file.name, url: prev?.url ?? "" }))
       setAudienceFileToUpload(null)
       await refreshIdentityFile("audience_file")
