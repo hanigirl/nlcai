@@ -172,6 +172,20 @@ export async function POST(req: NextRequest) {
         .upsert(row as never, { onConflict: "user_id" })
       saveError = error?.message ?? null
       saved = !error
+      // Verify by re-reading the row.
+      if (saved) {
+        const { data: verifyRow } = await admin
+          .from("audience_identities")
+          .select("daily_pains, emotional_pains, fears")
+          .eq("user_id", userId)
+          .single()
+        if (verifyRow) {
+          (diagnosis as Record<string, unknown>).db_after_save = verifyRow
+        } else {
+          saveError = "save reported success but row not found on re-read"
+          saved = false
+        }
+      }
     } else {
       const row = {
         user_id: userId,
@@ -188,6 +202,19 @@ export async function POST(req: NextRequest) {
         .upsert(row as never, { onConflict: "user_id" })
       saveError = error?.message ?? null
       saved = !error
+      if (saved) {
+        const { data: verifyRow } = await admin
+          .from("core_identities")
+          .select("niche, who_i_am, who_i_serve")
+          .eq("user_id", userId)
+          .single()
+        if (verifyRow) {
+          (diagnosis as Record<string, unknown>).db_after_save = verifyRow
+        } else {
+          saveError = "save reported success but row not found on re-read"
+          saved = false
+        }
+      }
     }
   }
 
