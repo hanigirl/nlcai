@@ -227,17 +227,44 @@ export async function POST(req: NextRequest) {
     const rawFileText =
       fileContent?.kind === "text" ? fileContent.text : null
 
+    // Pull existing values so a partial parse can't wipe good prior data.
+    const { data: existingCore } =
+      type === "core"
+        ? await supabase
+            .from("core_identities")
+            .select("*")
+            .eq("user_id", user.id)
+            .maybeSingle()
+        : { data: null }
+    const { data: existingAudience } =
+      type === "audience"
+        ? await supabase
+            .from("audience_identities")
+            .select("*")
+            .eq("user_id", user.id)
+            .maybeSingle()
+        : { data: null }
+
+    // pickFilled: prefer first non-empty value in the order given.
+    const pickFilled = (...vals: (string | undefined | null)[]): string => {
+      for (const v of vals) {
+        if (typeof v === "string" && v.trim().length > 0) return v
+      }
+      return ""
+    }
+    const cur = (existingCore ?? existingAudience) as Record<string, string | null> | null
+
     // Save to DB — manual fields take priority over parsed (non-empty manual fields won't be overwritten)
     if (type === "core") {
       const row = {
         user_id: user.id,
-        niche: manual.niche || parsed.niche || "",
-        product_name: manual.productName || parsed.productName || "",
-        who_i_am: manual.whoIAm || parsed.whoIAm || "",
-        who_i_serve: manual.whoIServe || parsed.whoIServe || "",
-        how_i_sound: parsed.howISound || manual.howISound || "",
-        slang_examples: parsed.slangExamples || manual.slangExamples || "",
-        what_i_never_do: parsed.whatINeverDo || manual.whatINeverDo || "",
+        niche: pickFilled(manual.niche, parsed.niche, cur?.niche),
+        product_name: pickFilled(manual.productName, parsed.productName, cur?.product_name),
+        who_i_am: pickFilled(manual.whoIAm, parsed.whoIAm, cur?.who_i_am),
+        who_i_serve: pickFilled(manual.whoIServe, parsed.whoIServe, cur?.who_i_serve),
+        how_i_sound: pickFilled(parsed.howISound, manual.howISound, cur?.how_i_sound),
+        slang_examples: pickFilled(parsed.slangExamples, manual.slangExamples, cur?.slang_examples),
+        what_i_never_do: pickFilled(parsed.whatINeverDo, manual.whatINeverDo, cur?.what_i_never_do),
         ...(rawFileText ? { raw_file_text: rawFileText } : {}),
       }
 
@@ -258,27 +285,27 @@ export async function POST(req: NextRequest) {
     } else {
       const row = {
         user_id: user.id,
-        location: parsed.location ?? "",
-        employment: parsed.employment ?? "",
-        education: parsed.education ?? "",
-        income: parsed.income ?? "",
-        behavioral: parsed.behavioral ?? "",
-        awareness_level: parsed.awarenessLevel ?? "",
-        daily_pains: parsed.dailyPains ?? "",
-        emotional_pains: parsed.emotionalPains ?? "",
-        unresolved_consequences: parsed.unresolvedConsequences ?? "",
-        fears: parsed.fears ?? "",
-        failed_solutions: parsed.failedSolutions ?? "",
-        limiting_beliefs: parsed.limitingBeliefs ?? "",
-        myths: parsed.myths ?? "",
-        daily_desires: parsed.dailyDesires ?? "",
-        emotional_desires: parsed.emotionalDesires ?? "",
-        small_wins: parsed.smallWins ?? "",
-        ideal_solution: parsed.idealSolution ?? "",
-        bottom_line: parsed.bottomLine ?? "",
-        cross_audience_quotes: parsed.crossAudienceQuotes ?? "",
-        ideal_solution_words: parsed.idealSolutionWords ?? "",
-        identity_statements: parsed.identityStatements ?? "",
+        location: pickFilled(parsed.location, cur?.location),
+        employment: pickFilled(parsed.employment, cur?.employment),
+        education: pickFilled(parsed.education, cur?.education),
+        income: pickFilled(parsed.income, cur?.income),
+        behavioral: pickFilled(parsed.behavioral, cur?.behavioral),
+        awareness_level: pickFilled(parsed.awarenessLevel, cur?.awareness_level),
+        daily_pains: pickFilled(parsed.dailyPains, cur?.daily_pains),
+        emotional_pains: pickFilled(parsed.emotionalPains, cur?.emotional_pains),
+        unresolved_consequences: pickFilled(parsed.unresolvedConsequences, cur?.unresolved_consequences),
+        fears: pickFilled(parsed.fears, cur?.fears),
+        failed_solutions: pickFilled(parsed.failedSolutions, cur?.failed_solutions),
+        limiting_beliefs: pickFilled(parsed.limitingBeliefs, cur?.limiting_beliefs),
+        myths: pickFilled(parsed.myths, cur?.myths),
+        daily_desires: pickFilled(parsed.dailyDesires, cur?.daily_desires),
+        emotional_desires: pickFilled(parsed.emotionalDesires, cur?.emotional_desires),
+        small_wins: pickFilled(parsed.smallWins, cur?.small_wins),
+        ideal_solution: pickFilled(parsed.idealSolution, cur?.ideal_solution),
+        bottom_line: pickFilled(parsed.bottomLine, cur?.bottom_line),
+        cross_audience_quotes: pickFilled(parsed.crossAudienceQuotes, cur?.cross_audience_quotes),
+        ideal_solution_words: pickFilled(parsed.idealSolutionWords, cur?.ideal_solution_words),
+        identity_statements: pickFilled(parsed.identityStatements, cur?.identity_statements),
         ...(rawFileText ? { raw_file_text: rawFileText } : {}),
       }
 
