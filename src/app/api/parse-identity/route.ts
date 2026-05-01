@@ -8,6 +8,7 @@ import {
   CORE_IDENTITY_PARSE_PROMPT,
   AUDIENCE_IDENTITY_PARSE_PROMPT,
 } from "@/lib/agents/identity-parser"
+import { anthropicErrorToHebrew } from "@/lib/anthropic-errors"
 
 type FileContent =
   | { kind: "text"; text: string }
@@ -193,11 +194,25 @@ export async function POST(req: NextRequest) {
           })
 
           const textBlock = message.content.find((b) => b.type === "text")
-          const raw = textBlock?.text ?? "{}"
+          const raw = textBlock?.text ?? ""
 
           const jsonMatch = raw.match(/\{[\s\S]*\}/)
           if (jsonMatch) {
-            parsed = JSON.parse(jsonMatch[0])
+            try {
+              parsed = JSON.parse(jsonMatch[0])
+            } catch (parseErr) {
+              aiError = parseErr instanceof Error ? parseErr.message : String(parseErr)
+            }
+          } else {
+            aiError = "no_json_block_in_response"
+          }
+
+          // Treat all-empty parse as a soft failure so the user gets feedback.
+          const hasAnyField = Object.values(parsed).some(
+            (v) => typeof v === "string" && v.trim().length > 0
+          )
+          if (!aiError && !hasAnyField) {
+            aiError = "claude_returned_empty"
           }
         } catch (err) {
           aiError = err instanceof Error ? err.message : String(err)
@@ -237,7 +252,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         parsed: { ...parsed, ...manual },
         saved: row,
-        ...(aiError ? { warning: `הקובץ לא נותח (${aiError}), השדות הידניים נשמרו` } : {}),
+        ...(aiError ? { warning: `${anthropicErrorToHebrew(aiError)} השדות הידניים נשמרו, אבל הקובץ לא נותח.` } : {}),
         ...(fileSaveError ? { fileSaveError } : {}),
       })
     } else {
@@ -278,7 +293,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         parsed,
         saved: row,
-        ...(aiError ? { warning: `הקובץ לא נותח (${aiError}), הנתונים לא נשמרו מהקובץ` } : {}),
+        ...(aiError ? { warning: `${anthropicErrorToHebrew(aiError)} הנתונים לא נשמרו מהקובץ.` } : {}),
         ...(fileSaveError ? { fileSaveError } : {}),
       })
     }

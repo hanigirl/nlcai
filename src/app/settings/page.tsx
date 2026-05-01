@@ -579,6 +579,11 @@ function SettingsPageInner() {
       }))
       const res = await fetch("/api/parse-identity", { method: "POST", body: formData })
       const resData = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(resData.message || resData.error || "הקובץ לא נשמר", { duration: 10000 })
+      } else if (resData.warning) {
+        toast.error(resData.warning, { duration: 10000 })
+      }
       if (resData.fileSaveError) {
         toast.error(`הקובץ לא נשמר: ${resData.fileSaveError}`)
       }
@@ -602,6 +607,11 @@ function SettingsPageInner() {
       formData.append("type", "audience")
       const res = await fetch("/api/parse-identity", { method: "POST", body: formData })
       const resData = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(resData.message || resData.error || "הקובץ לא נשמר", { duration: 10000 })
+      } else if (resData.warning) {
+        toast.error(resData.warning, { duration: 10000 })
+      }
       if (resData.fileSaveError) {
         toast.error(`הקובץ לא נשמר: ${resData.fileSaveError}`)
       }

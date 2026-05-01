@@ -129,16 +129,16 @@ function OnboardingPageInner() {
         })
         const resData = await res.json()
         if (!res.ok) {
-          alert(`שגיאה בשמירת נתוני העסק: ${resData.error}`)
+          toast.error(resData.message || `שגיאה בשמירת נתוני העסק: ${resData.error}`, { duration: 10000 })
           return
         }
         if (resData.warning) {
-          alert(resData.warning)
+          toast.error(resData.warning, { duration: 10000 })
         }
         if (resData.fileSaveError) {
           toast.error(`הקובץ לא נשמר: ${resData.fileSaveError}`)
-        } else if (styleFile) {
-          toast.success("הקובץ עלה בהצלחה")
+        } else if (styleFile && !resData.warning) {
+          toast.success("הקובץ עלה ונותח בהצלחה")
         }
         setCurrentStep(2)
       } else if (currentStep === 2) {
@@ -154,16 +154,16 @@ function OnboardingPageInner() {
         })
         const resData = await res.json()
         if (!res.ok) {
-          alert(`שגיאה בשמירת קהל היעד: ${resData.error}`)
+          toast.error(resData.message || `שגיאה בשמירת קהל היעד: ${resData.error}`, { duration: 10000 })
           return
         }
         if (resData.warning) {
-          alert(resData.warning)
+          toast.error(resData.warning, { duration: 10000 })
         }
         if (resData.fileSaveError) {
           toast.error(`הקובץ לא נשמר: ${resData.fileSaveError}`)
-        } else if (audienceFile) {
-          toast.success("הקובץ עלה בהצלחה")
+        } else if (audienceFile && !resData.warning) {
+          toast.success("הקובץ עלה ונותח בהצלחה")
         }
         setCurrentStep(3)
       } else if (currentStep === 3) {

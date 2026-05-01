@@ -6,6 +6,7 @@ import {
   CORE_IDENTITY_PARSE_PROMPT,
   AUDIENCE_IDENTITY_PARSE_PROMPT,
 } from "@/lib/agents/identity-parser"
+import { anthropicErrorToHebrew } from "@/lib/anthropic-errors"
 
 type Type = "core" | "audience"
 
@@ -194,14 +195,14 @@ export async function POST(req: NextRequest) {
   let message: string
   if (claudeError) {
     verdict = "anthropic_call_failed"
-    message = `הקריאה ל-Anthropic נכשלה: ${claudeError}`
+    message = anthropicErrorToHebrew(claudeError)
   } else if (parseError) {
     verdict = "json_parse_failed"
-    message = `Claude החזיר תשובה אבל לא הצלחנו לפרסר JSON: ${parseError}`
+    message = anthropicErrorToHebrew(parseError)
   } else if (filledFields === 0) {
     verdict = "claude_returned_empty"
     message =
-      "Claude החזיר JSON תקין אבל בלי תוכן. כנראה לא זיהה מידע על הקהל בטקסט."
+      "Claude החזיר JSON תקין אבל בלי תוכן. כנראה לא זיהה מידע בטקסט שהועלה."
   } else {
     verdict = save && saved ? "ok_and_saved" : "ok"
     message =

@@ -633,7 +633,10 @@ ${formatTemplatesForPrompt()}
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
           console.error(`Homepage Hooks: generation failed at hook ${hookCount} —`, msg)
-          safeEnqueue(encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`))
+          const isCredits = /credit|billing|insufficient_quota|payment|402/i.test(msg)
+          const isOverloaded = /overloaded|529|503/i.test(msg)
+          const errCode = isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : msg
+          safeEnqueue(encoder.encode(`data: ${JSON.stringify({ error: errCode })}\n\n`))
           safeClose()
         }
       },

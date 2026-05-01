@@ -6,6 +6,7 @@ import {
   CORE_IDENTITY_PARSE_PROMPT,
   AUDIENCE_IDENTITY_PARSE_PROMPT,
 } from "@/lib/agents/identity-parser"
+import { anthropicErrorToHebrew } from "@/lib/anthropic-errors"
 
 export async function POST(req: NextRequest) {
   try {
@@ -52,7 +53,10 @@ export async function POST(req: NextRequest) {
       anthropicApiKey = await getUserApiKey(supabase, "anthropic_api_key")
     } catch {
       return NextResponse.json(
-        { error: "anthropic_not_connected" },
+        {
+          error: "anthropic_not_connected",
+          message: anthropicErrorToHebrew("anthropic_not_connected"),
+        },
         { status: 400 }
       )
     }
@@ -64,28 +68,37 @@ export async function POST(req: NextRequest) {
         : AUDIENCE_IDENTITY_PARSE_PROMPT
 
     const client = new Anthropic({ apiKey: anthropicApiKey })
-    const message = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 4096,
-      messages: [
-        {
-          role: "user",
-          content: `${systemPrompt}\n\n--- הטקסט ---\n${rawText}`,
-        },
-      ],
-    })
+    let parsed: Record<string, string> = {}
+    try {
+      const message = await client.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 4096,
+        messages: [
+          {
+            role: "user",
+            content: `${systemPrompt}\n\n--- הטקסט ---\n${rawText}`,
+          },
+        ],
+      })
 
-    const textBlock = message.content.find((b) => b.type === "text")
-    const raw = textBlock?.text ?? "{}"
-    const jsonMatch = raw.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) {
+      const textBlock = message.content.find((b) => b.type === "text")
+      const raw = textBlock?.text ?? ""
+      const jsonMatch = raw.match(/\{[\s\S]*\}/)
+      if (!jsonMatch) {
+        return NextResponse.json(
+          { error: "no_json_block_in_response", message: anthropicErrorToHebrew("no_json_block_in_response") },
+          { status: 500 }
+        )
+      }
+      parsed = JSON.parse(jsonMatch[0])
+    } catch (aiErr) {
+      const raw = aiErr instanceof Error ? aiErr.message : String(aiErr)
+      console.error("Reparse identity AI call failed:", raw)
       return NextResponse.json(
-        { error: "AI returned no valid JSON" },
+        { error: raw, message: anthropicErrorToHebrew(raw) },
         { status: 500 }
       )
     }
-
-    const parsed: Record<string, string> = JSON.parse(jsonMatch[0])
 
     // Build update — only fill fields that are currently empty
     if (type === "core") {
