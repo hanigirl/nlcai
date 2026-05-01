@@ -735,7 +735,7 @@ function SettingsPageInner() {
                         {stored ? (
                           <Button size="sm" variant="outline" onClick={() => handleDisconnect(cfg.key)} disabled={isSaving} className="w-fit gap-2 border-button-destructive-default text-button-destructive-default hover:bg-red-95">
                             {isSaving ? <Loader2 className="size-4 animate-spin" /> : <Unlink className="size-4" />}
-                            נתק
+                            {isSaving ? "מנתק..." : "נתק"}
                           </Button>
                         ) : (
                           <div className="flex flex-col gap-2">
@@ -743,7 +743,7 @@ function SettingsPageInner() {
                               <Input dir="ltr" placeholder={cfg.placeholder} value={inputValues[cfg.key]} onChange={(e) => setInputValues((prev) => ({ ...prev, [cfg.key]: e.target.value }))} className="flex-1" />
                               <Button size="sm" onClick={() => handleConnect(cfg.key)} disabled={!inputValues[cfg.key].trim() || isSaving} className="gap-2">
                                 {isSaving ? <Loader2 className="size-4 animate-spin" /> : <Link2 className="size-4" />}
-                                חבר
+                                {isSaving ? "מתחבר..." : "חבר"}
                               </Button>
                             </div>
                             <p className="text-xs-body text-text-neutral-default">
@@ -862,7 +862,7 @@ function SettingsPageInner() {
                     className="w-fit gap-2"
                   >
                     {uploadingStyle && <Loader2 className="size-4 animate-spin" />}
-                    שמור ונתח
+                    {uploadingStyle ? "שומר ומנתח..." : "שמור ונתח"}
                   </Button>
                 </div>
 
@@ -937,7 +937,7 @@ function SettingsPageInner() {
                     className="w-fit gap-2"
                   >
                     {uploadingAudience && <Loader2 className="size-4 animate-spin" />}
-                    שמור ונתח
+                    {uploadingAudience ? "שומר ומנתח..." : "שמור ונתח"}
                   </Button>
                 </div>
 

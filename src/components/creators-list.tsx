@@ -94,7 +94,7 @@ export function CreatorsList({
                 className="self-end mt-1"
               >
                 {savingIndex === i && <Loader2 className="size-3.5 animate-spin" />}
-                שמור
+                {savingIndex === i ? "שומר..." : "שמור"}
               </Button>
             )}
           </div>

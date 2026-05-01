@@ -1336,8 +1336,9 @@ function FormatTree({
                             className="flex-1 rounded-lg border border-border-neutral-default bg-transparent px-3 py-2 text-sm text-text-primary-default outline-none focus:border-yellow-50"
                             onMouseDown={(e) => e.stopPropagation()}
                           />
-                          <Button size="sm" onClick={onCoverRegenerate} disabled={thCoverLoading} className="shrink-0">
-                            {thCoverLoading ? <Loader2 className="size-4 animate-spin" /> : "צור"}
+                          <Button size="sm" onClick={onCoverRegenerate} disabled={thCoverLoading} className="shrink-0 gap-2">
+                            {thCoverLoading && <Loader2 className="size-4 animate-spin" />}
+                            {thCoverLoading ? "יוצר..." : "צור"}
                           </Button>
                         </div>
                       </div>
