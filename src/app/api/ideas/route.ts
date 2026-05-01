@@ -290,7 +290,16 @@ export async function POST(req: NextRequest) {
       supabase.from("audience_identities").select("*").eq("user_id", user.id).single(),
     ])
     if (!coreIdentity) return NextResponse.json({ error: "Core identity not found." }, { status: 400 })
-    if (!audienceIdentity || !audienceIdentity.daily_pains) return NextResponse.json({ error: "audience_missing" }, { status: 400 })
+    const hasAudienceContent =
+      !!audienceIdentity &&
+      [
+        audienceIdentity.daily_pains,
+        audienceIdentity.emotional_pains,
+        audienceIdentity.fears,
+        audienceIdentity.daily_desires,
+        audienceIdentity.emotional_desires,
+      ].some((v) => typeof v === "string" && v.trim().length > 0)
+    if (!hasAudienceContent) return NextResponse.json({ error: "audience_missing" }, { status: 400 })
 
     let apiKey: string
     try {

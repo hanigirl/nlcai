@@ -50,7 +50,16 @@ export async function POST(req: NextRequest) {
       ((favoritedRows as { idea_text: string }[] | null) ?? []).map((r) => r.idea_text.trim()),
     )
 
-    if (!audienceIdentity || !audienceIdentity.daily_pains) {
+    const hasAudienceContent =
+      !!audienceIdentity &&
+      [
+        audienceIdentity.daily_pains,
+        audienceIdentity.emotional_pains,
+        audienceIdentity.fears,
+        audienceIdentity.daily_desires,
+        audienceIdentity.emotional_desires,
+      ].some((v) => typeof v === "string" && v.trim().length > 0)
+    if (!hasAudienceContent) {
       return NextResponse.json({ error: "audience_missing" }, { status: 400 })
     }
 
