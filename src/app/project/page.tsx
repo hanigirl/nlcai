@@ -278,9 +278,15 @@ function ProjectPageInner() {
     if (activeHook && !coverText) setCoverText(activeHook)
   }, [activeHook, coverText])
 
-  // Saved flow: load post from DB
+  // Saved flow: load post from DB.
+  //
+  // Skip the fetch when we're transitioning from an in-session generate —
+  // `corePost` is already populated, and re-fetching would (a) flip
+  // savedPostLoading to true (which would unmount the hook + workflow cards)
+  // and (b) race against any unsaved local edits to `response`.
   useEffect(() => {
     if (flow !== "saved" || !postId) return
+    if (corePost) return
     setSavedPostLoading(true)
     fetch(`/api/core-posts/${postId}`)
       .then((res) => res.json())
@@ -291,6 +297,10 @@ function ProjectPageInner() {
           setResponse(data.post.user_response ?? "")
           if (data.post.hook_text) {
             setSavedHookText(data.post.hook_text as string)
+            // Hydrate editableHook so the saved flow can reuse the same hook
+            // card + workflow card rendering as the live "from hook" flow —
+            // otherwise both controls vanish on refresh / re-entry.
+            setEditableHook(data.post.hook_text as string)
             setCoverText((data.post.cover_text as string) || (data.post.hook_text as string))
           }
           setActiveCard("post")
@@ -481,6 +491,14 @@ function ProjectPageInner() {
 
   const handleGeneratePost = async () => {
     if (!activeHook || !response.trim()) return
+
+    // Hydrate editableHook + savedHookText so the post-generation UI (which
+    // mirrors the "from hook" / "from saved" rendering) has the right hook
+    // text regardless of whether we came from idea/hook/saved. Without this,
+    // an idea-flow user loses both their hook and the textarea once the URL
+    // gets a post_id and Next 16's useSearchParams flips `flow` to "saved".
+    setEditableHook(activeHook)
+    setSavedHookText(activeHook)
 
     // Learning log: detect hook edit (fire and forget)
     if (selectedHook !== null && originalHooks[selectedHook] && hooks[selectedHook] !== originalHooks[selectedHook]) {
@@ -728,8 +746,13 @@ function ProjectPageInner() {
             </>
           )}
 
-          {/* === Flow: from hook === */}
-          {flow === "hook" && (
+          {/* === Flow: from hook (also reused for saved-post re-entry and
+                for the in-session transition to saved). Trigger on hook text
+                presence rather than on `savedPostLoading`, because Next 16's
+                useSearchParams reacts to `history.replaceState` from the
+                auto-save and would otherwise unmount these cards a second or
+                two after generation. === */}
+          {(flow === "hook" || (flow === "saved" && !!(savedHookText || editableHook))) && (
             <>
               {/* Hook card — editable */}
               <div
