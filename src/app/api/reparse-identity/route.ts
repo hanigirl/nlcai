@@ -8,6 +8,10 @@ import {
 } from "@/lib/agents/identity-parser"
 import { anthropicErrorToHebrew } from "@/lib/anthropic-errors"
 
+// Same reasoning as parse-identity: a 10s default timeout silently kills the
+// Claude call mid-flight on borderline files.
+export const maxDuration = 60
+
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()

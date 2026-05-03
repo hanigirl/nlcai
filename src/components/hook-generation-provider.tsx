@@ -9,6 +9,8 @@
 
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
+import { createClient } from "@/lib/supabase/client"
+import { userKey } from "@/lib/user-scoped-storage"
 
 export interface StreamedHook {
   id: string
@@ -82,11 +84,17 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
     // on the layout's <Toaster />. Updated as progress flows.
     toast.loading(`מייצר הוקים חדשים... 0 מתוך ${TOTAL_HOOKS}`, { id: TOAST_ID, duration: Infinity })
 
+    // Per-user storage — without scoping, switching accounts surfaces the
+    // previous user's cached ideas/hooks.
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    const uid = user?.id ?? null
+
     // Collect field ideas from localStorage (structured, for server-side favorite matching).
     type FieldIdea = { text: string; source?: string; category?: string; url?: string }
     let fieldIdeas: FieldIdea[] = []
     try {
-      const saved = localStorage.getItem("generatedIdeas_v23")
+      const saved = uid ? localStorage.getItem(userKey("generatedIdeas_v23", uid)) : null
       if (saved) {
         fieldIdeas = JSON.parse(saved).map((i: FieldIdea) => ({
           text: i.text, source: i.source, category: i.category, url: i.url,
@@ -146,6 +154,13 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
               )
               continue
             }
+            if (typeof parsed.save_failures === "number" && parsed.save_failures > 0) {
+              toast.error(
+                `${parsed.save_failures} הוקים לא נשמרו עקב תקלת רשת. נסי לג'נרט שוב.`,
+                { duration: 8000 },
+              )
+              continue
+            }
             if (parsed.hook_text && parsed.id) {
               count++
               const streamed: StreamedHook = {
@@ -176,7 +191,9 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
         toast.error("לא נוצרו הוקים חדשים. נסו שוב בעוד רגע", { id: TOAST_ID, duration: 6000 })
       } else {
         // Success — clear homepage hook cache so next home visit refetches
-        try { localStorage.removeItem("homepageHooks_v5") } catch { /* ignore */ }
+        try {
+          if (uid) localStorage.removeItem(userKey("homepageHooks_v6", uid))
+        } catch { /* ignore */ }
         toast.success("ההוקים מוכנים במחסן ההוקים!", {
           id: TOAST_ID,
           duration: 10000,

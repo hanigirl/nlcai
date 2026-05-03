@@ -11,6 +11,7 @@ import { ConfirmModal } from "@/components/confirm-modal"
 import { HookCard } from "@/components/hook-card"
 import { GeneratingStatus } from "@/components/generating-status"
 import { createClient } from "@/lib/supabase/client"
+import { withRetry } from "@/lib/supabase/retry"
 import { toast } from "sonner"
 import { useHookGeneration } from "@/components/hook-generation-provider"
 
@@ -142,8 +143,17 @@ export default function HooksPage() {
   const handleDelete = async (id: string) => {
     setDeletingId(id)
     const supabase = createClient()
-    supabase.from("hooks").delete().eq("id", id) // fire & forget
-    // Let the slide-down play, then remove from state (triggers auto-animate re-layout)
+    // Wait for the actual delete before flipping UI state. Previously this
+    // was fire-and-forget, so a failed delete left the row in the DB while
+    // the user saw "deleted" — and on next load the hook came back.
+    const { error } = await withRetry(() =>
+      supabase.from("hooks").delete().eq("id", id),
+    )
+    if (error) {
+      setDeletingId(null)
+      toast.error(`לא הצלחנו למחוק את ההוק: ${error.message ?? "תקלת רשת"}`)
+      return
+    }
     setTimeout(() => {
       setHooks((prev) => prev.filter((h) => h.id !== id))
       setDeletingId(null)
@@ -155,15 +165,30 @@ export default function HooksPage() {
     const supabase = createClient()
     const hook = hooks.find((h) => h.id === id)
     const oldText = hook?.hook_text
-    await supabase.from("hooks").update({ hook_text: newText }).eq("id", id)
+    const { error: updateError } = await withRetry(() =>
+      supabase.from("hooks").update({ hook_text: newText } as never).eq("id", id),
+    )
+    if (updateError) {
+      toast.error(`העריכה לא נשמרה: ${updateError.message ?? "תקלת רשת"}`)
+      return
+    }
     if (oldText) {
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
-        await supabase
-          .from("core_posts")
-          .update({ hook_text: newText } as never)
-          .eq("user_id", user.id)
-          .eq("hook_text", oldText)
+        // Mirror the rename onto any core_posts that reference the old text.
+        // Best-effort with retries; failure here is annotated separately so
+        // the user knows their edit landed but a derived doc may still show
+        // the old hook text.
+        const { error: mirrorError } = await withRetry(() =>
+          supabase
+            .from("core_posts")
+            .update({ hook_text: newText } as never)
+            .eq("user_id", user.id)
+            .eq("hook_text", oldText),
+        )
+        if (mirrorError) {
+          toast.warning("ההוק עודכן, אבל יישומים תלויים בו לא הצליחו להתעדכן.")
+        }
       }
     }
     setHooks((prev) => prev.map((h) => h.id === id ? { ...h, hook_text: newText } : h))

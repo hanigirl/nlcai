@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input"
 import { StickyNote } from "@/components/sticky-note"
 import { useAutoAnimate } from "@formkit/auto-animate/react"
 import { createClient } from "@/lib/supabase/client"
+import { userKey } from "@/lib/user-scoped-storage"
 import { toast } from "sonner"
 
 interface IdeaNote {
@@ -92,6 +93,7 @@ export default function IdeasPage() {
   const sessionKeysRef = useRef<Set<string>>(new Set())
   const [sessionTick, setSessionTick] = useState(0) // force re-render
   const [statusMessage, setStatusMessage] = useState("")
+  const [userId, setUserId] = useState<string | null>(null)
 
   // Status messages cycle while generating
   useEffect(() => {
@@ -129,22 +131,30 @@ export default function IdeasPage() {
     })
   }, [])
 
-  const saveToStorage = useCallback((arr: IdeaNote[]) => {
+  const saveToStorage = useCallback((arr: IdeaNote[], uid: string) => {
     const clean = dedupe(arr)
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(clean))
+    localStorage.setItem(userKey(STORAGE_KEY, uid), JSON.stringify(clean))
   }, [dedupe])
 
   // Load from localStorage + DB favorites — once
   useEffect(() => {
     const load = async () => {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        setLoading(false)
+        return
+      }
+      setUserId(user.id)
+
       let loadedIdeas: IdeaNote[] = []
       try {
-        const saved = localStorage.getItem(STORAGE_KEY)
+        const saved = localStorage.getItem(userKey(STORAGE_KEY, user.id))
         if (saved) {
           loadedIdeas = dedupe(JSON.parse(saved))
         }
 
-        const savedSession = localStorage.getItem(SESSION_KEYS_STORAGE)
+        const savedSession = localStorage.getItem(userKey(SESSION_KEYS_STORAGE, user.id))
         if (savedSession) {
           const sessionArr = JSON.parse(savedSession) as string[]
           const loadedKeys = new Set(loadedIdeas.map((i) => i.text.trim()))
@@ -157,30 +167,26 @@ export default function IdeasPage() {
         } else if (loadedIdeas.length > 0) {
           sessionKeysRef.current = new Set(loadedIdeas.slice(0, 9).map((i) => i.text.trim()))
         }
-      } catch { /* ignore */ }
+      } catch (err) { console.error("[ideas][session-keys-restore]", err) }
 
       // Load favorites from DB (persists across devices/logins)
       try {
-        const supabase = createClient()
-        const { data: { user } } = await supabase.auth.getUser()
-        if (user) {
-          const { data: favsData } = await supabase
-            .from("idea_favorites")
-            .select("idea_text, idea_data")
-            .eq("user_id", user.id)
-          if (favsData) {
-            const favTexts = new Set(favsData.map((f) => (f as { idea_text: string }).idea_text))
-            setFavorites(favTexts)
-            // Rehydrate any DB-favorited ideas that aren't in localStorage (e.g. fresh device)
-            const localKeys = new Set(loadedIdeas.map((i) => i.text.trim()))
-            const missing = favsData
-              .filter((f) => !localKeys.has((f as { idea_text: string }).idea_text))
-              .map((f) => (f as { idea_data: Record<string, unknown> }).idea_data as unknown as IdeaNote)
-              .filter((i) => i && i.text)
-            if (missing.length > 0) loadedIdeas = dedupe([...loadedIdeas, ...missing])
-          }
+        const { data: favsData } = await supabase
+          .from("idea_favorites")
+          .select("idea_text, idea_data")
+          .eq("user_id", user.id)
+        if (favsData) {
+          const favTexts = new Set(favsData.map((f) => (f as { idea_text: string }).idea_text))
+          setFavorites(favTexts)
+          // Rehydrate any DB-favorited ideas that aren't in localStorage (e.g. fresh device)
+          const localKeys = new Set(loadedIdeas.map((i) => i.text.trim()))
+          const missing = favsData
+            .filter((f) => !localKeys.has((f as { idea_text: string }).idea_text))
+            .map((f) => (f as { idea_data: Record<string, unknown> }).idea_data as unknown as IdeaNote)
+            .filter((i) => i && i.text)
+          if (missing.length > 0) loadedIdeas = dedupe([...loadedIdeas, ...missing])
         }
-      } catch { /* ignore */ }
+      } catch (err) { console.error("[ideas][favorites-load]", err) }
 
       setIdeas(loadedIdeas)
       ideasRef.current = loadedIdeas
@@ -387,15 +393,17 @@ export default function IdeasPage() {
             setSessionTick((t) => t + 1)
             newCount++
             setSkeletonCount(Math.max(0, 9 - newCount))
-          } catch { /* skip */ }
+          } catch (err) { console.error("[ideas][stream-parse]", err) }
         }
       }
     } catch (err) {
       console.error("Ideas stream error:", err)
     } finally {
-      // Save to localStorage once at the end
-      saveToStorage(ideasRef.current)
-      localStorage.setItem(SESSION_KEYS_STORAGE, JSON.stringify([...sessionKeysRef.current]))
+      // Save to localStorage once at the end (no-op until userId resolved)
+      if (userId) {
+        saveToStorage(ideasRef.current, userId)
+        localStorage.setItem(userKey(SESSION_KEYS_STORAGE, userId), JSON.stringify([...sessionKeysRef.current]))
+      }
       setGenerating(false)
       setSkeletonCount(0)
       generatingRef.current = false

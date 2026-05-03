@@ -17,6 +17,8 @@ import { MediaPanel } from "@/components/media-panel"
 import { ConfirmModal } from "@/components/confirm-modal"
 import type { Avatar } from "@/components/avatar-picker"
 import type { SlideData } from "@/lib/carousel-templates"
+import { createClient } from "@/lib/supabase/client"
+import { userKey } from "@/lib/user-scoped-storage"
 
 type Flow = "idea" | "hook" | "saved"
 
@@ -137,12 +139,21 @@ function ProjectPageInner() {
   const CANVAS_KEY = "canvasState_v1"
   const sessionKey = `${flow}|${initialIdea}|${hookParam}|${postId}`
   const restoredRef = useRef(false)
+  const [userId, setUserId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const supabase = createClient()
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setUserId(user?.id ?? null)
+    })
+  }, [])
 
   useEffect(() => {
     if (restoredRef.current) return
+    if (!userId) return
     restoredRef.current = true
     try {
-      const raw = localStorage.getItem(CANVAS_KEY)
+      const raw = localStorage.getItem(userKey(CANVAS_KEY, userId))
       if (!raw) return
       const saved = JSON.parse(raw)
       if (saved?.sessionKey !== sessionKey) return
@@ -172,12 +183,13 @@ function ProjectPageInner() {
       if (typeof saved.savedHookText === "string") setSavedHookText(saved.savedHookText)
       if (Array.isArray(saved.originalHooks)) setOriginalHooks(saved.originalHooks)
       if (typeof saved.originalCorePost === "string") setOriginalCorePost(saved.originalCorePost)
-    } catch { /* corrupted state, ignore */ }
-  }, [sessionKey, postId, router])
+    } catch (err) { console.error("[project][canvas-restore]", err) }
+  }, [sessionKey, postId, router, userId])
 
   // Save canvas state on changes (debounced)
   useEffect(() => {
     if (!restoredRef.current) return
+    if (!userId) return
     const t = setTimeout(() => {
       try {
         const state = {
@@ -191,11 +203,11 @@ function ProjectPageInner() {
           // up) can still recover the saved post via the restore effect above.
           savedPostId,
         }
-        localStorage.setItem(CANVAS_KEY, JSON.stringify(state))
-      } catch { /* quota exceeded or other; ignore */ }
+        localStorage.setItem(userKey(CANVAS_KEY, userId), JSON.stringify(state))
+      } catch (err) { console.error("[project][canvas-save]", err) }
     }, 300)
     return () => clearTimeout(t)
-  }, [sessionKey, idea, hooks, selectedHook, response, corePost, showFormats, selectedFormats, duplicatedFormats, formatPosts, editableHook, coverText, thTranscript, thSourceMode, savedHookText, originalHooks, originalCorePost, savedPostId])
+  }, [sessionKey, idea, hooks, selectedHook, response, corePost, showFormats, selectedFormats, duplicatedFormats, formatPosts, editableHook, coverText, thTranscript, thSourceMode, savedHookText, originalHooks, originalCorePost, savedPostId, userId])
 
   // Extract a frame from a video URL as a data URL
   const extractVideoFrame = (videoSrc: string): Promise<string | null> => {
@@ -215,7 +227,8 @@ function ProjectPageInner() {
           const ctx = canvas.getContext("2d")
           ctx?.drawImage(video, 0, 0)
           resolve(canvas.toDataURL("image/jpeg", 0.8))
-        } catch {
+        } catch (err) {
+          console.error("[project][video-frame-capture]", err)
           resolve(null)
         }
       }
@@ -253,7 +266,7 @@ function ProjectPageInner() {
       })
       const d = await res.json()
       if (d.covers?.[0]) setThCoverImage(d.covers[0])
-    } catch { /* ignore */ }
+    } catch (err) { console.error("[project][th-cover-generate]", err) }
     finally { setThCoverLoading(false) }
   }
 
@@ -438,7 +451,8 @@ function ProjectPageInner() {
         count: 10,
         fieldIdeas: (() => {
           try {
-            const s = localStorage.getItem("generatedIdeas_v23")
+            if (!userId) return []
+            const s = localStorage.getItem(userKey("generatedIdeas_v23", userId))
             if (!s) return []
             return JSON.parse(s).map((i: { text: string; source?: string; category?: string; url?: string }) => ({
               text: i.text,
@@ -446,7 +460,7 @@ function ProjectPageInner() {
               category: i.category,
               url: i.url,
             }))
-          } catch { return [] }
+          } catch (err) { console.error("[project][ideas-payload-parse]", err); return [] }
         })(),
       }),
     })
@@ -534,7 +548,8 @@ function ProjectPageInner() {
           })
           .catch(() => {})
       }
-    } catch {
+    } catch (err) {
+      console.error("[project][create-post]", err)
       setPostError("שגיאה ביצירת הפוסט")
     } finally {
       setPostLoading(false)
@@ -892,7 +907,8 @@ function ProjectPageInner() {
                                     const text = data.text || corePost
                                     results[fid] = text
                                     setFormatPosts((prev) => ({ ...prev, [fid]: text }))
-                                  } catch {
+                                  } catch (err) {
+                                    console.error("[project][format-variant-generate]", err)
                                     results[fid] = corePost
                                     setFormatPosts((prev) => ({ ...prev, [fid]: corePost }))
                                   }
@@ -994,7 +1010,7 @@ function ProjectPageInner() {
                   fr.readAsDataURL(blob)
                 })
               }
-            } catch { /* couldn't pre-fetch cover — restore will skip it */ }
+            } catch (err) { console.error("[project][prefetch-cover-for-undo]", err) }
           }
           if (savedPostId) {
             // Await so the modal stays open (with spinner) until the DB
@@ -1006,7 +1022,7 @@ function ProjectPageInner() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ deleteVideo: true, deleteCover: true }),
               })
-            } catch { /* swallow — UI state is cleared regardless */ }
+            } catch (err) { console.error("[project][delete-th-assets]", err) }
           }
           setThVideoUrl(null)
           setThAudioBlob(null)
@@ -1032,7 +1048,8 @@ function ProjectPageInner() {
                       }),
                     })
                     toast.success("הסרטון שוחזר")
-                  } catch {
+                  } catch (err) {
+                    console.error("[project][restore-th]", err)
                     toast.error("השחזור נכשל")
                   }
                 }
@@ -1256,7 +1273,8 @@ function FormatTree({
                                 a.click()
                                 a.remove()
                                 URL.revokeObjectURL(objectUrl)
-                              } catch {
+                              } catch (err) {
+                                console.error("[project][th-video-download]", err)
                                 // CORS-blocked or network failure — fall back to a new tab
                                 // so the user can right-click → save manually.
                                 window.open(thVideoUrl, "_blank")
@@ -1418,8 +1436,8 @@ function CarouselResultCard({
       a.download = "carousel.zip"
       a.click()
       URL.revokeObjectURL(url)
-    } catch {
-      // silent fail
+    } catch (err) {
+      console.error("[project][carousel-download]", err)
     } finally {
       setDownloading(false)
     }
@@ -1610,7 +1628,8 @@ function CopyButton({ text }: { text: string }) {
       setCopied(true)
       toast.success("הועתק ללוח")
       setTimeout(() => setCopied(false), 1500)
-    } catch {
+    } catch (err) {
+      console.error("[project][copy-to-clipboard]", err)
       toast.error("ההעתקה נכשלה")
     }
   }

@@ -10,6 +10,18 @@ import {
 } from "@/lib/agents/identity-parser"
 import { anthropicErrorToHebrew } from "@/lib/anthropic-errors"
 
+// Vercel default is 10s. Identity parsing with Sonnet on a ~10K-char file can
+// take 30–45s end-to-end; without this it'd timeout silently and the row would
+// land in the empty-fields state we're trying to prevent.
+export const maxDuration = 60
+
+// Reject files past these limits up front. 30K Hebrew chars ≈ 15K tokens,
+// which fits comfortably under maxDuration=60 even with Anthropic latency.
+// Anything larger usually means the user dumped a doc with noise — the model
+// doesn't get a better identity from it, and the round-trip risks timing out.
+const MAX_TEXT_CHARS = 30_000
+const MAX_PDF_BYTES = 5 * 1024 * 1024
+
 type FileContent =
   | { kind: "text"; text: string }
   | { kind: "pdf"; base64: string }
@@ -108,6 +120,29 @@ export async function POST(req: NextRequest) {
       // Hard fail early when the file format is unreadable — user needs immediate feedback.
       if (fileContent.kind === "unsupported") {
         return NextResponse.json({ error: fileContent.message }, { status: 400 })
+      }
+
+      // Length cap. Long files cause timeouts mid-parse and the row ends up
+      // committed with empty fields; better to refuse them up front with a
+      // clear message so the user trims the file and re-uploads.
+      if (fileContent.kind === "text" && fileContent.text.length > MAX_TEXT_CHARS) {
+        return NextResponse.json(
+          {
+            error: "file_too_long",
+            message: `הקובץ ארוך מדי (${fileContent.text.length.toLocaleString("he-IL")} תווים). אנא קצרו אותו ל־${MAX_TEXT_CHARS.toLocaleString("he-IL")} תווים לכל היותר ונסו שוב — קבצים ארוכים מדי לא משפרים את איכות הניתוח.`,
+          },
+          { status: 413 }
+        )
+      }
+      if (fileContent.kind === "pdf" && fileBuffer.byteLength > MAX_PDF_BYTES) {
+        const mb = (fileBuffer.byteLength / 1024 / 1024).toFixed(1)
+        return NextResponse.json(
+          {
+            error: "file_too_large",
+            message: `קובץ ה־PDF גדול מדי (${mb} MB). הגודל המקסימלי הוא ${MAX_PDF_BYTES / 1024 / 1024} MB. אנא קצרו את הקובץ או המירו לטקסט.`,
+          },
+          { status: 413 }
+        )
       }
 
       // Save original file to Supabase Storage
@@ -219,6 +254,28 @@ export async function POST(req: NextRequest) {
           console.error("AI parsing failed, saving manual fields only:", aiError)
         }
       }
+    }
+
+    // If AI failed and there's nothing else meaningful to persist, refuse the
+    // upsert and surface the error. Without this gate, a failed parse would
+    // create an empty identity row (or overwrite-via-fallback an existing one),
+    // and the user later can't generate hooks because the row "exists" but is
+    // empty. Audience flow has no manual fields, so any AI failure there is
+    // fatal. Core flow has manualFields — if the user typed niche/whoIAm/etc.,
+    // those are still worth saving on their own.
+    const hasManualCoreContent =
+      type === "core" &&
+      [manual.productName, manual.niche, manual.whoIAm, manual.whoIServe, manual.howISound, manual.slangExamples, manual.whatINeverDo]
+        .some((v) => typeof v === "string" && v.trim().length > 0)
+    if (aiError && !hasManualCoreContent) {
+      return NextResponse.json(
+        {
+          error: "ai_parse_failed",
+          message: anthropicErrorToHebrew(aiError),
+          ...(fileSaveError ? { fileSaveError } : {}),
+        },
+        { status: 422 }
+      )
     }
 
     // raw_file_text is only available for text-based formats. For PDF we skip it;

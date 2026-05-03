@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
+import { createClient } from "@/lib/supabase/client"
+import { userKey } from "@/lib/user-scoped-storage"
 
 
 export interface Avatar {
@@ -19,10 +21,12 @@ interface AvatarPickerProps {
 const CACHE_KEY = "heygen_avatars_cache"
 const CACHE_TTL = 24 * 60 * 60 * 1000 // 24 hours
 
-function getCachedAvatars(): Avatar[] | null {
+// Per-user cache. Avatars come from the user's own HeyGen API key, so two
+// users on the same browser would otherwise see each other's avatar list.
+function readCachedAvatars(uid: string): Avatar[] | null {
   if (typeof window === "undefined") return null
   try {
-    const cached = localStorage.getItem(CACHE_KEY)
+    const cached = localStorage.getItem(userKey(CACHE_KEY, uid))
     if (cached) {
       const { avatars, timestamp } = JSON.parse(cached)
       if (Date.now() - timestamp < CACHE_TTL && avatars?.length > 0) {
@@ -36,19 +40,34 @@ function getCachedAvatars(): Avatar[] | null {
 }
 
 export function AvatarPicker({ onSelect }: AvatarPickerProps) {
-  const [avatars, setAvatars] = useState<Avatar[]>(() => getCachedAvatars() ?? [])
-  const [loading, setLoading] = useState(() => getCachedAvatars() === null)
+  const [avatars, setAvatars] = useState<Avatar[]>([])
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [notConnected, setNotConnected] = useState(false)
 
   useEffect(() => {
-    // Skip fetch if we already have cached data
-    if (avatars.length > 0) return
+    let cancelled = false
+    ;(async () => {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (cancelled) return
+      if (!user) {
+        setLoading(false)
+        return
+      }
 
-    fetch("/api/avatars")
-      .then((res) => res.json())
-      .then((data) => {
+      const cached = readCachedAvatars(user.id)
+      if (cached) {
+        setAvatars(cached)
+        setLoading(false)
+        return
+      }
+
+      try {
+        const res = await fetch("/api/avatars")
+        const data = await res.json()
+        if (cancelled) return
         if (data.error === "heygen_not_connected") {
           setNotConnected(true)
         } else if (data.error) {
@@ -56,15 +75,22 @@ export function AvatarPicker({ onSelect }: AvatarPickerProps) {
         } else {
           setAvatars(data.avatars)
           try {
-            localStorage.setItem(CACHE_KEY, JSON.stringify({ avatars: data.avatars, timestamp: Date.now() }))
+            localStorage.setItem(
+              userKey(CACHE_KEY, user.id),
+              JSON.stringify({ avatars: data.avatars, timestamp: Date.now() }),
+            )
           } catch {
             // localStorage full, ignore
           }
         }
-      })
-      .catch(() => setError("Failed to load avatars"))
-      .finally(() => setLoading(false))
-  }, [avatars.length])
+      } catch {
+        if (!cancelled) setError("Failed to load avatars")
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   if (loading) {
     return (

@@ -153,12 +153,46 @@ function SettingsPageInner() {
     const supabase = createClient()
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return
-      const { data } = await supabase
+
+      // Fire all queries in parallel; await each individually to keep their distinct Supabase types intact.
+      const userRowPromise = supabase
         .from("users")
         .select("anthropic_api_key, heygen_api_key, apify_api_key, brand_style")
         .eq("id", user.id)
         .single()
-      const row = data as Record<string, unknown> | null
+      const coreIdPromise = supabase
+        .from("core_identities")
+        .select("product_name, niche, who_i_am")
+        .eq("user_id", user.id)
+        .single()
+      const creatorsPromise = supabase
+        .from("user_top_creators")
+        .select("id, url")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: true })
+      const productsPromise = supabase
+        .from("products")
+        .select("id, name, type, landing_page_url, page_summary")
+        .eq("user_id", user.id)
+      const allMediaPromise = supabase
+        .from("user_media")
+        .select("id, category, file_name, storage_path, metadata")
+        .eq("user_id", user.id)
+
+      const userRowRes = await userRowPromise
+      const coreIdRes = await coreIdPromise
+      const creatorsRes = await creatorsPromise
+      const productsRes = await productsPromise
+      const allMediaRes = await allMediaPromise
+
+      if (userRowRes.error) console.error("[settings][users]", userRowRes.error)
+      const coreIdErr = coreIdRes.error as { code?: string } | null
+      if (coreIdErr && coreIdErr.code !== "PGRST116") console.error("[settings][core_identities]", coreIdErr)
+      if (creatorsRes.error) console.error("[settings][user_top_creators]", creatorsRes.error)
+      if (productsRes.error) console.error("[settings][products]", productsRes.error)
+      if (allMediaRes.error) console.error("[settings][user_media]", allMediaRes.error)
+
+      const row = userRowRes.data as Record<string, unknown> | null
       if (row) {
         setStoredKeys({
           anthropic_api_key: (row.anthropic_api_key as string) ?? null,
@@ -168,50 +202,19 @@ function SettingsPageInner() {
         if (row.brand_style) setStyleAnalyzed(true)
       }
 
-      // Load core identity for business tab
-      const { data: coreId } = await supabase
-        .from("core_identities")
-        .select("product_name, niche, who_i_am")
-        .eq("user_id", user.id)
-        .single()
-      if (coreId) {
-        const ci = coreId as Record<string, string | null>
-        setBusinessName(ci.product_name ?? "")
-        setBusinessNiche(ci.niche ?? "")
-        setBusinessExpertise(ci.who_i_am ?? "")
+      const coreIdData = coreIdRes.data as Record<string, string | null> | null
+      if (coreIdData) {
+        setBusinessName(coreIdData.product_name ?? "")
+        setBusinessNiche(coreIdData.niche ?? "")
+        setBusinessExpertise(coreIdData.who_i_am ?? "")
       }
 
-      // Load original uploaded files
-      const { data: identityFiles } = await supabase
-        .from("user_media")
-        .select("category, file_name, storage_path")
-        .eq("user_id", user.id)
-        .in("category", ["style_file", "audience_file"])
-      if (identityFiles) {
-        for (const f of identityFiles as { category: string; file_name: string; storage_path: string }[]) {
-          const { data: urlData } = supabase.storage.from("user-media").getPublicUrl(f.storage_path)
-          if (f.category === "style_file") {
-            setStyleOriginalFile({ name: f.file_name, url: urlData.publicUrl })
-          } else {
-            setAudienceOriginalFile({ name: f.file_name, url: urlData.publicUrl })
-          }
-        }
-      }
-
-      // Load user's top creators
-      const { data: creatorRows } = await supabase
-        .from("user_top_creators")
-        .select("id, url")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: true })
+      const creatorRows = creatorsRes.data
       if (creatorRows && creatorRows.length > 0) {
         setTopCreators((creatorRows as { id: string; url: string }[]).map((c) => ({ id: c.id, url: c.url })))
       }
 
-      const { data: prods } = await supabase
-        .from("products")
-        .select("id, name, type, landing_page_url, page_summary")
-        .eq("user_id", user.id)
+      const prods = productsRes.data
       if (prods) {
         setProducts(prods.map((p: Record<string, unknown>) => {
           const url = (p.landing_page_url as string) || ""
@@ -229,19 +232,24 @@ function SettingsPageInner() {
         }))
       }
 
-      // Load user media from Supabase
-      const { data: mediaRows } = await supabase
-        .from("user_media")
-        .select("id, category, file_name, storage_path, metadata")
-        .eq("user_id", user.id)
+      const mediaRows = allMediaRes.data as { id: string; category: string; file_name: string; storage_path: string; metadata: Record<string, unknown> }[] | null
       if (mediaRows) {
-        const toItem = (row: { id: string; file_name: string; storage_path: string; metadata: Record<string, unknown> }): MediaItem => {
-          const isGoogle = (row.metadata as { source?: string })?.source === "google"
-          return { id: row.id, name: row.file_name, url: isGoogle ? "" : supabase.storage.from("user-media").getPublicUrl(row.storage_path).data.publicUrl }
+        for (const f of mediaRows.filter((r) => r.category === "style_file" || r.category === "audience_file")) {
+          const { data: urlData } = supabase.storage.from("user-media").getPublicUrl(f.storage_path)
+          if (f.category === "style_file") {
+            setStyleOriginalFile({ name: f.file_name, url: urlData.publicUrl })
+          } else {
+            setAudienceOriginalFile({ name: f.file_name, url: urlData.publicUrl })
+          }
         }
-        setFontItems(mediaRows.filter((r) => r.category === "font").map((r) => toItem(r as never)))
-        setElementItems(mediaRows.filter((r) => r.category === "element").map((r) => toItem(r as never)))
-        setCoverItems(mediaRows.filter((r) => r.category === "cover").map((r) => toItem(r as never)))
+
+        const toItem = (r: { id: string; file_name: string; storage_path: string; metadata: Record<string, unknown> }): MediaItem => {
+          const isGoogle = (r.metadata as { source?: string })?.source === "google"
+          return { id: r.id, name: r.file_name, url: isGoogle ? "" : supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl }
+        }
+        setFontItems(mediaRows.filter((r) => r.category === "font").map(toItem))
+        setElementItems(mediaRows.filter((r) => r.category === "element").map(toItem))
+        setCoverItems(mediaRows.filter((r) => r.category === "cover").map(toItem))
       }
 
       setLoading(false)
@@ -391,7 +399,7 @@ function SettingsPageInner() {
           setStyleAnalyzed(true)
           setTimeout(() => setStyleAnalyzed(false), 10000)
         }
-      } catch { /* ignore */ }
+      } catch (err) { console.error("[settings][analyze-covers]", err) }
       finally { setAnalyzingStyle(false) }
     }
   }
@@ -1227,7 +1235,7 @@ function SettingsPageInner() {
                                 setStyleAnalyzed(true)
                                 setTimeout(() => setStyleAnalyzed(false), 10000)
                               }
-                            } catch { /* ignore */ }
+                            } catch (err) { console.error("[settings][reanalyze-covers]", err) }
                             finally { setAnalyzingStyle(false) }
                           }}
                           className="w-fit gap-2"

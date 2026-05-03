@@ -5,11 +5,12 @@ import { useRouter, useSearchParams } from "next/navigation"
 import Image from "next/image"
 import { Check, Loader2 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
+import { userKey } from "@/lib/user-scoped-storage"
 import onboardingHero from "../../../images/onboarding-hero.png"
 
 // LocalStorage keys — must match the ones the home page reads, so prefetched
 // results land in its cache and it skips its own auto-generation branch.
-const HOMEPAGE_HOOKS_KEY = "homepageHooks_v5"
+const HOMEPAGE_HOOKS_KEY = "homepageHooks_v6"
 const HOOKS_FIRST_VISIT_KEY = "hooksCleanup_v3"
 const IDEAS_STORAGE_KEY = "generatedIdeas_v23"
 
@@ -67,7 +68,7 @@ async function streamSSE(res: Response, onItem: (item: unknown) => void): Promis
   }
 }
 
-async function prefetchHooks(): Promise<void> {
+async function prefetchHooks(userId: string): Promise<void> {
   const res = await fetch("/api/homepage-hooks", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -80,14 +81,15 @@ async function prefetchHooks(): Promise<void> {
     if (h.hook_text) collected.push(h.hook_text)
   })
   if (collected.length > 0) {
-    localStorage.setItem(HOMEPAGE_HOOKS_KEY, JSON.stringify(collected))
+    // Cache only the 4 most-recent — must match what the home page expects.
+    localStorage.setItem(userKey(HOMEPAGE_HOOKS_KEY, userId), JSON.stringify(collected.slice(-4)))
     // Flag set last, so the home page only skips its auto-gen when we really
     // produced something worth caching.
-    localStorage.setItem(HOOKS_FIRST_VISIT_KEY, "done")
+    localStorage.setItem(userKey(HOOKS_FIRST_VISIT_KEY, userId), "done")
   }
 }
 
-async function prefetchIdeas(): Promise<void> {
+async function prefetchIdeas(userId: string): Promise<void> {
   const res = await fetch("/api/ideas", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -112,7 +114,7 @@ async function prefetchIdeas(): Promise<void> {
     })
   })
   if (collected.length > 0) {
-    localStorage.setItem(IDEAS_STORAGE_KEY, JSON.stringify(collected))
+    localStorage.setItem(userKey(IDEAS_STORAGE_KEY, userId), JSON.stringify(collected))
   }
 }
 
@@ -133,6 +135,7 @@ function WelcomePageInner() {
   const previewMode = searchParams.get("preview") === "1"
 
   const [initChecked, setInitChecked] = useState(false)
+  const [userId, setUserId] = useState<string | null>(null)
   // runningIndex points at the step currently spinning. Rows at indices below
   // it are already ticked off; rows above it are not yet revealed.
   // Starts at -1 so the very first paint has every card in its hidden state —
@@ -163,6 +166,7 @@ function WelcomePageInner() {
         router.replace("/")
         return
       }
+      setUserId(user.id)
       setInitChecked(true)
     })
   }, [router, previewMode])
@@ -172,15 +176,17 @@ function WelcomePageInner() {
   // finishes. Preview mode skips this to avoid spending API tokens during QA.
   useEffect(() => {
     if (!initChecked || kickedOffRef.current) return
-    kickedOffRef.current = true
     if (previewMode) {
+      kickedOffRef.current = true
       setHooksDone(true)
       setIdeasDone(true)
       return
     }
-    prefetchHooks().finally(() => setHooksDone(true))
-    prefetchIdeas().finally(() => setIdeasDone(true))
-  }, [initChecked, previewMode])
+    if (!userId) return
+    kickedOffRef.current = true
+    prefetchHooks(userId).finally(() => setHooksDone(true))
+    prefetchIdeas(userId).finally(() => setIdeasDone(true))
+  }, [initChecked, previewMode, userId])
 
   // Drive step progression and the final pause in one effect. When all steps
   // have ticked off, wait FINAL_PAUSE_MS then mark the animation as done.

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react"
 import { useRouter } from "next/navigation"
+import { toast } from "sonner"
 import { ArrowUp, Mic, Loader2 } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AppLink } from "@/components/ui/app-link"
@@ -12,6 +13,7 @@ import { HookCard } from "@/components/hook-card"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { createClient } from "@/lib/supabase/client"
+import { userKey } from "@/lib/user-scoped-storage"
 
 interface IdeaNote {
   text: string
@@ -34,29 +36,28 @@ export default function Home() {
   const hooksInitRef = useRef(false)
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY)
-      if (saved) {
-        const parsed = dedupe(JSON.parse(saved))
-        if (parsed.length > 0) {
-          setIdeas(parsed)
-          ideasRef.current = parsed
-          return
-        }
-      }
-    } catch {
-      // ignore
-    }
-
-    // No cached ideas locally. Before auto-generating, check whether this user
-    // has already used the system (existing core_identity older than 2 min,
-    // OR any saved favorites). If so, this is a returning user with cleared
-    // localStorage — DO NOT auto-generate. They can hit "עוד רעיונות" from /ideas
-    // when they want fresh content. Auto-generation is reserved for the truly
-    // first-time experience right after onboarding.
     const supabase = createClient()
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return
+
+      try {
+        const saved = localStorage.getItem(userKey(STORAGE_KEY, user.id))
+        if (saved) {
+          const parsed = dedupe(JSON.parse(saved))
+          if (parsed.length > 0) {
+            setIdeas(parsed)
+            ideasRef.current = parsed
+            return
+          }
+        }
+      } catch (err) {
+        console.error("[home][ideas-cache-read]", err)
+      }
+
+      // No cached ideas locally. Before auto-generating, check whether this user
+      // has already used the system (existing core_identity older than 2 min,
+      // OR any saved favorites). If so, this is a returning user with cleared
+      // localStorage — DO NOT auto-generate.
       const [{ data: core }, { count: favCount }] = await Promise.all([
         supabase
           .from("core_identities")
@@ -84,7 +85,7 @@ export default function Home() {
       }
 
       // Genuine first visit (just onboarded, no favorites yet) — auto-generate.
-      streamIdeas([])
+      streamIdeas([], user.id)
     })
   }, [])
 
@@ -101,20 +102,23 @@ export default function Home() {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return
 
-      // Try cache first (fast path).
+      // Try cache first (fast path). Per-user key: switching accounts on the
+      // same browser must not surface the previous user's cached hooks.
+      const hooksCacheKey = userKey("homepageHooks_v6", user.id)
+      const hooksFlagKey = userKey("hooksCleanup_v3", user.id)
       try {
-        const cached = localStorage.getItem("homepageHooks_v6")
+        const cached = localStorage.getItem(hooksCacheKey)
         if (cached) {
           const parsed: string[] = JSON.parse(cached)
           if (parsed.length > 0) {
             setHooks(parsed)
-            // Mark this device as having seen hooks — purely informational; the
-            // real "have I generated already?" answer comes from the DB below.
-            localStorage.setItem("hooksCleanup_v3", "done")
+            localStorage.setItem(hooksFlagKey, "done")
             return
           }
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.error("[home][hooks-cache-read]", err)
+      }
 
       // No cache — check the DB. If the user already has hooks, load them and
       // never auto-regenerate. The DB is the source of truth: localStorage can
@@ -133,13 +137,13 @@ export default function Home() {
       if (dbHooks && dbHooks.length > 0) {
         const hookTexts = (dbHooks as Array<{ hook_text: string }>).map((h) => h.hook_text)
         setHooks(hookTexts)
-        localStorage.setItem("homepageHooks_v6", JSON.stringify(hookTexts))
-        localStorage.setItem("hooksCleanup_v3", "done")
+        localStorage.setItem(hooksCacheKey, JSON.stringify(hookTexts))
+        localStorage.setItem(hooksFlagKey, "done")
         return
       }
 
       // True first visit: no hooks anywhere for this user. Auto-generate.
-      localStorage.setItem("hooksCleanup_v3", "done")
+      localStorage.setItem(hooksFlagKey, "done")
 
       setHooksLoading(true)
       try {
@@ -180,19 +184,28 @@ export default function Home() {
             try {
               const h = JSON.parse(d)
               if (h.model_fallback) { setModelFallback(true); continue }
+              if (typeof h.save_failures === "number" && h.save_failures > 0) {
+                toast.error(
+                  `${h.save_failures} הוקים לא נשמרו עקב תקלת רשת. נסי לרענן בעוד רגע.`,
+                  { duration: 8000 },
+                )
+                continue
+              }
               if (h.hook_text) {
                 streamed.push(h.hook_text)
                 setHooks([...streamed])
               }
-            } catch { /* skip */ }
+            } catch (err) { console.error("[home][hooks-stream-parse]", err) }
           }
         }
         if (streamed.length > 0) {
           // Cache only the 4 most-recent (last to stream in) so the homepage
           // matches what the DB returns on next load.
-          localStorage.setItem("homepageHooks_v6", JSON.stringify(streamed.slice(-4)))
+          localStorage.setItem(hooksCacheKey, JSON.stringify(streamed.slice(-4)))
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.error("[home][hooks-stream]", err)
+      }
       setHooksLoading(false)
     })
   }, [])
@@ -238,7 +251,7 @@ export default function Home() {
     })
   }, [])
 
-  const streamIdeas = async (prevIdeas: IdeaNote[]) => {
+  const streamIdeas = async (prevIdeas: IdeaNote[], userId: string) => {
     if (generatingRef.current) return
     generatingRef.current = true
     setGenerating(true)
@@ -291,21 +304,24 @@ export default function Home() {
               ideasRef.current = [idea, ...ideasRef.current]
               setIdeas([...ideasRef.current])
             }
-          } catch { /* skip partial */ }
+          } catch (err) { console.error("[home][ideas-stream-parse]", err) }
         }
       }
     } catch (err) {
       setIdeasError("connection_error")
       console.error("Ideas stream error:", err)
     } finally {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(dedupe(ideasRef.current)))
+      localStorage.setItem(userKey(STORAGE_KEY, userId), JSON.stringify(dedupe(ideasRef.current)))
       setGenerating(false)
       generatingRef.current = false
     }
   }
 
-  const handleGenerateIdeas = () => {
-    streamIdeas(ideas)
+  const handleGenerateIdeas = async () => {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    streamIdeas(ideas, user.id)
   }
 
   return (

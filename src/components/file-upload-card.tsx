@@ -25,6 +25,14 @@ export function FileUploadCard({
 
   const handleFile = async (file: File) => {
     setFileName(file.name)
+
+    const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name)
+    if (isPdf) {
+      setStatus("error")
+      setErrorMsg("אי אפשר להעלות קבצי PDF")
+      return
+    }
+
     setStatus("uploading")
     setErrorMsg("")
 
@@ -68,7 +76,7 @@ export function FileUploadCard({
         <input
           ref={inputRef}
           type="file"
-          accept=".pdf,.docx,.doc,.txt,.md,.rtf"
+          accept=".docx,.doc,.txt,.md,.rtf"
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0]
@@ -86,7 +94,7 @@ export function FileUploadCard({
               גרור קובץ לכאן או לחץ לבחירה
             </span>
             <span className="text-xs-body text-text-neutral-default">
-              pdf, docx, doc, txt, md
+              docx, doc, txt, md
             </span>
           </button>
         )}

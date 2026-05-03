@@ -17,6 +17,7 @@ interface PlanItem {
 import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
+import { withRetry } from "@/lib/supabase/retry"
 
 const USE_DUMMY = false
 
@@ -381,6 +382,12 @@ ${categoriesCatalog}
       async start(controller) {
         let hookCount = 0
         let usedFallback = false
+        // saveFailures counts hooks the AI produced but the DB refused to
+        // store even after retries — we surface this separately at end-of-
+        // stream so the client can show "X hooks failed to save". This is
+        // distinct from `skipped`, which counts AI-quality drops the user
+        // doesn't need to know about.
+        let saveFailures = 0
         // Collected as hooks stream out, so we can batch-classify by product at the end.
         const generatedHooks: Array<{ id: string; text: string }> = []
 
@@ -580,16 +587,29 @@ ${formatTemplatesForPrompt()}
               if (hookText.length <= 10) { skipped++; return }
             }
 
-            const { data: row } = await supabase.from("hooks").insert({
-              user_id: userId,
-              hook_text: hookText,
-              display_order: planIdx, // plan order preserved even in parallel execution
-              status: "completed",
-              is_selected: false,
-              is_used: false,
-            } as Record<string, unknown>).select("id").single()
+            // Pre-generate the id so retries are idempotent: if attempt 1
+            // committed but the response was lost, attempt 2 fails with a
+            // unique-violation that withRetry treats as success rather than
+            // creating a duplicate row.
+            const hookId = crypto.randomUUID()
+            const { error: insertError } = await withRetry(() =>
+              supabase.from("hooks").insert({
+                id: hookId,
+                user_id: userId,
+                hook_text: hookText,
+                display_order: planIdx, // plan order preserved even in parallel execution
+                status: "completed",
+                is_selected: false,
+                is_used: false,
+              } as Record<string, unknown>),
+            )
 
-            const hookId = row?.id || crypto.randomUUID()
+            if (insertError) {
+              saveFailures++
+              console.error(`Homepage Hooks: insert failed after retries for "${hookText.slice(0, 40)}..." — ${insertError.message}`)
+              return
+            }
+
             generatedHooks.push({ id: hookId, text: hookText })
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({
               id: hookId,
@@ -621,22 +641,32 @@ ${formatTemplatesForPrompt()}
                 hooks: generatedHooks,
                 products: productList.map((p) => ({ id: p.id, name: p.name, summary: p.page_summary })),
               })
-              // Parallel DB updates — one per hook.
-              await Promise.all(
+              // Parallel DB updates — one per hook. Retry transient errors
+              // so a network blip doesn't strip product tags off a hook.
+              const updateResults = await Promise.all(
                 generatedHooks.map((h) => {
                   const productIds = classification[h.id] ?? []
-                  return supabase
-                    .from("hooks")
-                    .update({ product_ids: productIds } as never)
-                    .eq("id", h.id)
+                  return withRetry(() =>
+                    supabase
+                      .from("hooks")
+                      .update({ product_ids: productIds } as never)
+                      .eq("id", h.id),
+                  )
                 }),
               )
+              const failedUpdates = updateResults.filter((r) => r.error).length
+              if (failedUpdates > 0) {
+                console.error(`Homepage Hooks: ${failedUpdates}/${generatedHooks.length} product-tag updates failed after retries`)
+              }
               console.log(`Homepage Hooks: classified ${generatedHooks.length} hooks across ${productList.length} products`)
             } catch (err) {
               console.error("Homepage Hooks: classification failed — hooks ship without product tags:", err)
             }
           }
 
+          if (saveFailures > 0) {
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ save_failures: saveFailures })}\n\n`))
+          }
           safeEnqueue(encoder.encode("data: [DONE]\n\n"))
           safeClose()
         } catch (err) {
