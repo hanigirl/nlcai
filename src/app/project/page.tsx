@@ -808,7 +808,12 @@ function ProjectPageInner() {
           {/* === Core Post result — shared by all flows === */}
           {(postLoading || corePost || postError) && (
             <>
-              {flow !== "saved" && (
+              {/* Connector to whatever card precedes the core post. In `saved`
+                  flow the workflow/hook cards now render too (after generation
+                  the URL flips to `saved`), so the connector must follow them
+                  rather than be omitted as it was when `saved` had nothing
+                  before the core post. */}
+              {(flow !== "saved" || !!(savedHookText || editableHook)) && (
                 <div className="flex items-center mt-[55px]">
                   <div className="h-[2px] w-7 bg-gray-80" />
                 </div>
