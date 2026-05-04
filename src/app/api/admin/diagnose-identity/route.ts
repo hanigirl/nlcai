@@ -7,6 +7,11 @@ import {
   AUDIENCE_IDENTITY_PARSE_PROMPT,
 } from "@/lib/agents/identity-parser"
 import { anthropicErrorToHebrew } from "@/lib/anthropic-errors"
+import { extractFileContent, type FileContent } from "@/lib/extract-file-content"
+import { extractFirstJsonObject } from "@/lib/extract-first-json"
+
+// Re-parsing PDFs/docx via Claude is the slow path; align with parse-identity.
+export const maxDuration = 60
 
 type Type = "core" | "audience"
 
@@ -84,16 +89,62 @@ export async function POST(req: NextRequest) {
     })
   }
 
+  // If we don't have raw_file_text, try to re-parse the original file from
+  // storage. This recovers users whose first parse failed silently (e.g., the
+  // model returned multiple JSON objects so the regex-based extractor blew up
+  // and the row was never written) without forcing them to re-upload.
+  let fileContent: FileContent | null = null
+  let recoveredText: string | null = null
+  let storageError: string | null = null
+
   if (!rawText) {
-    return NextResponse.json({
-      ...diagnosis,
-      verdict: "no_raw_text",
-      message:
-        "אין טקסט שמור (כנראה הקובץ היה PDF). היא צריכה להעלות מחדש כ-docx או טקסט.",
-    })
+    const latestFile = (mediaRows ?? [])[0] as
+      | { file_name: string; storage_path: string }
+      | undefined
+
+    if (!latestFile) {
+      return NextResponse.json({
+        ...diagnosis,
+        verdict: "no_raw_text",
+        message:
+          "אין טקסט שמור ולא נמצא קובץ ב-storage. צריך להעלות קובץ זהות מחדש.",
+      })
+    }
+
+    try {
+      const { data: blob, error: dlErr } = await admin.storage
+        .from("user-media")
+        .download(latestFile.storage_path)
+      if (dlErr || !blob) {
+        storageError = dlErr?.message ?? "download returned empty blob"
+      } else {
+        const buf = Buffer.from(await blob.arrayBuffer())
+        fileContent = await extractFileContent(latestFile.file_name, buf)
+        if (fileContent.kind === "text") {
+          recoveredText = fileContent.text
+        } else if (fileContent.kind === "unsupported") {
+          storageError = fileContent.message
+        }
+      }
+    } catch (err) {
+      storageError = err instanceof Error ? err.message : String(err)
+    }
+
+    if (storageError && !fileContent) {
+      return NextResponse.json({
+        ...diagnosis,
+        verdict: "storage_fetch_failed",
+        message: `לא הצלחנו להוריד את הקובץ מהאחסון: ${storageError}`,
+      })
+    }
+
+    diagnosis.recovered_from_storage = true
+    diagnosis.recovered_file_name = latestFile.file_name
+    diagnosis.recovered_text_length = recoveredText?.length ?? 0
   }
 
   // 3. Re-run the AI call and capture everything.
+  // Source of truth, in order: stored raw_file_text → re-parsed text → PDF blob.
   const systemPrompt =
     type === "core" ? CORE_IDENTITY_PARSE_PROMPT : AUDIENCE_IDENTITY_PARSE_PROMPT
   const client = new Anthropic({ apiKey: anthropicKey })
@@ -104,26 +155,44 @@ export async function POST(req: NextRequest) {
   let claudeError: string | null = null
   let stopReason: string | null = null
 
+  const textForClaude = rawText ?? recoveredText
+  const userContent: Anthropic.ContentBlockParam[] = textForClaude
+    ? [{ type: "text", text: `${systemPrompt}\n\n--- הטקסט ---\n${textForClaude}` }]
+    : fileContent?.kind === "pdf"
+      ? [
+          {
+            type: "document",
+            source: {
+              type: "base64",
+              media_type: "application/pdf",
+              data: fileContent.base64,
+            },
+          },
+          { type: "text", text: systemPrompt },
+        ]
+      : []
+
+  if (userContent.length === 0) {
+    return NextResponse.json({
+      ...diagnosis,
+      verdict: "no_input_for_claude",
+      message: "לא היה טקסט ולא PDF להעביר ל-Claude.",
+    })
+  }
+
   try {
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 4096,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: `${systemPrompt}\n\n--- הטקסט ---\n${rawText}` },
-          ],
-        },
-      ],
+      messages: [{ role: "user", content: userContent }],
     })
     stopReason = message.stop_reason ?? null
     const textBlock = message.content.find((b) => b.type === "text")
     rawResponse = textBlock?.text ?? ""
-    const jsonMatch = rawResponse.match(/\{[\s\S]*\}/)
-    if (jsonMatch) {
+    const jsonStr = extractFirstJsonObject(rawResponse)
+    if (jsonStr) {
       try {
-        parsed = JSON.parse(jsonMatch[0])
+        parsed = JSON.parse(jsonStr)
       } catch (err) {
         parseError = err instanceof Error ? err.message : String(err)
       }
@@ -173,6 +242,7 @@ export async function POST(req: NextRequest) {
         cross_audience_quotes: pickFilled(parsed.crossAudienceQuotes, cur?.cross_audience_quotes),
         ideal_solution_words: pickFilled(parsed.idealSolutionWords, cur?.ideal_solution_words),
         identity_statements: pickFilled(parsed.identityStatements, cur?.identity_statements),
+        ...(recoveredText ? { raw_file_text: recoveredText } : {}),
       }
       const { error } = await admin
         .from("audience_identities")
@@ -203,6 +273,7 @@ export async function POST(req: NextRequest) {
         how_i_sound: pickFilled(parsed.howISound, cur?.how_i_sound),
         slang_examples: pickFilled(parsed.slangExamples, cur?.slang_examples),
         what_i_never_do: pickFilled(parsed.whatINeverDo, cur?.what_i_never_do),
+        ...(recoveredText ? { raw_file_text: recoveredText } : {}),
       }
       const { error } = await admin
         .from("core_identities")

@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
-import mammoth from "mammoth"
-import WordExtractor from "word-extractor"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import {
@@ -9,6 +7,8 @@ import {
   AUDIENCE_IDENTITY_PARSE_PROMPT,
 } from "@/lib/agents/identity-parser"
 import { anthropicErrorToHebrew } from "@/lib/anthropic-errors"
+import { extractFileContent, type FileContent } from "@/lib/extract-file-content"
+import { extractFirstJsonObject } from "@/lib/extract-first-json"
 
 // Vercel default is 10s. Identity parsing with Sonnet on a ~10K-char file can
 // take 30–45s end-to-end; without this it'd timeout silently and the row would
@@ -22,57 +22,6 @@ export const maxDuration = 60
 const MAX_TEXT_CHARS = 30_000
 const MAX_PDF_BYTES = 5 * 1024 * 1024
 
-type FileContent =
-  | { kind: "text"; text: string }
-  | { kind: "pdf"; base64: string }
-  | { kind: "unsupported"; message: string }
-
-async function extractContent(file: File, buffer: Buffer): Promise<FileContent> {
-  const name = file.name.toLowerCase()
-
-  if (name.endsWith(".pdf")) {
-    return { kind: "pdf", base64: buffer.toString("base64") }
-  }
-
-  if (name.endsWith(".docx")) {
-    try {
-      const result = await mammoth.extractRawText({ buffer })
-      const text = result.value?.trim()
-      if (!text) {
-        return { kind: "unsupported", message: "הקובץ נראה ריק. נסו להעלות שוב." }
-      }
-      return { kind: "text", text }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      return { kind: "unsupported", message: `לא הצלחנו לקרוא את קובץ ה-docx (${msg})` }
-    }
-  }
-
-  if (name.endsWith(".doc")) {
-    try {
-      const extractor = new WordExtractor()
-      const extracted = await extractor.extract(buffer)
-      const text = extracted.getBody()?.trim()
-      if (!text) {
-        return { kind: "unsupported", message: "הקובץ נראה ריק. שמרו אותו כ-docx או pdf ונסו שוב." }
-      }
-      return { kind: "text", text }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      return { kind: "unsupported", message: `לא הצלחנו לקרוא את קובץ ה-doc (${msg}). שמרו אותו כ-docx או pdf ונסו שוב.` }
-    }
-  }
-
-  if (name.endsWith(".txt") || name.endsWith(".md") || name.endsWith(".rtf")) {
-    const text = buffer.toString("utf8").trim()
-    if (!text) {
-      return { kind: "unsupported", message: "הקובץ ריק." }
-    }
-    return { kind: "text", text }
-  }
-
-  return { kind: "unsupported", message: "פורמט לא נתמך. תומכים ב-pdf, docx, doc, txt, md." }
-}
 
 export async function POST(req: NextRequest) {
   try {
@@ -115,7 +64,7 @@ export async function POST(req: NextRequest) {
     // Extract content from file
     if (file) {
       fileBuffer = Buffer.from(await file.arrayBuffer())
-      fileContent = await extractContent(file, fileBuffer)
+      fileContent = await extractFileContent(file.name, fileBuffer)
 
       // Hard fail early when the file format is unreadable — user needs immediate feedback.
       if (fileContent.kind === "unsupported") {
@@ -231,10 +180,10 @@ export async function POST(req: NextRequest) {
           const textBlock = message.content.find((b) => b.type === "text")
           const raw = textBlock?.text ?? ""
 
-          const jsonMatch = raw.match(/\{[\s\S]*\}/)
-          if (jsonMatch) {
+          const jsonStr = extractFirstJsonObject(raw)
+          if (jsonStr) {
             try {
-              parsed = JSON.parse(jsonMatch[0])
+              parsed = JSON.parse(jsonStr)
             } catch (parseErr) {
               aiError = parseErr instanceof Error ? parseErr.message : String(parseErr)
             }

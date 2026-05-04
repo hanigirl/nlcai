@@ -948,6 +948,9 @@ function SettingsPageInner() {
                     {" · "}
                     ניתן להעלות קבצי doc, docx, md
                   </p>
+                  <p className="text-xs-body text-text-primary-default text-start font-semibold">
+                    שימו לב — בשלב הזה תומכים בקהל יעד אחד לכל קובץ. אם בקובץ יש כמה קהלים, יישמר רק הראשון.
+                  </p>
                   <Button
                     size="sm"
                     onClick={handleUploadAudience}
