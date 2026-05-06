@@ -14,6 +14,7 @@ import { parseCreatorInput } from "@/lib/creator-url"
 import { CreatorsList } from "@/components/creators-list"
 import { ProductsList, type ProductEntry } from "@/components/products-list"
 import { toast } from "sonner"
+import { validateIdentityFile } from "@/lib/validate-identity-file"
 
 const GOOGLE_FONTS = [
   "Rubik", "Heebo", "Assistant", "Open Sans", "Noto Sans Hebrew", "Secular One",
@@ -573,9 +574,13 @@ function SettingsPageInner() {
   const handleUploadStyle = async () => {
     if (!styleFileToUpload) return
     const file = styleFileToUpload
+    const validation = validateIdentityFile(file)
+    if (validation) {
+      toast.error(validation.message, { duration: 10000 })
+      return
+    }
     setUploadingStyle(true)
-    toast.success("הקובץ עלה בהצלחה")
-    setTimeout(() => toast("מנתח קבצים"), 700)
+    toast("מעלה ומנתח את הקובץ — זה יכול לקחת עד דקה")
     try {
       const formData = new FormData()
       formData.append("file", file)
@@ -585,15 +590,38 @@ function SettingsPageInner() {
         niche: businessNiche,
         whoIAm: businessExpertise,
       }))
-      const res = await fetch("/api/parse-identity", { method: "POST", body: formData })
+      let res: Response
+      try {
+        res = await fetch("/api/parse-identity", { method: "POST", body: formData })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        toast.error(
+          `החיבור נקטע באמצע ההעלאה (${msg}). בדקו את החיבור לאינטרנט ונסו שוב.`,
+          { duration: 12000 }
+        )
+        return
+      }
       const resData = await res.json().catch(() => ({}))
       if (!res.ok) {
-        toast.error(resData.message || resData.error || "הקובץ לא נשמר", { duration: 10000 })
-      } else if (resData.warning) {
-        toast.error(resData.warning, { duration: 10000 })
+        const detail = resData.message || resData.error || `שגיאת שרת ${res.status}`
+        toast.error(detail, { duration: 12000 })
+        if (resData.fileSaveError) {
+          toast.error(`בנוסף — הקובץ לא נשמר: ${resData.fileSaveError}`, { duration: 12000 })
+        }
+        return
       }
+      // Success path: identity row was saved. Surface backup-failure separately
+      // so the user knows the parsed data is safe but the original file isn't.
       if (resData.fileSaveError) {
-        toast.error(`הקובץ לא נשמר: ${resData.fileSaveError}`)
+        toast.error(`הקובץ לא נשמר במלואו: ${resData.fileSaveError}`, { duration: 12000 })
+      }
+      if (resData.notice) {
+        toast(resData.notice, { duration: 15000 })
+      }
+      if (resData.warning) {
+        toast.error(resData.warning, { duration: 12000 })
+      } else if (!resData.fileSaveError && !resData.notice) {
+        toast.success("הקובץ עלה ונותח בהצלחה")
       }
       setStyleOriginalFile((prev) => ({ name: file.name, url: prev?.url ?? "" }))
       setStyleFileToUpload(null)
@@ -606,22 +634,47 @@ function SettingsPageInner() {
   const handleUploadAudience = async () => {
     if (!audienceFileToUpload) return
     const file = audienceFileToUpload
+    const validation = validateIdentityFile(file)
+    if (validation) {
+      toast.error(validation.message, { duration: 10000 })
+      return
+    }
     setUploadingAudience(true)
-    toast.success("הקובץ עלה בהצלחה")
-    setTimeout(() => toast("מנתח קבצים"), 700)
+    toast("מעלה ומנתח את הקובץ — זה יכול לקחת עד דקה")
     try {
       const formData = new FormData()
       formData.append("file", file)
       formData.append("type", "audience")
-      const res = await fetch("/api/parse-identity", { method: "POST", body: formData })
+      let res: Response
+      try {
+        res = await fetch("/api/parse-identity", { method: "POST", body: formData })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        toast.error(
+          `החיבור נקטע באמצע ההעלאה (${msg}). בדקו את החיבור לאינטרנט ונסו שוב.`,
+          { duration: 12000 }
+        )
+        return
+      }
       const resData = await res.json().catch(() => ({}))
       if (!res.ok) {
-        toast.error(resData.message || resData.error || "הקובץ לא נשמר", { duration: 10000 })
-      } else if (resData.warning) {
-        toast.error(resData.warning, { duration: 10000 })
+        const detail = resData.message || resData.error || `שגיאת שרת ${res.status}`
+        toast.error(detail, { duration: 12000 })
+        if (resData.fileSaveError) {
+          toast.error(`בנוסף — הקובץ לא נשמר: ${resData.fileSaveError}`, { duration: 12000 })
+        }
+        return
       }
       if (resData.fileSaveError) {
-        toast.error(`הקובץ לא נשמר: ${resData.fileSaveError}`)
+        toast.error(`הקובץ לא נשמר במלואו: ${resData.fileSaveError}`, { duration: 12000 })
+      }
+      if (resData.notice) {
+        toast(resData.notice, { duration: 15000 })
+      }
+      if (resData.warning) {
+        toast.error(resData.warning, { duration: 12000 })
+      } else if (!resData.fileSaveError && !resData.notice) {
+        toast.success("הקובץ עלה ונותח בהצלחה")
       }
       setAudienceOriginalFile((prev) => ({ name: file.name, url: prev?.url ?? "" }))
       setAudienceFileToUpload(null)

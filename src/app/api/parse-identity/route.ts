@@ -8,7 +8,8 @@ import {
 } from "@/lib/agents/identity-parser"
 import { anthropicErrorToHebrew } from "@/lib/anthropic-errors"
 import { extractFileContent, type FileContent } from "@/lib/extract-file-content"
-import { extractFirstJsonObject } from "@/lib/extract-first-json"
+import { extractFirstJsonObject, hasMoreObjectsAfter } from "@/lib/extract-first-json"
+import { classifyUploadError } from "@/lib/upload-errors"
 
 // Vercel default is 10s. Identity parsing with Sonnet on a ~10K-char file can
 // take 30–45s end-to-end; without this it'd timeout silently and the row would
@@ -29,7 +30,13 @@ export async function POST(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
 
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      return NextResponse.json(
+        {
+          error: "unauthorized",
+          message: "פג תוקף ההתחברות. התחברו מחדש ונסו שוב.",
+        },
+        { status: 401 }
+      )
     }
 
     const formData = await req.formData()
@@ -40,9 +47,12 @@ export async function POST(req: NextRequest) {
     const manualFields = formData.get("manualFields") as string | null
     const manual = manualFields ? JSON.parse(manualFields) : {}
 
-    if (!type) {
+    if (!type || (type !== "core" && type !== "audience")) {
       return NextResponse.json(
-        { error: "type is required" },
+        {
+          error: "invalid_type",
+          message: "תקלה בבקשה — חסר סוג הקובץ. רעננו את הדף ונסו שוב.",
+        },
         { status: 400 }
       )
     }
@@ -58,6 +68,7 @@ export async function POST(req: NextRequest) {
     let parsed: Record<string, string> = {}
     let aiError: string | null = null
     let fileSaveError: string | null = null
+    let multipleProfilesDetected = false
     let fileContent: FileContent | null = null
     let fileBuffer: Buffer | null = null
 
@@ -68,7 +79,10 @@ export async function POST(req: NextRequest) {
 
       // Hard fail early when the file format is unreadable — user needs immediate feedback.
       if (fileContent.kind === "unsupported") {
-        return NextResponse.json({ error: fileContent.message }, { status: 400 })
+        return NextResponse.json(
+          { error: "file_unreadable", message: fileContent.message },
+          { status: 400 }
+        )
       }
 
       // Length cap. Long files cause timeouts mid-parse and the row ends up
@@ -94,7 +108,11 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      // Save original file to Supabase Storage
+      // Save original file to Supabase Storage. This is the *backup* of the
+      // raw file — used later for reparse (especially for PDF, which has no
+      // raw_file_text fallback). If it fails, surface a Hebrew-categorized
+      // warning so the user knows the parsed data was kept but the original
+      // file isn't recoverable.
       try {
         const category = type === "core" ? "style_file" : "audience_file"
         const ext = file.name.split(".").pop() || "txt"
@@ -116,8 +134,9 @@ export async function POST(req: NextRequest) {
           contentType: file.type || "application/octet-stream",
         })
         if (storageErr) {
-          fileSaveError = `storage upload failed: ${storageErr.message}`
-          console.error("[parse-identity]", fileSaveError)
+          const classified = classifyUploadError(storageErr)
+          fileSaveError = `${classified.message} (גיבוי הקובץ ב-Storage נכשל; ${classified.kind})`
+          console.error("[parse-identity] storage upload:", classified.kind, classified.raw)
         } else {
           // Record in user_media — also returns {error} silently
           const { error: insertErr } = await supabase.from("user_media").insert({
@@ -128,20 +147,22 @@ export async function POST(req: NextRequest) {
             metadata: {},
           } as never)
           if (insertErr) {
-            fileSaveError = `user_media insert failed: ${insertErr.message}`
-            console.error("[parse-identity]", fileSaveError)
+            const classified = classifyUploadError(insertErr)
+            fileSaveError = `${classified.message} (רישום הקובץ ב-DB נכשל; ${classified.kind})`
+            console.error("[parse-identity] user_media insert:", classified.kind, classified.raw)
           }
         }
       } catch (err) {
-        fileSaveError = err instanceof Error ? err.message : String(err)
-        console.error("[parse-identity] file save threw:", fileSaveError)
+        const classified = classifyUploadError(err)
+        fileSaveError = `${classified.message} (חריגה בעת שמירת הקובץ; ${classified.kind})`
+        console.error("[parse-identity] file save threw:", classified.kind, classified.raw)
       }
     }
 
     // Parse with AI
     if (fileContent) {
       if (!anthropicApiKey) {
-        aiError = "Claude API key not connected"
+        aiError = "anthropic_not_connected"
       } else {
         try {
           const systemPrompt =
@@ -184,6 +205,13 @@ export async function POST(req: NextRequest) {
           if (jsonStr) {
             try {
               parsed = JSON.parse(jsonStr)
+              // Files describing 2+ personas make Claude emit multiple JSON
+              // objects back-to-back. We keep the first (one-row-per-user
+              // schema), but surface a notice so the user knows the rest
+              // were dropped intentionally.
+              if (hasMoreObjectsAfter(raw, jsonStr)) {
+                multipleProfilesDetected = true
+              }
             } catch (parseErr) {
               aiError = parseErr instanceof Error ? parseErr.message : String(parseErr)
             }
@@ -279,7 +307,16 @@ export async function POST(req: NextRequest) {
         .upsert(row as never, { onConflict: "user_id" })
 
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 })
+        const classified = classifyUploadError(error)
+        console.error("[parse-identity] core_identities upsert:", classified.kind, classified.raw)
+        return NextResponse.json(
+          {
+            error: "identity_save_failed",
+            message: `הנתונים לא נשמרו במסד הנתונים. ${classified.message}`,
+            ...(fileSaveError ? { fileSaveError } : {}),
+          },
+          { status: 500 }
+        )
       }
 
       return NextResponse.json({
@@ -287,6 +324,12 @@ export async function POST(req: NextRequest) {
         saved: row,
         ...(aiError ? { warning: `${anthropicErrorToHebrew(aiError)} השדות הידניים נשמרו, אבל הקובץ לא נותח.` } : {}),
         ...(fileSaveError ? { fileSaveError } : {}),
+        ...(multipleProfilesDetected
+          ? {
+              notice:
+                "זיהינו בקובץ יותר מפרופיל אחד. המערכת תומכת בפרופיל אחד בלבד, ולכן נשמר רק הראשון.",
+            }
+          : {}),
       })
     } else {
       const row = {
@@ -320,7 +363,16 @@ export async function POST(req: NextRequest) {
         .upsert(row as never, { onConflict: "user_id" })
 
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 })
+        const classified = classifyUploadError(error)
+        console.error("[parse-identity] audience_identities upsert:", classified.kind, classified.raw)
+        return NextResponse.json(
+          {
+            error: "identity_save_failed",
+            message: `הנתונים לא נשמרו במסד הנתונים. ${classified.message}`,
+            ...(fileSaveError ? { fileSaveError } : {}),
+          },
+          { status: 500 }
+        )
       }
 
       return NextResponse.json({
@@ -328,13 +380,34 @@ export async function POST(req: NextRequest) {
         saved: row,
         ...(aiError ? { warning: `${anthropicErrorToHebrew(aiError)} הנתונים לא נשמרו מהקובץ.` } : {}),
         ...(fileSaveError ? { fileSaveError } : {}),
+        ...(multipleProfilesDetected
+          ? {
+              notice:
+                "זיהינו בקובץ יותר מקהל יעד אחד. המערכת תומכת בקהל יעד אחד בלבד, ולכן נשמר רק הראשון.",
+            }
+          : {}),
       })
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    console.error("Parse identity error:", message)
+    console.error("[parse-identity] top-level error:", message)
+    // Detect FormData/body parsing failures vs everything else.
+    const isFormDataError = /formdata|multipart|body|payload/i.test(message)
+    if (isFormDataError) {
+      return NextResponse.json(
+        {
+          error: "request_invalid",
+          message: "הבקשה הגיעה לא תקינה לשרת. רעננו את הדף ונסו שוב.",
+        },
+        { status: 400 }
+      )
+    }
+    const classified = classifyUploadError(error)
     return NextResponse.json(
-      { error: `Failed to parse file: ${message}` },
+      {
+        error: "internal_error",
+        message: `אירעה שגיאה בעיבוד הקובץ. ${classified.message}`,
+      },
       { status: 500 }
     )
   }
