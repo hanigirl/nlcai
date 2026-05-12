@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipLabel } from "@/components/ui/tooltip"
 import { MediaPanel } from "@/components/media-panel"
 import { ConfirmModal } from "@/components/confirm-modal"
+import { CorePostCelebration } from "@/components/core-post-celebration"
 import type { Avatar } from "@/components/avatar-picker"
 import type { SlideData } from "@/lib/carousel-templates"
 import { createClient } from "@/lib/supabase/client"
@@ -88,6 +89,7 @@ function ProjectPageInner() {
   const [corePost, setCorePost] = useState("")
   const [postLoading, setPostLoading] = useState(false)
   const [postError, setPostError] = useState("")
+  const [celebrationKey, setCelebrationKey] = useState(0)
   const [bodySaveStatus, setBodySaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
   const [showFormats, setShowFormats] = useState(false)
   const [selectedFormats, setSelectedFormats] = useState<string[]>([])
@@ -687,6 +689,50 @@ function ProjectPageInner() {
     }).catch(() => {})
   }, [savedPostId, thCoverImage])
 
+  // Auto-save inline hook edits. The user can edit any hook text directly
+  // in the picker on /project; without this effect the change lived in
+  // local state only, and the next DB-by-idea fetch (refresh, navigation
+  // back) overwrote it with the original generated text. Compares the
+  // current hooks array against originalHooks (which is only updated by
+  // source loads — /api/hooks response, canvas restore, DB fetch — never
+  // by user edits) and PATCHes the diffed rows directly through the
+  // Supabase client, matching the pattern /hooks already uses for the
+  // inventory edit handler.
+  useEffect(() => {
+    if (!userId) return
+    if (hooks.length === 0) return
+    if (hooks.length !== originalHooks.length) return
+    if (hooks.length !== hookIds.length) return
+
+    const changed: Array<{ id: string; text: string }> = []
+    for (let i = 0; i < hooks.length; i++) {
+      if (!hookIds[i]) continue
+      if (hooks[i].trim() === (originalHooks[i] ?? "").trim()) continue
+      changed.push({ id: hookIds[i], text: hooks[i] })
+    }
+    if (changed.length === 0) return
+
+    const timer = setTimeout(async () => {
+      try {
+        const supabase = createClient()
+        await Promise.all(
+          changed.map(({ id, text }) =>
+            supabase
+              .from("hooks")
+              .update({ hook_text: text } as never)
+              .eq("id", id)
+              .eq("user_id", userId),
+          ),
+        )
+        // Sync the baseline so this effect doesn't re-fire for the same diff.
+        setOriginalHooks([...hooks])
+      } catch (err) {
+        console.error("[project][autosave-hook-edits]", err)
+      }
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [hooks, hookIds, originalHooks, userId])
+
   // Auto-save cover text when it changes (debounced by dependency)
   // Auto-save cover text (debounced)
   const prevCoverTextRef = useRef(coverText)
@@ -903,6 +949,7 @@ function ProjectPageInner() {
         setCorePost(data.post)
         setOriginalCorePost(data.post)
         setActiveCard("post")
+        setCelebrationKey((k) => k + 1)
 
         // Persist the body to DB. If a draft already exists (idea flow
         // created one when the user picked a hook, or this is a saved-flow
@@ -1280,7 +1327,8 @@ function ProjectPageInner() {
               )}
 
               {(corePost || savedPostId) && !postLoading && (
-                <div className="relative flex flex-col items-center w-[567px] shrink-0">
+                <div className="relative isolate flex flex-col items-center w-[567px] shrink-0">
+                  <CorePostCelebration trigger={celebrationKey} />
                   {/* Core post card */}
                   <div
                     dir="rtl"
