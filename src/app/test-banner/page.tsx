@@ -49,8 +49,22 @@ function reasonCopy(reason: FileIssueReason, fileLabel: string) {
 
 function HealthBanner({ health }: { health: ProfileHealth }) {
   // Labels match the section names the user will see in /settings so the
-  // "go fix it" link lands somewhere predictable.
-  const fileIssues: Array<{ key: string; label: string; reason: FileIssueReason }> = []
+  // "go fix it" link lands somewhere predictable. Per-reason link target
+  // lets the banner point at the exact panel (file upload sub-section for
+  // parse failures, manual-entry sub-section for missing content).
+  const fileSettingsHref = (reason: FileIssueReason, kind: "style" | "audience") => {
+    // no_file is the only state where typing manually is the natural
+    // first move — point at the matching about/you sub-section. Every
+    // other reason is upload-recovery → the files sub-section.
+    if (reason === "no_file") {
+      return kind === "style"
+        ? "/settings?tab=business&sub=about"
+        : "/settings?tab=business&sub=you"
+    }
+    return "/settings?tab=business&sub=files"
+  }
+
+  const fileIssues: Array<{ key: "style" | "audience"; label: string; reason: FileIssueReason }> = []
   if (health.styleFileIssue) {
     fileIssues.push({ key: "style", label: "מידע על העסק", reason: health.styleFileIssue.reason })
   }
@@ -70,7 +84,7 @@ function HealthBanner({ health }: { health: ProfileHealth }) {
               {reasonCopy(issue.reason, issue.label)}
             </p>
             <a
-              href="/settings?tab=business"
+              href={fileSettingsHref(issue.reason, issue.key)}
               className="text-small-bold text-text-primary-default hover:underline shrink-0"
             >
               להגדרות ←
@@ -86,13 +100,18 @@ function HealthBanner({ health }: { health: ProfileHealth }) {
   if (!health.hasCreators) missingItems.push("יוצרים מובילים")
 
   if (missingItems.length > 0) {
+    // Land the user on whichever inventory is empty. When both are
+    // empty, default to products (first in the message order).
+    const inventoryHref = !health.hasProducts
+      ? "/settings?tab=products"
+      : "/settings?tab=creators"
     return (
       <div className="rounded-xl border border-yellow-50 bg-yellow-95 px-4 py-3 flex items-center justify-between gap-3">
         <p className="text-small text-text-primary-default">
           כדי להפיק את המירב מהמערכת כדאי להגדיר {missingItems.join(" ו")}
         </p>
         <a
-          href="/settings?tab=business"
+          href={inventoryHref}
           className="text-small-bold text-text-primary-default hover:underline shrink-0"
         >
           להגדרות ←

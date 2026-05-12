@@ -373,18 +373,53 @@ export default function Home() {
             Non-beta users see nothing — the endpoint returns enabled:false
             for them. */}
         {profileHealth && profileHealth.enabled && (() => {
-          const reasonText = (reason: "parse_failed" | "missing") =>
-            reason === "parse_failed"
-              ? "הקובץ לא נקרא במלואו — חסר תוכן שמשמש לג'ינרוט"
-              : "לא הועלה קובץ ולא הוזן תוכן ידנית"
+          type FileIssueReason =
+            | "no_file"
+            | "file_invalid"
+            | "file_too_long"
+            | "multiple_audiences"
+            | "ai_failed"
+            | "empty_content"
+          type FileIssue = { key: "style" | "audience"; label: string; reason: FileIssueReason }
 
-          const fileIssues: Array<{ key: string; label: string; reason: "parse_failed" | "missing" }> = []
-          if (profileHealth.styleFileIssue) {
-            fileIssues.push({ key: "style", label: "סגנון הכתיבה", reason: profileHealth.styleFileIssue.reason })
+          const reasonCopy = (reason: FileIssueReason, fileLabel: string) => {
+            switch (reason) {
+              case "no_file":
+                return `עדיין לא הוזן ${fileLabel}. אפשר להעלות קובץ או להזין ידנית בהגדרות.`
+              case "file_invalid":
+                return `הקובץ שהועלה עבור ${fileLabel} לא תקין. צריך לנסות קובץ docx/pdf אחר, ולוודא שאינו פגום.`
+              case "file_too_long":
+                return `הקובץ שהועלה עבור ${fileLabel} ארוך מדי לעיבוד. צריך לקצר אותו ולהעלות שוב.`
+              case "multiple_audiences":
+                return `הקובץ של ${fileLabel} מכיל יותר מקהל יעד אחד. צריך להעלות קובץ נפרד לכל קהל, או להשאיר קהל אחד בלבד.`
+              case "ai_failed":
+                return `הניתוח של ${fileLabel} נכשל. אפשר לנסות להעלות שוב או להזין ידנית בהגדרות.`
+              case "empty_content":
+                return `הקובץ שהועלה עבור ${fileLabel} ריק או קצר מדי. צריך להוסיף תוכן ולהעלות שוב.`
+            }
           }
-          if (profileHealth.audienceFileIssue) {
-            fileIssues.push({ key: "audience", label: "ניתוח קהל היעד", reason: profileHealth.audienceFileIssue.reason })
+
+          // Per-reason deep link. no_file points at the manual-entry sub-
+          // section (about/you), everything else points at the file-upload
+          // sub-section since the user is recovering from an upload failure.
+          const fileSettingsHref = (reason: FileIssueReason, kind: "style" | "audience") => {
+            if (reason === "no_file") {
+              return kind === "style"
+                ? "/settings?tab=business&sub=about"
+                : "/settings?tab=business&sub=you"
+            }
+            return "/settings?tab=business&sub=files"
           }
+
+          // The API still returns the older two-state shape today; this
+          // narrows it to the wider FileIssueReason vocabulary so adding
+          // server-side detection later doesn't require touching the JSX.
+          const styleReason = profileHealth.styleFileIssue?.reason as FileIssueReason | undefined
+          const audienceReason = profileHealth.audienceFileIssue?.reason as FileIssueReason | undefined
+
+          const fileIssues: FileIssue[] = []
+          if (styleReason) fileIssues.push({ key: "style", label: "מידע על העסק", reason: styleReason })
+          if (audienceReason) fileIssues.push({ key: "audience", label: "ניתוח קהל היעד", reason: audienceReason })
 
           if (fileIssues.length > 0) {
             return (
@@ -395,14 +430,13 @@ export default function Home() {
                     className="rounded-xl border border-red-50 bg-red-95 px-4 py-3 flex items-center justify-between gap-3"
                   >
                     <p className="text-small text-text-primary-default">
-                      <span className="text-small-bold">בעיה בקובץ {issue.label}:</span>{" "}
-                      {reasonText(issue.reason)}
+                      {reasonCopy(issue.reason, issue.label)}
                     </p>
                     <a
-                      href="/settings?tab=business"
+                      href={fileSettingsHref(issue.reason, issue.key)}
                       className="text-small-bold text-text-primary-default hover:underline shrink-0"
                     >
-                      לעדכון →
+                      להגדרות ←
                     </a>
                   </div>
                 ))}
@@ -419,16 +453,19 @@ export default function Home() {
           if (!profileHealth.hasCreators) missingItems.push("יוצרים מובילים")
 
           if (missingItems.length > 0) {
+            const inventoryHref = !profileHealth.hasProducts
+              ? "/settings?tab=products"
+              : "/settings?tab=creators"
             return (
               <div className="mb-8 rounded-xl border border-yellow-50 bg-yellow-95 px-4 py-3 flex items-center justify-between gap-3">
                 <p className="text-small text-text-primary-default">
                   כדי להפיק את המירב מהמערכת כדאי להגדיר {missingItems.join(" ו")}
                 </p>
                 <a
-                  href="/settings?tab=business"
+                  href={inventoryHref}
                   className="text-small-bold text-text-primary-default hover:underline shrink-0"
                 >
-                  להגדרות →
+                  להגדרות ←
                 </a>
               </div>
             )

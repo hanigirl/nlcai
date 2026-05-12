@@ -88,8 +88,13 @@ function SettingsPageInner() {
 
   const searchParams = useSearchParams()
   const initialTab = (searchParams.get("tab") as SettingsTab) || "connections"
+  // Optional sub-section deep link via `?sub=...`. The home-page profile-
+  // health banner uses this to land the user directly on, say, the
+  // "קבצים להעלאה" panel inside the business tab instead of forcing them
+  // to find it manually.
+  const initialSub = searchParams.get("sub") || ""
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
-  const [activeSubSection, setActiveSubSection] = useState<string>("")
+  const [activeSubSection, setActiveSubSection] = useState<string>(initialSub)
   type MediaSection = "fonts" | "elements" | "covers" | "carousels"
   const [activeMediaSection, setActiveMediaSection] = useState<MediaSection>("fonts")
   const [loading, setLoading] = useState(true)
