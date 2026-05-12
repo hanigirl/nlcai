@@ -24,10 +24,22 @@ interface IdeaNote {
   createdAt?: string
 }
 
+// Health-banner data — set by /api/profile/health. enabled:false for
+// non-beta users skips the surface entirely so existing users don't see
+// the new banner while it's still being validated.
+type ProfileHealth = {
+  enabled: true
+  styleFileIssue: { reason: "parse_failed" | "missing" } | null
+  audienceFileIssue: { reason: "parse_failed" | "missing" } | null
+  hasProducts: boolean
+  hasCreators: boolean
+} | { enabled: false }
+
 export default function Home() {
   const router = useRouter()
   const [userName, setUserName] = useState("")
   const [idea, setIdea] = useState("")
+  const [profileHealth, setProfileHealth] = useState<ProfileHealth | null>(null)
   const [ideas, setIdeas] = useState<IdeaNote[]>([])
   const [generating, setGenerating] = useState(false)
   const [hooks, setHooks] = useState<string[]>([])
@@ -229,6 +241,25 @@ export default function Home() {
     })
   }, [])
 
+  // Profile-health check for the home banner. Fires once per mount; the
+  // endpoint returns enabled:false for non-beta users so this stays inert
+  // for everyone outside the preview ring.
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/profile/health")
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return
+        if (data && (data.enabled === true || data.enabled === false)) {
+          setProfileHealth(data as ProfileHealth)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const handleSubmit = () => {
     if (!idea.trim()) return
     router.push(`/project?idea=${encodeURIComponent(idea)}`)
@@ -334,6 +365,78 @@ export default function Home() {
         </div>
       )}
       <div dir="rtl" className="mx-auto max-w-3xl relative z-10 px-20 pt-[72px] pb-[100px]">
+        {/* Profile-health banner — shown above the greeting when the API
+            flags an unusable identity file or a missing products/creators
+            list. Priority: file issues come first (critical, blocks
+            generation quality); only when both identity files are healthy
+            do we surface the products/creators improvement nudge.
+            Non-beta users see nothing — the endpoint returns enabled:false
+            for them. */}
+        {profileHealth && profileHealth.enabled && (() => {
+          const reasonText = (reason: "parse_failed" | "missing") =>
+            reason === "parse_failed"
+              ? "הקובץ לא נקרא במלואו — חסר תוכן שמשמש לג'ינרוט"
+              : "לא הועלה קובץ ולא הוזן תוכן ידנית"
+
+          const fileIssues: Array<{ key: string; label: string; reason: "parse_failed" | "missing" }> = []
+          if (profileHealth.styleFileIssue) {
+            fileIssues.push({ key: "style", label: "סגנון הכתיבה", reason: profileHealth.styleFileIssue.reason })
+          }
+          if (profileHealth.audienceFileIssue) {
+            fileIssues.push({ key: "audience", label: "ניתוח קהל היעד", reason: profileHealth.audienceFileIssue.reason })
+          }
+
+          if (fileIssues.length > 0) {
+            return (
+              <div className="flex flex-col gap-2 mb-8">
+                {fileIssues.map((issue) => (
+                  <div
+                    key={issue.key}
+                    className="rounded-xl border border-red-50 bg-red-95 px-4 py-3 flex items-center justify-between gap-3"
+                  >
+                    <p className="text-small text-text-primary-default">
+                      <span className="text-small-bold">בעיה בקובץ {issue.label}:</span>{" "}
+                      {reasonText(issue.reason)}
+                    </p>
+                    <a
+                      href="/settings?tab=business"
+                      className="text-small-bold text-text-primary-default hover:underline shrink-0"
+                    >
+                      לעדכון →
+                    </a>
+                  </div>
+                ))}
+              </div>
+            )
+          }
+
+          // Only when both identity files are healthy do we nudge toward
+          // products/creators. The two files are the floor for generation
+          // quality; pushing the user to add creators while their style
+          // file is broken would scatter their attention.
+          const missingItems: string[] = []
+          if (!profileHealth.hasProducts) missingItems.push("מוצרים")
+          if (!profileHealth.hasCreators) missingItems.push("יוצרים מובילים")
+
+          if (missingItems.length > 0) {
+            return (
+              <div className="mb-8 rounded-xl border border-yellow-50 bg-yellow-95 px-4 py-3 flex items-center justify-between gap-3">
+                <p className="text-small text-text-primary-default">
+                  כדי להפיק את המירב מהמערכת כדאי להגדיר {missingItems.join(" ו")}
+                </p>
+                <a
+                  href="/settings?tab=business"
+                  className="text-small-bold text-text-primary-default hover:underline shrink-0"
+                >
+                  להגדרות →
+                </a>
+              </div>
+            )
+          }
+
+          return null
+        })()}
+
         {/* Greeting */}
         <div className="text-center mb-[72px]">
           {/* Card fan */}
