@@ -240,7 +240,12 @@ function CorePostCard({
             {bodyPreview}
           </p>
         ) : (
-          <p className="text-sm text-text-neutral-default text-center leading-relaxed py-6">
+          // py-2 lines up the placeholder height with a 3-line body
+          // preview (text-sm × leading-relaxed × 3 ≈ 68px). Without this the
+          // draft cards came out ~30px taller than completed ones, and CSS
+          // grid stretched every other card in the same day to match,
+          // which is what made "today" look bulkier than "yesterday".
+          <p className="text-sm text-text-neutral-default text-center leading-relaxed py-2">
             יש אחלה הוק! אבל עדיין אין סקריפט
             <br />
             המשיכו ליצור את הפוסט הזה
