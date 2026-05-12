@@ -310,7 +310,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: msg }, { status: 500 })
     }
 
-    const niche = coreIdentity.niche
+    const niche = (coreIdentity.niche || "").toString().trim()
+    if (!niche) return NextResponse.json({ error: "niche_missing" }, { status: 400 })
     const whoIAm = coreIdentity.who_i_am || ""
     const client = new Anthropic({ apiKey })
 
@@ -482,6 +483,22 @@ export async function POST(req: NextRequest) {
       )
       for (const list of linkedinLists) if (list.length > 0) creatorLists.push(list)
 
+      // Diversity cap: without this a single prolific creator (10+ viral posts)
+      // pushes the others off the prompt window. With N creators contributing
+      // content, each gets at most ceil(9/N) posts — so 2 creators → 5 each,
+      // 3 creators → 3 each, etc. Floor of 2 so a sparse-feed creator still has
+      // a backup in case the first one is promotional and gets skipped.
+      const creatorsWithContentCount = creatorLists.length
+      if (creatorsWithContentCount > 1) {
+        const perCreatorCap = Math.max(2, Math.ceil(9 / creatorsWithContentCount))
+        for (let i = 0; i < creatorLists.length; i++) {
+          if (creatorLists[i].length > perCreatorCap) {
+            console.log(`Ideas API Step 5: capping creator list ${i} from ${creatorLists[i].length} → ${perCreatorCap} (diversity guarantee)`)
+            creatorLists[i] = creatorLists[i].slice(0, perCreatorCap)
+          }
+        }
+      }
+
       // Round-robin interleave across creators so the ordered list is:
       //   A#1 (viral), B#1, C#1, A#2, B#2, C#2, ...
       // Each creator's list is already engagement-sorted; creator order follows the
@@ -540,18 +557,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "trend_search_failed" }, { status: 502 })
     }
 
-    // Upfront validation — fail fast before calling Claude if we have no raw material.
-    if (!hasCreators && trendResults.length === 0) {
-      // If the user has no creators and all trend URLs were already seen, this is
-      // the "everything's exhausted" case.
-      const code = seenUrls.size > 0 ? "no_fresh_content" : "no_trends_found"
-      return NextResponse.json({ error: code }, { status: 404 })
-    }
-    if (hasCreators && contentItems.length === 0 && trendResults.length === 0) {
-      // Creator content + trends both empty. If seenUrls is non-empty, user has
-      // simply exhausted everything we can currently pull — surface that specifically.
-      const code = seenUrls.size > 0 ? "no_fresh_content" : "no_creator_content"
-      return NextResponse.json({ error: code }, { status: 404 })
+    // No external material (creator scraping empty AND trends empty) is no
+    // longer a hard failure — we fall through to an LLM-only mission so the user
+    // always gets ideas. The most common cause is a user who added creator links
+    // but hasn't connected an Apify API key (BYOK), so IG/YT/TT scraping was
+    // silently skipped and Serper trends came back thin for their niche.
+    if (contentItems.length === 0 && trendResults.length === 0) {
+      console.log("Ideas API: no external material — falling back to LLM-only generation")
     }
 
     // ══════════════════════════════════════════════
@@ -620,6 +632,7 @@ ${trendQuota > 0 ? `\n## טרנדים (להשלמה בלבד):\n${trendsSection}
 ## המשימה — 9 רעיונות (${creatorQuota} מיוצרים${trendQuota > 0 ? ` + ${trendQuota} מטרנדים` : ""}):
 
 **${creatorQuota} מיוצרים של המשתמש — עדיפות עליונה!**
+- **חובת איזון בין יוצרים:** אם יש N יוצרים עם תוכן בסקשן "תוכן ויראלי" — חובה להחזיר לפחות רעיון אחד מכל אחד מהם. אסור שכל הרעיונות יבואו מאותו יוצר.
 - **השתמש ברעיונות לפי הסדר שהם מופיעים בסקשן "תוכן ויראלי"** — הם כבר ממוינים ויראליות-ראשונה ומפוזרים בין היוצרים. קח את ה-${creatorQuota} הראשונים שמתאימים.
 - אם פוסט ספציפי פרסומי (קורס, מבצע, פרס, קידום עצמי) — דלג עליו והמשך לבא בתור.
 - אסור להשתמש ביוצרים שלא ברשימה "יוצרים של המשתמש". **רק יוצרים מהרשימה הזו.**
@@ -637,7 +650,8 @@ ${trendQuota > 0 ? `\n**${trendQuota} מטרנדים (רק להשלמה — כש
 - עם caption: "[סיכום ה-caption: המסקנות והנקודות הספציפיות]."
 - עם תגיות: "העלה תוכן בנושא [X]. תגיות: #tag1 #tag2"
 - טרנד: "טרנד: [הנושא]. [סיכום מהמאמר]."`
-      : `## טרנדים:
+      : trendResults.length > 0
+      ? `## טרנדים:
 ${trendsSection}
 
 ## המשימה — 9 רעיונות **רק מטרנדים**:
@@ -653,8 +667,29 @@ ${hasCreators
 
 ### פורמט:
 - "טרנד: [הנושא]. [סיכום מהמאמר — נקודות ספציפיות, לא כללי]."`
+      : `## אין חומר חיצוני זמין — תייצר רעיונות מבוססי זהות בלבד
 
-    const promptContent = `אתה חוקר תוכן. קיבלת מחקר: ${hasCreators ? "רשימת יוצרים שהמשתמש בחר, עם תוכן ויראלי מהפרופילים שלהם, וטרנדים" : "טרנדים בנישה"}.
+${hasCreators
+  ? "לא הצלחנו למשוך תוכן ויראלי מהיוצרים שהמשתמש הגדיר (ייתכן שלא חיבר Apify API key, או שהיוצרים לא נמצאו בפלטפורמות), וגם לא נמצאו טרנדים רלוונטיים כרגע."
+  : "המשתמש לא הגדיר יוצרים מועדפים וגם לא נמצאו טרנדים רלוונטיים כרגע."}
+
+תייצר 9 רעיונות **חדשים ומבוססים** על הנישה, קהל היעד, והזהות של המשתמש — מהידע שלך, בלי לינקים חיצוניים. הרעיונות צריכים להיות ספציפיים וברי-ביצוע, לא תיאוריות כלליות.
+
+- כל רעיון: source = "AI". profileUrl = "". url = ""
+- 9 רעיונות על 9 נושאים שונים — אסור לחזור על אותו נושא.
+- הנושא חייב לנגוע ישירות בכאבים/רצונות הקהל מהסקשן למעלה.
+- מהנישה והטון של המשתמש — לא רעיון גנרי שמתאים לכל אחד.
+
+### פורמט ה-text:
+- "[רעיון פוסט — תיאור קצר וקונקרטי של מה לפרסם, בלי שם יוצר ובלי פלטפורמה]"`
+
+    const promptContent = `אתה חוקר תוכן. ${
+      contentItems.length > 0
+        ? "קיבלת מחקר: רשימת יוצרים שהמשתמש בחר, עם תוכן ויראלי מהפרופילים שלהם, וטרנדים."
+        : trendResults.length > 0
+          ? "קיבלת מחקר: טרנדים בנישה."
+          : "אין מחקר חיצוני זמין — תייצר רעיונות מהידע שלך על בסיס הזהות, הנישה וקהל היעד של המשתמש."
+    }
 
 ## מי אני
 ${whoIAm}
@@ -698,8 +733,14 @@ JSONL:
       let correctedProfileUrl = p.profileUrl || ""
       let correctedUrl = p.url || ""
 
-      // Source is "טרנד" — no creator to match, skip
-      if (p.source === "טרנד" || p.source.toLowerCase() === "trend") {
+      // Non-creator sources (trend, AI) — no creator handle to match, skip.
+      const sourceLower = (p.source || "").toLowerCase().trim()
+      if (
+        p.source === "טרנד" ||
+        p.source === "מהבינה" ||
+        sourceLower === "trend" ||
+        sourceLower === "ai"
+      ) {
         return p
       }
 
@@ -765,8 +806,12 @@ JSONL:
                     // the text/URL are fabricated. Better to show fewer, real
                     // ideas than fake ones with mismatched links.
                     const srcHandle = p.source.replace(/^@/, "").toLowerCase().trim()
-                    const isTrendSource = p.source === "טרנד" || srcHandle === "trend"
-                    if (!isTrendSource && !creatorsWithContent.has(srcHandle)) {
+                    const isNonCreatorSource =
+                      p.source === "טרנד" ||
+                      p.source === "מהבינה" ||
+                      srcHandle === "trend" ||
+                      srcHandle === "ai"
+                    if (!isNonCreatorSource && !creatorsWithContent.has(srcHandle)) {
                       console.log(`Ideas API: SKIPPED hallucinated idea for "${p.source}" — no content items for this creator`)
                       continue
                     }

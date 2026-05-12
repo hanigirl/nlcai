@@ -351,7 +351,7 @@ export default function IdeasPage() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_fresh_content", "trend_search_failed", "search_not_configured", "search_quota_exceeded", "apify_quota_exceeded"]
+        const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "niche_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_fresh_content", "trend_search_failed", "search_not_configured", "search_quota_exceeded", "apify_quota_exceeded"]
         const raw = data.error
         setError(known.includes(raw) ? raw : (raw || "generic"))
         return
@@ -638,7 +638,7 @@ export default function IdeasPage() {
         </div>
 
         {error && (() => {
-          const infoCodes = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_fresh_content", "no_ideas_generated", "all_ideas_duplicate", "trend_search_failed", "search_not_configured", "search_quota_exceeded", "apify_quota_exceeded"]
+          const infoCodes = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "niche_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_fresh_content", "no_ideas_generated", "all_ideas_duplicate", "trend_search_failed", "search_not_configured", "search_quota_exceeded", "apify_quota_exceeded"]
           const isInfo = infoCodes.includes(error)
           const config: Record<string, { message: string; action?: { href: string; label: string; external?: boolean } }> = {
             credits_exhausted: {
@@ -657,6 +657,10 @@ export default function IdeasPage() {
             core_identity_missing: {
               message: "חסרה זהות ליבה. יש להשלים את תהליך ה־onboarding",
               action: { href: "/onboarding", label: "להשלמת onboarding →" },
+            },
+            niche_missing: {
+              message: "חסרה הגדרת נישה בפרופיל. בלעדיה אי אפשר לחפש טרנדים ולייצר רעיונות מותאמים",
+              action: { href: "/settings?tab=business", label: "לעדכון הנישה →" },
             },
             unauthorized: {
               message: "נראה שהתנתקת. יש להתחבר מחדש",
