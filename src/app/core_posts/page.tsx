@@ -240,16 +240,23 @@ function CorePostCard({
             {bodyPreview}
           </p>
         ) : (
-          // py-2 lines up the placeholder height with a 3-line body
-          // preview (text-sm × leading-relaxed × 3 ≈ 68px). Without this the
-          // draft cards came out ~30px taller than completed ones, and CSS
-          // grid stretched every other card in the same day to match,
-          // which is what made "today" look bulkier than "yesterday".
-          <p className="text-sm text-text-neutral-default text-center leading-relaxed py-2">
-            יש אחלה הוק! אבל עדיין אין סקריפט
-            <br />
-            המשיכו ליצור את הפוסט הזה
-          </p>
+          // Empty-body draft state: the section mascot (paper airplane =
+          // letter-min.png) in grayscale + muted text. Grayscale keeps the
+          // illustration recognisably "ours" while signalling "not yet
+          // active". The flex column slots into the same vertical room as
+          // a 3-line body preview so the fixed-height card stays balanced.
+          <div className="flex flex-col items-center justify-center gap-1.5 py-1">
+            <img
+              src="/images/letter-min.png"
+              alt=""
+              className="w-7 h-7 grayscale opacity-50"
+            />
+            <p className="text-sm text-text-neutral-default text-center leading-relaxed">
+              יש אחלה הוק! אבל עדיין אין סקריפט
+              <br />
+              המשיכו ליצור את הפוסט הזה
+            </p>
+          </div>
         )}
 
         {/* Actions row — pinned to the bottom of the card. mt-auto pushes
