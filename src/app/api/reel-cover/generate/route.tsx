@@ -7,32 +7,42 @@ import type { BrandStyle } from "@/lib/supabase/types"
 const COVER_WIDTH = 1080
 const COVER_HEIGHT = 1920 // 9:16 aspect ratio
 
+// Simplified single-style cover generation. The per-user brand_style
+// pipeline (analyze 3 cover examples → save a 30-field BrandStyle JSON
+// → render with it) is still on disk but bypassed at the route level
+// while we ship a baseline that everyone gets the same look from:
+//
+//   * Rubik ExtraBold
+//   * Solid black overlay at 15% opacity (lets the underlying video
+//     thumbnail breathe through)
+//   * Hook text centered, white, no shadow
+//
+// To re-enable per-user covers later, restore the brand_style fetch +
+// gate at the top of POST and route renderCover with that style instead
+// of DEFAULT_BRAND_STYLE.
 const DEFAULT_BRAND_STYLE: BrandStyle = {
   font_name: "Rubik",
   font_size_px: 72,
-  font_weight: "bold",
+  font_weight: "extra-bold",
   text_color: "#FFFFFF",
   text_position: "bottom-center",
   text_size: "large",
   text_direction: "rtl",
-  text_shadow: true,
-  text_shadow_color: "rgba(0,0,0,0.5)",
+  text_shadow: false,
   line_height: 1.0,
   letter_spacing: 0,
   text_align: "center",
   avg_words_per_line: 2,
-  overlay_style: "gradient",
-  overlay_opacity: 0.3,
+  overlay_style: "solid",
+  overlay_opacity: 0.15,
   overlay_color: "#000000",
-  overlay_gradient_direction: "bottom-to-top",
-  overlay_gradient_from: "#000000",
-  overlay_gradient_to: "#000000",
   has_text_background: false,
   has_recurring_elements: false,
 }
 
 let fontDataCache: ArrayBuffer | null = null
 let boldFontCache: ArrayBuffer | null = null
+let extraBoldFontCache: ArrayBuffer | null = null
 
 async function loadFont(): Promise<ArrayBuffer> {
   if (fontDataCache) return fontDataCache
@@ -74,6 +84,26 @@ async function loadBoldFont(): Promise<ArrayBuffer> {
   }
 }
 
+async function loadExtraBoldFont(): Promise<ArrayBuffer> {
+  if (extraBoldFontCache) return extraBoldFontCache
+  const fs = await import("fs/promises")
+  const path = await import("path")
+  const localPath = path.join(process.cwd(), "public", "fonts", "Rubik-ExtraBold.ttf")
+  try {
+    const buffer = await fs.readFile(localPath)
+    extraBoldFontCache = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+    return extraBoldFontCache
+  } catch {
+    const res = await fetch("https://fonts.googleapis.com/css2?family=Rubik:wght@800&display=swap")
+    const css = await res.text()
+    const urlMatch = css.match(/src:\s*url\(([^)]+)\)/)
+    if (!urlMatch) throw new Error("Could not find extra-bold font URL")
+    const fontRes = await fetch(urlMatch[1])
+    extraBoldFontCache = await fontRes.arrayBuffer()
+    return extraBoldFontCache
+  }
+}
+
 function getTextPositionStyles(position: BrandStyle["text_position"]) {
   switch (position) {
     case "center":
@@ -106,6 +136,7 @@ function getTextSize(size: BrandStyle["text_size"]): number {
 
 function getFontWeight(weight: BrandStyle["font_weight"]): number {
   switch (weight) {
+    case "extra-bold": return 800
     case "bold": return 700
     case "light": return 400
     case "regular": return 400
@@ -300,18 +331,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Get user's brand style — required
-    const { data: userData } = await supabase
-      .from("users")
-      .select("brand_style")
-      .eq("id", user.id)
-      .single()
-
-    const brandStyle = (userData as Record<string, unknown> | null)?.brand_style as BrandStyle | null
-    if (!brandStyle) {
-      return NextResponse.json({ error: "no_brand_style" }, { status: 400 })
-    }
-    const style = brandStyle
+    // Per-user brand_style is intentionally bypassed here — every cover
+    // ships with the same Rubik ExtraBold + 15% black-overlay treatment
+    // until we revisit per-user theming. The DB column and analyzer
+    // pipeline are left intact so it's a one-line restore when we go
+    // back to per-user.
+    const style = DEFAULT_BRAND_STYLE
 
     // Fetch thumbnail if provided (supports data URLs and regular URLs)
     let thumbBase64: string | undefined
@@ -331,7 +356,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const [fontData, boldFontData] = await Promise.all([loadFont(), loadBoldFont()])
+    const [fontData, boldFontData, extraBoldFontData] = await Promise.all([
+      loadFont(),
+      loadBoldFont(),
+      loadExtraBoldFont(),
+    ])
 
     // Generate 1 cover
     const covers: string[] = []
@@ -344,6 +373,7 @@ export async function POST(req: NextRequest) {
         fonts: [
           { name: "Rubik", data: fontData, weight: 400, style: "normal" as const },
           { name: "Rubik", data: boldFontData, weight: 700, style: "normal" as const },
+          { name: "Rubik", data: extraBoldFontData, weight: 800, style: "normal" as const },
         ],
       })
 
