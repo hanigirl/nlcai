@@ -23,15 +23,27 @@ interface CorePostInput {
   hook: string
   userResponse: string
   productName?: string
+  productSummary?: string
+  productType?: string
+  triggerWord?: string
   coreIdentity?: CoreIdentity | null
   audienceIdentity?: AudienceIdentity | null
   learningInsights?: string
+}
+
+const PRODUCT_TYPE_LABEL: Record<string, string> = {
+  front: "מוצר חזית (כניסה)",
+  premium: "מוצר פרימיום",
+  lead_magnet: "ליד מגנט (חינמי)",
 }
 
 export function buildCorePostPrompt({
   hook,
   userResponse,
   productName,
+  productSummary,
+  productType,
+  triggerWord,
   coreIdentity,
   audienceIdentity,
   learningInsights,
@@ -81,6 +93,10 @@ ${audienceIdentity.fears}
     : ""
 
   const product = productName || coreIdentity?.product_name || ""
+  const productTypeLabel = productType ? PRODUCT_TYPE_LABEL[productType] : ""
+  const productSection = product
+    ? `## המוצר/שירות: ${product}${productTypeLabel ? ` (${productTypeLabel})` : ""}${productSummary ? `\n\n### תיאור המוצר\n${productSummary}` : ""}`
+    : ""
 
   return `אתה סוכן מומחה בכתיבת פוסטים קצרים לרשתות חברתיות בעברית.
 
@@ -93,7 +109,7 @@ ${audienceIdentity.fears}
 ${identitySection}
 ${audienceSection}
 
-${product ? `## המוצר/שירות: ${product}` : ""}
+${productSection}
 
 ## מבנה הפוסט (חובה לעקוב אחרי הסדר הזה בדיוק):
 
@@ -119,8 +135,30 @@ ${product ? `## המוצר/שירות: ${product}` : ""}
 - אל תהיה ארוך מדי — פוסט סושיאל, לא מאמר
 
 ### 4. הנעה לפעולה (שורה אחרונה)
-שורה אחת שמעודדת את הקורא לפעול — לשמור, לשתף, להגיב, או לפנות למשתמש.
-צריכה להיות טבעית ולא מכירתית מדי.
+${triggerWord
+  ? `שורה אחת שמבקשת מהקורא להגיב במילה הספציפית "${triggerWord}" בתגובות, ובתמורה הוא יקבל משהו ערכי וספציפי.
+${product
+  ? `**ההצעה חייבת להתאים למוצר "${product}"** שמתואר למעלה. קרא בעיון את תיאור המוצר וגזור ממנו מה אתה מציע בתגובה למילה "${triggerWord}" — שלח את הדבר הכי קרוב למה שהמוצר נותן (גישה, רשימה, מדריך, הדרכה, שיעור, פרטים נוספים), בנוסח שמרגיש כמו טעימה / שלב ראשון של המוצר ולא כמו ספאם מכירתי.
+${productType === "lead_magnet"
+  ? `המוצר הוא ליד מגנט — ההצעה היא ה-${product} עצמו (חינם, בתמורה לתגובה).`
+  : productType === "front"
+    ? `המוצר הוא מוצר חזית — ההצעה צריכה לפתוח שיחה / לתת טעימה שמובילה אל ה-${product} (לא למכור אותו ישירות בשורה אחת).`
+    : productType === "premium"
+      ? `המוצר הוא פרימיום — אל תמכור אותו בשורה הזו; הצע משהו חינמי וערכי שמתחבר לעולם של ${product} (פרק, מדריך, שיחת ייעוץ קצרה).`
+      : ""}
+דוגמאות לסגנון (התאם את התוכן שאחרי "${triggerWord}" למוצר):
+- הגיבו "${triggerWord}" ואשלח לכם הדרכה מוקלטת על <נושא ספציפי מתוך המוצר>.
+- כתבו "${triggerWord}" בתגובות ואצרף אתכם לרשימת ה<שם הרשימה מהמוצר>.
+- מי שרוצה את <הדבר הספציפי>, שיכתוב "${triggerWord}" בתגובות.`
+  : `בחר משהו ערכי שמתאים לנושא הפוסט (הדרכה מוקלטת, מדריך, פרטים נוספים, שיעור).
+דוגמאות לסגנון:
+- הגיבו "${triggerWord}" ואשלח לכם הדרכה מוקלטת.
+- כתבו "${triggerWord}" בתגובות ואשלח לכם את כל הפרטים.
+- מי שרוצה את המדריך, שיכתוב "${triggerWord}" בתגובות.`}
+המבנה הקבוע: \`הגיבו "${triggerWord}" ו<פועל בעתיד, ברבים> לכם <מה שתשלחו>\`.
+חובה לשמור על המילה המדויקת "${triggerWord}" בגרשיים, ולשמור על הטון של המשתמש.`
+  : `שורה אחת שמעודדת את הקורא לפעול — לשמור, לשתף, להגיב, או לפנות למשתמש.
+צריכה להיות טבעית ולא מכירתית מדי.`}
 
 ## כללי כתיבה
 1. כתוב בעברית, בגובה העיניים

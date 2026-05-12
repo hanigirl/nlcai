@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { hook, userResponse, productName } = await req.json()
+    const { hook, userResponse, productName: productNameInput, productId, triggerWord } = await req.json()
 
     if (!hook || !userResponse) {
       return NextResponse.json(
@@ -30,11 +30,26 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const [{ data: coreIdentity }, { data: audienceIdentity }, learningInsights] = await Promise.all([
+    const [{ data: coreIdentity }, { data: audienceIdentity }, learningInsights, productLookup] = await Promise.all([
       supabase.from("core_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("audience_identities").select("*").eq("user_id", user.id).single(),
       fetchLearningInsights(supabase, user.id, "core_post"),
+      productId
+        ? supabase
+            .from("products")
+            .select("name, type, page_summary")
+            .eq("id", productId)
+            .eq("user_id", user.id)
+            .maybeSingle()
+        : Promise.resolve({ data: null as { name: string; type: string | null; page_summary: string | null } | null }),
     ])
+
+    const productRow = (productLookup && "data" in productLookup ? productLookup.data : null) as
+      | { name: string; type: string | null; page_summary: string | null }
+      | null
+    const productName = productNameInput || productRow?.name
+    const productSummary = productRow?.page_summary ?? undefined
+    const productType = productRow?.type ?? undefined
 
     let apiKey: string
     try {
@@ -51,6 +66,9 @@ export async function POST(req: NextRequest) {
       hook,
       userResponse,
       productName,
+      productSummary,
+      productType,
+      triggerWord,
       coreIdentity,
       audienceIdentity,
       learningInsights,

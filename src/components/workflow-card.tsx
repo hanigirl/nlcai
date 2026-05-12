@@ -4,6 +4,8 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { Mic, MicOff, Square } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import {
   Dialog,
@@ -24,6 +26,13 @@ interface WorkflowCardProps {
   onFocus?: () => void
   onSubmit?: () => void
   className?: string
+  // Optional product + trigger-word controls. When `products` is provided, the
+  // card renders a product dropdown + trigger-word input above the textarea.
+  products?: Array<{ id: string; name: string }>
+  productId?: string | null
+  onProductChange?: (id: string | null) => void
+  triggerWord?: string
+  onTriggerWordChange?: (value: string) => void
 }
 
 export function WorkflowCard({
@@ -38,6 +47,11 @@ export function WorkflowCard({
   onFocus,
   onSubmit,
   className,
+  products,
+  productId,
+  onProductChange,
+  triggerWord,
+  onTriggerWordChange,
 }: WorkflowCardProps) {
   const [showMicDialog, setShowMicDialog] = useState(false)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
@@ -169,6 +183,41 @@ export function WorkflowCard({
           onFocus={onFocus}
           className="min-h-[156px] rounded-[10px] border-border-neutral-default bg-white dark:bg-gray-10 resize-none shadow-none"
         />
+        {products && (
+          <div className="flex flex-col gap-3">
+            <span className="text-small-bold text-text-primary-default">הגדרות אופציונאליות</span>
+            <div className="flex gap-3">
+              <div className="flex flex-col gap-1.5 flex-1">
+                <label className="text-small text-text-neutral-default">מוצר</label>
+                <Select
+                  variant="homepage"
+                  selectSize="small"
+                  value={productId ?? ""}
+                  onChange={(e) => onProductChange?.(e.target.value || null)}
+                  onFocus={onFocus}
+                  disabled={!active}
+                >
+                  <option value="">כללי — בלי שיוך למוצר</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1.5 flex-1">
+                <label className="text-small text-text-neutral-default">מילת טריגר</label>
+                <Input
+                  variant="homepage"
+                  inputSize="small"
+                  value={triggerWord ?? ""}
+                  onChange={(e) => onTriggerWordChange?.(e.target.value)}
+                  onFocus={onFocus}
+                  disabled={!active}
+                  placeholder='לדוגמה: "פלואו"'
+                />
+              </div>
+            </div>
+          </div>
+        )}
         <div className="flex flex-col gap-2 items-end">
           <div className="flex gap-2">
             <Button variant="danger" className="gap-2" onClick={() => setShowMicDialog(true)} disabled={!active}>
