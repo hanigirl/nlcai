@@ -28,19 +28,28 @@ const DEFAULT_BRAND_STYLE: BrandStyle = {
   text_position: "center",
   text_size: "large",
   text_direction: "rtl",
-  // Subtle drop shadow so the hook reads cleanly regardless of what's
-  // behind it in the thumbnail. 60% black at 2/2/8 keeps the type crisp
-  // without looking heavy-handed.
-  text_shadow: true,
-  text_shadow_color: "rgba(0,0,0,0.6)",
+  // Pill handles contrast now, so the shadow is redundant — turning it
+  // off keeps the type cleaner.
+  text_shadow: false,
   line_height: 1.0,
   letter_spacing: 0,
   text_align: "center",
   avg_words_per_line: 2,
+  // 15% black overlay is too subtle to rescue white text on light
+  // thumbnails (a Notion screen recording goes white-on-white). The
+  // solid dark pill below carries the readability guarantee; the
+  // overlay just adds a brand-flavoured tint on top of the thumbnail.
   overlay_style: "solid",
   overlay_opacity: 0.15,
   overlay_color: "#000000",
-  has_text_background: false,
+  // Solid dark pill behind the hook — same trick Instagram Reels /
+  // TikTok captions use. Renders identically on any thumbnail (light,
+  // dark, busy) so the hook is always readable. 24px corner radius
+  // gives a modern feel without over-rounding.
+  has_text_background: true,
+  text_background_color: "#000000",
+  text_background_opacity: 1,
+  text_background_border_radius: 24,
   has_recurring_elements: false,
 }
 
