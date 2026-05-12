@@ -130,6 +130,13 @@ function ProjectPageInner() {
   const [coverText, setCoverText] = useState("")
   const [thVideoFrameDataUrl, setThVideoFrameDataUrl] = useState<string | null>(null)
   const thVideoCardRef = useRef<HTMLDivElement>(null)
+  // Anchor for the post-generation visual feedback. We point it at the
+  // first card that mounts when handleGeneratePost runs (either the
+  // "כותב את הפוסט..." loading chip or the core post card itself) and
+  // smooth-scroll to it so the user can see Claude is working — otherwise
+  // the click stays at the bottom of the canvas and reads as "nothing
+  // happened".
+  const corePostResultRef = useRef<HTMLDivElement>(null)
 
   // Carousel state (lifted for panel persistence)
   const [carouselImages, setCarouselImages] = useState<string[] | null>(null)
@@ -846,6 +853,12 @@ function ProjectPageInner() {
     setPostLoading(true)
     setPostError("")
     setCorePost("")
+    // Wait one frame so the loading chip mounts and the ref attaches before
+    // we ask the browser to scroll. block: "start" lands the chip near the
+    // top of the viewport so the user actually sees the spinner.
+    requestAnimationFrame(() => {
+      corePostResultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+    })
 
     try {
       const res = await fetch("/api/core-post", {
@@ -1222,7 +1235,7 @@ function ProjectPageInner() {
               )}
 
               {postLoading && (
-                <div className="flex items-center mt-[29px]">
+                <div ref={corePostResultRef} className="flex items-center mt-[29px]">
                   <div className="flex items-center gap-2 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
                     <Loader2 className="size-5 animate-spin text-yellow-50" />
                     <span className="text-small text-text-neutral-default">כותב את הפוסט...</span>
