@@ -223,7 +223,7 @@ function CorePostCard({
   return (
     <Card
       dir="rtl"
-      className="group gap-4 rounded-[16px] border-border-neutral-default bg-white dark:bg-gray-10 p-4 py-4 text-right transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 shadow-none"
+      className="group h-[200px] gap-4 rounded-[16px] border-border-neutral-default bg-white dark:bg-gray-10 p-4 py-4 text-right transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 shadow-none"
     >
       <CardContent className="flex flex-1 flex-col gap-2 p-0">
         {/* Title — the hook is the most recognisable hook of the post. */}
