@@ -515,6 +515,61 @@ function ProjectPageInner() {
     if (thVideoUrl) setThVideoLoading(false)
   }, [thVideoUrl])
 
+  // Fetch every hook the user has previously generated for the current idea,
+  // straight from the DB. The full list shows up on the idea-flow stack —
+  // this is what guarantees the user always sees ALL their hooks for an
+  // idea, regardless of how they got to /project (fresh idea, draft view via
+  // /core_posts card click with no ?idea= param, different browser, cleared
+  // localStorage). The DB is the source of truth; canvas restore from
+  // localStorage is now just a fast-path for in-session continuation.
+  //
+  // Anchored on `idea` state (URL ?idea= populates it on mount; saved-flow
+  // load populates it from data.post.idea_text after the fetch returns). A
+  // per-idea ref prevents the fetch from re-firing when the user starts
+  // editing the idea textarea — we only ever fetch the first time an idea
+  // value appears.
+  const fetchedHooksForIdeaRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!userId) return
+    const anchorIdea = (idea || "").trim()
+    if (!anchorIdea) return
+    if (fetchedHooksForIdeaRef.current === anchorIdea) return
+    fetchedHooksForIdeaRef.current = anchorIdea
+
+    const supabase = createClient()
+    supabase
+      .from("hooks")
+      .select("id, hook_text")
+      .eq("user_id", userId)
+      .eq("idea_text", anchorIdea)
+      .order("created_at", { ascending: false })
+      .then(({ data, error }) => {
+        if (error) {
+          console.error("[project][fetch-hooks-by-idea]", error)
+          return
+        }
+        if (!data || data.length === 0) return
+        const fetched = data as unknown as { id: string; hook_text: string }[]
+        const texts = fetched.map((h) => h.hook_text)
+        const ids = fetched.map((h) => h.id)
+        setHooks(texts)
+        setHookIds(ids)
+        setOriginalHooks(texts)
+      })
+  }, [idea, userId])
+
+  // Derive the selected-hook index from the saved post's hook_text whenever
+  // the hooks list or savedHookText changes. Split out from the fetch above
+  // so the matching catches up when each piece arrives (saved-flow load and
+  // hooks-by-idea fetch race; either can land first).
+  useEffect(() => {
+    if (selectedHook !== null) return
+    if (!savedHookText) return
+    if (hooks.length === 0) return
+    const idx = hooks.findIndex((h) => h === savedHookText)
+    if (idx >= 0) setSelectedHook(idx)
+  }, [savedHookText, hooks, selectedHook])
+
   // Create a draft core_post the moment the user picks a hook in the idea
   // flow. The draft has an empty body — it's just a stub so an editable card
   // shows up on /core_posts immediately. When the user later clicks "תייצר
