@@ -947,7 +947,7 @@ function ProjectPageInner() {
                 dir="rtl"
                 className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[346px] shrink-0"
               >
-                <div className="flex items-center bg-bg-surface px-6 py-3 rounded-t-[20px]">
+                <div className={`flex items-center px-6 py-3 rounded-t-[20px] ${activeCard === "idea" ? "bg-bg-surface-primary-default-80" : "bg-bg-surface"}`}>
                   <span className="text-p-bold text-text-primary-default">רעיון</span>
                 </div>
                 <div className="px-6">
@@ -955,6 +955,7 @@ function ProjectPageInner() {
                     <Textarea
                       value={idea}
                       onChange={(e) => setIdea(e.target.value)}
+                      onFocus={() => setActiveCard("idea")}
                       placeholder="כתבו או ערכו את הרעיון..."
                       className="min-h-[120px] text-small text-text-primary-default border-none bg-transparent shadow-none p-0 resize-none focus-visible:ring-0"
                     />
