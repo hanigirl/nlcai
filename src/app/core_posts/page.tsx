@@ -225,7 +225,7 @@ function CorePostCard({
       dir="rtl"
       className="group gap-4 rounded-[16px] border-border-neutral-default bg-white dark:bg-gray-10 p-4 py-4 text-right transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 shadow-none"
     >
-      <CardContent className="flex flex-col gap-2 p-0">
+      <CardContent className="flex flex-1 flex-col gap-2 p-0">
         {/* Title — the hook is the most recognisable hook of the post. */}
         <p className="text-sm font-semibold text-text-primary-default line-clamp-1">
           {post.hook_text ?? post.title ?? lines[0] ?? "פוסט ללא כותרת"}
@@ -247,8 +247,12 @@ function CorePostCard({
           </p>
         )}
 
-        {/* Actions row */}
-        <div className="flex items-center gap-2 mt-1">
+        {/* Actions row — pinned to the bottom of the card. mt-auto pushes
+            it down through the flex-1 column above, so the arrow always
+            sits in the bottom-left (RTL) regardless of how long or short
+            the body preview is. pt-3 guarantees a minimum gap above the
+            row so it doesn't crowd against the body in short cards. */}
+        <div className="flex items-center gap-2 mt-auto pt-3">
           {/* Format tags */}
           {post.formats.length > 0 && (
             <div className="flex flex-wrap gap-2">
