@@ -26,30 +26,33 @@ type ProfileHealth = {
 }
 
 // Reason → user-facing message. The structure is "what went wrong" +
-// "what to do" so the user can act without guessing. Audience gets a
-// dedicated multiple_audiences variant since the style file is one-persona
-// by definition.
+// "what to do" so the user can act without guessing. The label points
+// the user at the exact section name they'll find in /settings, so the
+// no_file copy reads as concrete ("לא הוזן מידע על העסק") instead of
+// vague ("manual entry").
 function reasonCopy(reason: FileIssueReason, fileLabel: string) {
   switch (reason) {
     case "no_file":
-      return `עדיין לא הועלה קובץ ${fileLabel} ולא הוזן תוכן ידנית. אפשר להעלות קובץ או להזין ידנית בהגדרות.`
+      return `עדיין לא הוזן ${fileLabel}. אפשר להעלות קובץ או להזין ידנית בהגדרות.`
     case "file_invalid":
-      return `הקובץ שהעלית ל${fileLabel} לא תקין. נסי קובץ docx/pdf אחר, ודאי שהוא לא פגום.`
+      return `הקובץ שהועלה עבור ${fileLabel} לא תקין. צריך לנסות קובץ docx/pdf אחר, ולוודא שאינו פגום.`
     case "file_too_long":
-      return `הקובץ שהעלית ל${fileLabel} ארוך מדי לעיבוד. קצרי אותו והעלי שוב.`
+      return `הקובץ שהועלה עבור ${fileLabel} ארוך מדי לעיבוד. צריך לקצר אותו ולהעלות שוב.`
     case "multiple_audiences":
-      return `הקובץ שהעלית מכיל יותר מקהל יעד אחד. העלי קובץ נפרד לכל קהל, או השאירי קהל אחד בלבד.`
+      return `הקובץ של ${fileLabel} מכיל יותר מקהל יעד אחד. צריך להעלות קובץ נפרד לכל קהל, או להשאיר קהל אחד בלבד.`
     case "ai_failed":
-      return `הניתוח של ${fileLabel} נכשל. נסי להעלות שוב או להזין ידנית בהגדרות.`
+      return `הניתוח של ${fileLabel} נכשל. אפשר לנסות להעלות שוב או להזין ידנית בהגדרות.`
     case "empty_content":
-      return `הקובץ שהעלית ל${fileLabel} ריק או קצר מדי. הוסיפי תוכן והעלי שוב.`
+      return `הקובץ שהועלה עבור ${fileLabel} ריק או קצר מדי. צריך להוסיף תוכן ולהעלות שוב.`
   }
 }
 
 function HealthBanner({ health }: { health: ProfileHealth }) {
+  // Labels match the section names the user will see in /settings so the
+  // "go fix it" link lands somewhere predictable.
   const fileIssues: Array<{ key: string; label: string; reason: FileIssueReason }> = []
   if (health.styleFileIssue) {
-    fileIssues.push({ key: "style", label: "סגנון הכתיבה", reason: health.styleFileIssue.reason })
+    fileIssues.push({ key: "style", label: "מידע על העסק", reason: health.styleFileIssue.reason })
   }
   if (health.audienceFileIssue) {
     fileIssues.push({ key: "audience", label: "ניתוח קהל היעד", reason: health.audienceFileIssue.reason })
@@ -70,7 +73,7 @@ function HealthBanner({ health }: { health: ProfileHealth }) {
               href="/settings?tab=business"
               className="text-small-bold text-text-primary-default hover:underline shrink-0"
             >
-              להגדרות →
+              להגדרות ←
             </a>
           </div>
         ))}
@@ -92,7 +95,7 @@ function HealthBanner({ health }: { health: ProfileHealth }) {
           href="/settings?tab=business"
           className="text-small-bold text-text-primary-default hover:underline shrink-0"
         >
-          להגדרות →
+          להגדרות ←
         </a>
       </div>
     )
