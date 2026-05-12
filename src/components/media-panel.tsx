@@ -511,7 +511,7 @@ function TalkingHeadFlow({
       const { data: { user } } = await supabase.auth.getUser()
       const { data: { session } } = await supabase.auth.getSession()
       if (!user || !session) {
-        toast.error("לא מזוהה משתמש. רעננו ונסו שוב.", { id: uploadToast })
+        toast.error("לא מזוהה משתמש. רעננו ונסו שוב.", { id: uploadToast, duration: 6000 })
         return
       }
       const ext = file.name.split(".").pop()?.toLowerCase() || "mp4"
@@ -551,7 +551,7 @@ function TalkingHeadFlow({
 
       if (ok) {
         const videoUrl = supabase.storage.from("user-media").getPublicUrl(storagePath).data.publicUrl
-        toast.success("וידאו נשמר", { id: uploadToast })
+        toast.success("וידאו נשמר", { id: uploadToast, duration: 4000 })
         // Replace the blob URL with the persistent storage URL — this is
         // what the parent's auto-save useEffect will PATCH onto the post.
         onVideoUrlChange(videoUrl)
@@ -579,7 +579,7 @@ function TalkingHeadFlow({
       }
     } catch (err) {
       console.error("[upload] unexpected error:", err)
-      toast.error(`שגיאה בהעלאה: ${err instanceof Error ? err.message : String(err)}`, { id: uploadToast })
+      toast.error(`שגיאה בהעלאה: ${err instanceof Error ? err.message : String(err)}`, { id: uploadToast, duration: 8000 })
     }
 
     // Generate cover with video frame as thumbnail
@@ -695,11 +695,11 @@ function TalkingHeadFlow({
     return (
       <div className="flex flex-col gap-6">
         {/* Video + Cover side by side */}
-        <div className="flex gap-3 justify-center">
+        <div className="flex gap-3">
           {/* Video */}
-          <div className="flex flex-col items-center gap-2">
+          <div className="flex flex-col items-center gap-2 flex-1 min-w-0">
             <p className="text-xs text-text-neutral-default">סרטון</p>
-            <div className="w-[80px] aspect-[9/16] rounded-lg overflow-hidden bg-gray-95 relative">
+            <div className="w-full aspect-[9/16] rounded-lg overflow-hidden bg-gray-95 relative">
               {/* Same <video> element for blob and remote URLs. The previous
                   `<img>` fallback for non-blob URLs left the preview blank,
                   because an mp4 URL can't render as an image. The `#t=0.001`
@@ -719,17 +719,17 @@ function TalkingHeadFlow({
 
           {/* Cover */}
           {coverLoading && (
-            <div className="flex flex-col items-center gap-2">
+            <div className="flex flex-col items-center gap-2 flex-1 min-w-0">
               <p className="text-xs text-text-neutral-default">קאבר</p>
-              <div className="w-[80px] aspect-[9/16] rounded-lg bg-gray-95 flex items-center justify-center">
+              <div className="w-full aspect-[9/16] rounded-lg bg-gray-95 flex items-center justify-center">
                 <Loader2 className="size-4 animate-spin text-text-neutral-default" />
               </div>
             </div>
           )}
           {coverImage && !coverLoading && (
-            <div className="flex flex-col items-center gap-2">
+            <div className="flex flex-col items-center gap-2 flex-1 min-w-0">
               <p className="text-xs text-text-neutral-default">קאבר</p>
-              <div className="w-[80px] aspect-[9/16] rounded-lg overflow-hidden">
+              <div className="w-full aspect-[9/16] rounded-lg overflow-hidden">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={`data:image/png;base64,${coverImage}`}
@@ -788,10 +788,10 @@ function TalkingHeadFlow({
         {progressBar}
 
         {/* Video + Cover side by side */}
-        <div className="flex gap-3 justify-center">
-          <div className="flex flex-col items-center gap-2">
+        <div className="flex gap-3">
+          <div className="flex flex-col items-center gap-2 flex-1 min-w-0">
             <p className="text-xs text-text-neutral-default">סרטון</p>
-            <div className="w-[80px] aspect-[9/16] rounded-lg overflow-hidden bg-gray-95 relative">
+            <div className="w-full aspect-[9/16] rounded-lg overflow-hidden bg-gray-95 relative">
               {liftedVideoUrl.startsWith("blob:") ? (
                 <video
                   src={liftedVideoUrl}
@@ -808,17 +808,17 @@ function TalkingHeadFlow({
             </div>
           </div>
           {coverLoading && (
-            <div className="flex flex-col items-center gap-2">
+            <div className="flex flex-col items-center gap-2 flex-1 min-w-0">
               <p className="text-xs text-text-neutral-default">קאבר</p>
-              <div className="w-[80px] aspect-[9/16] rounded-lg bg-gray-95 flex items-center justify-center">
+              <div className="w-full aspect-[9/16] rounded-lg bg-gray-95 flex items-center justify-center">
                 <Loader2 className="size-4 animate-spin text-text-neutral-default" />
               </div>
             </div>
           )}
           {coverImage && !coverLoading && (
-            <div className="flex flex-col items-center gap-2">
+            <div className="flex flex-col items-center gap-2 flex-1 min-w-0">
               <p className="text-xs text-text-neutral-default">קאבר</p>
-              <div className="w-[80px] aspect-[9/16] rounded-lg overflow-hidden">
+              <div className="w-full aspect-[9/16] rounded-lg overflow-hidden">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={`data:image/png;base64,${coverImage}`}
