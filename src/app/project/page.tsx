@@ -83,6 +83,7 @@ function ProjectPageInner() {
   const [corePost, setCorePost] = useState("")
   const [postLoading, setPostLoading] = useState(false)
   const [postError, setPostError] = useState("")
+  const [bodySaveStatus, setBodySaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
   const [showFormats, setShowFormats] = useState(false)
   const [selectedFormats, setSelectedFormats] = useState<string[]>([])
   const [duplicatedFormats, setDuplicatedFormats] = useState<string[]>([])
@@ -448,6 +449,36 @@ function ProjectPageInner() {
     }, 1000)
     return () => clearTimeout(timer)
   }, [savedPostId, coverText])
+
+  // Auto-save core post body — debounced PATCH whenever the user edits the
+  // textarea. Without this, edits live only in local state (+ sessionStorage)
+  // and get overwritten by the original DB body on the next /project?post_id
+  // load. Duplication to formats then runs on the original text, not the
+  // user's version.
+  useEffect(() => {
+    if (!savedPostId) return
+    if (!corePost) return
+    if (corePost === originalCorePost) return
+
+    setBodySaveStatus("saving")
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/core-posts/${savedPostId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body: corePost }),
+        })
+        if (!res.ok) throw new Error(`save failed: ${res.status}`)
+        setOriginalCorePost(corePost)
+        setBodySaveStatus("saved")
+      } catch (err) {
+        console.error("[project][autosave-body]", err)
+        setBodySaveStatus("error")
+        toast.error("שמירת הפוסט נכשלה")
+      }
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [savedPostId, corePost, originalCorePost])
 
   // Manual hooks generation (no auto-generation)
   const handleGenerateHooks = () => {
@@ -836,7 +867,7 @@ function ProjectPageInner() {
                 </div>
               )}
 
-              {corePost && !postLoading && (
+              {(corePost || savedPostId) && !postLoading && (
                 <div className="relative flex flex-col items-center w-[567px] shrink-0">
                   {/* Core post card */}
                   <div
@@ -845,6 +876,23 @@ function ProjectPageInner() {
                   >
                     <div className={`flex items-center px-6 py-3 rounded-t-[20px] ${activeCard === "post" ? "bg-bg-surface-primary-default-80" : "bg-bg-surface"}`}>
                       <span className="text-p-bold text-text-primary-default">פוסט ליבה</span>
+                      {savedPostId && (
+                        <span className="ms-auto flex items-center gap-1 text-xs text-text-neutral-default">
+                          {bodySaveStatus === "saving" ? (
+                            <>
+                              <Loader2 className="size-3 animate-spin" />
+                              <span>שומר...</span>
+                            </>
+                          ) : bodySaveStatus === "error" ? (
+                            <span className="text-button-destructive-default">שגיאה בשמירה</span>
+                          ) : (
+                            <>
+                              <Check className="size-3" />
+                              <span>נשמר</span>
+                            </>
+                          )}
+                        </span>
+                      )}
                     </div>
                     <div className="flex flex-col gap-4 px-6 items-end">
                       <Textarea
