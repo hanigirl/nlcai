@@ -1320,8 +1320,22 @@ function ProjectPageInner() {
 
               {postError && !postLoading && (
                 <div className="flex items-center mt-[55px]">
-                  <div className="rounded-[20px] border border-button-destructive-default bg-white dark:bg-gray-10 px-6 py-4">
-                    <span className="text-small text-button-destructive-default">{postError}</span>
+                  <div
+                    dir="rtl"
+                    className="flex flex-col gap-1 rounded-[20px] border border-button-destructive-default bg-white dark:bg-gray-10 px-6 py-4 text-right"
+                  >
+                    {postError === "anthropic_overloaded" ? (
+                      <>
+                        <span className="text-small-bold text-button-destructive-default">
+                          קרעתם את קלוד אה? :(
+                        </span>
+                        <span className="text-small text-button-destructive-default">
+                          השרתים של אנתרופיק עמוסים ולא ניתן זמנית לייצר תוכן. אפשר לנסות שוב בעוד כמה דקות.
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-small text-button-destructive-default">{postError}</span>
+                    )}
                   </div>
                 </div>
               )}

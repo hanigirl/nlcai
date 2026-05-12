@@ -88,9 +88,16 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("Core post generation error:", msg)
+    const isCredits = /credit|billing|insufficient_quota|payment|402/.test(msg)
+    const isOverloaded = /overloaded|529|503/.test(msg)
+    const errCode = isCredits
+      ? "credits_exhausted"
+      : isOverloaded
+        ? "anthropic_overloaded"
+        : `Failed to generate post: ${msg}`
     return NextResponse.json(
-      { error: `Failed to generate post: ${msg}` },
-      { status: 500 }
+      { error: errCode },
+      { status: isCredits ? 402 : isOverloaded ? 503 : 500 },
     )
   }
 }
