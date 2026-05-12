@@ -118,7 +118,7 @@ export function RichBodyEditor({
       onMouseDown={onMouseDown}
       onClick={onClick}
       className={cn(
-        "whitespace-pre-wrap break-words outline-none overflow-y-auto",
+        "whitespace-pre-wrap break-words outline-none overflow-y-auto cursor-text",
         className,
       )}
     />
