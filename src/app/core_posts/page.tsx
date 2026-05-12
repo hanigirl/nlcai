@@ -231,10 +231,19 @@ function CorePostCard({
           {post.hook_text ?? post.title ?? lines[0] ?? "פוסט ללא כותרת"}
         </p>
 
-        {/* Body — preview of the continuation, hook line stripped above. */}
-        {bodyPreview && (
+        {/* Body — preview of the continuation when there's a script. When
+            the user only generated a hook (draft with empty body), surface a
+            centered placeholder so the card reads as "started but not yet
+            written" instead of looking incomplete or broken. */}
+        {bodyPreview ? (
           <p className="text-sm text-text-primary-default line-clamp-3 leading-relaxed">
             {bodyPreview}
+          </p>
+        ) : (
+          <p className="text-sm text-text-neutral-default text-center leading-relaxed py-6">
+            יש אחלה הוק! אבל עדיין אין סקריפט
+            <br />
+            המשיכו ליצור את הפוסט הזה
           </p>
         )}
 
