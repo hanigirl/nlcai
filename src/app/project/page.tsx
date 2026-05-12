@@ -994,10 +994,15 @@ function ProjectPageInner() {
                 reacts to the `history.replaceState` that the draft-on-hook-
                 selection effect fires, so `flow` flips to "saved" mid-session
                 and would otherwise unmount the entire idea card stack
-                including the generated hooks. We keep this stack rendered as
-                long as the user hasn't transitioned to a real generated post
-                (corePost still empty). */}
-          {(((flow === "idea") || hooks.length > 0) && !corePost) && (
+                including the generated hooks.
+                We deliberately DO NOT gate on `!corePost`: once the user has
+                generated hooks for this session, the full list stays visible
+                even after the core post is created. The rule from product is
+                "anything the user generated or wrote stays on screen until
+                they explicitly remove it" — collapsing back to a single-hook
+                view broke that. The hook-flow card stack below is mutex'd
+                against this so they never render simultaneously. */}
+          {((flow === "idea") || hooks.length > 0) && (
             <>
               {/* Idea card — editable */}
               <div
@@ -1153,12 +1158,12 @@ function ProjectPageInner() {
                 useSearchParams reacts to `history.replaceState` from the
                 auto-save and would otherwise unmount these cards a second or
                 two after generation. ===
-                Also mutex against the idea-flow stack above so we don't
-                render both at once when an idea-flow user just picked a
-                hook (URL updates, flow flips to "saved", savedHookText
-                lands from the draft load — both blocks would otherwise
-                fire). */}
-          {!(((flow === "idea") || hooks.length > 0) && !corePost) &&
+                Mutex against the idea-flow stack above so the two never
+                render at once. The idea-flow stack covers any session where
+                we have hooks in state (in-session or hydrated by the DB-by-
+                idea fetch); this stack is reserved for hook-flow entries
+                without an associated idea-text + hooks set. */}
+          {!((flow === "idea") || hooks.length > 0) &&
             (flow === "hook" || (flow === "saved" && !!(savedHookText || editableHook))) && (
             <>
               {/* Hook card — editable */}
