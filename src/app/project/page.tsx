@@ -406,6 +406,17 @@ function ProjectPageInner() {
             setEditableHook(data.post.hook_text as string)
             setCoverText((data.post.cover_text as string) || (data.post.hook_text as string))
           }
+          // Restore the product + trigger-word the user picked when they
+          // created/edited this draft. Mark productManuallySetRef so the
+          // auto-assign-from-hook-classifier effect doesn't overwrite the
+          // restored selection.
+          if (data.post.product_id) {
+            setSelectedProductId(data.post.product_id as string)
+            productManuallySetRef.current = true
+          }
+          if (typeof data.post.trigger_word === "string") {
+            setTriggerWord(data.post.trigger_word as string)
+          }
           setActiveCard("post")
 
           // Restore format variants
@@ -681,6 +692,40 @@ function ProjectPageInner() {
     return () => clearTimeout(timer)
   }, [savedPostId, coverText])
 
+  // Auto-save product selection. PATCH fires whenever the user picks a
+  // different product (or clears it to null). Tracked separately from
+  // coverText so the prev-ref idempotency works per-field.
+  const prevProductIdRef = useRef<string | null>(selectedProductId)
+  useEffect(() => {
+    if (!savedPostId) return
+    if (selectedProductId === prevProductIdRef.current) return
+    prevProductIdRef.current = selectedProductId
+    fetch(`/api/core-posts/${savedPostId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ productId: selectedProductId }),
+    }).catch(() => {})
+  }, [savedPostId, selectedProductId])
+
+  // Auto-save trigger-word, debounced so we don't fire a PATCH on every
+  // keystroke. Empty string is a valid "user cleared it" value and gets
+  // persisted as such.
+  const prevTriggerWordRef = useRef(triggerWord)
+  useEffect(() => {
+    if (!savedPostId) return
+    if (triggerWord === prevTriggerWordRef.current) return
+    const next = triggerWord
+    const timer = setTimeout(() => {
+      prevTriggerWordRef.current = next
+      fetch(`/api/core-posts/${savedPostId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ triggerWord: next }),
+      }).catch(() => {})
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [savedPostId, triggerWord])
+
   // Auto-save core post body — debounced PATCH whenever the user edits the
   // textarea. Without this, edits live only in local state (+ sessionStorage)
   // and get overwritten by the original DB body on the next /project?post_id
@@ -915,7 +960,6 @@ function ProjectPageInner() {
         onCarouselImagesChange={setCarouselImages}
         onCarouselSlidesChange={setCarouselSlides}
         carouselText={formatPosts["carousel"] ?? ""}
-        onScrollToCarousel={() => carouselCardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
       />
 
       <InfiniteCanvas>

@@ -102,11 +102,13 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, hookText, hookId, idea, formatPosts, videoUrl, deleteVideo, coverBase64, coverText, deleteCover } = (await req.json()) as {
+    const { body, hookText, hookId, idea, productId, triggerWord, formatPosts, videoUrl, deleteVideo, coverBase64, coverText, deleteCover } = (await req.json()) as {
       body?: string
       hookText?: string
       hookId?: string
       idea?: string
+      productId?: string | null
+      triggerWord?: string
       formatPosts?: Record<string, string>
       videoUrl?: string
       deleteVideo?: boolean
@@ -174,6 +176,26 @@ export async function PATCH(
       await supabase
         .from("core_posts")
         .update({ cover_text: coverText } as never)
+        .eq("id", id)
+        .eq("user_id", user.id)
+    }
+
+    // Update product selection. null clears the FK, a uuid sets it. Omit
+    // entirely to leave alone.
+    if (productId !== undefined) {
+      await supabase
+        .from("core_posts")
+        .update({ product_id: productId } as never)
+        .eq("id", id)
+        .eq("user_id", user.id)
+    }
+
+    // Update trigger word. Empty string is a valid "user cleared the field"
+    // signal; only `undefined` skips the write.
+    if (triggerWord !== undefined) {
+      await supabase
+        .from("core_posts")
+        .update({ trigger_word: triggerWord } as never)
         .eq("id", id)
         .eq("user_id", user.id)
     }

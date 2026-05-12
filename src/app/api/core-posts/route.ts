@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, hookText, hookId, userResponse, formatPosts, videoUrl, idea } = (await req.json()) as {
+    const { body, hookText, hookId, userResponse, formatPosts, videoUrl, idea, productId, triggerWord } = (await req.json()) as {
       body: string
       hookText: string
       hookId?: string
@@ -88,6 +88,8 @@ export async function POST(req: NextRequest) {
       formatPosts?: Record<string, string>
       videoUrl?: string
       idea?: string
+      productId?: string | null
+      triggerWord?: string
     }
 
     // Empty body is intentional — drafts get created the moment the user
@@ -133,6 +135,8 @@ export async function POST(req: NextRequest) {
       status: isDraft ? "pending" : "completed",
     }
     if (idea && idea.trim()) insertData.idea_text = idea.trim()
+    if (productId) insertData.product_id = productId
+    if (triggerWord && triggerWord.trim()) insertData.trigger_word = triggerWord.trim()
 
     const { data: post, error: postError } = await supabase
       .from("core_posts")
