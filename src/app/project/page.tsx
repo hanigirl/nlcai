@@ -10,6 +10,7 @@ import { InfiniteCanvas } from "@/components/infinite-canvas"
 import { WorkflowCard } from "@/components/workflow-card"
 import { SelectionCard } from "@/components/selection-card"
 import { Textarea } from "@/components/ui/textarea"
+import { RichBodyEditor } from "@/components/rich-body-editor"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipLabel } from "@/components/ui/tooltip"
@@ -895,12 +896,12 @@ function ProjectPageInner() {
                       )}
                     </div>
                     <div className="flex flex-col gap-4 px-6 items-end">
-                      <Textarea
+                      <RichBodyEditor
                         value={corePost}
+                        onChange={setCorePost}
                         onFocus={() => setActiveCard("post")}
                         onMouseDown={(e) => e.stopPropagation()}
-                        onChange={(e) => setCorePost(e.target.value)}
-                        className="w-full min-h-[250px] rounded-[10px] border-border-neutral-default bg-white dark:bg-gray-10 resize-none shadow-none text-small leading-relaxed select-text [&::first-line]:font-medium"
+                        className="w-full min-h-[250px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text"
                       />
                       <Button
                         disabled={activeCard !== "post"}
@@ -1247,13 +1248,13 @@ function FormatTree({
                 </div>
                 <div className="px-6 flex flex-col gap-3">
                   <div className="relative group">
-                    <Textarea
+                    <RichBodyEditor
                       value={formatPosts[fid] ?? ""}
+                      onChange={(text) => onPostChange(fid, text)}
                       onFocus={() => onActiveChange(`format-${fid}`)}
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => onPostChange(fid, e.target.value)}
-                      className="min-h-[200px] rounded-[10px] border-border-neutral-default bg-white dark:bg-gray-10 resize-none shadow-none text-small leading-relaxed select-text [&::first-line]:font-medium"
+                      className="min-h-[200px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text"
                     />
                     <CopyButton text={formatPosts[fid] ?? ""} />
                   </div>
