@@ -900,7 +900,7 @@ function ProjectPageInner() {
                         onFocus={() => setActiveCard("post")}
                         onMouseDown={(e) => e.stopPropagation()}
                         onChange={(e) => setCorePost(e.target.value)}
-                        className="w-full min-h-[250px] rounded-[10px] border-border-neutral-default bg-white dark:bg-gray-10 resize-none shadow-none text-small leading-relaxed select-text"
+                        className="w-full min-h-[250px] rounded-[10px] border-border-neutral-default bg-white dark:bg-gray-10 resize-none shadow-none text-small leading-relaxed select-text [&::first-line]:font-medium"
                       />
                       <Button
                         disabled={activeCard !== "post"}
@@ -1253,7 +1253,7 @@ function FormatTree({
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
                       onChange={(e) => onPostChange(fid, e.target.value)}
-                      className="min-h-[200px] rounded-[10px] border-border-neutral-default bg-white dark:bg-gray-10 resize-none shadow-none text-small leading-relaxed select-text"
+                      className="min-h-[200px] rounded-[10px] border-border-neutral-default bg-white dark:bg-gray-10 resize-none shadow-none text-small leading-relaxed select-text [&::first-line]:font-medium"
                     />
                     <CopyButton text={formatPosts[fid] ?? ""} />
                   </div>

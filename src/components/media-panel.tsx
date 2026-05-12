@@ -1226,7 +1226,7 @@ function CarouselFlow({
       {carouselText && (
         <div className="rounded-lg border border-border-neutral-default bg-bg-surface p-3">
           <p className="text-xs text-text-neutral-default mb-1">טקסט הקרוסלה</p>
-          <p className="text-xs text-text-primary-default leading-relaxed whitespace-pre-wrap line-clamp-6">
+          <p className="text-xs text-text-primary-default leading-relaxed whitespace-pre-wrap line-clamp-6 [&::first-line]:font-medium">
             {carouselText}
           </p>
         </div>

@@ -223,7 +223,7 @@ function CorePostCard({
 
         {/* Body */}
         {bodyPreview && (
-          <p className="text-sm text-text-primary-default line-clamp-3 leading-relaxed">
+          <p className="text-sm text-text-primary-default line-clamp-3 leading-relaxed [&::first-line]:font-medium">
             {bodyPreview}
           </p>
         )}
