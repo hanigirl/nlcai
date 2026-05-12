@@ -41,7 +41,7 @@ const navItems = [
     icon: Image,
   },
   {
-    label: "לוח שנה",
+    label: "תזמון",
     href: "/calendar",
     icon: CalendarDays,
     // Route not yet deployed — disable prefetch to avoid 404s in production console.
