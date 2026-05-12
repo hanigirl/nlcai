@@ -76,6 +76,10 @@ function ProjectPageInner() {
   const [idea, setIdea] = useState(initialIdea)
   useEffect(() => { setIdea(initialIdea) }, [initialIdea])
   const [hooks, setHooks] = useState<string[]>([])
+  // Parallel array of DB ids for the generated hooks above. Indexed by
+  // position — hookIds[i] is the id of hooks[i]. Empty string when an insert
+  // failed; the core-post route then falls back to matching on text.
+  const [hookIds, setHookIds] = useState<string[]>([])
   const [selectedHook, setSelectedHook] = useState<number | null>(null)
   const [hooksLoading, setHooksLoading] = useState(false)
   const [error, setError] = useState("")
@@ -171,6 +175,7 @@ function ProjectPageInner() {
       }
       if (typeof saved.idea === "string") setIdea(saved.idea)
       if (Array.isArray(saved.hooks)) setHooks(saved.hooks)
+      if (Array.isArray(saved.hookIds)) setHookIds(saved.hookIds)
       if (saved.selectedHook === null || typeof saved.selectedHook === "number") setSelectedHook(saved.selectedHook)
       if (typeof saved.response === "string") setResponse(saved.response)
       if (typeof saved.corePost === "string") setCorePost(saved.corePost)
@@ -196,7 +201,7 @@ function ProjectPageInner() {
       try {
         const state = {
           sessionKey,
-          idea, hooks, selectedHook, response, corePost,
+          idea, hooks, hookIds, selectedHook, response, corePost,
           showFormats, selectedFormats, duplicatedFormats, formatPosts,
           editableHook, coverText, thTranscript, thSourceMode,
           savedHookText, originalHooks, originalCorePost,
@@ -209,7 +214,7 @@ function ProjectPageInner() {
       } catch (err) { console.error("[project][canvas-save]", err) }
     }, 300)
     return () => clearTimeout(t)
-  }, [sessionKey, idea, hooks, selectedHook, response, corePost, showFormats, selectedFormats, duplicatedFormats, formatPosts, editableHook, coverText, thTranscript, thSourceMode, savedHookText, originalHooks, originalCorePost, savedPostId, userId])
+  }, [sessionKey, idea, hooks, hookIds, selectedHook, response, corePost, showFormats, selectedFormats, duplicatedFormats, formatPosts, editableHook, coverText, thTranscript, thSourceMode, savedHookText, originalHooks, originalCorePost, savedPostId, userId])
 
   // Extract a frame from a video URL as a data URL
   const extractVideoFrame = (videoSrc: string): Promise<string | null> => {
@@ -513,8 +518,19 @@ function ProjectPageInner() {
         } else if (data.error) {
           setError(data.error)
         } else if (data.hooks) {
-          setHooks(data.hooks)
-          setOriginalHooks(data.hooks)
+          // /api/hooks now returns Array<{id, hook_text}> (it persists every
+          // generated hook to the user's inventory). Stay compatible with the
+          // older string[] response in case anything else hits this endpoint.
+          const isObjShape = data.hooks.length > 0 && typeof data.hooks[0] === "object"
+          const texts: string[] = isObjShape
+            ? data.hooks.map((h: { hook_text: string }) => h.hook_text)
+            : data.hooks
+          const ids: string[] = isObjShape
+            ? data.hooks.map((h: { id: string }) => h.id)
+            : []
+          setHooks(texts)
+          setOriginalHooks(texts)
+          setHookIds(ids)
         }
       })
       .catch(() => setError("שגיאה ביצירת הוקים"))
@@ -568,14 +584,24 @@ function ProjectPageInner() {
         setOriginalCorePost(data.post)
         setActiveCard("post")
 
-        // Auto-save to DB (fire and forget)
+        // Auto-save to DB (fire and forget).
+        //
+        // hookId priority:
+        //   1. hook_id from URL (user came from /hooks page with a chosen hook)
+        //   2. the DB id of the currently-selected hook from the idea flow,
+        //      stored in hookIds[selectedHook] after /api/hooks persisted it
+        //   3. undefined — core-posts then falls back to matching on hook_text
+        const selectedHookId =
+          selectedHook !== null && hookIds[selectedHook]
+            ? hookIds[selectedHook]
+            : undefined
         fetch("/api/core-posts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             body: data.post,
             hookText: activeHook,
-            hookId: hookIdParam || undefined,
+            hookId: hookIdParam || selectedHookId,
             userResponse: response,
             videoUrl: thVideoUrl && !thVideoUrl.startsWith("blob:") ? thVideoUrl : undefined,
           }),

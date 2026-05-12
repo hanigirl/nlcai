@@ -195,10 +195,31 @@ export async function POST(req: NextRequest) {
     // Polish only when judge accepted the original. Judge rewrites come from
     // Opus 4.7 and are already natural Hebrew — skipping the Sonnet polish
     // on those saves 3-6s per hook with no quality loss.
-    const hooks = await Promise.all(
+    const hookTexts = await Promise.all(
       judged.map(({ text, rewrote }) =>
         rewrote ? Promise.resolve(text) : polishHookForHebrew(client, text, PRIMARY_MODEL),
       ),
+    )
+
+    // Persist every generated hook to the user's inventory so the unselected
+    // ones show up on /hooks too — picking a hook for a post then marks just
+    // that one as used (see core-posts POST). Inserts run in parallel and
+    // preserve order via Promise.all; insert failures fall back to id="" so
+    // the user can still generate a post (core-posts matches on text in that
+    // case).
+    const hooks = await Promise.all(
+      hookTexts.map(async (text) => {
+        const { data, error } = await supabase
+          .from("hooks")
+          .insert({ user_id: user.id, hook_text: text } as never)
+          .select("id, hook_text")
+          .single()
+        if (error || !data) {
+          console.error("[api/hooks] failed to persist hook", error)
+          return { id: "", hook_text: text }
+        }
+        return data as unknown as { id: string; hook_text: string }
+      }),
     )
 
     return NextResponse.json({ hooks, model_fallback: modelFallback })
