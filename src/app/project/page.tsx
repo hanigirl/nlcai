@@ -560,7 +560,11 @@ function ProjectPageInner() {
       .select("id, hook_text")
       .eq("user_id", userId)
       .eq("idea_text", anchorIdea)
-      .order("created_at", { ascending: false })
+      // Sort by display_order ASC so the user sees the same order they
+      // picked from originally — the position they remember picking should
+      // still be the position they see highlighted. created_at-DESC inverted
+      // it, which is why "the wrong hook looks selected" was the report.
+      .order("display_order", { ascending: true })
       .then(({ data, error }) => {
         if (error) {
           console.error("[project][fetch-hooks-by-idea]", error)
@@ -732,6 +736,25 @@ function ProjectPageInner() {
     }, 800)
     return () => clearTimeout(timer)
   }, [savedPostId, triggerWord])
+
+  // Auto-save "what do you want to say". Used to live only in React state,
+  // so a regeneration / navigation re-read the draft's user_response="" from
+  // DB and wiped what the user typed. Debounced like trigger-word.
+  const prevResponseRef = useRef(response)
+  useEffect(() => {
+    if (!savedPostId) return
+    if (response === prevResponseRef.current) return
+    const next = response
+    const timer = setTimeout(() => {
+      prevResponseRef.current = next
+      fetch(`/api/core-posts/${savedPostId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userResponse: next }),
+      }).catch(() => {})
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [savedPostId, response])
 
   // Auto-save core post body — debounced PATCH whenever the user edits the
   // textarea. Without this, edits live only in local state (+ sessionStorage)

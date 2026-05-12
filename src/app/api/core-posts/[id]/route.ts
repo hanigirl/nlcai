@@ -102,13 +102,14 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, hookText, hookId, idea, productId, triggerWord, formatPosts, videoUrl, deleteVideo, coverBase64, coverText, deleteCover } = (await req.json()) as {
+    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, videoUrl, deleteVideo, coverBase64, coverText, deleteCover } = (await req.json()) as {
       body?: string
       hookText?: string
       hookId?: string
       idea?: string
       productId?: string | null
       triggerWord?: string
+      userResponse?: string
       formatPosts?: Record<string, string>
       videoUrl?: string
       deleteVideo?: boolean
@@ -196,6 +197,18 @@ export async function PATCH(
       await supabase
         .from("core_posts")
         .update({ trigger_word: triggerWord } as never)
+        .eq("id", id)
+        .eq("user_id", user.id)
+    }
+
+    // Update the "what do you want to say" textarea. Same semantics as
+    // trigger word — empty string clears, undefined skips. Without this
+    // the autosave on /project couldn't reach the row and a refresh /
+    // navigation back wiped the textarea to its draft-time "" value.
+    if (userResponse !== undefined) {
+      await supabase
+        .from("core_posts")
+        .update({ user_response: userResponse } as never)
         .eq("id", id)
         .eq("user_id", user.id)
     }
