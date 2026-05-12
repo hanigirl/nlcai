@@ -393,12 +393,12 @@ export default function Home() {
           if (profileHealth.creditsExhausted) {
             return (
               <div className="mb-8 rounded-xl border border-red-50 bg-red-95 px-4 py-3 flex items-center justify-between gap-3">
-                <p className="text-small text-text-primary-default">
-                  <strong className="text-small-bold">
+                <div className="text-small text-text-primary-default">
+                  <p className="text-small-bold">
                     לא ניתן לייצר תוכן נוסף כי נגמרו הקרדיטים מאנתרופיק.
-                  </strong>{" "}
-                  יש להטעין קרדיטים מחדש באתר אנתרופיק.
-                </p>
+                  </p>
+                  <p>יש להטעין קרדיטים מחדש באתר אנתרופיק.</p>
+                </div>
                 <a
                   href={ANTHROPIC_BILLING_URL}
                   target="_blank"
@@ -411,22 +411,46 @@ export default function Home() {
             )
           }
 
-          const reasonCopy = (reason: FileIssueReason, fileLabel: string) => {
+          // Two-line copy per reason: bold title (what went wrong) on top,
+          // action description below. Lets the user scan the banner without
+          // parsing a full sentence.
+          const reasonCopy = (reason: FileIssueReason, fileLabel: string): { title: string; description: string } => {
             switch (reason) {
               case "no_file":
-                return `עדיין לא הוזן ${fileLabel}. אפשר להעלות קובץ או להזין ידנית בהגדרות.`
+                return {
+                  title: `עדיין לא הוזן ${fileLabel}`,
+                  description: "אפשר להעלות קובץ או להזין ידנית בהגדרות.",
+                }
               case "file_invalid":
-                return `הקובץ שהועלה עבור ${fileLabel} לא תקין. צריך לנסות קובץ docx/pdf אחר, ולוודא שאינו פגום.`
+                return {
+                  title: `הקובץ שהועלה עבור ${fileLabel} לא תקין`,
+                  description: "צריך לנסות קובץ docx/pdf אחר, ולוודא שאינו פגום.",
+                }
               case "file_too_long":
-                return `הקובץ שהועלה עבור ${fileLabel} ארוך מדי לעיבוד. צריך לקצר אותו ולהעלות שוב.`
+                return {
+                  title: `הקובץ שהועלה עבור ${fileLabel} ארוך מדי לעיבוד`,
+                  description: "צריך לקצר אותו ולהעלות שוב.",
+                }
               case "multiple_audiences":
-                return `הקובץ של ${fileLabel} מכיל יותר מקהל יעד אחד. צריך להעלות קובץ נפרד לכל קהל, או להשאיר קהל אחד בלבד.`
+                return {
+                  title: `הקובץ של ${fileLabel} מכיל יותר מקהל יעד אחד`,
+                  description: "צריך להעלות קובץ נפרד לכל קהל, או להשאיר קהל אחד בלבד.",
+                }
               case "ai_failed":
-                return `הניתוח של ${fileLabel} נכשל. אפשר לנסות להעלות שוב או להזין ידנית בהגדרות.`
+                return {
+                  title: `הניתוח של ${fileLabel} נכשל`,
+                  description: "אפשר לנסות להעלות שוב או להזין ידנית בהגדרות.",
+                }
               case "no_credits":
-                return `הניתוח של ${fileLabel} לא הצליח כי נגמרו הקרדיטים מאנתרופיק. צריך להטעין קרדיטים ולנסות שוב.`
+                return {
+                  title: `הניתוח של ${fileLabel} לא הצליח כי נגמרו הקרדיטים מאנתרופיק`,
+                  description: "צריך להטעין קרדיטים ולנסות שוב.",
+                }
               case "empty_content":
-                return `הקובץ שהועלה עבור ${fileLabel} ריק או קצר מדי. צריך להוסיף תוכן ולהעלות שוב.`
+                return {
+                  title: `הקובץ שהועלה עבור ${fileLabel} ריק או קצר מדי`,
+                  description: "צריך להוסיף תוכן ולהעלות שוב.",
+                }
             }
           }
 
@@ -455,22 +479,26 @@ export default function Home() {
           if (fileIssues.length > 0) {
             return (
               <div className="flex flex-col gap-2 mb-8">
-                {fileIssues.map((issue) => (
-                  <div
-                    key={issue.key}
-                    className="rounded-xl border border-red-50 bg-red-95 px-4 py-3 flex items-center justify-between gap-3"
-                  >
-                    <p className="text-small text-text-primary-default">
-                      {reasonCopy(issue.reason, issue.label)}
-                    </p>
-                    <a
-                      href={fileSettingsHref(issue.reason, issue.key)}
-                      className="text-small-bold text-text-primary-default hover:underline shrink-0"
+                {fileIssues.map((issue) => {
+                  const { title, description } = reasonCopy(issue.reason, issue.label)
+                  return (
+                    <div
+                      key={issue.key}
+                      className="rounded-xl border border-red-50 bg-red-95 px-4 py-3 flex items-center justify-between gap-3"
                     >
-                      להגדרות ←
-                    </a>
-                  </div>
-                ))}
+                      <div className="text-small text-text-primary-default">
+                        <p className="text-small-bold">{title}</p>
+                        <p>{description}</p>
+                      </div>
+                      <a
+                        href={fileSettingsHref(issue.reason, issue.key)}
+                        className="text-small-bold text-text-primary-default hover:underline shrink-0"
+                      >
+                        להגדרות ←
+                      </a>
+                    </div>
+                  )
+                })}
               </div>
             )
           }
@@ -508,10 +536,10 @@ export default function Home() {
                     key={item.key}
                     className="rounded-xl border border-yellow-50 bg-yellow-95 px-4 py-3 flex items-center justify-between gap-3"
                   >
-                    <p className="text-small text-text-primary-default">
-                      <strong className="text-small-bold">הכל מוכן ליצור תוכן! אבל...</strong>{" "}
-                      {item.body}
-                    </p>
+                    <div className="text-small text-text-primary-default">
+                      <p className="text-small-bold">הכל מוכן ליצור תוכן! אבל...</p>
+                      <p>{item.body}</p>
+                    </div>
                     <a
                       href={item.href}
                       className="text-small-bold text-text-primary-default hover:underline shrink-0"
