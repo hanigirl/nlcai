@@ -562,13 +562,20 @@ function ProjectPageInner() {
   // the hooks list or savedHookText changes. Split out from the fetch above
   // so the matching catches up when each piece arrives (saved-flow load and
   // hooks-by-idea fetch race; either can land first).
+  //
+  // Re-runs on hooks/savedHookText changes — NOT on selectedHook changes —
+  // so the DB-derived selection overrides any stale index that canvas
+  // restore wrote from the previous hook ordering (localStorage stored
+  // selectedHook=2 from the old sort, the DB fetch then re-sorts by
+  // created_at desc, position 2 now holds a different hook). Excluding
+  // selectedHook from the deps also means a manual click won't trigger a
+  // re-derive — the user's pick wins.
   useEffect(() => {
-    if (selectedHook !== null) return
     if (!savedHookText) return
     if (hooks.length === 0) return
     const idx = hooks.findIndex((h) => h === savedHookText)
     if (idx >= 0) setSelectedHook(idx)
-  }, [savedHookText, hooks, selectedHook])
+  }, [savedHookText, hooks])
 
   // Create a draft core_post the moment the user picks a hook in the idea
   // flow. The draft has an empty body — it's just a stub so an editable card
