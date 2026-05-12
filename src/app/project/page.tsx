@@ -848,8 +848,16 @@ function ProjectPageInner() {
         )}
         <div className="flex items-start gap-0 pt-24 pr-24" dir="rtl">
 
-          {/* === Flow: from idea === */}
-          {flow === "idea" && (
+          {/* === Flow: from idea ===
+                Trigger on state (hooks generated or fresh idea entry) rather
+                than on `flow === "idea"` alone. Next 16's useSearchParams
+                reacts to the `history.replaceState` that the draft-on-hook-
+                selection effect fires, so `flow` flips to "saved" mid-session
+                and would otherwise unmount the entire idea card stack
+                including the generated hooks. We keep this stack rendered as
+                long as the user hasn't transitioned to a real generated post
+                (corePost still empty). */}
+          {(((flow === "idea") || hooks.length > 0) && !corePost) && (
             <>
               {/* Idea card — editable */}
               <div
@@ -986,8 +994,14 @@ function ProjectPageInner() {
                 presence rather than on `savedPostLoading`, because Next 16's
                 useSearchParams reacts to `history.replaceState` from the
                 auto-save and would otherwise unmount these cards a second or
-                two after generation. === */}
-          {(flow === "hook" || (flow === "saved" && !!(savedHookText || editableHook))) && (
+                two after generation. ===
+                Also mutex against the idea-flow stack above so we don't
+                render both at once when an idea-flow user just picked a
+                hook (URL updates, flow flips to "saved", savedHookText
+                lands from the draft load — both blocks would otherwise
+                fire). */}
+          {!(((flow === "idea") || hooks.length > 0) && !corePost) &&
+            (flow === "hook" || (flow === "saved" && !!(savedHookText || editableHook))) && (
             <>
               {/* Hook card — editable */}
               <div
