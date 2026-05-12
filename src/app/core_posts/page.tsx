@@ -208,7 +208,17 @@ function CorePostCard({
   onClick: () => void
 }) {
   const lines = post.body.split("\n").filter(Boolean)
-  const bodyPreview = lines.join("\n")
+  // The body returned by the AI starts with the hook line, but we also render
+  // the hook as the card title — showing both produced the hook twice. Strip
+  // the hook from the start of the body for the preview only (the DB body
+  // itself is unchanged), so the card reads as "title → continuation" instead
+  // of "title → title-again → continuation".
+  const hookText = (post.hook_text ?? "").trim()
+  const previewLines =
+    hookText && lines.length > 0 && lines[0].trim() === hookText
+      ? lines.slice(1)
+      : lines
+  const bodyPreview = previewLines.join("\n")
 
   return (
     <Card
@@ -216,14 +226,14 @@ function CorePostCard({
       className="group gap-4 rounded-[16px] border-border-neutral-default bg-white dark:bg-gray-10 p-4 py-4 text-right transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 shadow-none"
     >
       <CardContent className="flex flex-col gap-2 p-0">
-        {/* Title */}
+        {/* Title — the hook is the most recognisable hook of the post. */}
         <p className="text-sm font-semibold text-text-primary-default line-clamp-1">
           {post.hook_text ?? post.title ?? lines[0] ?? "פוסט ללא כותרת"}
         </p>
 
-        {/* Body */}
+        {/* Body — preview of the continuation, hook line stripped above. */}
         {bodyPreview && (
-          <p className="text-sm text-text-primary-default line-clamp-3 leading-relaxed [&::first-line]:font-medium">
+          <p className="text-sm text-text-primary-default line-clamp-3 leading-relaxed">
             {bodyPreview}
           </p>
         )}
