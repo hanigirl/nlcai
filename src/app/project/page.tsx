@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
-import { Loader2, Smartphone, Video, Layers, Image, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, type LucideIcon } from "lucide-react"
+import { Loader2, Smartphone, Video, Layers, Image, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { AppShell } from "@/components/app-shell"
 import { InfiniteCanvas } from "@/components/infinite-canvas"
@@ -712,8 +712,16 @@ function ProjectPageInner() {
   }, [savedPostId, corePost, originalCorePost])
 
   // Manual hooks generation (no auto-generation)
-  const handleGenerateHooks = () => {
+  const handleGenerateHooks = (opts?: { replace?: boolean }) => {
     if (!idea) return
+    const isReplace = opts?.replace === true
+    if (isReplace) {
+      // Wipe the local selection + the per-idea fetch ref so the DB-by-idea
+      // effect treats the post-regen state as fresh. The actual hooks in
+      // state get replaced by the API response below.
+      setSelectedHook(null)
+      fetchedHooksForIdeaRef.current = null
+    }
     setHooksLoading(true)
     fetch("/api/hooks", {
       method: "POST",
@@ -721,6 +729,10 @@ function ProjectPageInner() {
       body: JSON.stringify({
         idea,
         count: 10,
+        // Server-side: deletes is_used=false hooks for this user+idea before
+        // inserting the new batch, so /project shows a clean replacement
+        // instead of the old + new union.
+        replaceExisting: isReplace,
         fieldIdeas: (() => {
           try {
             if (!userId) return []
@@ -962,6 +974,23 @@ function ProjectPageInner() {
               >
                 <div className={`flex items-center px-6 py-3 rounded-t-[20px] ${activeCard === "hooks" ? "bg-bg-surface-primary-default-80" : "bg-bg-surface"}`}>
                   <span className="text-p-bold text-text-primary-default">בחירת הוק</span>
+                  {/* Regenerate action — only when there are already hooks to
+                      replace. Visual position: left of the title in RTL
+                      (ms-auto), matching the "נשמר ✓" tag pattern on the core
+                      post card. Clears the selection + the per-idea fetch ref
+                      and re-runs /api/hooks with replaceExisting=true so the
+                      old unused batch is removed before the new one lands. */}
+                  {hooks.length > 0 && !hooksLoading && (
+                    <button
+                      type="button"
+                      onClick={() => handleGenerateHooks({ replace: true })}
+                      disabled={!idea}
+                      className="ms-auto flex items-center gap-1 text-xs text-text-neutral-default hover:text-text-primary-default transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      <RotateCw className="size-3" />
+                      <span>תייצר מחדש</span>
+                    </button>
+                  )}
                 </div>
 
                 {hooksLoading && (
@@ -996,7 +1025,7 @@ function ProjectPageInner() {
 
                 {hooks.length === 0 && !hooksLoading && !error && (
                   <div className="flex justify-center px-6 py-4">
-                    <Button onClick={handleGenerateHooks} size="sm" className="gap-1.5">
+                    <Button onClick={() => handleGenerateHooks()} size="sm" className="gap-1.5">
                       <Sparkles className="size-3.5" />
                       תייצר לי הוקים
                     </Button>

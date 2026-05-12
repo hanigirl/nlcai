@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { idea, userResponse, productName, count = 3, fieldIdeas: rawFieldIdeas = [] } = await req.json()
+    const { idea, userResponse, productName, count = 3, fieldIdeas: rawFieldIdeas = [], replaceExisting = false } = await req.json()
     // Accept both legacy string[] and new structured shape {text, source, category, url}
     type FieldIdea = { text: string; source?: string; category?: string; url?: string }
     const fieldIdeas: FieldIdea[] = (rawFieldIdeas as unknown[])
@@ -37,6 +37,24 @@ export async function POST(req: NextRequest) {
         { error: "idea is required" },
         { status: 400 }
       )
+    }
+
+    // When the user clicks "תייצר מחדש" on /project, wipe the unused hooks
+    // they've already generated for this idea so the next batch shows up as
+    // a clean replacement. We deliberately scope to is_used=false: hooks
+    // tied to a core_post have ON DELETE CASCADE wired up, so removing them
+    // would also remove the draft/post the user has been working on.
+    if (replaceExisting && typeof idea === "string" && idea.trim()) {
+      const { error: delErr } = await supabase
+        .from("hooks")
+        .delete()
+        .eq("user_id", user.id)
+        .eq("idea_text", idea.trim())
+        .eq("is_used", false)
+      if (delErr) {
+        console.error("[api/hooks] replaceExisting delete failed", delErr)
+        // Non-fatal — proceed with insert. Old unused hooks just stick around.
+      }
     }
 
     // Fetch core identity, audience identity, favorites & trending context
