@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Home, FileText, Image, Settings, Anchor, Lightbulb, CalendarDays } from "lucide-react"
@@ -13,6 +14,8 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
+import { createClient } from "@/lib/supabase/client"
+import { isOwner } from "@/lib/owner"
 
 const navItems = [
   {
@@ -56,6 +59,19 @@ const navItems = [
 
 export function AppSidebar() {
   const pathname = usePathname()
+  // Hide the "תזמון" tab from everyone except the owner. We default to
+  // false (hidden) and flip to true ONLY once the user lookup confirms
+  // it's the owner — so a slow auth fetch never leaks the tab to other
+  // users by accident.
+  const [ownerView, setOwnerView] = useState(false)
+  useEffect(() => {
+    const supabase = createClient()
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (isOwner(user?.email)) setOwnerView(true)
+    })
+  }, [])
+
+  const visibleItems = ownerView ? navItems : navItems.filter((i) => i.href !== "/calendar")
 
   return (
     <Sidebar side="right" collapsible="icon" className="border-l border-border-neutral-default bg-white dark:bg-gray-10">
@@ -69,7 +85,7 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {navItems.map((item) => (
+              {visibleItems.map((item) => (
                 <SidebarMenuItem key={item.href}>
                   <SidebarMenuButton
                     asChild

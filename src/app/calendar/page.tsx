@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
 import {
   ChevronRight,
   ChevronLeft,
@@ -10,6 +11,8 @@ import {
   XCircle,
 } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
+import { createClient } from "@/lib/supabase/client"
+import { isOwner } from "@/lib/owner"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -352,6 +355,24 @@ function ScheduledChip({
 // --- page ----------------------------------------------------------------
 
 export default function CalendarPage() {
+  // Owner gate. The /calendar surface is intentionally limited to the
+  // owner only — every other user gets bounced home. `granted` starts
+  // null so we render an empty shell while the auth check resolves,
+  // and never flash the calendar grid to a non-owner before the redirect.
+  const router = useRouter()
+  const [granted, setGranted] = useState<boolean | null>(null)
+  useEffect(() => {
+    const supabase = createClient()
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (isOwner(user?.email)) {
+        setGranted(true)
+      } else {
+        setGranted(false)
+        router.replace("/")
+      }
+    })
+  }, [router])
+
   // We hold "today" and "now" in state so they stay stable across re-renders
   // within a session. (Re-computing on every render would make `isToday`
   // flicker if a render straddled midnight — rare, but cheap to avoid.)
@@ -747,6 +768,15 @@ export default function CalendarPage() {
       moveDialog.time,
     )
     setMoveDialog(null)
+  }
+
+  // Owner gate render-time guard. Until the auth check resolves to "yes,
+  // owner", render nothing inside the shell — that way a non-owner who
+  // direct-navigates to /calendar never sees the grid before the redirect
+  // fires, and the owner sees a blank flash for one paint instead of stale
+  // calendar state.
+  if (granted !== true) {
+    return <AppShell><div /></AppShell>
   }
 
   return (

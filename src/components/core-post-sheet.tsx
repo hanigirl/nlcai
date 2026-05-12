@@ -70,6 +70,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { createClient } from "@/lib/supabase/client"
+import { isOwner } from "@/lib/owner"
 import {
   TIMING_KEYS,
   getCorePostMeta,
@@ -419,6 +420,18 @@ export function CorePostSheet({
 
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+
+  // Owner gate. /calendar is owner-only, so the "תזמון בלוח" footer
+  // CTA in the Sheet's format-detail view shouldn't show for everyone
+  // else — it would just bounce them home. Defaults to false so a slow
+  // auth fetch never flashes the CTA to non-owners.
+  const [ownerView, setOwnerView] = useState(false)
+  useEffect(() => {
+    const supabase = createClient()
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (isOwner(user?.email)) setOwnerView(true)
+    })
+  }, [])
 
   // Active tab — controlled so we can react to `initialFormat` after the
   // Sheet hydrates AND let the user freely switch tabs after that.
@@ -1068,9 +1081,10 @@ export function CorePostSheet({
             </div>
           </div>
 
-          {/* Screen 2 footer — schedule CTA. Only visible in format detail.
+          {/* Screen 2 footer — schedule CTA. Only visible in format detail
+              AND only to the owner (the /calendar surface is owner-gated).
               Disabled unless the format is `ready` (script + media-or-drive). */}
-          {post && selectedFormat !== null && (
+          {post && selectedFormat !== null && ownerView && (
             <footer className="sticky bottom-0 bg-white dark:bg-gray-10 border-t border-border-neutral-default px-6 py-4 flex items-center justify-between gap-3">
               <span className="text-xs-body text-text-neutral-default">
                 אפשר לתזמן פורמט רק במידה ויש לו מדיה או קישור לדרייב וסקריפט
