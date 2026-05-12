@@ -25,10 +25,14 @@ const DEFAULT_BRAND_STYLE: BrandStyle = {
   font_size_px: 72,
   font_weight: "extra-bold",
   text_color: "#FFFFFF",
-  text_position: "bottom-center",
+  text_position: "center",
   text_size: "large",
   text_direction: "rtl",
-  text_shadow: false,
+  // Subtle drop shadow so the hook reads cleanly regardless of what's
+  // behind it in the thumbnail. 60% black at 2/2/8 keeps the type crisp
+  // without looking heavy-handed.
+  text_shadow: true,
+  text_shadow_color: "rgba(0,0,0,0.6)",
   line_height: 1.0,
   letter_spacing: 0,
   text_align: "center",
