@@ -237,11 +237,9 @@ function TalkingHeadFlow({
 
   // --- cover generation state ---
   const [coverLoading, setCoverLoading] = useState(false)
-  // Pill colour for the cover's text background. Defaults to black to
-  // match the existing baseline; the user can override it from the
-  // color input next to the cover preview, which triggers a regenerate
-  // with the new colour.
-  const [pillColor, setPillColor] = useState("#000000")
+  // Pill colour for the cover's text background. Always black inside the
+  // media panel — colour customisation lives on the main project canvas.
+  const pillColor = "#000000"
 
   // Load mic devices
   useEffect(() => {
@@ -422,7 +420,6 @@ function TalkingHeadFlow({
   }
 
   const generateCover = async (thumbnailUrl: string, customTitle?: string, color?: string) => {
-    lastThumbRef.current = thumbnailUrl
     setCoverLoading(true); onCoverLoadingChange?.(true)
     try {
       const res = await fetch("/api/reel-cover/generate", {
@@ -444,11 +441,6 @@ function TalkingHeadFlow({
       setCoverLoading(false); onCoverLoadingChange?.(false)
     }
   }
-
-  // Stash the last thumbnail used so changing the pill colour can
-  // re-fire the generate against the same image instead of asking the
-  // user to upload again. Updated whenever generateCover runs.
-  const lastThumbRef = useRef<string>("")
 
   const handleDownloadCover = () => {
     if (!coverImage) return
@@ -620,7 +612,6 @@ function TalkingHeadFlow({
 
     // Generate cover with video frame as thumbnail
     const coverTitle = hookText || transcript || "ריל חדש"
-    lastThumbRef.current = frameDataUrl ?? ""
     setCoverLoading(true); onCoverLoadingChange?.(true)
     try {
       const res = await fetch("/api/reel-cover/generate", {
@@ -778,26 +769,6 @@ function TalkingHeadFlow({
                   className="w-full h-full object-cover"
                 />
               </div>
-              {/* Pill colour picker — native <input type="color"> opens the
-                  OS colour wheel. The browser only fires onChange when the
-                  user closes/commits the picker, so we don't burn API calls
-                  on every drag. Regenerates the cover against the saved
-                  thumbnail with the new colour. */}
-              <label className="flex items-center gap-2 text-xs text-text-neutral-default cursor-pointer">
-                צבע הרקע של הכותרת
-                <input
-                  type="color"
-                  value={pillColor}
-                  onChange={(e) => {
-                    const next = e.target.value
-                    setPillColor(next)
-                    if (lastThumbRef.current) {
-                      generateCover(lastThumbRef.current, undefined, next)
-                    }
-                  }}
-                  className="w-8 h-8 rounded cursor-pointer border border-border-neutral-default"
-                />
-              </label>
             </div>
           )}
         </div>
@@ -887,21 +858,6 @@ function TalkingHeadFlow({
                   className="w-full h-full object-cover"
                 />
               </div>
-              <label className="flex items-center gap-2 text-xs text-text-neutral-default cursor-pointer">
-                צבע הרקע של הכותרת
-                <input
-                  type="color"
-                  value={pillColor}
-                  onChange={(e) => {
-                    const next = e.target.value
-                    setPillColor(next)
-                    if (lastThumbRef.current) {
-                      generateCover(lastThumbRef.current, undefined, next)
-                    }
-                  }}
-                  className="w-8 h-8 rounded cursor-pointer border border-border-neutral-default"
-                />
-              </label>
             </div>
           )}
         </div>

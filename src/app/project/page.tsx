@@ -18,6 +18,7 @@ import { MediaPanel } from "@/components/media-panel"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { CorePostCelebration } from "@/components/core-post-celebration"
 import { ScheduleInCalendarBar } from "@/components/schedule-in-calendar-bar"
+import { ColorSwatchPicker } from "@/components/color-swatch-picker"
 import type { Avatar } from "@/components/avatar-picker"
 import type { SlideData } from "@/lib/carousel-templates"
 import { createClient } from "@/lib/supabase/client"
@@ -1641,6 +1642,7 @@ function ProjectPageInner() {
                             setPillColor(next)
                             generateCoverForPost(coverText, thVideoUrl || undefined, next)
                           }}
+                          userId={userId}
                           carouselImages={carouselImages}
                           carouselCardRef={carouselCardRef}
                           onCarouselRegenerate={() => {
@@ -1770,6 +1772,7 @@ function FormatTree({
   onCoverRegenerate,
   pillColor,
   onPillColorChange,
+  userId,
   carouselImages,
   carouselCardRef,
   onCarouselRegenerate,
@@ -1794,6 +1797,7 @@ function FormatTree({
   onCoverRegenerate: () => void
   pillColor: string
   onPillColorChange: (color: string) => void
+  userId: string | null
   carouselImages: string[] | null
   carouselCardRef: React.RefObject<HTMLDivElement | null>
   onCarouselRegenerate: () => void
@@ -2061,22 +2065,16 @@ function FormatTree({
                           />
                         </div>
                       </div>
-                      {/* Pill colour picker. The browser's native color
-                          input opens the OS colour wheel and only fires
-                          onChange on commit, so we don't burn a generate
-                          per drag. The parent regenerates the cover with
-                          the new colour as soon as the picker resolves. */}
-                      <label className="flex items-center justify-center gap-2 text-xs text-text-neutral-default cursor-pointer">
-                        צבע הרקע של הכותרת
-                        <input
-                          type="color"
+                      {/* Footer row: swatch picker on the right (RTL first
+                          child), download button on the left. Matches the
+                          shared layout pattern from the Figma. */}
+                      <div className="flex items-center justify-between gap-3" dir="rtl">
+                        <ColorSwatchPicker
                           value={pillColor}
-                          onChange={(e) => onPillColorChange(e.target.value)}
-                          className="w-8 h-8 rounded cursor-pointer border border-border-neutral-default"
-                          aria-label="צבע הרקע של הכותרת"
+                          onChange={onPillColorChange}
+                          userId={userId}
+                          label="רקע הכותרת"
                         />
-                      </label>
-                      <div className="flex items-center justify-center">
                         <TooltipLabel label="הורד קאבר">
                           <Button
                             asChild
