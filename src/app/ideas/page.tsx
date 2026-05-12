@@ -73,6 +73,11 @@ function stripSourcePrefix(text: string, source: string): string {
 export default function IdeasPage() {
   const router = useRouter()
   const [ideas, setIdeas] = useState<IdeaNote[]>([])
+  // Creators that the Apify pipeline couldn't pull any posts for in the last
+  // generation — surfaced as an inline banner so the user knows which handle
+  // to double-check instead of wondering why their creator-set ideas are
+  // skewed.
+  const [missingCreators, setMissingCreators] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [skeletonCount, setSkeletonCount] = useState(0)
@@ -314,6 +319,7 @@ export default function IdeasPage() {
     setGenerating(true)
     setSkeletonCount(9)
     setError("")
+    setMissingCreators([])
     let newCount = 0
 
     // Reset session keys — new generation starts a fresh "חדש" group
@@ -376,6 +382,14 @@ export default function IdeasPage() {
           if (!data || data === "[DONE]") continue
           try {
             const idea = JSON.parse(data)
+            // Server-side notice when one of the user's configured creators
+            // returned zero posts from Apify (or LinkedIn via Serper). Lands
+            // before any idea events so the banner is up while the cards
+            // stream in.
+            if (Array.isArray(idea.missing_creators)) {
+              setMissingCreators(idea.missing_creators)
+              continue
+            }
             if (idea.error) {
               const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "no_ideas_generated", "all_ideas_duplicate"]
               setError(known.includes(idea.error) ? idea.error : (idea.error || "generic"))
@@ -636,6 +650,26 @@ export default function IdeasPage() {
             </button>
           </div>
         </div>
+
+        {/* Per-creator failure banner — when Apify (or LinkedIn via Serper)
+            returns 0 posts for a configured creator, the generation continues
+            but the resulting ideas skew to whoever did return content. Surface
+            the failed handles so the user knows which one to verify. */}
+        {missingCreators.length > 0 && (
+          <div className="w-full rounded-xl border border-yellow-50 bg-yellow-95 p-4 text-center mb-6">
+            <p className="text-small text-text-primary-default mb-1">
+              {missingCreators.length === 1
+                ? `לא מצאנו תוכן מ-@${missingCreators[0]}. ייתכן שה-handle לא נכון או שאין לו פוסטים זמינים`
+                : `לא מצאנו תוכן מהיוצרים: ${missingCreators.map((h) => `@${h}`).join(", ")}. ייתכן שה-handles לא נכונים או שאין להם פוסטים זמינים`}
+            </p>
+            <a
+              href="/settings?tab=business"
+              className="text-small-bold text-text-primary-default hover:underline"
+            >
+              לעדכון רשימת היוצרים →
+            </a>
+          </div>
+        )}
 
         {error && (() => {
           const infoCodes = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "niche_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_fresh_content", "no_ideas_generated", "all_ideas_duplicate", "trend_search_failed", "search_not_configured", "search_quota_exceeded", "apify_quota_exceeded"]

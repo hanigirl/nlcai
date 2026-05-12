@@ -350,6 +350,8 @@ export async function POST(req: NextRequest) {
     // LinkedIn stays on Serper (worse Apify coverage, rare in user_top_creators).
     // ══════════════════════════════════════════════
     const contentItems: ContentItem[] = []
+    // Hoisted so the SSE stream below can surface failures to the UI.
+    const missingCreators: string[] = []
 
     if (hasCreators) {
       const topCreators = verifiedCreators.slice(0, 10)
@@ -437,12 +439,16 @@ export async function POST(req: NextRequest) {
 
       // For each creator: max engagement per platform → winning platform → posts sorted desc.
       // We build ONE list per creator (full depth, engagement-sorted) so we can round-robin later.
+      // missingCreators is hoisted above — silently skipping creators that
+      // returned 0 posts is the most common source of "feature doesn't work"
+      // reports, so we surface them via SSE to the UI.
       const creatorLists: ContentItem[][] = []
       for (const c of multiPlatformCreators) {
         const handleKey = c.handle.replace(/^@/, "").toLowerCase()
         const platMap = byCreator.get(handleKey)
         if (!platMap || platMap.size === 0) {
           console.log(`Ideas API Step 5: no Apify posts for @${c.handle} on any platform — skipping`)
+          missingCreators.push(c.handle)
           continue
         }
         let winner: CreatorPlatform | null = null
@@ -469,19 +475,27 @@ export async function POST(req: NextRequest) {
 
       // LinkedIn still goes through Serper — narrow coverage on Apify side.
       // Collect as a separate creator list so LinkedIn creators also participate in round-robin.
-      const linkedinLists = await Promise.all(
+      const linkedinResults = await Promise.all(
         linkedinCreators.map(async (c) => {
           const results = await searchWeb(`site:linkedin.com/posts ${c.handle}`, 3)
-          return results.slice(0, 2).map((r) => ({
+          const items = results.slice(0, 2).map((r) => ({
             creator: c.handle,
             platform: "linkedin" as const,
             url: r.link,
             caption: r.snippet,
             hashtags: [] as string[],
           }))
+          return { handle: c.handle, items }
         })
       )
-      for (const list of linkedinLists) if (list.length > 0) creatorLists.push(list)
+      for (const { handle, items } of linkedinResults) {
+        if (items.length > 0) {
+          creatorLists.push(items)
+        } else {
+          console.log(`Ideas API Step 5: no LinkedIn results for @${handle}`)
+          missingCreators.push(handle)
+        }
+      }
 
       // Diversity cap: without this a single prolific creator (10+ viral posts)
       // pushes the others off the prompt window. With N creators contributing
@@ -848,6 +862,12 @@ JSONL:
         }
 
         try {
+          // Surface any creators that returned 0 posts before the ideas
+          // start streaming, so the UI can show a banner alongside them
+          // rather than letting the failure go silent.
+          if (missingCreators.length > 0) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ missing_creators: missingCreators })}\n\n`))
+          }
           await runStream(PRIMARY_MODEL)
           console.log(`Ideas API: Stream complete. Total sent: ${sentTexts.size}. Full response length: ${fullText.length}`)
           emitNoNewIdeasIfEmpty()
