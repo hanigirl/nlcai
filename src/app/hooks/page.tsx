@@ -220,43 +220,17 @@ export default function HooksPage() {
       ? "כללי"
       : products.find((p) => p.id === filter)?.name ?? "מוצרים"
 
-  const formatDate = (iso: string) => {
-    const d = new Date(iso)
-    return d.toLocaleDateString("he-IL", { day: "2-digit", month: "2-digit", year: "2-digit" }).replace(/\//g, ".")
-  }
-
-  const todayDateLabel = formatDate(new Date().toISOString())
-
-  // Group by date — hooks within each group sorted newest first,
-  // groups themselves keyed by an ISO day so we can sort chronologically.
-  const groupedByDate = (() => {
-    const sorted = [...filtered].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    )
-    const groups = new Map<string, HookItem[]>()
-    // Ensure today's section appears (with skeletons) even if no hooks exist yet
-    if (skeletonCount > 0) {
-      const t = new Date()
-      const todayKey = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`
-      groups.set(todayKey, [])
-    }
-    for (const hook of sorted) {
-      const d = new Date(hook.created_at)
-      const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
-      const existing = groups.get(dayKey)
-      if (existing) existing.push(hook)
-      else groups.set(dayKey, [hook])
-    }
-    // Map iteration preserves insertion order; since `sorted` is desc by time,
-    // groups are already inserted newest day first.
-    const result: Record<string, HookItem[]> = {}
-    for (const [dayKey, items] of groups) {
-      const label = items.length > 0 ? formatDate(items[0].created_at) : todayDateLabel
-      result[label] = items
-      void dayKey
-    }
-    return result
-  })()
+  // Flat newest-first list (no date sections). Session hooks (this run's
+  // generation) reserve the top slots so the streaming skeletons → cards
+  // animation keeps its in-place feel; everything else stacks below.
+  const sortedFiltered = [...filtered].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  )
+  const sessionIdSet = new Set(sessionHookIds)
+  const sessionItems = sessionHookIds
+    .map((id) => sortedFiltered.find((h) => h.id === id))
+    .filter(Boolean) as HookItem[]
+  const restItems = sortedFiltered.filter((h) => !sessionIdSet.has(h.id))
 
   return (
     <AppShell>
@@ -402,61 +376,48 @@ export default function HooksPage() {
           </div>
         )}
 
-        {/* Grouped by date */}
-        {!loading && Object.keys(groupedByDate).length > 0 && (
-          <div className="flex flex-col gap-8">
-            {Object.entries(groupedByDate).map(([date, items]) => {
-              const isToday = date === todayDateLabel
-              const sessionItems = isToday
-                ? sessionHookIds.map((id) => items.find((h) => h.id === id)).filter(Boolean) as HookItem[]
-                : []
-              const sessionIdSet = new Set(sessionHookIds)
-              const restItems = isToday ? items.filter((h) => !sessionIdSet.has(h.id)) : items
-              const renderHookCard = (hook: HookItem, opts?: { staggerIndex?: number }) => (
-                <div
-                  key={hook.id}
-                  style={opts?.staggerIndex !== undefined ? { animationDelay: `${Math.min(opts.staggerIndex * 25, 500)}ms` } : undefined}
-                  className={`transition-all duration-400 ease-out animate-hook-bump ${deletingId === hook.id ? "opacity-0 translate-y-6 scale-95" : ""}`}
-                >
-                  <HookCard
-                    hookText={hook.hook_text}
-                    onNavigate={() => router.push(`/project?hook=${encodeURIComponent(hook.hook_text)}&hook_id=${hook.id}`)}
-                    onEdit={!hook.is_used ? (newText) => handleEdit(hook.id, newText) : undefined}
-                    onDelete={() => setPendingDeleteId(hook.id)}
-                    onToggleFavorite={() => toggleFavorite(hook.id)}
-                    isFavorite={hook.is_favorite}
-                    used={hook.is_used}
-                  />
-                </div>
-              )
-              return (
-                <section key={date}>
-                  <div className="flex flex-col gap-2 mb-4">
-                    <p className="text-small text-text-neutral-default">{date}</p>
-                    {isToday && generating && <GeneratingStatus />}
-                  </div>
-                  <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" : "flex flex-col gap-2"}>
-                    {/* Per-slot rendering: each slot is either a hook (once arrived) or a skeleton.
-                        The slot index is stable, so the skeleton at slot N becomes the hook at slot N
-                        without other slots shifting positions. */}
-                    {(isToday && (sessionItems.length > 0 || skeletonCount > 0)) && (
-                      Array.from({ length: sessionItems.length + skeletonCount }).map((_, i) => {
-                        const hook = sessionItems[i]
-                        if (hook) return renderHookCard(hook)
-                        return <HookSkeleton key={`gen-skel-${i}`} />
-                      })
-                    )}
-                    {/* Other today hooks (or all hooks for non-today dates) */}
-                    {restItems.map((hook, idx) => renderHookCard(hook, { staggerIndex: idx }))}
-                  </div>
-                </section>
-              )
-            })}
-          </div>
-        )}
+        {/* Flat hook list — per-card date label (היום · DD.MM.YY or DD.MM.YY).
+            Session slots are reserved at the top: each slot is either a hook
+            (once it arrives) or a skeleton, so slot N becomes hook N without
+            shifting siblings. */}
+        {!loading && (sortedFiltered.length > 0 || skeletonCount > 0) && (() => {
+          const renderHookCard = (hook: HookItem, opts?: { staggerIndex?: number }) => (
+            <div
+              key={hook.id}
+              style={opts?.staggerIndex !== undefined ? { animationDelay: `${Math.min(opts.staggerIndex * 25, 500)}ms` } : undefined}
+              className={`transition-all duration-400 ease-out animate-hook-bump ${deletingId === hook.id ? "opacity-0 translate-y-6 scale-95" : ""}`}
+            >
+              <HookCard
+                hookText={hook.hook_text}
+                createdAt={hook.created_at}
+                onNavigate={() => router.push(`/project?hook=${encodeURIComponent(hook.hook_text)}&hook_id=${hook.id}`)}
+                onEdit={!hook.is_used ? (newText) => handleEdit(hook.id, newText) : undefined}
+                onDelete={() => setPendingDeleteId(hook.id)}
+                onToggleFavorite={() => toggleFavorite(hook.id)}
+                isFavorite={hook.is_favorite}
+                used={hook.is_used}
+              />
+            </div>
+          )
+          return (
+            <div className="flex flex-col gap-4">
+              {generating && <GeneratingStatus />}
+              <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" : "flex flex-col gap-2"}>
+                {(sessionItems.length > 0 || skeletonCount > 0) && (
+                  Array.from({ length: sessionItems.length + skeletonCount }).map((_, i) => {
+                    const hook = sessionItems[i]
+                    if (hook) return renderHookCard(hook)
+                    return <HookSkeleton key={`gen-skel-${i}`} />
+                  })
+                )}
+                {restItems.map((hook, idx) => renderHookCard(hook, { staggerIndex: idx }))}
+              </div>
+            </div>
+          )
+        })()}
 
         {/* No results for filter */}
-        {!loading && hooks.length > 0 && Object.keys(groupedByDate).length === 0 && !generating && (
+        {!loading && hooks.length > 0 && sortedFiltered.length === 0 && !generating && (
           <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
             <p className="text-p text-text-neutral-default">אין הוקים בפילטר הזה</p>
           </div>

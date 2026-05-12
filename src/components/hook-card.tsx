@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react"
 import { ArrowLeft, Copy, Check, Trash2, Star, CheckCircle2 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { toast } from "sonner"
+import { formatPostDate } from "@/lib/format-date"
 
 interface HookCardProps {
   hookText: string
@@ -14,9 +15,10 @@ interface HookCardProps {
   onToggleFavorite?: () => void
   isFavorite?: boolean
   used?: boolean
+  createdAt?: string
 }
 
-export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onToggleFavorite, isFavorite, used }: HookCardProps) {
+export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onToggleFavorite, isFavorite, used, createdAt }: HookCardProps) {
   const [copied, setCopied] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(hookText)
@@ -68,6 +70,14 @@ export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onTog
       }`}
     >
       <CardContent className="flex flex-col gap-2 p-0">
+        {/* Date — "היום · DD.MM.YY" for today, else "DD.MM.YY".
+            Matches the CorePostCard label style for cross-screen consistency. */}
+        {createdAt && (
+          <span className="text-xs text-yellow-30 self-start">
+            {formatPostDate(createdAt)}
+          </span>
+        )}
+
         {/* Hook text */}
         {editing ? (
           <textarea

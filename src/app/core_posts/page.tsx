@@ -6,6 +6,7 @@ import { FileText, Loader2, ArrowLeft, LayoutGrid, List, Search } from "lucide-r
 import { AppShell } from "@/components/app-shell"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { formatPostDate } from "@/lib/format-date"
 
 const FORMAT_LABELS: Record<string, string> = {
   story: "סטורי",
@@ -21,21 +22,6 @@ interface SavedPost {
   hook_text: string | null
   formats: string[]
   created_at: string
-}
-
-function groupByRecency(posts: SavedPost[]): { recent: SavedPost[]; older: SavedPost[] } {
-  const now = Date.now()
-  const sevenDays = 7 * 24 * 60 * 60 * 1000
-  const recent: SavedPost[] = []
-  const older: SavedPost[] = []
-  for (const p of posts) {
-    if (now - new Date(p.created_at).getTime() < sevenDays) {
-      recent.push(p)
-    } else {
-      older.push(p)
-    }
-  }
-  return { recent, older }
 }
 
 export default function CorePostsPage() {
@@ -57,15 +43,16 @@ export default function CorePostsPage() {
   }, [])
 
   const q = searchQuery.trim().toLowerCase()
-  const filtered = posts.filter((p) => {
-    if (formatFilter && !p.formats.includes(formatFilter)) return false
-    if (q) {
-      const haystack = `${p.title || ""} ${p.body} ${p.hook_text || ""}`.toLowerCase()
-      if (!haystack.includes(q)) return false
-    }
-    return true
-  })
-  const { recent, older } = groupByRecency(filtered)
+  const filtered = posts
+    .filter((p) => {
+      if (formatFilter && !p.formats.includes(formatFilter)) return false
+      if (q) {
+        const haystack = `${p.title || ""} ${p.body} ${p.hook_text || ""}`.toLowerCase()
+        if (!haystack.includes(q)) return false
+      }
+      return true
+    })
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 
   return (
     <AppShell>
@@ -166,36 +153,18 @@ export default function CorePostsPage() {
           </div>
         )}
 
-        {/* Recent section */}
-        {!loading && recent.length > 0 && (
-          <section className="mb-10">
-            <p className="text-small text-text-neutral-default mb-4">נשמרו לאחרונה</p>
-            <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" : "flex flex-col gap-2"}>
-              {recent.map((post) => (
-                <CorePostCard
-                  key={post.id}
-                  post={post}
-                  onClick={() => router.push(`/project?post_id=${post.id}`)}
-                />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Older section */}
-        {!loading && older.length > 0 && (
-          <section>
-            <p className="text-small text-text-neutral-default mb-4">מוקדם יותר</p>
-            <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" : "flex flex-col gap-2"}>
-              {older.map((post) => (
-                <CorePostCard
-                  key={post.id}
-                  post={post}
-                  onClick={() => router.push(`/project?post_id=${post.id}`)}
-                />
-              ))}
-            </div>
-          </section>
+        {/* Posts grid — flat, sorted newest first. Per-card date label carries
+            the "היום · ..." prefix when applicable; no section headers. */}
+        {!loading && filtered.length > 0 && (
+          <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" : "flex flex-col gap-2"}>
+            {filtered.map((post) => (
+              <CorePostCard
+                key={post.id}
+                post={post}
+                onClick={() => router.push(`/project?post_id=${post.id}`)}
+              />
+            ))}
+          </div>
         )}
       </div>
     </AppShell>
@@ -215,11 +184,7 @@ function CorePostCard({
 }) {
   const lines = post.body.split("\n").filter(Boolean)
   const bodyPreview = lines.join("\n")
-  const dateStr = new Date(post.created_at).toLocaleDateString("he-IL", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "2-digit",
-  })
+  const dateStr = formatPostDate(post.created_at)
 
   return (
     <Card
