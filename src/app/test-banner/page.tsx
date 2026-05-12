@@ -95,27 +95,46 @@ function HealthBanner({ health }: { health: ProfileHealth }) {
     )
   }
 
-  const missingItems: string[] = []
-  if (!health.hasProducts) missingItems.push("מוצרים")
-  if (!health.hasCreators) missingItems.push("יוצרים מובילים")
+  // Improvement nudges — one banner per missing inventory so each has
+  // its own tailored copy + deep link. The shared "הכל מוכן ליצור תוכן!
+  // אבל..." prefix is repeated intentionally; treating them as separate
+  // cards keeps the action wording specific to what's missing.
+  const improvements: Array<{ key: string; body: string; href: string }> = []
+  if (!health.hasCreators) {
+    improvements.push({
+      key: "creators",
+      body: "כדי להפיק את המירב מהמערכת יש לעדכן גם יוצרים ולקבל רעיונות מהשטח שיפתחו את החשיבה.",
+      href: "/settings?tab=creators",
+    })
+  }
+  if (!health.hasProducts) {
+    improvements.push({
+      key: "products",
+      body: "כדי לדייק עבורך את התוכן יש להכניס את כל המוצרים המוצעים בעסק.",
+      href: "/settings?tab=products",
+    })
+  }
 
-  if (missingItems.length > 0) {
-    // Land the user on whichever inventory is empty. When both are
-    // empty, default to products (first in the message order).
-    const inventoryHref = !health.hasProducts
-      ? "/settings?tab=products"
-      : "/settings?tab=creators"
+  if (improvements.length > 0) {
     return (
-      <div className="rounded-xl border border-yellow-50 bg-yellow-95 px-4 py-3 flex items-center justify-between gap-3">
-        <p className="text-small text-text-primary-default">
-          כדי להפיק את המירב מהמערכת כדאי להגדיר {missingItems.join(" ו")}
-        </p>
-        <a
-          href={inventoryHref}
-          className="text-small-bold text-text-primary-default hover:underline shrink-0"
-        >
-          להגדרות ←
-        </a>
+      <div className="flex flex-col gap-2">
+        {improvements.map((item) => (
+          <div
+            key={item.key}
+            className="rounded-xl border border-yellow-50 bg-yellow-95 px-4 py-3 flex items-center justify-between gap-3"
+          >
+            <p className="text-small text-text-primary-default">
+              <strong className="text-small-bold">הכל מוכן ליצור תוכן! אבל...</strong>{" "}
+              {item.body}
+            </p>
+            <a
+              href={item.href}
+              className="text-small-bold text-text-primary-default hover:underline shrink-0"
+            >
+              להגדרות ←
+            </a>
+          </div>
+        ))}
       </div>
     )
   }

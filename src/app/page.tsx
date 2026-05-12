@@ -448,25 +448,47 @@ export default function Home() {
           // products/creators. The two files are the floor for generation
           // quality; pushing the user to add creators while their style
           // file is broken would scatter their attention.
-          const missingItems: string[] = []
-          if (!profileHealth.hasProducts) missingItems.push("מוצרים")
-          if (!profileHealth.hasCreators) missingItems.push("יוצרים מובילים")
+          // Each missing inventory gets its own banner so the action wording
+          // can stay specific ("יוצרים מהשטח שיפתחו את החשיבה" vs "מוצרים
+          // לדייק את התוכן"). The "הכל מוכן ליצור תוכן! אבל..." prefix
+          // repeats intentionally — treating the two as separate cards
+          // keeps the link target tied to its message.
+          const improvements: Array<{ key: string; body: string; href: string }> = []
+          if (!profileHealth.hasCreators) {
+            improvements.push({
+              key: "creators",
+              body: "כדי להפיק את המירב מהמערכת יש לעדכן גם יוצרים ולקבל רעיונות מהשטח שיפתחו את החשיבה.",
+              href: "/settings?tab=creators",
+            })
+          }
+          if (!profileHealth.hasProducts) {
+            improvements.push({
+              key: "products",
+              body: "כדי לדייק עבורך את התוכן יש להכניס את כל המוצרים המוצעים בעסק.",
+              href: "/settings?tab=products",
+            })
+          }
 
-          if (missingItems.length > 0) {
-            const inventoryHref = !profileHealth.hasProducts
-              ? "/settings?tab=products"
-              : "/settings?tab=creators"
+          if (improvements.length > 0) {
             return (
-              <div className="mb-8 rounded-xl border border-yellow-50 bg-yellow-95 px-4 py-3 flex items-center justify-between gap-3">
-                <p className="text-small text-text-primary-default">
-                  כדי להפיק את המירב מהמערכת כדאי להגדיר {missingItems.join(" ו")}
-                </p>
-                <a
-                  href={inventoryHref}
-                  className="text-small-bold text-text-primary-default hover:underline shrink-0"
-                >
-                  להגדרות ←
-                </a>
+              <div className="flex flex-col gap-2 mb-8">
+                {improvements.map((item) => (
+                  <div
+                    key={item.key}
+                    className="rounded-xl border border-yellow-50 bg-yellow-95 px-4 py-3 flex items-center justify-between gap-3"
+                  >
+                    <p className="text-small text-text-primary-default">
+                      <strong className="text-small-bold">הכל מוכן ליצור תוכן! אבל...</strong>{" "}
+                      {item.body}
+                    </p>
+                    <a
+                      href={item.href}
+                      className="text-small-bold text-text-primary-default hover:underline shrink-0"
+                    >
+                      להגדרות ←
+                    </a>
+                  </div>
+                ))}
               </div>
             )
           }
