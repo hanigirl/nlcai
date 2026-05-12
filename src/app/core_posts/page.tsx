@@ -6,7 +6,7 @@ import { FileText, Loader2, ArrowLeft, LayoutGrid, List, Search } from "lucide-r
 import { AppShell } from "@/components/app-shell"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { formatPostDate } from "@/lib/format-date"
+import { formatPostDate, getDayKey } from "@/lib/format-date"
 
 const FORMAT_LABELS: Record<string, string> = {
   story: "סטורי",
@@ -53,6 +53,24 @@ export default function CorePostsPage() {
       return true
     })
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+
+  // Group by Jerusalem-tz day so each day becomes its own section, matching
+  // /hooks. Section header carries the date label ("היום · DD.MM.YY" for
+  // today, plain "DD.MM.YY" otherwise); cards inside don't show the date.
+  const groupedByDate: { dayKey: string; label: string; items: SavedPost[] }[] = (() => {
+    const groups = new Map<string, SavedPost[]>()
+    for (const post of filtered) {
+      const key = getDayKey(post.created_at)
+      const existing = groups.get(key)
+      if (existing) existing.push(post)
+      else groups.set(key, [post])
+    }
+    return Array.from(groups, ([dayKey, items]) => ({
+      dayKey,
+      label: formatPostDate(items[0].created_at),
+      items,
+    }))
+  })()
 
   return (
     <AppShell>
@@ -153,16 +171,23 @@ export default function CorePostsPage() {
           </div>
         )}
 
-        {/* Posts grid — flat, sorted newest first. Per-card date label carries
-            the "היום · ..." prefix when applicable; no section headers. */}
-        {!loading && filtered.length > 0 && (
-          <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" : "flex flex-col gap-2"}>
-            {filtered.map((post) => (
-              <CorePostCard
-                key={post.id}
-                post={post}
-                onClick={() => router.push(`/project?post_id=${post.id}`)}
-              />
+        {/* Sections per day — header carries the date label; cards don't
+            show the date. Matches /hooks for cross-screen consistency. */}
+        {!loading && groupedByDate.length > 0 && (
+          <div className="flex flex-col gap-8">
+            {groupedByDate.map(({ dayKey, label, items }) => (
+              <section key={dayKey}>
+                <p className="text-small text-text-neutral-default mb-4">{label}</p>
+                <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" : "flex flex-col gap-2"}>
+                  {items.map((post) => (
+                    <CorePostCard
+                      key={post.id}
+                      post={post}
+                      onClick={() => router.push(`/project?post_id=${post.id}`)}
+                    />
+                  ))}
+                </div>
+              </section>
             ))}
           </div>
         )}
@@ -184,7 +209,6 @@ function CorePostCard({
 }) {
   const lines = post.body.split("\n").filter(Boolean)
   const bodyPreview = lines.join("\n")
-  const dateStr = formatPostDate(post.created_at)
 
   return (
     <Card
@@ -192,11 +216,6 @@ function CorePostCard({
       className="group gap-4 rounded-[16px] border-border-neutral-default bg-white dark:bg-gray-10 p-4 py-4 text-right transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 shadow-none"
     >
       <CardContent className="flex flex-col gap-2 p-0">
-        {/* Date */}
-        <span className="text-xs text-yellow-30 self-start">
-          {dateStr}
-        </span>
-
         {/* Title */}
         <p className="text-sm font-semibold text-text-primary-default line-clamp-1">
           {post.hook_text ?? post.title ?? lines[0] ?? "פוסט ללא כותרת"}

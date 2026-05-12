@@ -5,7 +5,13 @@
 
 const TZ = "Asia/Jerusalem"
 
-function jerusalemDayKey(d: Date): string {
+/**
+ * Stable Jerusalem-timezone day key (YYYY-MM-DD) suitable for grouping
+ * lists by calendar day. Same input → same key, regardless of when in
+ * the day it's called.
+ */
+export function getDayKey(input: string | Date): string {
+  const d = typeof input === "string" ? new Date(input) : input
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: TZ,
     year: "numeric",
@@ -30,7 +36,7 @@ export function formatPostDate(iso: string | null | undefined): string {
     month: "2-digit",
     year: "2-digit",
   }).format(d).replace(/\//g, ".")
-  return jerusalemDayKey(d) === jerusalemDayKey(new Date())
+  return getDayKey(d) === getDayKey(new Date())
     ? `היום · ${datePart}`
     : datePart
 }
