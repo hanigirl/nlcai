@@ -8,6 +8,7 @@ interface CorePostRow {
   title: string | null
   body: string
   hook_text: string | null
+  idea_text: string | null
   user_response: string | null
   status: string
   created_at: string
@@ -30,7 +31,7 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from("core_posts")
-      .select("id, title, body, hook_text, user_response, status, created_at, updated_at")
+      .select("id, title, body, hook_text, idea_text, user_response, status, created_at, updated_at")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
 
@@ -79,13 +80,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, hookText, hookId, userResponse, formatPosts, videoUrl } = (await req.json()) as {
+    const { body, hookText, hookId, userResponse, formatPosts, videoUrl, idea } = (await req.json()) as {
       body: string
       hookText: string
       hookId?: string
       userResponse: string
       formatPosts?: Record<string, string>
       videoUrl?: string
+      idea?: string
     }
 
     // Empty body is intentional — drafts get created the moment the user
@@ -117,15 +119,20 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Save core post
-    const insertData = {
+    // Save core post. The status column is the generation_status enum, which
+    // only allows ('pending' | 'processing' | 'completed' | 'failed') — drafts
+    // (empty body waiting for the AI body to land) map to 'pending' since
+    // that's the semantic match. Was previously 'draft' which triggered a
+    // 22P02 invalid_text_representation error and every POST returned 500.
+    const insertData: Record<string, unknown> = {
       user_id: user.id,
       body: body ?? "",
       title,
       hook_text: hookText,
       user_response: userResponse,
-      status: isDraft ? "draft" : "completed",
+      status: isDraft ? "pending" : "completed",
     }
+    if (idea && idea.trim()) insertData.idea_text = idea.trim()
 
     const { data: post, error: postError } = await supabase
       .from("core_posts")

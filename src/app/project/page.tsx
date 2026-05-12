@@ -382,6 +382,13 @@ function ProjectPageInner() {
           setCorePost(data.post.body)
           setOriginalCorePost(data.post.body)
           setResponse(data.post.user_response ?? "")
+          // Restore the originating idea so the breadcrumb / shell title and
+          // any future regenerate flows have it. We only set when the URL
+          // didn't already carry an `?idea=...` — keeps an in-progress session
+          // that just navigated to ?post_id from clobbering its own state.
+          if (typeof data.post.idea_text === "string" && data.post.idea_text && !idea) {
+            setIdea(data.post.idea_text)
+          }
           if (data.post.hook_text) {
             setSavedHookText(data.post.hook_text as string)
             // Hydrate editableHook so the saved flow can reuse the same hook
@@ -525,6 +532,7 @@ function ProjectPageInner() {
         hookText: chosenText,
         hookId: chosenId,
         userResponse: "",
+        idea: idea || undefined,
       }),
     })
       .then((r) => r.json())
@@ -543,7 +551,7 @@ function ProjectPageInner() {
       })
       .catch((err) => console.error("[project][create-draft]", err))
       .finally(() => { draftInFlightRef.current = false })
-  }, [flow, savedPostId, postId, selectedHook, hooks, hookIds])
+  }, [flow, savedPostId, postId, selectedHook, hooks, hookIds, idea])
 
   // If the user re-picks a hook (or edits its text) after the draft already
   // exists, keep the row's hook_text in sync. Debounced so rapid clicking
@@ -750,6 +758,7 @@ function ProjectPageInner() {
               body: data.post,
               hookText: activeHook,
               hookId: hookIdParam || selectedHookId,
+              idea: idea || undefined,
             }),
           }).catch(() => {})
         } else {
@@ -762,6 +771,7 @@ function ProjectPageInner() {
               hookId: hookIdParam || selectedHookId,
               userResponse: response,
               videoUrl: thVideoUrl && !thVideoUrl.startsWith("blob:") ? thVideoUrl : undefined,
+              idea: idea || undefined,
             }),
           })
             .then((res) => res.json())

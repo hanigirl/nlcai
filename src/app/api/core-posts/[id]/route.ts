@@ -102,10 +102,11 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, hookText, hookId, formatPosts, videoUrl, deleteVideo, coverBase64, coverText, deleteCover } = (await req.json()) as {
+    const { body, hookText, hookId, idea, formatPosts, videoUrl, deleteVideo, coverBase64, coverText, deleteCover } = (await req.json()) as {
       body?: string
       hookText?: string
       hookId?: string
+      idea?: string
       formatPosts?: Record<string, string>
       videoUrl?: string
       deleteVideo?: boolean
@@ -145,6 +146,26 @@ export async function PATCH(
           .update({ is_used: true } as never)
           .eq("user_id", user.id)
           .eq("id", hookId)
+      }
+    }
+
+    // Backfill idea_text once. We only write when it's currently null on the
+    // row, so editing the textarea on /project doesn't overwrite the original
+    // idea the post was generated from.
+    if (idea !== undefined && idea.trim()) {
+      const { data: existing } = await supabase
+        .from("core_posts")
+        .select("idea_text")
+        .eq("id", id)
+        .eq("user_id", user.id)
+        .single()
+      const currentIdea = (existing as { idea_text: string | null } | null)?.idea_text
+      if (!currentIdea) {
+        await supabase
+          .from("core_posts")
+          .update({ idea_text: idea.trim() } as never)
+          .eq("id", id)
+          .eq("user_id", user.id)
       }
     }
 
