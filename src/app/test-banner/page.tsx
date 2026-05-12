@@ -9,24 +9,45 @@
 
 import { AppShell } from "@/components/app-shell"
 
+type FileIssueReason =
+  | "no_file" // user didn't upload + didn't type anything manually
+  | "file_invalid" // upload failed to read (unsupported format / corrupted)
+  | "file_too_long" // exceeded the AI context window
+  | "multiple_audiences" // multi-persona file detected (audience only)
+  | "ai_failed" // generic AI / parsing error
+  | "empty_content" // file was readable but had no extractable content
+
 type ProfileHealth = {
   enabled: true
-  styleFileIssue: { reason: "parse_failed" | "missing" } | null
-  audienceFileIssue: { reason: "parse_failed" | "missing" } | null
+  styleFileIssue: { reason: FileIssueReason } | null
+  audienceFileIssue: { reason: FileIssueReason } | null
   hasProducts: boolean
   hasCreators: boolean
 }
 
-// Inline banner copy duplicated from src/app/page.tsx so this preview
-// page renders identically. Keep them in sync until the banner is
-// extracted to a shared component.
-function HealthBanner({ health }: { health: ProfileHealth }) {
-  const reasonText = (reason: "parse_failed" | "missing") =>
-    reason === "parse_failed"
-      ? "הקובץ לא נקרא במלואו — חסר תוכן שמשמש לג'ינרוט"
-      : "לא הועלה קובץ ולא הוזן תוכן ידנית"
+// Reason → user-facing message. The structure is "what went wrong" +
+// "what to do" so the user can act without guessing. Audience gets a
+// dedicated multiple_audiences variant since the style file is one-persona
+// by definition.
+function reasonCopy(reason: FileIssueReason, fileLabel: string) {
+  switch (reason) {
+    case "no_file":
+      return `עדיין לא הועלה קובץ ${fileLabel} ולא הוזן תוכן ידנית. אפשר להעלות קובץ או להזין ידנית בהגדרות.`
+    case "file_invalid":
+      return `הקובץ שהעלית ל${fileLabel} לא תקין. נסי קובץ docx/pdf אחר, ודאי שהוא לא פגום.`
+    case "file_too_long":
+      return `הקובץ שהעלית ל${fileLabel} ארוך מדי לעיבוד. קצרי אותו והעלי שוב.`
+    case "multiple_audiences":
+      return `הקובץ שהעלית מכיל יותר מקהל יעד אחד. העלי קובץ נפרד לכל קהל, או השאירי קהל אחד בלבד.`
+    case "ai_failed":
+      return `הניתוח של ${fileLabel} נכשל. נסי להעלות שוב או להזין ידנית בהגדרות.`
+    case "empty_content":
+      return `הקובץ שהעלית ל${fileLabel} ריק או קצר מדי. הוסיפי תוכן והעלי שוב.`
+  }
+}
 
-  const fileIssues: Array<{ key: string; label: string; reason: "parse_failed" | "missing" }> = []
+function HealthBanner({ health }: { health: ProfileHealth }) {
+  const fileIssues: Array<{ key: string; label: string; reason: FileIssueReason }> = []
   if (health.styleFileIssue) {
     fileIssues.push({ key: "style", label: "סגנון הכתיבה", reason: health.styleFileIssue.reason })
   }
@@ -43,14 +64,13 @@ function HealthBanner({ health }: { health: ProfileHealth }) {
             className="rounded-xl border border-red-50 bg-red-95 px-4 py-3 flex items-center justify-between gap-3"
           >
             <p className="text-small text-text-primary-default">
-              <span className="text-small-bold">בעיה בקובץ {issue.label}:</span>{" "}
-              {reasonText(issue.reason)}
+              {reasonCopy(issue.reason, issue.label)}
             </p>
             <a
               href="/settings?tab=business"
               className="text-small-bold text-text-primary-default hover:underline shrink-0"
             >
-              לעדכון →
+              להגדרות →
             </a>
           </div>
         ))}
@@ -89,104 +109,60 @@ function HealthBanner({ health }: { health: ProfileHealth }) {
 
 const variants: Array<{ title: string; health: ProfileHealth }> = [
   {
-    title: "1. קובץ סגנון לא הועלה (missing)",
-    health: {
-      enabled: true,
-      styleFileIssue: { reason: "missing" },
-      audienceFileIssue: null,
-      hasProducts: true,
-      hasCreators: true,
-    },
+    title: "1. סגנון — לא הועלה קובץ (no_file)",
+    health: { enabled: true, styleFileIssue: { reason: "no_file" }, audienceFileIssue: null, hasProducts: true, hasCreators: true },
   },
   {
-    title: "2. קובץ סגנון נכשל בקריאה (parse_failed)",
-    health: {
-      enabled: true,
-      styleFileIssue: { reason: "parse_failed" },
-      audienceFileIssue: null,
-      hasProducts: true,
-      hasCreators: true,
-    },
+    title: "2. סגנון — קובץ לא תקין (file_invalid)",
+    health: { enabled: true, styleFileIssue: { reason: "file_invalid" }, audienceFileIssue: null, hasProducts: true, hasCreators: true },
   },
   {
-    title: "3. קובץ קהל יעד לא הועלה",
-    health: {
-      enabled: true,
-      styleFileIssue: null,
-      audienceFileIssue: { reason: "missing" },
-      hasProducts: true,
-      hasCreators: true,
-    },
+    title: "3. סגנון — קובץ ארוך מדי (file_too_long)",
+    health: { enabled: true, styleFileIssue: { reason: "file_too_long" }, audienceFileIssue: null, hasProducts: true, hasCreators: true },
   },
   {
-    title: "4. קובץ קהל יעד נכשל בקריאה",
-    health: {
-      enabled: true,
-      styleFileIssue: null,
-      audienceFileIssue: { reason: "parse_failed" },
-      hasProducts: true,
-      hasCreators: true,
-    },
+    title: "4. סגנון — קובץ ריק (empty_content)",
+    health: { enabled: true, styleFileIssue: { reason: "empty_content" }, audienceFileIssue: null, hasProducts: true, hasCreators: true },
   },
   {
-    title: "5. שני הקבצים בעייתיים (missing + parse_failed)",
-    health: {
-      enabled: true,
-      styleFileIssue: { reason: "missing" },
-      audienceFileIssue: { reason: "parse_failed" },
-      hasProducts: true,
-      hasCreators: true,
-    },
+    title: "5. סגנון — שגיאת AI (ai_failed)",
+    health: { enabled: true, styleFileIssue: { reason: "ai_failed" }, audienceFileIssue: null, hasProducts: true, hasCreators: true },
   },
   {
-    title: "6. קבצים תקינים, חסרים מוצרים בלבד",
-    health: {
-      enabled: true,
-      styleFileIssue: null,
-      audienceFileIssue: null,
-      hasProducts: false,
-      hasCreators: true,
-    },
+    title: "6. קהל יעד — לא הועלה קובץ",
+    health: { enabled: true, styleFileIssue: null, audienceFileIssue: { reason: "no_file" }, hasProducts: true, hasCreators: true },
   },
   {
-    title: "7. קבצים תקינים, חסרים יוצרים בלבד",
-    health: {
-      enabled: true,
-      styleFileIssue: null,
-      audienceFileIssue: null,
-      hasProducts: true,
-      hasCreators: false,
-    },
+    title: "7. קהל יעד — מכיל 2 קהלים (multiple_audiences)",
+    health: { enabled: true, styleFileIssue: null, audienceFileIssue: { reason: "multiple_audiences" }, hasProducts: true, hasCreators: true },
   },
   {
-    title: "8. קבצים תקינים, חסרים גם מוצרים וגם יוצרים",
-    health: {
-      enabled: true,
-      styleFileIssue: null,
-      audienceFileIssue: null,
-      hasProducts: false,
-      hasCreators: false,
-    },
+    title: "8. קהל יעד — קובץ ארוך מדי",
+    health: { enabled: true, styleFileIssue: null, audienceFileIssue: { reason: "file_too_long" }, hasProducts: true, hasCreators: true },
   },
   {
-    title: "9. הכל תקין — אין באנר",
-    health: {
-      enabled: true,
-      styleFileIssue: null,
-      audienceFileIssue: null,
-      hasProducts: true,
-      hasCreators: true,
-    },
+    title: "9. שני הקבצים בעייתיים (סגנון לא תקין + קהל מרובה)",
+    health: { enabled: true, styleFileIssue: { reason: "file_invalid" }, audienceFileIssue: { reason: "multiple_audiences" }, hasProducts: true, hasCreators: true },
   },
   {
-    title: "10. בעיית קבצים גוברת על חסרי מוצרים/יוצרים",
-    health: {
-      enabled: true,
-      styleFileIssue: { reason: "parse_failed" },
-      audienceFileIssue: null,
-      hasProducts: false,
-      hasCreators: false,
-    },
+    title: "10. קבצים תקינים, חסרים מוצרים בלבד",
+    health: { enabled: true, styleFileIssue: null, audienceFileIssue: null, hasProducts: false, hasCreators: true },
+  },
+  {
+    title: "11. קבצים תקינים, חסרים יוצרים בלבד",
+    health: { enabled: true, styleFileIssue: null, audienceFileIssue: null, hasProducts: true, hasCreators: false },
+  },
+  {
+    title: "12. קבצים תקינים, חסרים גם מוצרים וגם יוצרים",
+    health: { enabled: true, styleFileIssue: null, audienceFileIssue: null, hasProducts: false, hasCreators: false },
+  },
+  {
+    title: "13. הכל תקין — אין באנר",
+    health: { enabled: true, styleFileIssue: null, audienceFileIssue: null, hasProducts: true, hasCreators: true },
+  },
+  {
+    title: "14. בעיית קובץ גוברת — סגנון ארוך מדי + חסרים מוצרים+יוצרים",
+    health: { enabled: true, styleFileIssue: { reason: "file_too_long" }, audienceFileIssue: null, hasProducts: false, hasCreators: false },
   },
 ]
 
@@ -197,8 +173,8 @@ export default function TestBannerPage() {
         <header className="mb-8">
           <h1 className="text-text-primary-default mb-2">Profile health banner — preview</h1>
           <p className="text-small text-text-neutral-default">
-            כל הוריאנטים של הבאנר במסך הבית. הסדר משקף את ה-priority של ה-API:
-            קבצים גוברים על מוצרים/יוצרים.
+            כל הוריאנטים של הבאנר במסך הבית. ההודעה אומרת בדיוק מה השתבש ומה צריך לעשות.
+            הסדר משקף את ה-priority של ה-API: קבצים גוברים על מוצרים/יוצרים.
           </p>
         </header>
 
