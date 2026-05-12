@@ -406,29 +406,52 @@
   will-change: transform, opacity;
 }
 
-/* Paper-plane celebration: silky left-to-right arc that glides through
-   the card body, staying well below the confetti's origin so the
-   plane passes UNDER the falling particles. 9 keyframes evenly
-   spaced in time + a parabolic y curve (peak y=80, ends y=180) give
-   a smooth path. Banking is gentle (±20°) and scale stays close to 1
-   for a "light" feel. */
-@keyframes paper-plane-celebrate {
-  0%    { opacity: 0; transform: translate(calc(-50% - 360px), 180px) rotate(-20deg) scale(0.85); }
-  12.5% { opacity: 1; transform: translate(calc(-50% - 270px), 136px) rotate(-15deg) scale(1);    }
-  25%   { opacity: 1; transform: translate(calc(-50% - 180px), 105px) rotate(-10deg) scale(1.02); }
-  37.5% { opacity: 1; transform: translate(calc(-50% - 90px),  86px)  rotate(-5deg)  scale(1.04); }
-  50%   { opacity: 1; transform: translate(-50%,               80px)  rotate(0deg)   scale(1.05); }
-  62.5% { opacity: 1; transform: translate(calc(-50% + 90px),  86px)  rotate(5deg)   scale(1.04); }
-  75%   { opacity: 1; transform: translate(calc(-50% + 180px), 105px) rotate(10deg)  scale(1.02); }
-  87.5% { opacity: 1; transform: translate(calc(-50% + 270px), 136px) rotate(15deg)  scale(1);    }
-  100%  { opacity: 0; transform: translate(calc(-50% + 360px), 180px) rotate(20deg)  scale(0.85); }
+/* Paper-plane celebration: orbits an imaginary circle 1.5 times like a
+   loader, with the plane's nose facing the tangent direction.
+
+   Implementation:
+   - `offset-path: circle(90px at 50% 50%)` defines a true circular
+     orbit of radius 90px centered on the element's own box center.
+     The element's anchor (its center, by default) traces this circle
+     continuously — no chord segments, mathematically smooth.
+   - `offset-rotate: auto 45deg` makes the plane face the tangent
+     direction. The +45° offset compensates for letter-min.png's
+     natural northeast-pointing orientation so its NOSE aligns with
+     the direction of travel around the orbit.
+   - Two animations: travel (linear, so the orbit speed is steady like
+     a loader) and fade (eased, for entry/exit drama on opacity +
+     scale). offset-distance animates from 0% to 150% over the
+     duration — 1.5 full revolutions around the closed path.
+
+   The orbit center sits in the upper body of the card; the orbit's
+   bottom stays well inside the body, the top above the header. */
+.paper-plane-celebrate {
+  position: absolute;
+  top: 124px;
+  left: 50%;
+  margin-left: -36px; /* center the 72px box on parent's horizontal center */
+  width: 72px;
+  height: 72px;
+  pointer-events: none;
+  z-index: 50;
+  offset-path: circle(90px at 50% 50%);
+  offset-rotate: auto 45deg;
+  animation:
+    paper-plane-orbit-travel 1600ms linear both,
+    paper-plane-orbit-fade   1600ms ease both;
+  will-change: offset-distance, opacity, transform;
 }
 
-.animate-paper-plane-celebrate {
-  animation: paper-plane-celebrate 1500ms cubic-bezier(0.4, 0, 0.2, 1) both;
-  transform-origin: center;
-  will-change: transform, opacity;
-  z-index: 50;
+@keyframes paper-plane-orbit-travel {
+  from { offset-distance: 0%;   }
+  to   { offset-distance: 150%; } /* 1.5 revolutions */
+}
+
+@keyframes paper-plane-orbit-fade {
+  0%   { opacity: 0; transform: scale(0.85); }
+  18%  { opacity: 1; transform: scale(1);    }
+  82%  { opacity: 1; transform: scale(1);    }
+  100% { opacity: 0; transform: scale(0.85); }
 }
 
 /* Whoosh trails — two short yellow streaks behind the plane that
