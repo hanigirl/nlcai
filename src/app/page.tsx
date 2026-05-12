@@ -29,11 +29,14 @@ interface IdeaNote {
 // the new banner while it's still being validated.
 type ProfileHealth = {
   enabled: true
-  styleFileIssue: { reason: "parse_failed" | "missing" } | null
-  audienceFileIssue: { reason: "parse_failed" | "missing" } | null
+  creditsExhausted: boolean
+  styleFileIssue: { reason: string } | null
+  audienceFileIssue: { reason: string } | null
   hasProducts: boolean
   hasCreators: boolean
 } | { enabled: false }
+
+const ANTHROPIC_BILLING_URL = "https://console.anthropic.com/settings/billing"
 
 export default function Home() {
   const router = useRouter()
@@ -379,8 +382,34 @@ export default function Home() {
             | "file_too_long"
             | "multiple_audiences"
             | "ai_failed"
+            | "no_credits"
             | "empty_content"
           type FileIssue = { key: "style" | "audience"; label: string; reason: FileIssueReason }
+
+          // Highest-priority banner — when Anthropic credits are out, no
+          // content can be generated until the user tops up. Suppress the
+          // file/inventory banners below since acting on them won't help
+          // until credits return.
+          if (profileHealth.creditsExhausted) {
+            return (
+              <div className="mb-8 rounded-xl border border-red-50 bg-red-95 px-4 py-3 flex items-center justify-between gap-3">
+                <p className="text-small text-text-primary-default">
+                  <strong className="text-small-bold">
+                    לא ניתן לייצר תוכן נוסף כי נגמרו הקרדיטים מאנתרופיק.
+                  </strong>{" "}
+                  יש להטעין קרדיטים מחדש באתר אנתרופיק.
+                </p>
+                <a
+                  href={ANTHROPIC_BILLING_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-small-bold text-text-primary-default hover:underline shrink-0"
+                >
+                  להטעינה ←
+                </a>
+              </div>
+            )
+          }
 
           const reasonCopy = (reason: FileIssueReason, fileLabel: string) => {
             switch (reason) {
@@ -394,6 +423,8 @@ export default function Home() {
                 return `הקובץ של ${fileLabel} מכיל יותר מקהל יעד אחד. צריך להעלות קובץ נפרד לכל קהל, או להשאיר קהל אחד בלבד.`
               case "ai_failed":
                 return `הניתוח של ${fileLabel} נכשל. אפשר לנסות להעלות שוב או להזין ידנית בהגדרות.`
+              case "no_credits":
+                return `הניתוח של ${fileLabel} לא הצליח כי נגמרו הקרדיטים מאנתרופיק. צריך להטעין קרדיטים ולנסות שוב.`
               case "empty_content":
                 return `הקובץ שהועלה עבור ${fileLabel} ריק או קצר מדי. צריך להוסיף תוכן ולהעלות שוב.`
             }

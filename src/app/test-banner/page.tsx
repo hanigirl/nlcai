@@ -15,15 +15,24 @@ type FileIssueReason =
   | "file_too_long" // exceeded the AI context window
   | "multiple_audiences" // multi-persona file detected (audience only)
   | "ai_failed" // generic AI / parsing error
+  | "no_credits" // Anthropic returned credits_exhausted during the parse
   | "empty_content" // file was readable but had no extractable content
 
 type ProfileHealth = {
   enabled: true
+  // Global Anthropic credits flag. When true the user can't generate
+  // anything until they top up — shown as the highest-priority banner
+  // above file issues and improvement nudges. File-level no_credits
+  // is reported through styleFileIssue / audienceFileIssue so the user
+  // sees a per-file explanation when only the parse died.
+  creditsExhausted: boolean
   styleFileIssue: { reason: FileIssueReason } | null
   audienceFileIssue: { reason: FileIssueReason } | null
   hasProducts: boolean
   hasCreators: boolean
 }
+
+const ANTHROPIC_BILLING_URL = "https://console.anthropic.com/settings/billing"
 
 // Reason → user-facing message. The structure is "what went wrong" +
 // "what to do" so the user can act without guessing. The label points
@@ -42,12 +51,40 @@ function reasonCopy(reason: FileIssueReason, fileLabel: string) {
       return `הקובץ של ${fileLabel} מכיל יותר מקהל יעד אחד. צריך להעלות קובץ נפרד לכל קהל, או להשאיר קהל אחד בלבד.`
     case "ai_failed":
       return `הניתוח של ${fileLabel} נכשל. אפשר לנסות להעלות שוב או להזין ידנית בהגדרות.`
+    case "no_credits":
+      return `הניתוח של ${fileLabel} לא הצליח כי נגמרו הקרדיטים מאנתרופיק. צריך להטעין קרדיטים ולנסות שוב.`
     case "empty_content":
       return `הקובץ שהועלה עבור ${fileLabel} ריק או קצר מדי. צריך להוסיף תוכן ולהעלות שוב.`
   }
 }
 
 function HealthBanner({ health }: { health: ProfileHealth }) {
+  // Credits-exhausted is the highest-priority banner — nothing else
+  // generates until the user tops up at Anthropic. Renders alone with a
+  // red treatment + external link to billing; the file/inventory
+  // banners below are intentionally suppressed because acting on them
+  // is pointless until credits are restored.
+  if (health.creditsExhausted) {
+    return (
+      <div className="rounded-xl border border-red-50 bg-red-95 px-4 py-3 flex items-center justify-between gap-3">
+        <p className="text-small text-text-primary-default">
+          <strong className="text-small-bold">
+            לא ניתן לייצר תוכן נוסף כי נגמרו הקרדיטים מאנתרופיק.
+          </strong>{" "}
+          יש להטעין קרדיטים מחדש באתר אנתרופיק.
+        </p>
+        <a
+          href={ANTHROPIC_BILLING_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-small-bold text-text-primary-default hover:underline shrink-0"
+        >
+          להטעינה ←
+        </a>
+      </div>
+    )
+  }
+
   // Labels match the section names the user will see in /settings so the
   // "go fix it" link lands somewhere predictable. Per-reason link target
   // lets the banner point at the exact panel (file upload sub-section for
@@ -148,62 +185,72 @@ function HealthBanner({ health }: { health: ProfileHealth }) {
   )
 }
 
+const base = { creditsExhausted: false, hasProducts: true, hasCreators: true } as const
+
 const variants: Array<{ title: string; health: ProfileHealth }> = [
   {
+    title: "0. אין קרדיטים מאנתרופיק (גובר על הכל)",
+    health: { enabled: true, ...base, creditsExhausted: true, styleFileIssue: null, audienceFileIssue: null },
+  },
+  {
     title: "1. סגנון — לא הועלה קובץ (no_file)",
-    health: { enabled: true, styleFileIssue: { reason: "no_file" }, audienceFileIssue: null, hasProducts: true, hasCreators: true },
+    health: { enabled: true, ...base, styleFileIssue: { reason: "no_file" }, audienceFileIssue: null },
   },
   {
     title: "2. סגנון — קובץ לא תקין (file_invalid)",
-    health: { enabled: true, styleFileIssue: { reason: "file_invalid" }, audienceFileIssue: null, hasProducts: true, hasCreators: true },
+    health: { enabled: true, ...base, styleFileIssue: { reason: "file_invalid" }, audienceFileIssue: null },
   },
   {
     title: "3. סגנון — קובץ ארוך מדי (file_too_long)",
-    health: { enabled: true, styleFileIssue: { reason: "file_too_long" }, audienceFileIssue: null, hasProducts: true, hasCreators: true },
+    health: { enabled: true, ...base, styleFileIssue: { reason: "file_too_long" }, audienceFileIssue: null },
   },
   {
     title: "4. סגנון — קובץ ריק (empty_content)",
-    health: { enabled: true, styleFileIssue: { reason: "empty_content" }, audienceFileIssue: null, hasProducts: true, hasCreators: true },
+    health: { enabled: true, ...base, styleFileIssue: { reason: "empty_content" }, audienceFileIssue: null },
   },
   {
-    title: "5. סגנון — שגיאת AI (ai_failed)",
-    health: { enabled: true, styleFileIssue: { reason: "ai_failed" }, audienceFileIssue: null, hasProducts: true, hasCreators: true },
+    title: "5. סגנון — שגיאת AI כללית (ai_failed)",
+    health: { enabled: true, ...base, styleFileIssue: { reason: "ai_failed" }, audienceFileIssue: null },
   },
   {
-    title: "6. קהל יעד — לא הועלה קובץ",
-    health: { enabled: true, styleFileIssue: null, audienceFileIssue: { reason: "no_file" }, hasProducts: true, hasCreators: true },
+    title: "6. סגנון — פירסור נכשל כי אין קרדיטים (no_credits)",
+    health: { enabled: true, ...base, styleFileIssue: { reason: "no_credits" }, audienceFileIssue: null },
   },
   {
-    title: "7. קהל יעד — מכיל 2 קהלים (multiple_audiences)",
-    health: { enabled: true, styleFileIssue: null, audienceFileIssue: { reason: "multiple_audiences" }, hasProducts: true, hasCreators: true },
+    title: "7. קהל יעד — לא הועלה קובץ",
+    health: { enabled: true, ...base, styleFileIssue: null, audienceFileIssue: { reason: "no_file" } },
   },
   {
-    title: "8. קהל יעד — קובץ ארוך מדי",
-    health: { enabled: true, styleFileIssue: null, audienceFileIssue: { reason: "file_too_long" }, hasProducts: true, hasCreators: true },
+    title: "8. קהל יעד — מכיל 2 קהלים (multiple_audiences)",
+    health: { enabled: true, ...base, styleFileIssue: null, audienceFileIssue: { reason: "multiple_audiences" } },
   },
   {
-    title: "9. שני הקבצים בעייתיים (סגנון לא תקין + קהל מרובה)",
-    health: { enabled: true, styleFileIssue: { reason: "file_invalid" }, audienceFileIssue: { reason: "multiple_audiences" }, hasProducts: true, hasCreators: true },
+    title: "9. קהל יעד — פירסור נכשל כי אין קרדיטים",
+    health: { enabled: true, ...base, styleFileIssue: null, audienceFileIssue: { reason: "no_credits" } },
   },
   {
-    title: "10. קבצים תקינים, חסרים מוצרים בלבד",
-    health: { enabled: true, styleFileIssue: null, audienceFileIssue: null, hasProducts: false, hasCreators: true },
+    title: "10. שני הקבצים בעייתיים (סגנון לא תקין + קהל מרובה)",
+    health: { enabled: true, ...base, styleFileIssue: { reason: "file_invalid" }, audienceFileIssue: { reason: "multiple_audiences" } },
   },
   {
-    title: "11. קבצים תקינים, חסרים יוצרים בלבד",
-    health: { enabled: true, styleFileIssue: null, audienceFileIssue: null, hasProducts: true, hasCreators: false },
+    title: "11. קבצים תקינים, חסרים מוצרים בלבד",
+    health: { enabled: true, ...base, styleFileIssue: null, audienceFileIssue: null, hasProducts: false },
   },
   {
-    title: "12. קבצים תקינים, חסרים גם מוצרים וגם יוצרים",
-    health: { enabled: true, styleFileIssue: null, audienceFileIssue: null, hasProducts: false, hasCreators: false },
+    title: "12. קבצים תקינים, חסרים יוצרים בלבד",
+    health: { enabled: true, ...base, styleFileIssue: null, audienceFileIssue: null, hasCreators: false },
   },
   {
-    title: "13. הכל תקין — אין באנר",
-    health: { enabled: true, styleFileIssue: null, audienceFileIssue: null, hasProducts: true, hasCreators: true },
+    title: "13. קבצים תקינים, חסרים גם מוצרים וגם יוצרים",
+    health: { enabled: true, ...base, styleFileIssue: null, audienceFileIssue: null, hasProducts: false, hasCreators: false },
   },
   {
-    title: "14. בעיית קובץ גוברת — סגנון ארוך מדי + חסרים מוצרים+יוצרים",
-    health: { enabled: true, styleFileIssue: { reason: "file_too_long" }, audienceFileIssue: null, hasProducts: false, hasCreators: false },
+    title: "14. הכל תקין — אין באנר",
+    health: { enabled: true, ...base, styleFileIssue: null, audienceFileIssue: null },
+  },
+  {
+    title: "15. בעיית קובץ גוברת — סגנון ארוך מדי + חסרים מוצרים+יוצרים",
+    health: { enabled: true, ...base, styleFileIssue: { reason: "file_too_long" }, audienceFileIssue: null, hasProducts: false, hasCreators: false },
   },
 ]
 
