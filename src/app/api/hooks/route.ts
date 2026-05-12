@@ -207,11 +207,21 @@ export async function POST(req: NextRequest) {
     // preserve order via Promise.all; insert failures fall back to id="" so
     // the user can still generate a post (core-posts matches on text in that
     // case).
+    // display_order is NOT NULL on the hooks table — use the batch index, the
+    // same convention homepage-hooks uses (see route.ts line 600). status
+    // defaults to 'pending' in schema; we mark these 'completed' explicitly
+    // since the polish/judge pipeline already ran end-to-end above.
     const hooks = await Promise.all(
-      hookTexts.map(async (text) => {
+      hookTexts.map(async (text, idx) => {
         const { data, error } = await supabase
           .from("hooks")
-          .insert({ user_id: user.id, hook_text: text } as never)
+          .insert({
+            user_id: user.id,
+            hook_text: text,
+            idea_text: idea,
+            display_order: idx,
+            status: "completed",
+          } as never)
           .select("id, hook_text")
           .single()
         if (error || !data) {
