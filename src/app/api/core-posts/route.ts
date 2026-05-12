@@ -40,7 +40,7 @@ export async function GET() {
       .from("core_posts")
       .select("id, title, body, hook_text, idea_text, user_response, status, created_at, updated_at")
       .eq("user_id", user.id)
-      .order("created_at", { ascending: false })
+      .order("updated_at", { ascending: false })
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })

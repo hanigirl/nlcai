@@ -74,6 +74,12 @@ export async function GET(
     // Load video URL from media_assets for talking_head
     let videoUrl: string | null = null
     let coverUrl: string | null = null
+    // Pill colour the cover was generated with. Stored in the cover's
+    // media_assets.metadata blob so the picker on /project can open with
+    // the same colour the PNG was baked with (otherwise the swatch resets
+    // to black on every reload while the cover stays whatever the user
+    // last picked → user-visible mismatch).
+    let coverPillColor: string | null = null
     const thVariant = variants.find((v) => v.format === "talking_head")
     if (thVariant) {
       const { data: mediaData } = await supabase
@@ -89,10 +95,10 @@ export async function GET(
         videoUrl = (mediaData as unknown as { url: string }).url
       }
 
-      // Load cover URL
+      // Load cover URL + pill colour
       const { data: coverData } = await supabase
         .from("media_assets")
-        .select("url")
+        .select("url, metadata")
         .eq("format_variant_id", thVariant.id)
         .eq("asset_type", "cover")
         .order("created_at", { ascending: false })
@@ -100,7 +106,12 @@ export async function GET(
         .single()
 
       if (coverData) {
-        coverUrl = (coverData as unknown as { url: string }).url
+        const row = coverData as unknown as { url: string; metadata: Record<string, unknown> | null }
+        coverUrl = row.url
+        const pill = row.metadata?.pill_color
+        if (typeof pill === "string" && /^#[0-9a-fA-F]{6}$/.test(pill)) {
+          coverPillColor = pill
+        }
       }
     }
 
@@ -111,6 +122,7 @@ export async function GET(
         formatsWithMedia,
         videoUrl,
         coverUrl,
+        coverPillColor,
       },
     })
   } catch (error) {
@@ -132,7 +144,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, videoUrl, deleteVideo, coverBase64, coverText, deleteCover, carouselImages } = (await req.json()) as {
+    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, videoUrl, deleteVideo, coverBase64, coverPillColor, coverText, deleteCover, carouselImages } = (await req.json()) as {
       body?: string
       hookText?: string
       hookId?: string
@@ -144,6 +156,10 @@ export async function PATCH(
       videoUrl?: string
       deleteVideo?: boolean
       coverBase64?: string
+      // Hex colour (#rrggbb) the cover was generated with. Persisted on
+      // the cover's media_assets.metadata so the picker on /project can
+      // open showing the same colour that's actually baked into the PNG.
+      coverPillColor?: string
       coverText?: string
       deleteCover?: boolean
       // Array of base64 PNG buffers — output of /api/carousel/generate.
@@ -152,6 +168,14 @@ export async function PATCH(
       // "delete carousel" path that sets carouselImages=null).
       carouselImages?: string[] | null
     }
+
+    // Track whether the PATCH touched any *child* table (format_variants,
+    // media_assets) without writing to core_posts itself. If so we bump
+    // core_posts.updated_at at the end so the /core_posts listing — sorted
+    // by updated_at desc — bubbles the post to the top after any kind of
+    // edit (Google-Docs-style "recently edited first"). Writes that go
+    // directly through core_posts already fire its own updated_at trigger.
+    let didIndirectEdit = false
 
     // Update core post body if provided. We treat empty string as "user
     // intentionally cleared" and still write it; callers that only want to
@@ -262,6 +286,7 @@ export async function PATCH(
             } as never,
             { onConflict: "core_post_id,format" },
           )
+        didIndirectEdit = true
       }
     }
 
@@ -281,6 +306,7 @@ export async function PATCH(
           .delete()
           .eq("format_variant_id", variantRow.id)
           .eq("asset_type", "video")
+        didIndirectEdit = true
       }
     }
 
@@ -300,6 +326,7 @@ export async function PATCH(
           .delete()
           .eq("format_variant_id", variantRow.id)
           .eq("asset_type", "cover")
+        didIndirectEdit = true
       }
     }
 
@@ -338,6 +365,7 @@ export async function PATCH(
           provider: "heygen",
           status: "completed",
         } as never)
+        didIndirectEdit = true
       }
     }
 
@@ -379,7 +407,11 @@ export async function PATCH(
           asset_type: "cover",
           url: coverUrl,
           status: "completed",
+          metadata: coverPillColor && /^#[0-9a-fA-F]{6}$/.test(coverPillColor)
+            ? { pill_color: coverPillColor }
+            : {},
         } as never)
+        didIndirectEdit = true
       }
     }
 
@@ -414,6 +446,7 @@ export async function PATCH(
           .delete()
           .eq("format_variant_id", variantRow.id)
           .eq("asset_type", "image")
+        didIndirectEdit = true
 
         // null/empty → just the deletion above. Otherwise upload + insert.
         if (Array.isArray(carouselImages) && carouselImages.length > 0) {
@@ -438,6 +471,19 @@ export async function PATCH(
           }
         }
       }
+    }
+
+    // Touch core_posts so updated_at advances on edits that only hit child
+    // tables (format bodies, video / cover / carousel assets). The
+    // before-update trigger sets updated_at = now() regardless of what we
+    // write, so any successful UPDATE bumps the row to the top of the
+    // /core_posts listing.
+    if (didIndirectEdit) {
+      await supabase
+        .from("core_posts")
+        .update({ updated_at: new Date().toISOString() } as never)
+        .eq("id", id)
+        .eq("user_id", user.id)
     }
 
     return NextResponse.json({ ok: true })

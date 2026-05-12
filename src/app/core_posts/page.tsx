@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import {
   FileText,
   LayoutGrid,
@@ -53,6 +53,9 @@ interface SavedPost {
   /** First non-cover media URL found across this post's formats. */
   primary_media_url?: string | null
   created_at: string
+  /** Bumped on every edit (body / hook / format scripts / media / cover /
+   *  pill colour). Drives the "recently edited first" sort + grouping. */
+  updated_at: string
 }
 
 export default function CorePostsPage() {
@@ -91,15 +94,23 @@ export default function CorePostsPage() {
    */
   const [coverUrlById, setCoverUrlById] = useState<Record<string, string | null>>({})
 
-  useEffect(() => {
-    fetch("/api/core-posts")
+  // Extracted so we can refetch on demand — e.g. after the Sheet closes,
+  // so any edit made inside it (body / hook / format scripts / media /
+  // cover / pill colour) immediately re-sorts the list by updated_at.
+  // Without this the list stayed frozen at the mount-time order even
+  // though the API was returning the right one.
+  const refetchPosts = useCallback(() => {
+    return fetch("/api/core-posts", { cache: "no-store" })
       .then((res) => res.json())
       .then((data) => {
         if (data.posts) setPosts(data.posts)
       })
       .catch(() => {})
-      .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    refetchPosts().finally(() => setLoading(false))
+  }, [refetchPosts])
 
   // Lazily fetch per-format scripts when a card opens. Cheap (single GET)
   // and gated on cache miss so opening the same card twice doesn't refetch.
@@ -147,22 +158,25 @@ export default function CorePostsPage() {
       }
       return true
     })
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
 
   // Group by Jerusalem-tz day so each day becomes its own section, matching
   // /hooks. Section header carries the date label ("היום · DD.MM.YY" for
   // today, plain "DD.MM.YY" otherwise); cards inside don't show the date.
+  // Day buckets follow `updated_at` (Google-Docs-style "recently edited
+  // first") — a post edited today shows under "היום" even if it was
+  // created earlier, and inside the day it sits in edit-recency order.
   const groupedByDate: { dayKey: string; label: string; items: SavedPost[] }[] = (() => {
     const groups = new Map<string, SavedPost[]>()
     for (const post of filtered) {
-      const key = getDayKey(post.created_at)
+      const key = getDayKey(post.updated_at)
       const existing = groups.get(key)
       if (existing) existing.push(post)
       else groups.set(key, [post])
     }
     return Array.from(groups, ([dayKey, items]) => ({
       dayKey,
-      label: formatPostDate(items[0].created_at),
+      label: formatPostDate(items[0].updated_at),
       items,
     }))
   })()
@@ -328,7 +342,14 @@ export default function CorePostsPage() {
 
       <CorePostSheet
         open={sheetOpen}
-        onOpenChange={setSheetOpen}
+        onOpenChange={(open) => {
+          setSheetOpen(open)
+          // Sheet closing → any autosave from inside it has committed by
+          // now. Refetch so updated_at-driven order reflects the edit
+          // (the API is the source of truth — local state would have to
+          // mirror every edit type, which gets brittle fast).
+          if (!open) refetchPosts()
+        }}
         post={sheetData}
         onDeleted={handleDeleted}
       />

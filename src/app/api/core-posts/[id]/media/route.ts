@@ -133,6 +133,15 @@ export async function POST(
       )
     }
 
+    // Bump core_posts.updated_at so the /core_posts listing surfaces this
+    // post as the most-recently-edited (the trigger sets the timestamp on
+    // any UPDATE).
+    await supabase
+      .from("core_posts")
+      .update({ updated_at: new Date().toISOString() } as never)
+      .eq("id", id)
+      .eq("user_id", user.id)
+
     return NextResponse.json({ ok: true })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
@@ -203,6 +212,14 @@ export async function DELETE(
       .delete()
       .eq("format_variant_id", variantRow.id)
       .eq("asset_type", assetType)
+
+    // Bump core_posts.updated_at so a media removal also counts as an
+    // edit for the /core_posts "recently edited" sort.
+    await supabase
+      .from("core_posts")
+      .update({ updated_at: new Date().toISOString() } as never)
+      .eq("id", id)
+      .eq("user_id", user.id)
 
     return NextResponse.json({ ok: true })
   } catch (error) {

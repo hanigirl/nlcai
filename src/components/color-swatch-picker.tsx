@@ -16,12 +16,18 @@ interface ColorSwatchPickerProps {
   onChange: (color: string) => void
   userId: string | null
   label?: string
+  // Fires on every wheel move while the popover is open, so the host can
+  // paint a live CSS overlay on whatever surface the colour belongs to.
+  // Receives the new colour during drag and `null` once the popover closes
+  // (commit, cancel-click-outside, or quick-pick) so the host can drop the
+  // overlay and let the regenerated source-of-truth take over.
+  onLivePreview?: (color: string | null) => void
 }
 
 const STORAGE_KEY = "recentSwatchColors_v1"
 const MAX_RECENT = 6
 
-export function ColorSwatchPicker({ value, onChange, userId, label = "צבע" }: ColorSwatchPickerProps) {
+export function ColorSwatchPicker({ value, onChange, userId, label = "צבע", onLivePreview }: ColorSwatchPickerProps) {
   const [open, setOpen] = useState(false)
   const [recent, setRecent] = useState<string[]>([])
   // Local draft colour shown inside the popover and on the swatch while
@@ -56,12 +62,18 @@ export function ColorSwatchPicker({ value, onChange, userId, label = "צבע" }:
   }
 
   // Close + commit. Push the final colour upstream and add to recents,
-  // but only if it actually differs from where we started.
+  // but only if it actually differs from where we started. We leave the
+  // live overlay armed when committing — the host clears it once the
+  // regenerated PNG lands, so the user never sees the pre-change PNG flash
+  // back during the ~1.5s server round-trip.
   const closeAndCommit = () => {
     setOpen(false)
-    if (draftColor.toLowerCase() !== initialColorRef.current.toLowerCase()) {
+    const changed = draftColor.toLowerCase() !== initialColorRef.current.toLowerCase()
+    if (changed) {
       onChange(draftColor)
       persistRecent(draftColor)
+    } else {
+      onLivePreview?.(null)
     }
   }
 
@@ -81,19 +93,29 @@ export function ColorSwatchPicker({ value, onChange, userId, label = "צבע" }:
     setOpen(true)
   }
 
-  // Quick-pick from history: commit immediately and close.
+  // Quick-pick from history: commit immediately and close. Same overlay
+  // handoff rule as closeAndCommit — if we're actually committing a new
+  // colour, keep the overlay armed and let the host clear it on PNG-ready.
   const pickRecent = (color: string) => {
     setOpen(false)
-    if (color.toLowerCase() !== initialColorRef.current.toLowerCase()) {
+    const changed = color.toLowerCase() !== initialColorRef.current.toLowerCase()
+    if (changed) {
+      // The recent swatch carries a colour the user may not have moved the
+      // wheel onto, so the overlay might still be on the initial value.
+      // Push the chosen colour through onLivePreview first so the cover
+      // visibly snaps to it for the brief window before the PNG lands.
+      onLivePreview?.(color)
       onChange(color)
       persistRecent(color)
+    } else {
+      onLivePreview?.(null)
     }
   }
 
   const swatchPreview = open ? draftColor : value
 
   return (
-    <div className="relative inline-flex items-center gap-2" ref={wrapperRef} dir="rtl">
+    <div className="relative inline-flex items-center gap-2" ref={wrapperRef} dir="rtl" data-no-pan>
       <span className="text-small text-text-primary-default">{label}</span>
       <button
         type="button"
@@ -103,11 +125,22 @@ export function ColorSwatchPicker({ value, onChange, userId, label = "צבע" }:
         aria-label={`${label}: ${swatchPreview}`}
       />
       {open && (
-        <div className="absolute bottom-full mb-2 end-0 z-50 rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 p-3 shadow-lg flex flex-col gap-3">
+        <div
+          data-no-pan
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          onWheel={(e) => e.stopPropagation()}
+          className="absolute bottom-full mb-2 end-0 z-50 rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 p-3 shadow-lg flex flex-col gap-3"
+          style={{ touchAction: "none", overscrollBehavior: "contain" }}
+        >
           <HexColorPicker
             color={draftColor}
-            onChange={setDraftColor}
-            style={{ width: 200, height: 160 }}
+            onChange={(c) => {
+              setDraftColor(c)
+              onLivePreview?.(c)
+            }}
+            style={{ width: 200, height: 160, touchAction: "none" }}
           />
           <div className="flex items-center gap-2">
             <span className="text-xs text-text-neutral-default">HEX</span>
@@ -116,7 +149,10 @@ export function ColorSwatchPicker({ value, onChange, userId, label = "צבע" }:
               value={draftColor}
               onChange={(e) => {
                 const v = e.target.value
-                if (/^#[0-9a-fA-F]{0,6}$/.test(v)) setDraftColor(v)
+                if (/^#[0-9a-fA-F]{0,6}$/.test(v)) {
+                  setDraftColor(v)
+                  if (v.length === 7) onLivePreview?.(v)
+                }
               }}
               className="flex-1 h-7 px-2 rounded border border-border-neutral-default text-xs text-text-primary-default focus:outline-none focus:border-button-primary-default"
               dir="ltr"

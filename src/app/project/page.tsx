@@ -129,6 +129,11 @@ function ProjectPageInner() {
   // when the user just picked a new colour, so the state-update race
   // doesn't bite).
   const [pillColor, setPillColor] = useState("#000000")
+  // Live colour the picker is currently dragging towards. `null` = picker
+  // closed → fall back to the baked PNG (`thCoverImage`). While dragging
+  // we show a CSS pill overlay so colour changes feel instant; the PNG
+  // is only regenerated once on commit.
+  const [livePillColor, setLivePillColor] = useState<string | null>(null)
   // Confirmation modal — opened from the trash icon on the video card. The
   // actual delete only fires after the user clicks "כן, למחוק". The cover has
   // no standalone delete action; it lives and dies with the video.
@@ -469,6 +474,14 @@ function ProjectPageInner() {
             setShowFormats(true)
           }
 
+          // Restore the pill colour the cover was baked with so the picker
+          // opens already aligned with what's on screen. Falls through to
+          // the localStorage hydrator below if the server didn't store one
+          // (older covers, pre-metadata).
+          if (typeof data.post.coverPillColor === "string") {
+            setPillColor(data.post.coverPillColor as string)
+          }
+
           // Restore saved cover if exists. Flip thCoverLoading on while we
           // fetch + decode so the cover area shows a skeleton instead of
           // empty space (the fetch + FileReader takes ~1s on slow networks).
@@ -711,15 +724,18 @@ function ProjectPageInner() {
     }).catch(() => {})
   }, [savedPostId, thVideoUrl])
 
-  // Auto-save cover when it changes
+  // Auto-save cover when it changes. Send pillColor too so the picker
+  // can open already aligned with what's actually baked into the PNG on
+  // the next mount (otherwise the swatch resets to black and you see a
+  // mismatch between the cover and the swatch).
   useEffect(() => {
     if (!savedPostId || !thCoverImage) return
     fetch(`/api/core-posts/${savedPostId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ coverBase64: thCoverImage }),
+      body: JSON.stringify({ coverBase64: thCoverImage, coverPillColor: pillColor }),
     }).catch(() => {})
-  }, [savedPostId, thCoverImage])
+  }, [savedPostId, thCoverImage, pillColor])
 
   // Auto-save inline hook edits. The user can edit any hook text directly
   // in the picker on /project; without this effect the change lived in
@@ -1640,8 +1656,16 @@ function ProjectPageInner() {
                           pillColor={pillColor}
                           onPillColorChange={(next) => {
                             setPillColor(next)
+                            // The picker leaves `livePillColor` armed when it
+                            // commits; we drop the CSS overlay only after the
+                            // regenerated PNG lands so the user never sees
+                            // the old colour flash back during the round-trip.
                             generateCoverForPost(coverText, thVideoUrl || undefined, next)
+                              .finally(() => setLivePillColor(null))
                           }}
+                          livePillColor={livePillColor}
+                          onLivePillPreview={setLivePillColor}
+                          thVideoFrameDataUrl={thVideoFrameDataUrl}
                           userId={userId}
                           carouselImages={carouselImages}
                           carouselCardRef={carouselCardRef}
@@ -1772,6 +1796,9 @@ function FormatTree({
   onCoverRegenerate,
   pillColor,
   onPillColorChange,
+  livePillColor,
+  onLivePillPreview,
+  thVideoFrameDataUrl,
   userId,
   carouselImages,
   carouselCardRef,
@@ -1797,6 +1824,9 @@ function FormatTree({
   onCoverRegenerate: () => void
   pillColor: string
   onPillColorChange: (color: string) => void
+  livePillColor: string | null
+  onLivePillPreview: (color: string | null) => void
+  thVideoFrameDataUrl: string | null
   userId: string | null
   carouselImages: string[] | null
   carouselCardRef: React.RefObject<HTMLDivElement | null>
@@ -2057,12 +2087,56 @@ function FormatTree({
                       </div>
                       <div className="flex justify-center">
                         <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={`data:image/png;base64,${thCoverImage}`}
-                            alt="cover"
-                            className="w-full h-full object-cover"
-                          />
+                          {livePillColor !== null ? (
+                            // Live client composite. Mirrors the server's
+                            // DEFAULT_BRAND_STYLE (center/center, Rubik
+                            // ExtraBold, 24px radius, 24×40 padding) at the
+                            // 200px-wide preview scale (~5.4× smaller than
+                            // the 1080-wide PNG) so the colour change feels
+                            // instant while the picker is open. PNG takes
+                            // over again on commit.
+                            <>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              {thVideoFrameDataUrl ? (
+                                <img
+                                  src={thVideoFrameDataUrl}
+                                  alt=""
+                                  className="absolute inset-0 w-full h-full object-cover"
+                                />
+                              ) : (
+                                <div
+                                  className="absolute inset-0"
+                                  style={{ backgroundImage: "linear-gradient(145deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)" }}
+                                />
+                              )}
+                              <div className="absolute inset-0 flex items-center justify-center px-[11px]">
+                                <span
+                                  className="text-white text-center"
+                                  style={{
+                                    backgroundColor: livePillColor,
+                                    padding: "4px 7px",
+                                    borderRadius: 4,
+                                    fontFamily: "Rubik, sans-serif",
+                                    fontWeight: 800,
+                                    fontSize: 13,
+                                    lineHeight: 1,
+                                    letterSpacing: 0,
+                                    maxWidth: "100%",
+                                    wordBreak: "break-word",
+                                  }}
+                                >
+                                  {coverText}
+                                </span>
+                              </div>
+                            </>
+                          ) : (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={`data:image/png;base64,${thCoverImage}`}
+                              alt="cover"
+                              className="w-full h-full object-cover"
+                            />
+                          )}
                         </div>
                       </div>
                       {/* Footer row: swatch picker on the right (RTL first
@@ -2072,6 +2146,7 @@ function FormatTree({
                         <ColorSwatchPicker
                           value={pillColor}
                           onChange={onPillColorChange}
+                          onLivePreview={onLivePillPreview}
                           userId={userId}
                           label="רקע הכותרת"
                         />

@@ -43,7 +43,6 @@ import {
   Copy,
   ExternalLink,
   Image as ImageIcon,
-  Info,
   Link2,
   Loader2,
   Pencil,
@@ -1045,7 +1044,6 @@ export function CorePostSheet({
                     mediaUrl={mediaUrl}
                     coverUrl={formatCoverUrl}
                     driveUrl={formatMeta.driveUrl}
-                    triggerWord={formatMeta.triggerWord}
                     scheduledDate={scheduledRow?.date}
                     scheduledTime={scheduledRow?.time ?? null}
                     publishedAt={publishedAt ?? undefined}
@@ -1053,12 +1051,6 @@ export function CorePostSheet({
                       if (!postId) return
                       setFormatMeta(postId, format, {
                         driveUrl: url || undefined,
-                      })
-                    }}
-                    onSaveTriggerWord={(word) => {
-                      if (!postId) return
-                      setFormatMeta(postId, format, {
-                        triggerWord: word || undefined,
                       })
                     }}
                     onCreateScript={() =>
@@ -1223,12 +1215,10 @@ function FormatPanel({
   mediaUrl,
   coverUrl,
   driveUrl,
-  triggerWord,
   scheduledDate,
   scheduledTime,
   publishedAt,
   onSaveDriveUrl,
-  onSaveTriggerWord,
   onCreateScript,
   onTogglePublished,
   onEditScript,
@@ -1240,12 +1230,10 @@ function FormatPanel({
   mediaUrl: string | null
   coverUrl: string | null
   driveUrl: string | undefined
-  triggerWord: string | undefined
   scheduledDate?: string
   scheduledTime?: string | null
   publishedAt?: string
   onSaveDriveUrl: (url: string) => void
-  onSaveTriggerWord: (word: string) => void
   onCreateScript: () => void
   onTogglePublished: () => void
   onEditScript: () => void
@@ -1598,88 +1586,6 @@ function DriveLinkBlock({
         >
           <Link2 className="size-3.5" />
         </button>
-      </div>
-    </div>
-  )
-}
-
-/**
- * Per-format trigger word input. Same auto-save pattern as DriveLinkBlock.
- */
-function TriggerWordBlock({
-  format,
-  disabled,
-  value,
-  onSave,
-}: {
-  format: FormatId
-  disabled: boolean
-  value: string
-  onSave: (word: string) => void
-}) {
-  const label = getFormatChipLabel(format)
-  const inputId = `trigger-word-${format}`
-  const [local, setLocal] = useState(value)
-  useEffect(() => {
-    setLocal(value)
-  }, [value])
-
-  const commit = () => {
-    if (local.trim() === (value ?? "").trim()) return
-    onSave(local.trim())
-  }
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-1.5">
-        <Label
-          htmlFor={inputId}
-          className="text-small text-text-primary-default"
-        >
-          מילת טריגר ({label})
-        </Label>
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label="מה זו מילת טריגר?"
-                className="inline-flex items-center justify-center size-4 rounded-full text-text-neutral-default hover:text-text-primary-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-              >
-                <Info className="size-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent
-              side="top"
-              className="max-w-[260px] text-xs leading-relaxed text-right"
-            >
-              המילה שכשמישהו שולח אותה ב-DM, מאניצ&apos;אט מפעיל את האוטומציה.
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      </div>
-      <div className="relative">
-        <Input
-          id={inputId}
-          dir="rtl"
-          inputSize="small"
-          value={local}
-          onChange={(e) => setLocal(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") e.currentTarget.blur()
-          }}
-          placeholder="מילה אחת או שתיים שמדליקות לכם רעיון"
-          className="pe-10 text-right"
-          disabled={disabled}
-          aria-label={`מילת טריגר ל${label}`}
-        />
-        <InlineCopyButton
-          value={local.trim()}
-          ariaLabel={`העתיקו את מילת הטריגר ל${label}`}
-          disabled={disabled}
-          className="absolute end-2 top-1/2 -translate-y-1/2"
-        />
       </div>
     </div>
   )
