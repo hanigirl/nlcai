@@ -35,12 +35,12 @@ const DEFAULT_BRAND_STYLE: BrandStyle = {
   letter_spacing: 0,
   text_align: "center",
   avg_words_per_line: 2,
-  // 15% black overlay is too subtle to rescue white text on light
-  // thumbnails (a Notion screen recording goes white-on-white). The
-  // solid dark pill below carries the readability guarantee; the
-  // overlay just adds a brand-flavoured tint on top of the thumbnail.
+  // Overlay disabled — the pill below carries readability, so darkening
+  // the whole thumbnail on top of it just hid the image for no gain.
+  // Keep the fields present (opacity 0) so the renderer skips the layer
+  // without a code branch.
   overlay_style: "solid",
-  overlay_opacity: 0.15,
+  overlay_opacity: 0,
   overlay_color: "#000000",
   // Solid dark pill behind the hook — same trick Instagram Reels /
   // TikTok captions use. Renders identically on any thumbnail (light,
@@ -329,9 +329,10 @@ function renderCover(
 
 export async function POST(req: NextRequest) {
   try {
-    const { thumbnail_url, title } = (await req.json()) as {
+    const { thumbnail_url, title, pill_color } = (await req.json()) as {
       thumbnail_url?: string
       title: string
+      pill_color?: string
     }
 
     if (!title) {
@@ -345,11 +346,15 @@ export async function POST(req: NextRequest) {
     }
 
     // Per-user brand_style is intentionally bypassed here — every cover
-    // ships with the same Rubik ExtraBold + 15% black-overlay treatment
-    // until we revisit per-user theming. The DB column and analyzer
-    // pipeline are left intact so it's a one-line restore when we go
-    // back to per-user.
-    const style = DEFAULT_BRAND_STYLE
+    // ships with the same Rubik ExtraBold + dark-pill treatment until we
+    // revisit per-user theming. The DB column and analyzer pipeline are
+    // left intact so it's a one-line restore when we go back to per-user.
+    // pill_color (optional hex) overrides only the text-background colour
+    // so the user can pick the pill tone from the UI without losing the
+    // rest of the default style. Anything else stays consistent.
+    const style: BrandStyle = pill_color
+      ? { ...DEFAULT_BRAND_STYLE, text_background_color: pill_color }
+      : DEFAULT_BRAND_STYLE
 
     // Fetch thumbnail if provided (supports data URLs and regular URLs)
     let thumbBase64: string | undefined
