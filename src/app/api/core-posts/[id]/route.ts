@@ -102,8 +102,10 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, formatPosts, videoUrl, deleteVideo, coverBase64, coverText, deleteCover } = (await req.json()) as {
+    const { body, hookText, hookId, formatPosts, videoUrl, deleteVideo, coverBase64, coverText, deleteCover } = (await req.json()) as {
       body?: string
+      hookText?: string
+      hookId?: string
       formatPosts?: Record<string, string>
       videoUrl?: string
       deleteVideo?: boolean
@@ -112,13 +114,38 @@ export async function PATCH(
       deleteCover?: boolean
     }
 
-    // Update core post body if provided
-    if (body) {
+    // Update core post body if provided. We treat empty string as "user
+    // intentionally cleared" and still write it; callers that only want to
+    // touch other fields should omit the body key entirely.
+    if (body !== undefined) {
+      const update: { body: string; status?: string } = { body }
+      // A previously-empty draft graduates to "completed" the moment a real
+      // body lands; conversely, clearing back to empty isn't worth demoting.
+      if (body.trim().length > 0) update.status = "completed"
       await supabase
         .from("core_posts")
-        .update({ body } as never)
+        .update(update as never)
         .eq("id", id)
         .eq("user_id", user.id)
+    }
+
+    // Update hook_text if provided. Used when the user re-picks a hook on
+    // /project after the draft was already created — we keep the row's
+    // hook_text in sync with the chosen one and flip is_used on the new
+    // source hook so /hooks reflects reality.
+    if (hookText !== undefined) {
+      await supabase
+        .from("core_posts")
+        .update({ hook_text: hookText } as never)
+        .eq("id", id)
+        .eq("user_id", user.id)
+      if (hookId) {
+        await supabase
+          .from("hooks")
+          .update({ is_used: true } as never)
+          .eq("user_id", user.id)
+          .eq("id", hookId)
+      }
     }
 
     // Update cover text if provided

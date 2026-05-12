@@ -96,6 +96,18 @@ function ProjectPageInner() {
   const [activeCard, setActiveCard] = useState<string>(flow === "hook" ? "response" : "hooks")
   const [editableHook, setEditableHook] = useState<string>(hookParam || "")
 
+  // Product + trigger-word controls (per-session; persisted via canvas state).
+  // The product dropdown shows ALL of the user's products. If the active hook
+  // already has a product_ids[0] assigned by the classifier, we auto-select it.
+  // The trigger word is optional — when set, it appears in the core-post CTA.
+  const [products, setProducts] = useState<Array<{ id: string; name: string }>>([])
+  const [hookProductIds, setHookProductIds] = useState<Record<string, string[]>>({})
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null)
+  const [triggerWord, setTriggerWord] = useState<string>("")
+  // Tracks whether the user has manually picked a product this session. Once
+  // they have, we stop auto-overwriting it from the active hook's product_ids.
+  const productManuallySetRef = useRef(false)
+
   // Media panel state
   const [selectedFormatCard, setSelectedFormatCard] = useState<string | null>(null)
 
@@ -154,6 +166,66 @@ function ProjectPageInner() {
     })
   }, [])
 
+  // Load the user's products once. Used to populate the product dropdown on
+  // the core-post WorkflowCard.
+  useEffect(() => {
+    if (!userId) return
+    const supabase = createClient()
+    supabase
+      .from("products")
+      .select("id, name")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: true })
+      .then(({ data, error }) => {
+        if (error) {
+          console.error("[project][products-load]", error)
+          return
+        }
+        if (data) setProducts(data as Array<{ id: string; name: string }>)
+      })
+  }, [userId])
+
+  // Fetch product_ids for any hook we currently need (hook-flow via hookIdParam,
+  // saved-flow via the core_post's hook_id, idea-flow via hookIds[selectedHook]).
+  // Cached in hookProductIds so re-selecting doesn't re-fetch.
+  useEffect(() => {
+    if (!userId) return
+    const targetHookId =
+      hookIdParam ||
+      (selectedHook !== null && hookIds[selectedHook] ? hookIds[selectedHook] : "")
+    if (!targetHookId) return
+    if (hookProductIds[targetHookId]) return
+    const supabase = createClient()
+    supabase
+      .from("hooks")
+      .select("product_ids")
+      .eq("id", targetHookId)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (error) {
+          console.error("[project][hook-products-load]", error)
+          return
+        }
+        const row = data as { product_ids: string[] | null } | null
+        const ids = row?.product_ids ?? []
+        setHookProductIds((prev) => ({ ...prev, [targetHookId]: ids }))
+      })
+  }, [userId, hookIdParam, selectedHook, hookIds, hookProductIds])
+
+  // Auto-select the hook's first product (if any) until the user makes a
+  // manual choice. After a manual change, productManuallySetRef stays true and
+  // we leave selectedProductId alone.
+  useEffect(() => {
+    if (productManuallySetRef.current) return
+    const targetHookId =
+      hookIdParam ||
+      (selectedHook !== null && hookIds[selectedHook] ? hookIds[selectedHook] : "")
+    if (!targetHookId) return
+    const ids = hookProductIds[targetHookId]
+    if (!ids) return // still loading
+    setSelectedProductId(ids[0] ?? null)
+  }, [hookIdParam, selectedHook, hookIds, hookProductIds])
+
   useEffect(() => {
     if (restoredRef.current) return
     if (!userId) return
@@ -190,6 +262,13 @@ function ProjectPageInner() {
       if (typeof saved.savedHookText === "string") setSavedHookText(saved.savedHookText)
       if (Array.isArray(saved.originalHooks)) setOriginalHooks(saved.originalHooks)
       if (typeof saved.originalCorePost === "string") setOriginalCorePost(saved.originalCorePost)
+      if (typeof saved.selectedProductId === "string" || saved.selectedProductId === null) {
+        setSelectedProductId(saved.selectedProductId ?? null)
+        // A restored product counts as a manual choice — don't overwrite it
+        // from the hook's classifier suggestion.
+        if (saved.selectedProductId !== undefined) productManuallySetRef.current = true
+      }
+      if (typeof saved.triggerWord === "string") setTriggerWord(saved.triggerWord)
     } catch (err) { console.error("[project][canvas-restore]", err) }
   }, [sessionKey, postId, router, userId])
 
@@ -205,6 +284,7 @@ function ProjectPageInner() {
           showFormats, selectedFormats, duplicatedFormats, formatPosts,
           editableHook, coverText, thTranscript, thSourceMode,
           savedHookText, originalHooks, originalCorePost,
+          selectedProductId, triggerWord,
           // Persist the auto-saved post id so a refresh on a tab whose URL
           // hasn't been synced yet (e.g. opened before the URL-sync was wired
           // up) can still recover the saved post via the restore effect above.
@@ -214,7 +294,7 @@ function ProjectPageInner() {
       } catch (err) { console.error("[project][canvas-save]", err) }
     }, 300)
     return () => clearTimeout(t)
-  }, [sessionKey, idea, hooks, hookIds, selectedHook, response, corePost, showFormats, selectedFormats, duplicatedFormats, formatPosts, editableHook, coverText, thTranscript, thSourceMode, savedHookText, originalHooks, originalCorePost, savedPostId, userId])
+  }, [sessionKey, idea, hooks, hookIds, selectedHook, response, corePost, showFormats, selectedFormats, duplicatedFormats, formatPosts, editableHook, coverText, thTranscript, thSourceMode, savedHookText, originalHooks, originalCorePost, selectedProductId, triggerWord, savedPostId, userId])
 
   // Extract a frame from a video URL as a data URL
   const extractVideoFrame = (videoSrc: string): Promise<string | null> => {
@@ -419,6 +499,72 @@ function ProjectPageInner() {
     if (thVideoUrl) setThVideoLoading(false)
   }, [thVideoUrl])
 
+  // Create a draft core_post the moment the user picks a hook in the idea
+  // flow. The draft has an empty body — it's just a stub so an editable card
+  // shows up on /core_posts immediately. When the user later clicks "תייצר
+  // לי פוסט ליבה", handleGeneratePost PATCHes this same row with the body
+  // instead of inserting a new one. We guard on `postId` so the saved-flow
+  // load isn't racing the create.
+  const draftInFlightRef = useRef(false)
+  useEffect(() => {
+    if (savedPostId) return
+    if (postId) return
+    if (flow !== "idea") return
+    if (selectedHook === null) return
+    if (draftInFlightRef.current) return
+    const chosenText = hooks[selectedHook]?.trim()
+    if (!chosenText) return
+    const chosenId = hookIds[selectedHook] || undefined
+
+    draftInFlightRef.current = true
+    fetch("/api/core-posts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: "",
+        hookText: chosenText,
+        hookId: chosenId,
+        userResponse: "",
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.id) {
+          setSavedPostId(data.id)
+          // Reflect the new draft id in the URL so a refresh recovers it
+          // without re-creating. We use replaceState so Next 16's
+          // useSearchParams doesn't flip `flow` to "saved" mid-session.
+          const url = new URL(window.location.href)
+          if (!url.searchParams.get("post_id")) {
+            url.searchParams.set("post_id", data.id)
+            window.history.replaceState({}, "", url.toString())
+          }
+        }
+      })
+      .catch((err) => console.error("[project][create-draft]", err))
+      .finally(() => { draftInFlightRef.current = false })
+  }, [flow, savedPostId, postId, selectedHook, hooks, hookIds])
+
+  // If the user re-picks a hook (or edits its text) after the draft already
+  // exists, keep the row's hook_text in sync. Debounced so rapid clicking
+  // between hooks doesn't fire a PATCH per click.
+  useEffect(() => {
+    if (!savedPostId) return
+    if (flow !== "idea") return
+    if (selectedHook === null) return
+    const chosenText = hooks[selectedHook]?.trim()
+    if (!chosenText) return
+    const chosenId = hookIds[selectedHook] || undefined
+    const timer = setTimeout(() => {
+      fetch(`/api/core-posts/${savedPostId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hookText: chosenText, hookId: chosenId }),
+      }).catch(() => {})
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [savedPostId, flow, selectedHook, hooks, hookIds])
+
   // Auto-save video URL when it changes
   useEffect(() => {
     if (!savedPostId || !thVideoUrl) return
@@ -572,6 +718,8 @@ function ProjectPageInner() {
         body: JSON.stringify({
           hook: activeHook,
           userResponse: response,
+          productId: selectedProductId || undefined,
+          triggerWord: triggerWord.trim() || undefined,
         }),
       })
       const data = await res.json()
@@ -584,45 +732,56 @@ function ProjectPageInner() {
         setOriginalCorePost(data.post)
         setActiveCard("post")
 
-        // Auto-save to DB (fire and forget).
-        //
-        // hookId priority:
-        //   1. hook_id from URL (user came from /hooks page with a chosen hook)
-        //   2. the DB id of the currently-selected hook from the idea flow,
-        //      stored in hookIds[selectedHook] after /api/hooks persisted it
-        //   3. undefined — core-posts then falls back to matching on hook_text
+        // Persist the body to DB. If a draft already exists (idea flow
+        // created one when the user picked a hook, or this is a saved-flow
+        // regeneration), PATCH it so we don't end up with duplicate rows.
+        // Otherwise create a new row — the hook flow lands here when the
+        // user came from /hooks and never went through the idea-flow draft
+        // creation effect.
         const selectedHookId =
           selectedHook !== null && hookIds[selectedHook]
             ? hookIds[selectedHook]
             : undefined
-        fetch("/api/core-posts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            body: data.post,
-            hookText: activeHook,
-            hookId: hookIdParam || selectedHookId,
-            userResponse: response,
-            videoUrl: thVideoUrl && !thVideoUrl.startsWith("blob:") ? thVideoUrl : undefined,
-          }),
-        })
-          .then((res) => res.json())
-          .then((saveData) => {
-            if (saveData.id) {
-              setSavedPostId(saveData.id)
-              // Update URL with post_id so a refresh re-loads this exact post
-              // (incl. avatar video, cover, formats). replaceState avoids a
-              // Next.js navigation — current in-memory `flow` stays at "hook",
-              // but on refresh `useSearchParams` reads post_id and switches to
-              // the "saved" flow which re-fetches the row from DB.
-              const url = new URL(window.location.href)
-              if (!url.searchParams.get("post_id")) {
-                url.searchParams.set("post_id", saveData.id)
-                window.history.replaceState({}, "", url.toString())
-              }
-            }
+        if (savedPostId) {
+          fetch(`/api/core-posts/${savedPostId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              body: data.post,
+              hookText: activeHook,
+              hookId: hookIdParam || selectedHookId,
+            }),
+          }).catch(() => {})
+        } else {
+          fetch("/api/core-posts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              body: data.post,
+              hookText: activeHook,
+              hookId: hookIdParam || selectedHookId,
+              userResponse: response,
+              videoUrl: thVideoUrl && !thVideoUrl.startsWith("blob:") ? thVideoUrl : undefined,
+            }),
           })
-          .catch(() => {})
+            .then((res) => res.json())
+            .then((saveData) => {
+              if (saveData.id) {
+                setSavedPostId(saveData.id)
+                // Update URL with post_id so a refresh re-loads this exact post
+                // (incl. avatar video, cover, formats). replaceState avoids a
+                // Next.js navigation — current in-memory `flow` stays at "hook",
+                // but on refresh `useSearchParams` reads post_id and switches to
+                // the "saved" flow which re-fetches the row from DB.
+                const url = new URL(window.location.href)
+                if (!url.searchParams.get("post_id")) {
+                  url.searchParams.set("post_id", saveData.id)
+                  window.history.replaceState({}, "", url.toString())
+                }
+              }
+            })
+            .catch(() => {})
+        }
       }
     } catch (err) {
       console.error("[project][create-post]", err)
@@ -796,6 +955,14 @@ function ProjectPageInner() {
                       onFocus={() => setActiveCard("response")}
                       onChange={(val) => setResponse(val)}
                       onSubmit={handleGeneratePost}
+                      products={products}
+                      productId={selectedProductId}
+                      onProductChange={(id) => {
+                        productManuallySetRef.current = true
+                        setSelectedProductId(id)
+                      }}
+                      triggerWord={triggerWord}
+                      onTriggerWordChange={setTriggerWord}
                       className="w-[567px]"
                     />
                   </div>
@@ -849,6 +1016,14 @@ function ProjectPageInner() {
                   onFocus={() => setActiveCard("response")}
                   onChange={(val) => setResponse(val)}
                   onSubmit={handleGeneratePost}
+                  products={products}
+                  productId={selectedProductId}
+                  onProductChange={(id) => {
+                    productManuallySetRef.current = true
+                    setSelectedProductId(id)
+                  }}
+                  triggerWord={triggerWord}
+                  onTriggerWordChange={setTriggerWord}
                   className="w-[567px]"
                 />
               </div>

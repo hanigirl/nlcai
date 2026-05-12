@@ -88,39 +88,43 @@ export async function POST(req: NextRequest) {
       videoUrl?: string
     }
 
-    if (!body) {
-      return NextResponse.json({ error: "body is required" }, { status: 400 })
-    }
+    // Empty body is intentional — drafts get created the moment the user
+    // picks a hook on /project, so a card shows up on /core_posts even
+    // before the AI fills in the body. The card's title falls back to
+    // hook_text on the list view either way.
+    const isDraft = !body || body.trim().length === 0
 
-    // Generate title via AI
-    let title = body.split("\n")[0].slice(0, 60) // fallback
-    try {
-      const apiKey = await getUserApiKey(supabase, "anthropic_api_key")
-      const client = new Anthropic({ apiKey })
-      const msg = await client.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 50,
-        messages: [{
-          role: "user",
-          content: `תן כותרת קצרה (3-6 מילים) לפוסט הבא. החזר רק את הכותרת, בלי גרשיים ובלי הסברים.\n\n${body.slice(0, 500)}`,
-        }],
-      })
-      const textBlock = msg.content.find((b) => b.type === "text")
-      if (textBlock?.text) {
-        title = textBlock.text.trim()
+    let title = ""
+    if (!isDraft) {
+      title = body.split("\n")[0].slice(0, 60) // fallback
+      try {
+        const apiKey = await getUserApiKey(supabase, "anthropic_api_key")
+        const client = new Anthropic({ apiKey })
+        const msg = await client.messages.create({
+          model: "claude-sonnet-4-6",
+          max_tokens: 50,
+          messages: [{
+            role: "user",
+            content: `תן כותרת קצרה (3-6 מילים) לפוסט הבא. החזר רק את הכותרת, בלי גרשיים ובלי הסברים.\n\n${body.slice(0, 500)}`,
+          }],
+        })
+        const textBlock = msg.content.find((b) => b.type === "text")
+        if (textBlock?.text) {
+          title = textBlock.text.trim()
+        }
+      } catch {
+        // Use fallback title
       }
-    } catch {
-      // Use fallback title
     }
 
     // Save core post
     const insertData = {
       user_id: user.id,
-      body,
+      body: body ?? "",
       title,
       hook_text: hookText,
       user_response: userResponse,
-      status: "completed",
+      status: isDraft ? "draft" : "completed",
     }
 
     const { data: post, error: postError } = await supabase
