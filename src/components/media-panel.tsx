@@ -2,13 +2,21 @@
 
 import { useState, useRef, useEffect, useCallback } from "react"
 import Image from "next/image"
-import { X, Smartphone, Video, Layers, Image as ImageIcon, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, Download, Upload, ChevronLeft, ChevronRight, type LucideIcon } from "lucide-react"
+import { X, Smartphone, Video, Layers, Image as ImageIcon, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, Upload, ChevronLeft, ChevronRight, Link2, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { AvatarPicker, type Avatar } from "@/components/avatar-picker"
 import { Button } from "@/components/ui/button"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import type { SlideData } from "@/lib/carousel-templates"
 import { CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
+import {
+  getFormatMeta,
+  setFormatMeta,
+  type FormatId,
+} from "@/lib/timing-storage"
 
 const FORMAT_META: Record<string, { label: string; icon: LucideIcon }> = {
   story: { label: "סטורי", icon: Smartphone },
@@ -20,6 +28,16 @@ const FORMAT_META: Record<string, { label: string; icon: LucideIcon }> = {
 interface MediaPanelProps {
   formatId: string | null
   onClose: () => void
+  /**
+   * The saved core_posts.id this panel is attached to. Required for the
+   * generic MediaUploadFlow (story / image_post) — without it we can't
+   * persist uploads to the right format_variant. May be null if the user
+   * is editing a *new* post that hasn't been saved yet; in that case the
+   * upload flow shows a soft empty state instructing the user to save
+   * first. Talking-head and carousel flows ignore this — they have their
+   * own persistence path through the parent's auto-save useEffect.
+   */
+  postId?: string | null
   // Talking head state (lifted)
   thAvatar: Avatar | null
   thAudioBlob: Blob | null
@@ -48,6 +66,7 @@ interface MediaPanelProps {
 export function MediaPanel({
   formatId,
   onClose,
+  postId,
   thAvatar,
   thAudioBlob,
   thTranscript,
@@ -145,17 +164,11 @@ export function MediaPanel({
         )}
 
         {formatId && formatId !== "talking_head" && formatId !== "carousel" && (
-          <div className="flex flex-col items-center justify-center gap-4 py-12 text-center">
-            <div className="rounded-2xl border-2 border-dashed border-border-neutral-default p-8">
-              <ImagePlus className="size-10 text-text-neutral-default mx-auto mb-3" />
-              <p className="text-small text-text-neutral-default">
-                גרור תמונה לכאן או לחץ להעלאה
-              </p>
-            </div>
-            <p className="text-xs text-text-primary-disabled">
-              בקרוב — יצירת תמונות עם AI
-            </p>
-          </div>
+          <MediaUploadFlow
+            format={formatId}
+            postId={postId ?? null}
+            hookText={panelHookText}
+          />
         )}
       </div>
     </div>
@@ -281,8 +294,8 @@ function TalkingHeadFlow({
           if (data.text) {
             onTranscriptChange(data.text)
           }
-        } catch {
-          // transcription is optional, fail silently
+        } catch (err) {
+          console.error("[media-panel][transcribe]", err)
         } finally {
           setTranscribing(false)
         }
@@ -300,7 +313,8 @@ function TalkingHeadFlow({
       timerRef.current = setInterval(() => {
         setRecordingTime((t) => t + 1)
       }, 1000)
-    } catch {
+    } catch (err) {
+      console.error("[media-panel][mic-access]", err)
       setRecError("לא ניתן לגשת למיקרופון. אנא אפשר גישה.")
     }
   }
@@ -338,7 +352,8 @@ function TalkingHeadFlow({
             })
             const storeData = await storeRes.json()
             onVideoUrlChange(storeData.url || data.video_url)
-          } catch {
+          } catch (err) {
+            console.error("[media-panel][store-video]", err)
             onVideoUrlChange(data.video_url)
           }
           setVideoPhase("done")
@@ -357,7 +372,8 @@ function TalkingHeadFlow({
               : `סטטוס: ${data.status}`
           )
         }
-      } catch {
+      } catch (err) {
+        console.error("[media-panel][poll-video-status]", err)
         clearInterval(interval)
         setVideoError("החיבור אבד בזמן בדיקת סטטוס הוידאו")
         setVideoPhase("done")
@@ -398,7 +414,8 @@ function TalkingHeadFlow({
 
       setVideoProgress("HeyGen מרנדר את הוידאו...")
       pollVideoStatus(genData.video_id)
-    } catch {
+    } catch (err) {
+      console.error("[media-panel][start-video-gen]", err)
       setVideoError("שגיאה בתחילת יצירת הוידאו")
       setVideoPhase("done")
     }
@@ -421,8 +438,8 @@ function TalkingHeadFlow({
       if (data.covers?.[0]) {
         onCoverImageChange(data.covers[0])
       }
-    } catch {
-      // Cover generation is optional, fail silently
+    } catch (err) {
+      console.error("[media-panel][generate-cover]", err)
     } finally {
       setCoverLoading(false); onCoverLoadingChange?.(false)
     }
@@ -471,7 +488,7 @@ function TalkingHeadFlow({
           canvas.getContext("2d")?.drawImage(video, 0, 0)
           URL.revokeObjectURL(url)
           resolve(canvas.toDataURL("image/jpeg", 0.8))
-        } catch { resolve(null) }
+        } catch (err) { console.error("[media-panel][video-frame-capture]", err); resolve(null) }
       }
       video.onerror = () => { URL.revokeObjectURL(url); resolve(null) }
       setTimeout(() => resolve(null), 5000)
@@ -556,7 +573,7 @@ function TalkingHeadFlow({
             try {
               const r = JSON.parse(xhr.responseText)
               msg = r.message || r.error || msg
-            } catch { /* not JSON */ }
+            } catch { /* response wasn't JSON, keep status-based message */ }
             resolve({ ok: false, error: msg })
           }
         }
@@ -566,6 +583,10 @@ function TalkingHeadFlow({
 
       if (ok) {
         const videoUrl = supabase.storage.from("user-media").getPublicUrl(storagePath).data.publicUrl
+        // Explicit duration — the loading toast was opened with
+        // `duration: Infinity`. Sonner inherits the duration when we
+        // replace via `id`, so without this the success toast would
+        // never auto-dismiss.
         toast.success("וידאו נשמר", { id: uploadToast, duration: 4000 })
         // Replace the blob URL with the persistent storage URL — this is
         // what the parent's auto-save useEffect will PATCH onto the post.
@@ -613,7 +634,7 @@ function TalkingHeadFlow({
       })
       const data = await res.json()
       if (data.covers?.[0]) onCoverImageChange(data.covers[0])
-    } catch { /* ignore */ }
+    } catch (err) { console.error("[media-panel][cover-from-frame]", err) }
     finally { setCoverLoading(false); onCoverLoadingChange?.(false) }
   }
 
@@ -1141,7 +1162,8 @@ function CarouselFlow({
         onImagesChange(data.images)
         setPreviewIndex(0)
       }
-    } catch {
+    } catch (err) {
+      console.error("[media-panel][generate-carousel]", err)
       setError("שגיאה ביצירת הקרוסלה")
     } finally {
       setGenerating(false)
@@ -1166,7 +1188,8 @@ function CarouselFlow({
       a.download = "carousel.zip"
       a.click()
       URL.revokeObjectURL(url)
-    } catch {
+    } catch (err) {
+      console.error("[media-panel][download-carousel]", err)
       setError("שגיאה בהורדת הקבצים")
     } finally {
       setDownloading(false)
@@ -1295,6 +1318,471 @@ function CarouselFlow({
           עדכן את טקסט הקרוסלה בכרטיס כדי ליצור סליידים
         </p>
       )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  MediaUploadFlow — generic per-format media for story / image_post  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Per-format media entry surface used for any format that doesn't have a
+ * dedicated authoring flow yet (today: `story` and `image_post` — and any
+ * future format we add). Two ways to attach media:
+ *
+ *   1. Direct upload to Supabase Storage (`user-media` bucket). On success
+ *      we POST `/api/core-posts/{id}/media` so the new asset lands in
+ *      `media_assets` and the readiness chips flip to "ready".
+ *
+ *   2. A Google Drive link, persisted to localStorage (timing-storage's
+ *      per-format slice) so the post still counts as ready for scheduling
+ *      without uploading the actual file. Same DriveLinkBlock pattern as
+ *      the editable Sheet — auto-save on blur/Enter, "open" affordance
+ *      next to the input.
+ *
+ * Why two paths?  Per Hani: many users keep finished assets in Drive and
+ * don't want to re-upload them. Forcing an upload would be a 30s+ tax on
+ * every scheduled post. Both paths produce a "ready" state — the user
+ * picks the friction model that fits their workflow.
+ *
+ * Why a Tabs structure and not two side-by-side cards?  Hick's Law: the
+ * decision is mutually exclusive (you either upload OR link, never both
+ * for the same format). Tabs make the choice explicit and keep the
+ * authoring surface focused on whichever path the user committed to.
+ */
+
+/** Bucket name aligned with the rest of the project. */
+const MEDIA_BUCKET = "user-media"
+/** Hard upload size cap (matches the bucket's default). */
+const MAX_FILE_MB = 50
+
+/**
+ * What kinds of files this format accepts. Stories accept video AND image
+ * (a photo or 15s reel both count). Image posts accept only images. The
+ * value is fed straight into `<input accept>` so the OS file picker
+ * filters the right way.
+ */
+function acceptedMimeForFormat(format: string): {
+  accept: string
+  /** Whether a video file should be accepted. Drives our type-check on drop. */
+  acceptsVideo: boolean
+  /** Hebrew description shown in the empty state. */
+  helperText: string
+} {
+  switch (format) {
+    case "story":
+      return {
+        accept: "image/*,video/*",
+        acceptsVideo: true,
+        helperText: "תמונה או וידאו עד 50MB",
+      }
+    case "image_post":
+    case "static":
+      return {
+        accept: "image/*",
+        acceptsVideo: false,
+        helperText: "תמונה עד 50MB",
+      }
+    default:
+      // Anything we don't recognize — fall back to images, the safer
+      // default. The MediaPanel never opens this flow for talking_head /
+      // carousel, so we won't hit this path in practice.
+      return {
+        accept: "image/*",
+        acceptsVideo: false,
+        helperText: "תמונה עד 50MB",
+      }
+  }
+}
+
+function MediaUploadFlow({
+  format,
+  postId,
+  hookText: _hookText,
+}: {
+  format: string
+  postId: string | null
+  hookText?: string
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  // Local mirror of the saved drive URL — committed to storage on
+  // blur/Enter (same pattern as DriveLinkBlock in core-post-sheet.tsx).
+  const [driveUrl, setDriveUrl] = useState<string>("")
+  const [driveDirty, setDriveDirty] = useState(false)
+
+  // Uploaded asset preview (data URL while uploading; persistent URL after).
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [previewKind, setPreviewKind] = useState<"image" | "video" | null>(null)
+  const [uploading, setUploading] = useState(false)
+
+  // Hydrate the drive URL from storage when the panel opens for this
+  // (post, format) pair. We use `getFormatMeta` so the post-level legacy
+  // value falls back automatically — same precedence as the Sheet.
+  useEffect(() => {
+    if (!postId) {
+      setDriveUrl("")
+      return
+    }
+    const meta = getFormatMeta(postId, format as FormatId)
+    setDriveUrl(meta.driveUrl ?? "")
+    setDriveDirty(false)
+    // Reset the upload preview when the post changes — otherwise
+    // navigating between posts would leak a previous post's preview into
+    // a fresh open.
+    setPreviewUrl(null)
+    setPreviewKind(null)
+  }, [postId, format])
+
+  const accepted = acceptedMimeForFormat(format)
+
+  /**
+   * Upload via XHR (not supabase-js) so we get progress events. Same
+   * pattern as the talking_head video upload above — keeping this
+   * consistent across the file means the user sees the same progress
+   * toast UI regardless of which format they're uploading to.
+   */
+  const handleUpload = async (file: File) => {
+    if (!postId) {
+      toast.error("שמרו קודם את הפוסט כדי להעלות מדיה", { duration: 4000 })
+      return
+    }
+
+    const sizeMb = file.size / 1024 / 1024
+    if (sizeMb > MAX_FILE_MB) {
+      toast.error(
+        `הקובץ גדול מדי (${sizeMb.toFixed(1)}MB). מקסימום ${MAX_FILE_MB}MB.`,
+        { duration: 6000 },
+      )
+      return
+    }
+
+    const isVideo = file.type.startsWith("video/")
+    if (isVideo && !accepted.acceptsVideo) {
+      toast.error("הפורמט הזה תומך רק בתמונות", { duration: 4000 })
+      return
+    }
+
+    // Local preview — instant feedback. The blob URL gets replaced with
+    // the persistent URL once the upload completes.
+    const localBlobUrl = URL.createObjectURL(file)
+    setPreviewUrl(localBlobUrl)
+    setPreviewKind(isVideo ? "video" : "image")
+    setUploading(true)
+
+    const sizeMbStr = sizeMb.toFixed(1)
+    const renderProgress = (pct: number, loadedMb?: string) => (
+      <div className="flex flex-col gap-1.5 w-full" dir="rtl">
+        <div className="flex items-center justify-between text-xs text-text-primary-default">
+          <span>מעלה מדיה...</span>
+          <span className="text-text-neutral-default">
+            {loadedMb ? `${loadedMb} / ${sizeMbStr}MB · ${pct}%` : `${pct}%`}
+          </span>
+        </div>
+        <div className="w-full h-1.5 bg-gray-95 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-yellow-50 transition-[width] duration-150 ease-out"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+    )
+    // Loading toast must auto-dismiss explicitly when we replace it (sonner
+    // inherits the duration on `id` updates — without `duration: 3000` on
+    // the success replace, this toast would hang forever).
+    const uploadToast = toast.loading(renderProgress(0), { duration: Infinity })
+
+    try {
+      const { createClient } = await import("@/lib/supabase/client")
+      const supabase = createClient()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      if (!user || !session) {
+        toast.error("לא מזוהה משתמש. רעננו ונסו שוב.", { id: uploadToast })
+        setUploading(false)
+        return
+      }
+
+      const ext = file.name.split(".").pop()?.toLowerCase() || "bin"
+      const safeExt = /^[a-z0-9]{2,5}$/.test(ext) ? ext : "bin"
+      const subfolder = isVideo ? "video" : "image"
+      const storagePath = `${user.id}/${subfolder}/${crypto.randomUUID()}.${safeExt}`
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+
+      const { ok, error: uploadErrMsg } = await new Promise<{
+        ok: boolean
+        error?: string
+      }>((resolve) => {
+        const xhr = new XMLHttpRequest()
+        xhr.open(
+          "POST",
+          `${supabaseUrl}/storage/v1/object/${MEDIA_BUCKET}/${storagePath}`,
+        )
+        xhr.setRequestHeader("Authorization", `Bearer ${session.access_token}`)
+        xhr.setRequestHeader("apikey", anonKey)
+        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream")
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100)
+            const loadedMb = (e.loaded / 1024 / 1024).toFixed(1)
+            toast.loading(renderProgress(pct, loadedMb), {
+              id: uploadToast,
+              duration: Infinity,
+            })
+          }
+        }
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve({ ok: true })
+          } else {
+            let msg = `Status ${xhr.status}`
+            try {
+              const r = JSON.parse(xhr.responseText)
+              msg = r.message || r.error || msg
+            } catch {
+              /* response wasn't JSON, keep the status string */
+            }
+            resolve({ ok: false, error: msg })
+          }
+        }
+        xhr.onerror = () => resolve({ ok: false, error: "שגיאת רשת" })
+        xhr.send(file)
+      })
+
+      if (!ok) {
+        console.error("[media-upload-flow] storage upload failed:", uploadErrMsg)
+        toast.error(`העלאת המדיה נכשלה: ${uploadErrMsg}`, {
+          id: uploadToast,
+          duration: 8000,
+        })
+        // Roll back the optimistic preview so the user knows nothing landed.
+        URL.revokeObjectURL(localBlobUrl)
+        setPreviewUrl(null)
+        setPreviewKind(null)
+        setUploading(false)
+        return
+      }
+
+      const publicUrl = supabase.storage
+        .from(MEDIA_BUCKET)
+        .getPublicUrl(storagePath).data.publicUrl
+
+      // Persist to media_assets via the generic endpoint.
+      const assetType = isVideo ? "video" : "image"
+      const persistRes = await fetch(`/api/core-posts/${postId}/media`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ format, url: publicUrl, assetType }),
+      })
+
+      if (!persistRes.ok) {
+        const persistErr = await persistRes.json().catch(() => ({}))
+        const detail = (persistErr as { error?: string }).error ?? "שגיאה לא ידועה"
+        toast.error(`לא הצלחנו לשמור את המדיה: ${detail}`, {
+          id: uploadToast,
+          duration: 8000,
+        })
+        URL.revokeObjectURL(localBlobUrl)
+        setPreviewUrl(null)
+        setPreviewKind(null)
+        setUploading(false)
+        return
+      }
+
+      // Replace the blob preview with the persistent URL — keeps the same
+      // visual but means a re-render won't flicker if React re-mounts.
+      URL.revokeObjectURL(localBlobUrl)
+      setPreviewUrl(publicUrl)
+      setUploading(false)
+      toast.success("מדיה נשמרה", { id: uploadToast, duration: 3000 })
+    } catch (err) {
+      console.error("[media-upload-flow] unexpected error:", err)
+      toast.error(
+        `שגיאה בהעלאה: ${err instanceof Error ? err.message : String(err)}`,
+        { id: uploadToast, duration: 8000 },
+      )
+      URL.revokeObjectURL(localBlobUrl)
+      setPreviewUrl(null)
+      setPreviewKind(null)
+      setUploading(false)
+    }
+  }
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) handleUpload(file)
+    // Reset so picking the same file again still triggers a change event.
+    e.target.value = ""
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    const file = e.dataTransfer.files[0]
+    if (!file) return
+    handleUpload(file)
+  }
+
+  const commitDriveUrl = () => {
+    if (!postId) return
+    if (!driveDirty) return
+    setFormatMeta(postId, format as FormatId, {
+      driveUrl: driveUrl.trim() || undefined,
+    })
+    setDriveDirty(false)
+    if (driveUrl.trim().length > 0) {
+      toast.success("קישור הדרייב נשמר", { duration: 3000 })
+    }
+  }
+
+  // The "saved post required" warning lives at the top of the panel —
+  // both tabs need it because both write paths touch postId. We surface
+  // it as an inline banner instead of disabling controls because the user
+  // can still SEE the structure of the panel and understand what comes
+  // next once they save.
+  const showNoPostWarning = !postId
+
+  // Layout matches the editable Sheet's MediaBlock + DriveLinkBlock pair:
+  // upload area on top, "או" divider, Drive URL input below. Single
+  // visual rhythm — no tabs hiding either path.
+  return (
+    <div dir="rtl" className="flex flex-col gap-4 w-full">
+      {showNoPostWarning && (
+        <Alert>
+          <AlertTitle>שמרו את הפוסט קודם</AlertTitle>
+          <AlertDescription>
+            אחרי שמירה תוכלו להעלות מדיה או לקשר לדרייב.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={accepted.accept}
+        onChange={handleFileInput}
+        className="hidden"
+        aria-hidden
+      />
+
+      {previewUrl ? (
+        <div className="flex flex-col gap-3">
+          <div className="aspect-square rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
+            {previewKind === "video" ? (
+              <video
+                src={
+                  previewUrl.startsWith("blob:")
+                    ? previewUrl
+                    : `${previewUrl}#t=0.001`
+                }
+                controls
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={previewUrl}
+                alt="המדיה שהועלתה"
+                className="w-full h-full object-cover"
+              />
+            )}
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading || !postId}
+            className="gap-1.5"
+          >
+            <Upload className="size-3.5" />
+            החליפו מדיה
+          </Button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={handleDrop}
+          disabled={uploading || !postId}
+          className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-border-neutral-default p-8 hover:border-yellow-50 hover:bg-bg-surface-primary-default transition-all disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+          aria-label="העלאת מדיה"
+        >
+          {uploading ? (
+            <Loader2 className="size-8 text-text-neutral-default animate-spin" />
+          ) : (
+            <ImagePlus className="size-8 text-text-neutral-default" />
+          )}
+          <span className="text-small font-semibold text-text-primary-default">
+            {uploading ? "מעלים..." : "גררו מדיה לכאן או לחצו לבחירה"}
+          </span>
+          <span className="text-xs text-text-neutral-default">
+            {accepted.helperText}
+          </span>
+        </button>
+      )}
+
+      {/* "או" divider — same pattern as the Sheet's MediaBlock →
+          DriveLinkBlock pair. Two ways to attach media; one visual flow. */}
+      <div
+        role="separator"
+        aria-label="או"
+        className="flex items-center gap-3 text-xs-body text-text-neutral-default"
+      >
+        <span className="flex-1 h-px bg-border-neutral-default" aria-hidden />
+        <span>או</span>
+        <span className="flex-1 h-px bg-border-neutral-default" aria-hidden />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label
+          htmlFor={`drive-url-${format}`}
+          className="text-xs-body text-text-neutral-default font-normal"
+        >
+          קישור לתיקיית Drive
+        </Label>
+        <div className="relative">
+          <Input
+            id={`drive-url-${format}`}
+            dir="rtl"
+            inputSize="small"
+            type="url"
+            value={driveUrl}
+            onChange={(e) => {
+              setDriveUrl(e.target.value)
+              setDriveDirty(true)
+            }}
+            onBlur={commitDriveUrl}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.currentTarget.blur()
+              }
+            }}
+            placeholder="https://drive.google.com/..."
+            className="pe-10 text-right"
+            disabled={!postId}
+            aria-label="קישור לתיקיית Drive"
+          />
+          <button
+            type="button"
+            onClick={() => {
+              const url = driveUrl.trim()
+              if (url) window.open(url, "_blank", "noopener,noreferrer")
+            }}
+            disabled={!driveUrl.trim()}
+            aria-label="פתחו את הקישור בכרטיסייה חדשה"
+            className="absolute end-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center size-7 rounded-md text-text-neutral-default hover:text-text-primary-default hover:bg-bg-surface disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <Link2 className="size-3.5" />
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

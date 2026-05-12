@@ -100,7 +100,7 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
           text: i.text, source: i.source, category: i.category, url: i.url,
         }))
       }
-    } catch { /* ignore */ }
+    } catch (err) { console.error("[hook-gen-provider][fetch-ideas]", err) }
 
     try {
       const res = await fetch("/api/homepage-hooks", {
@@ -177,10 +177,10 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
               toast.loading(`מייצר הוקים חדשים... ${count} מתוך ${TOTAL_HOOKS}`, { id: TOAST_ID, duration: Infinity })
               // Fire listeners (page component receives if mounted)
               for (const fn of hookListenersRef.current) {
-                try { fn(streamed) } catch { /* listener crash shouldn't break stream */ }
+                try { fn(streamed) } catch (err) { console.error("[hook-gen-provider][listener-crash]", err) }
               }
             }
-          } catch { /* malformed line, skip */ }
+          } catch (err) { console.error("[hook-gen-provider][stream-line-parse]", err) }
         }
       }
 
@@ -193,7 +193,7 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
         // Success — clear homepage hook cache so next home visit refetches
         try {
           if (uid) localStorage.removeItem(userKey("homepageHooks_v6", uid))
-        } catch { /* ignore */ }
+        } catch (err) { console.error("[hook-gen-provider][cache-clear]", err) }
         toast.success("ההוקים מוכנים במחסן ההוקים!", {
           id: TOAST_ID,
           duration: 10000,
@@ -204,7 +204,7 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
         })
         // Fire done listeners so the /hooks page (if mounted) can resync from DB
         for (const fn of doneListenersRef.current) {
-          try { fn() } catch { /* ignore */ }
+          try { fn() } catch (err) { console.error("[hook-gen-provider][done-listener-crash]", err) }
         }
       }
     } catch (err) {

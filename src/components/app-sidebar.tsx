@@ -44,6 +44,8 @@ const navItems = [
     label: "לוח שנה",
     href: "/calendar",
     icon: CalendarDays,
+    // Route not yet deployed — disable prefetch to avoid 404s in production console.
+    prefetch: false,
   },
   {
     label: "הגדרות",
@@ -74,7 +76,7 @@ export function AppSidebar() {
                     isActive={pathname === item.href}
                     tooltip={item.label}
                   >
-                    <Link href={item.href}>
+                    <Link href={item.href} prefetch={item.prefetch}>
                       <item.icon className="size-5" />
                       <span className="text-small">{item.label}</span>
                     </Link>

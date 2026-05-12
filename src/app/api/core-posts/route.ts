@@ -16,8 +16,15 @@ interface CorePostRow {
 }
 
 interface FormatVariantRow {
+  id: string
   core_post_id: string
   format: string
+}
+
+interface MediaAssetRow {
+  format_variant_id: string
+  url: string | null
+  asset_type: string | null
 }
 
 // GET — list user's core posts with their format variants
@@ -47,21 +54,56 @@ export async function GET() {
     if (postIds.length > 0) {
       const { data: vData } = await supabase
         .from("format_variants")
-        .select("core_post_id, format")
+        .select("id, core_post_id, format")
         .in("core_post_id", postIds)
       variants = (vData ?? []) as unknown as FormatVariantRow[]
     }
 
-    // Group formats by post
+    // Fetch media assets for these variants in one round-trip so the
+    // /core_posts grid can render format completion chips (task C) without
+    // an N+1 fan-out from the client.
+    const variantIds = variants.map((v) => v.id)
+    let media: MediaAssetRow[] = []
+    if (variantIds.length > 0) {
+      const { data: mData } = await supabase
+        .from("media_assets")
+        .select("format_variant_id, url, asset_type")
+        .in("format_variant_id", variantIds)
+      media = (mData ?? []) as unknown as MediaAssetRow[]
+    }
+    const variantHasMedia = new Set<string>()
+    const firstMediaByPost: Record<string, string> = {}
+    {
+      const variantToPost: Record<string, string> = {}
+      for (const v of variants) variantToPost[v.id] = v.core_post_id
+      for (const m of media) {
+        if (m.url && m.asset_type !== "cover") {
+          variantHasMedia.add(m.format_variant_id)
+          const postId = variantToPost[m.format_variant_id]
+          if (postId && !firstMediaByPost[postId]) {
+            firstMediaByPost[postId] = m.url
+          }
+        }
+      }
+    }
+
+    // Per-post: which formats have a duplicate, and which of those have media.
     const formatsByPost: Record<string, string[]> = {}
+    const formatsWithMediaByPost: Record<string, string[]> = {}
     for (const v of variants) {
       if (!formatsByPost[v.core_post_id]) formatsByPost[v.core_post_id] = []
       formatsByPost[v.core_post_id].push(v.format)
+      if (variantHasMedia.has(v.id)) {
+        if (!formatsWithMediaByPost[v.core_post_id]) formatsWithMediaByPost[v.core_post_id] = []
+        formatsWithMediaByPost[v.core_post_id].push(v.format)
+      }
     }
 
     const result = posts.map((p) => ({
       ...p,
       formats: formatsByPost[p.id] ?? [],
+      formats_with_media: formatsWithMediaByPost[p.id] ?? [],
+      primary_media_url: firstMediaByPost[p.id] ?? null,
     }))
 
     return NextResponse.json({ posts: result })

@@ -42,6 +42,35 @@ export async function GET(
       formatPosts[v.format] = v.body
     }
 
+    // Per-format readiness needs to know which formats have media. We do a
+    // single batched lookup against media_assets and project to a set of
+    // format ids that have at least one non-cover asset. The Sheet uses
+    // this to render the per-format status chips without an N+1 fan-out.
+    const variantIds = variants.map((v) => v.id)
+    const formatsWithMedia: string[] = []
+    if (variantIds.length > 0) {
+      const { data: mediaRows } = await supabase
+        .from("media_assets")
+        .select("format_variant_id, url, asset_type")
+        .in("format_variant_id", variantIds)
+      const variantToFormat: Record<string, string> = {}
+      for (const v of variants) variantToFormat[v.id] = v.format
+      const seen = new Set<string>()
+      for (const m of (mediaRows ?? []) as unknown as {
+        format_variant_id: string
+        url: string | null
+        asset_type: string | null
+      }[]) {
+        if (m.url && m.asset_type !== "cover") {
+          const fmt = variantToFormat[m.format_variant_id]
+          if (fmt && !seen.has(fmt)) {
+            seen.add(fmt)
+            formatsWithMedia.push(fmt)
+          }
+        }
+      }
+    }
+
     // Load video URL from media_assets for talking_head
     let videoUrl: string | null = null
     let coverUrl: string | null = null
@@ -79,6 +108,7 @@ export async function GET(
       post: {
         ...(post as Record<string, unknown>),
         formatPosts,
+        formatsWithMedia,
         videoUrl,
         coverUrl,
       },
@@ -102,7 +132,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, videoUrl, deleteVideo, coverBase64, coverText, deleteCover } = (await req.json()) as {
+    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, videoUrl, deleteVideo, coverBase64, coverText, deleteCover, carouselImages } = (await req.json()) as {
       body?: string
       hookText?: string
       hookId?: string
@@ -116,6 +146,11 @@ export async function PATCH(
       coverBase64?: string
       coverText?: string
       deleteCover?: boolean
+      // Array of base64 PNG buffers — output of /api/carousel/generate.
+      // Saved as multiple `media_assets` rows under the `carousel`
+      // format_variant. `null` clears the slate (matches the UI's
+      // "delete carousel" path that sets carouselImages=null).
+      carouselImages?: string[] | null
     }
 
     // Update core post body if provided. We treat empty string as "user
@@ -346,6 +381,112 @@ export async function PATCH(
           status: "completed",
         } as never)
       }
+    }
+
+    // Save carousel images — array of base64 PNG buffers from
+    // /api/carousel/generate. Each becomes its own `media_assets` row
+    // (asset_type "image") under the `carousel` format_variant. We
+    // wipe the slate first so re-generation doesn't pile up old slides.
+    if (carouselImages !== undefined) {
+      let { data: carouselVariant } = await supabase
+        .from("format_variants")
+        .select("id")
+        .eq("core_post_id", id)
+        .eq("format", "carousel")
+        .single()
+
+      if (!carouselVariant && Array.isArray(carouselImages) && carouselImages.length > 0) {
+        const { data: newVariant } = await supabase
+          .from("format_variants")
+          .insert({ core_post_id: id, format: "carousel", body: "" } as never)
+          .select("id")
+          .single()
+        carouselVariant = newVariant
+      }
+
+      if (carouselVariant) {
+        const variantRow = carouselVariant as unknown as { id: string }
+
+        // Drop any existing image assets — carousels are versioned as a
+        // group; partial replacement would leave stale slides.
+        await supabase
+          .from("media_assets")
+          .delete()
+          .eq("format_variant_id", variantRow.id)
+          .eq("asset_type", "image")
+
+        // null/empty → just the deletion above. Otherwise upload + insert.
+        if (Array.isArray(carouselImages) && carouselImages.length > 0) {
+          for (let i = 0; i < carouselImages.length; i++) {
+            const base64 = carouselImages[i]
+            if (!base64) continue
+            const buffer = Buffer.from(base64, "base64")
+            const storagePath = `${user.id}/carousel/${crypto.randomUUID()}.png`
+            await supabase.storage
+              .from("user-media")
+              .upload(storagePath, buffer, { contentType: "image/png" })
+            const publicUrl = supabase.storage
+              .from("user-media")
+              .getPublicUrl(storagePath).data.publicUrl
+
+            await supabase.from("media_assets").insert({
+              format_variant_id: variantRow.id,
+              asset_type: "image",
+              url: publicUrl,
+              status: "completed",
+            } as never)
+          }
+        }
+      }
+    }
+
+    return NextResponse.json({ ok: true })
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
+}
+
+// DELETE — remove a core post (and let the cascade clean up format_variants /
+// media_assets via FK ON DELETE CASCADE if configured). Front-end is the
+// source of truth for "are you sure" — this just acts on the request.
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await params
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    // Best-effort cleanup of dependent rows in case the schema doesn't have
+    // ON DELETE CASCADE wired. We swallow individual errors so a missing
+    // table or mismatched FK can't block the core delete the user requested.
+    try {
+      const { data: variants } = await supabase
+        .from("format_variants")
+        .select("id")
+        .eq("core_post_id", id)
+      const variantIds = ((variants ?? []) as { id: string }[]).map((v) => v.id)
+      if (variantIds.length > 0) {
+        await supabase.from("media_assets").delete().in("format_variant_id", variantIds)
+        await supabase.from("format_variants").delete().eq("core_post_id", id)
+      }
+    } catch (cleanupErr) {
+      console.warn("[core-posts][delete] cleanup warning:", cleanupErr)
+    }
+
+    const { error } = await supabase
+      .from("core_posts")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", user.id)
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
     return NextResponse.json({ ok: true })

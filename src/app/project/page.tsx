@@ -17,6 +17,7 @@ import { TooltipLabel } from "@/components/ui/tooltip"
 import { MediaPanel } from "@/components/media-panel"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { CorePostCelebration } from "@/components/core-post-celebration"
+import { ScheduleInCalendarBar } from "@/components/schedule-in-calendar-bar"
 import type { Avatar } from "@/components/avatar-picker"
 import type { SlideData } from "@/lib/carousel-templates"
 import { createClient } from "@/lib/supabase/client"
@@ -121,6 +122,12 @@ function ProjectPageInner() {
   const [thSourceMode, setThSourceMode] = useState<"choose" | "upload" | "avatar">("choose")
   const [thCoverImage, setThCoverImage] = useState<string | null>(null)
   const [thCoverLoading, setThCoverLoading] = useState(false)
+  // Cover pill colour, picked from the colour wheel next to the cover
+  // preview in FormatTree. Defaults to black to match the existing
+  // baseline. generateCoverForPost reads it (or an explicit override
+  // when the user just picked a new colour, so the state-update race
+  // doesn't bite).
+  const [pillColor, setPillColor] = useState("#000000")
   // Confirmation modal — opened from the trash icon on the video card. The
   // actual delete only fires after the user clicks "כן, למחוק". The cover has
   // no standalone delete action; it lives and dies with the video.
@@ -153,6 +160,23 @@ function ProjectPageInner() {
   const [savedPostId, setSavedPostId] = useState<string | null>(postId || null)
   const [savedPostLoading, setSavedPostLoading] = useState(!!postId)
   const [savedHookText, setSavedHookText] = useState("")
+  // Save lifecycle for the auto-POST that persists a freshly-generated core
+  // post. Previously this was fire-and-forget with `.catch(() => {})` which
+  // silently swallowed failures — the user would walk away thinking they had
+  // a saved post when there was actually no DB row. We surface the failure
+  // and let them retry without having to regenerate the AI text.
+  const [savingPost, setSavingPost] = useState(false)
+  const [saveError, setSaveError] = useState<string>("")
+  // Cached payload for the retry button — we don't want to recompute the
+  // hook/userResponse pairing from state because by the time the user clicks
+  // retry, those fields may have moved on.
+  const [pendingSavePayload, setPendingSavePayload] = useState<{
+    body: string
+    hookText: string
+    hookId?: string
+    userResponse: string
+    videoUrl?: string
+  } | null>(null)
 
   // Keep savedPostId in sync with the URL's post_id. After a recovery navigate
   // (router.replace below) the URL gains a post_id but savedPostId would stay
@@ -342,8 +366,11 @@ function ProjectPageInner() {
     })
   }
 
-  // Generate cover with optional video frame as thumbnail
-  const generateCoverForPost = async (hookText: string, videoSrc?: string) => {
+  // Generate cover with optional video frame as thumbnail. colorOverride
+  // sidesteps the state-update race when the user picks a new pill colour
+  // and we kick off a regenerate before pillColor has flushed through
+  // the next render.
+  const generateCoverForPost = async (hookText: string, videoSrc?: string, colorOverride?: string) => {
     setThCoverLoading(true)
     let thumbnailUrl: string | undefined
 
@@ -367,7 +394,11 @@ function ProjectPageInner() {
       const res = await fetch("/api/reel-cover/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: hookText, thumbnail_url: thumbnailUrl }),
+        body: JSON.stringify({
+          title: hookText,
+          thumbnail_url: thumbnailUrl,
+          pill_color: colorOverride ?? pillColor,
+        }),
       })
       const d = await res.json()
       if (d.covers?.[0]) setThCoverImage(d.covers[0])
@@ -832,6 +863,27 @@ function ProjectPageInner() {
     return () => clearTimeout(timer)
   }, [savedPostId, corePost, originalCorePost])
 
+  // Auto-save carousel images. Snapshot identity (length + first chars)
+  // is enough to detect "the user just regenerated" without doing a
+  // deep compare on full base64 strings. Skips when null/empty so a
+  // delete-all flow uses the explicit carousel-clear path instead of
+  // a no-op POST.
+  const prevCarouselSigRef = useRef<string>("")
+  useEffect(() => {
+    if (!savedPostId) return
+    const sig = carouselImages
+      ? `${carouselImages.length}|${carouselImages[0]?.slice(0, 32) ?? ""}`
+      : ""
+    if (sig === prevCarouselSigRef.current) return
+    prevCarouselSigRef.current = sig
+    if (!carouselImages || carouselImages.length === 0) return
+    fetch(`/api/core-posts/${savedPostId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ carouselImages }),
+    }).catch(() => {})
+  }, [savedPostId, carouselImages])
+
   // Manual hooks generation (no auto-generation)
   const handleGenerateHooks = (opts?: { replace?: boolean }) => {
     if (!idea) return
@@ -895,6 +947,70 @@ function ProjectPageInner() {
       .finally(() => setHooksLoading(false))
   }
 
+  // Persist a freshly-generated core post to the DB.
+  //
+  // Called from `handleGeneratePost` once the AI returns text, and again from
+  // the retry button if the first attempt fails. Returns true on success so
+  // the caller can clear any error state.
+  //
+  // Why awaited (not fire-and-forget): a missing DB row breaks every flow
+  // downstream — the post never shows up in /core_posts, in the calendar
+  // queue, or in the saved-flow URL recovery. The original `.catch(() => {})`
+  // hid that class of bug entirely. We now expose the failure to the user.
+  const persistCorePost = async (payload: {
+    body: string
+    hookText: string
+    hookId?: string
+    userResponse: string
+    videoUrl?: string
+    idea?: string
+  }): Promise<boolean> => {
+    setSavingPost(true)
+    setSaveError("")
+    try {
+      const res = await fetch("/api/core-posts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      const saveData = await res.json()
+      if (!res.ok || saveData?.error) {
+        throw new Error(saveData?.error || `HTTP ${res.status}`)
+      }
+      if (saveData.id) {
+        setSavedPostId(saveData.id)
+        setPendingSavePayload(null)
+        // Update URL with post_id so a refresh re-loads this exact post
+        // (incl. avatar video, cover, formats). replaceState avoids a
+        // Next.js navigation — current in-memory `flow` stays at "hook",
+        // but on refresh `useSearchParams` reads post_id and switches to
+        // the "saved" flow which re-fetches the row from DB.
+        const url = new URL(window.location.href)
+        if (!url.searchParams.get("post_id")) {
+          url.searchParams.set("post_id", saveData.id)
+          window.history.replaceState({}, "", url.toString())
+        }
+        return true
+      }
+      throw new Error("Save returned no id")
+    } catch (err) {
+      console.error("[project][save-core-post]", err)
+      // Cache the payload for retry — by the time the user clicks "נסו שוב",
+      // the textarea / hook may have changed, but we want to save the version
+      // they actually generated.
+      setPendingSavePayload(payload)
+      setSaveError("שמירת הפוסט נכשלה — נסו שוב")
+      return false
+    } finally {
+      setSavingPost(false)
+    }
+  }
+
+  const retrySavePost = () => {
+    if (!pendingSavePayload) return
+    void persistCorePost(pendingSavePayload)
+  }
+
   const handleGeneratePost = async () => {
     if (!activeHook || !response.trim()) return
 
@@ -954,9 +1070,8 @@ function ProjectPageInner() {
         // Persist the body to DB. If a draft already exists (idea flow
         // created one when the user picked a hook, or this is a saved-flow
         // regeneration), PATCH it so we don't end up with duplicate rows.
-        // Otherwise create a new row — the hook flow lands here when the
-        // user came from /hooks and never went through the idea-flow draft
-        // creation effect.
+        // Otherwise create a new row via persistCorePost — surfaces save
+        // failures via banner + retry instead of swallowing them.
         const selectedHookId =
           selectedHook !== null && hookIds[selectedHook]
             ? hookIds[selectedHook]
@@ -973,35 +1088,14 @@ function ProjectPageInner() {
             }),
           }).catch(() => {})
         } else {
-          fetch("/api/core-posts", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              body: data.post,
-              hookText: activeHook,
-              hookId: hookIdParam || selectedHookId,
-              userResponse: response,
-              videoUrl: thVideoUrl && !thVideoUrl.startsWith("blob:") ? thVideoUrl : undefined,
-              idea: idea || undefined,
-            }),
+          void persistCorePost({
+            body: data.post,
+            hookText: activeHook,
+            hookId: hookIdParam || selectedHookId,
+            userResponse: response,
+            videoUrl: thVideoUrl && !thVideoUrl.startsWith("blob:") ? thVideoUrl : undefined,
+            idea: idea || undefined,
           })
-            .then((res) => res.json())
-            .then((saveData) => {
-              if (saveData.id) {
-                setSavedPostId(saveData.id)
-                // Update URL with post_id so a refresh re-loads this exact post
-                // (incl. avatar video, cover, formats). replaceState avoids a
-                // Next.js navigation — current in-memory `flow` stays at "hook",
-                // but on refresh `useSearchParams` reads post_id and switches to
-                // the "saved" flow which re-fetches the row from DB.
-                const url = new URL(window.location.href)
-                if (!url.searchParams.get("post_id")) {
-                  url.searchParams.set("post_id", saveData.id)
-                  window.history.replaceState({}, "", url.toString())
-                }
-              }
-            })
-            .catch(() => {})
         }
       }
     } catch (err) {
@@ -1022,6 +1116,7 @@ function ProjectPageInner() {
       <MediaPanel
         formatId={selectedFormatCard}
         onClose={() => setSelectedFormatCard(null)}
+        postId={savedPostId}
         thAvatar={thAvatar}
         thAudioBlob={thAudioBlob}
         thTranscript={thTranscript}
@@ -1343,6 +1438,38 @@ function ProjectPageInner() {
               {(corePost || savedPostId) && !postLoading && (
                 <div className="relative isolate flex flex-col items-center w-[567px] shrink-0">
                   <CorePostCelebration trigger={celebrationKey} />
+                  {/* Save-failure banner — sits above the card so the user
+                      sees it before scanning the post body. The post itself
+                      is fully visible/editable; only persistence failed. */}
+                  {saveError && (
+                    <div
+                      dir="rtl"
+                      role="alert"
+                      className="mb-3 w-[567px] rounded-[12px] border border-button-destructive-default bg-white dark:bg-gray-10 px-4 py-3 flex items-center gap-3"
+                    >
+                      <span className="text-small text-button-destructive-default flex-1">
+                        {saveError}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={retrySavePost}
+                        disabled={savingPost}
+                        className="gap-1.5 shrink-0"
+                      >
+                        {savingPost ? (
+                          <>
+                            <Loader2 className="size-3.5 animate-spin" />
+                            שומר...
+                          </>
+                        ) : (
+                          "נסו שוב לשמור"
+                        )}
+                      </Button>
+                    </div>
+                  )}
+
+
                   {/* Core post card */}
                   <div
                     dir="rtl"
@@ -1509,6 +1636,11 @@ function ProjectPageInner() {
                           coverText={coverText}
                           onCoverTextChange={setCoverText}
                           onCoverRegenerate={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
+                          pillColor={pillColor}
+                          onPillColorChange={(next) => {
+                            setPillColor(next)
+                            generateCoverForPost(coverText, thVideoUrl || undefined, next)
+                          }}
                           carouselImages={carouselImages}
                           carouselCardRef={carouselCardRef}
                           onCarouselRegenerate={() => {
@@ -1527,6 +1659,10 @@ function ProjectPageInner() {
 
         </div>
       </InfiniteCanvas>
+
+      {/* Floating schedule bar — appears once we have a saved post id, on
+          top of the canvas. Picks up its state from timing-storage. */}
+      <ScheduleInCalendarBar corePostId={savedPostId} hookText={activeHook} />
 
       <ConfirmModal
         open={pendingVideoDelete}
@@ -1632,6 +1768,8 @@ function FormatTree({
   coverText,
   onCoverTextChange,
   onCoverRegenerate,
+  pillColor,
+  onPillColorChange,
   carouselImages,
   carouselCardRef,
   onCarouselRegenerate,
@@ -1654,6 +1792,8 @@ function FormatTree({
   coverText: string
   onCoverTextChange: (text: string) => void
   onCoverRegenerate: () => void
+  pillColor: string
+  onPillColorChange: (color: string) => void
   carouselImages: string[] | null
   carouselCardRef: React.RefObject<HTMLDivElement | null>
   onCarouselRegenerate: () => void
@@ -1733,20 +1873,21 @@ function FormatTree({
                   </div>
                   <Button
                     variant="outline"
-                    // talking_head only — disabled once a video exists, since
-                    // editing then happens via the video card's "עריכת סרטון"
-                    // button below. Other formats are still "(בקרוב)".
-                    disabled={fid !== "talking_head" || !!thVideoUrl}
+                    // For talking_head, we disable the button once a video
+                    // exists — editing then happens via the video card's
+                    // "עריכת סרטון" button below. For other formats, the
+                    // button always opens MediaPanel (MediaUploadFlow handles
+                    // upload + Drive link, just like the avatar module).
+                    disabled={fid === "talking_head" && !!thVideoUrl}
                     onClick={(e) => {
                       e.stopPropagation()
-                      if (fid === "talking_head" && !thVideoUrl) onSelectFormat(fid)
+                      if (fid === "talking_head" && thVideoUrl) return
+                      onSelectFormat(fid)
                     }}
                     className="w-full rounded-[10px] border-border-neutral-default text-text-primary-default text-small gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Icon className="size-4" />
-                    {fid === "talking_head"
-                      ? `עריכת מדיה ל${format.label}`
-                      : `עריכת מדיה ל${format.label} (בקרוב)`}
+                    עריכת מדיה ל{format.label}
                   </Button>
                 </div>
               </div>
@@ -1920,6 +2061,21 @@ function FormatTree({
                           />
                         </div>
                       </div>
+                      {/* Pill colour picker. The browser's native color
+                          input opens the OS colour wheel and only fires
+                          onChange on commit, so we don't burn a generate
+                          per drag. The parent regenerates the cover with
+                          the new colour as soon as the picker resolves. */}
+                      <label className="flex items-center justify-center gap-2 text-xs text-text-neutral-default cursor-pointer">
+                        צבע הרקע של הכותרת
+                        <input
+                          type="color"
+                          value={pillColor}
+                          onChange={(e) => onPillColorChange(e.target.value)}
+                          className="w-8 h-8 rounded cursor-pointer border border-border-neutral-default"
+                          aria-label="צבע הרקע של הכותרת"
+                        />
+                      </label>
                       <div className="flex items-center justify-center">
                         <TooltipLabel label="הורד קאבר">
                           <Button

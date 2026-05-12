@@ -72,8 +72,8 @@ export default function Home() {
       // No cached ideas locally. Before auto-generating, check whether this user
       // has already used the system (existing core_identity older than 2 min,
       // OR any saved favorites). If so, this is a returning user with cleared
-      // localStorage — DO NOT auto-generate.
-      const [{ data: core }, { count: favCount }] = await Promise.all([
+      // localStorage — rehydrate ideas from DB favorites instead of regenerating.
+      const [coreRes, favsRes] = await Promise.all([
         supabase
           .from("core_identities")
           .select("niche, created_at")
@@ -81,9 +81,11 @@ export default function Home() {
           .single<{ niche: string | null; created_at: string }>(),
         supabase
           .from("idea_favorites")
-          .select("id", { count: "exact", head: true })
+          .select("idea_text, idea_data")
           .eq("user_id", user.id),
       ])
+      const core = coreRes.data
+      const favsData = favsRes.data as { idea_text: string; idea_data: Record<string, unknown> }[] | null
 
       if (!core?.niche?.trim()) {
         setNicheError("אין מספיק פרטים על הנישה שלך")
@@ -91,11 +93,23 @@ export default function Home() {
       }
 
       const coreAgeMs = core.created_at ? Date.now() - new Date(core.created_at).getTime() : 0
-      const isReturningUser = (favCount ?? 0) > 0 || coreAgeMs > 2 * 60 * 1000
+      const isReturningUser = (favsData?.length ?? 0) > 0 || coreAgeMs > 2 * 60 * 1000
 
       if (isReturningUser) {
-        // Established user with no local cache — leave the ideas section empty.
-        // They can manually generate from /ideas if they want.
+        // Returning user with no local cache — rehydrate from DB favorites so
+        // their ideas don't disappear when localStorage clears (new device,
+        // browser data wiped, etc.). Matches the rehydration on /ideas.
+        if (favsData && favsData.length > 0) {
+          const rehydrated = favsData
+            .map((f) => f.idea_data as unknown as IdeaNote)
+            .filter((i) => i && i.text)
+          if (rehydrated.length > 0) {
+            const deduped = dedupe(rehydrated)
+            setIdeas(deduped)
+            ideasRef.current = deduped
+            localStorage.setItem(userKey(STORAGE_KEY, user.id), JSON.stringify(deduped))
+          }
+        }
         return
       }
 
