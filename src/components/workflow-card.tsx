@@ -195,7 +195,6 @@ export function WorkflowCard({
                   value={productId ?? ""}
                   onChange={(e) => onProductChange?.(e.target.value || null)}
                   onFocus={onFocus}
-                  disabled={!active}
                 >
                   <option value="">כללי — בלי שיוך למוצר</option>
                   {products.map((p) => (
@@ -211,7 +210,6 @@ export function WorkflowCard({
                   value={triggerWord ?? ""}
                   onChange={(e) => onTriggerWordChange?.(e.target.value)}
                   onFocus={onFocus}
-                  disabled={!active}
                   placeholder='לדוגמה: "פלואו"'
                 />
               </div>
