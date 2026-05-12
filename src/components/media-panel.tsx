@@ -2,12 +2,11 @@
 
 import { useState, useRef, useEffect, useCallback } from "react"
 import Image from "next/image"
-import { X, Smartphone, Video, Layers, Image as ImageIcon, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, Upload, ChevronLeft, ChevronRight, type LucideIcon } from "lucide-react"
+import { X, Smartphone, Video, Layers, Image as ImageIcon, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, Download, Upload, ChevronLeft, ChevronRight, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { AvatarPicker, type Avatar } from "@/components/avatar-picker"
 import { Button } from "@/components/ui/button"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import type { SlideData } from "@/lib/carousel-templates"
 import { CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 
@@ -44,7 +43,6 @@ interface MediaPanelProps {
   onCarouselImagesChange: (images: string[] | null) => void
   onCarouselSlidesChange: (slides: SlideData[] | null) => void
   carouselText: string
-  onScrollToCarousel?: () => void
 }
 
 export function MediaPanel({
@@ -71,7 +69,6 @@ export function MediaPanel({
   onCarouselImagesChange,
   onCarouselSlidesChange,
   carouselText,
-  onScrollToCarousel,
 }: MediaPanelProps) {
   const isOpen = formatId !== null
   const meta = formatId ? FORMAT_META[formatId] : null
@@ -144,7 +141,6 @@ export function MediaPanel({
             slides={carouselSlides}
             onImagesChange={onCarouselImagesChange}
             onSlidesChange={onCarouselSlidesChange}
-            onScrollToCarousel={onScrollToCarousel}
           />
         )}
 
@@ -1003,14 +999,12 @@ function CarouselFlow({
   slides,
   onImagesChange,
   onSlidesChange,
-  onScrollToCarousel,
 }: {
   carouselText: string
   images: string[] | null
   slides: SlideData[] | null
   onImagesChange: (imgs: string[] | null) => void
   onSlidesChange: (slides: SlideData[] | null) => void
-  onScrollToCarousel?: () => void
 }) {
   const [selectedTemplate, setSelectedTemplate] = useState(CAROUSEL_TEMPLATES[0].id)
   const [generating, setGenerating] = useState(false)
@@ -1135,20 +1129,6 @@ function CarouselFlow({
   if (images && images.length > 0) {
     return (
       <div className="flex flex-col gap-5">
-        <Alert className="border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950 [&>svg]:text-green-600 dark:[&>svg]:text-green-400">
-          <CircleCheck className="size-4" />
-          <AlertTitle className="text-green-800 dark:text-green-200">הקרוסלה נוצרה!</AlertTitle>
-          <AlertDescription className="text-green-700 dark:text-green-300">
-            {images.length} סליידים נוצרו בהצלחה.{" "}
-            <button
-              onClick={onScrollToCarousel}
-              className="underline font-medium hover:text-green-900 dark:hover:text-green-100 transition-colors"
-            >
-              הצג בקנבס
-            </button>
-          </AlertDescription>
-        </Alert>
-
         {/* Preview carousel */}
         <div className="flex flex-col items-center gap-3">
           <div className="relative w-full aspect-square rounded-xl overflow-hidden bg-gray-95">

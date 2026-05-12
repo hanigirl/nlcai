@@ -1,5 +1,49 @@
 import type { TemplateConfig } from "./index"
 
+// Satori (v0.26) does not run the Unicode Bidi Algorithm, so Hebrew text
+// renders LTR — visually reversed for an RTL reader. Same workaround used in
+// the reel-cover generator: reverse each word's characters and lay out words
+// in row-reverse so the line reads right-to-left.
+function reverseWord(word: string): string {
+  return [...word].reverse().join("")
+}
+
+function RtlText({
+  text,
+  style,
+}: {
+  text: string
+  style: React.CSSProperties
+}) {
+  // Preserve line breaks. Each line gets its own row-reverse row, otherwise
+  // wrapping breaks the visual order.
+  const lines = text.split("\n")
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", ...style }}>
+      {lines.map((line, li) => {
+        const words = line.split(" ")
+        return (
+          <div
+            key={li}
+            style={{
+              display: "flex",
+              flexDirection: "row-reverse",
+              flexWrap: "wrap",
+              justifyContent: "center",
+              gap: "0.28em",
+              maxWidth: "100%",
+            }}
+          >
+            {words.map((w, wi) => (
+              <span key={wi}>{reverseWord(w)}</span>
+            ))}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export const defaultTemplate: TemplateConfig = {
   id: "default",
   name: "מינימליסטי",
@@ -20,7 +64,6 @@ export const defaultTemplate: TemplateConfig = {
           padding: 80,
           backgroundColor: isCover ? "#332700" : isCta ? "#332700" : "#FFF9E5",
           fontFamily: "Rubik",
-          direction: "rtl",
         }}
       >
         {/* Slide number indicator */}
@@ -47,10 +90,9 @@ export const defaultTemplate: TemplateConfig = {
         )}
 
         {/* Title */}
-        <div
+        <RtlText
+          text={slide.title}
           style={{
-            display: "flex",
-            textAlign: "center",
             fontSize: isCover ? 64 : 52,
             fontWeight: 700,
             color: isCover || isCta ? "#FFC300" : "#332700",
@@ -58,25 +100,20 @@ export const defaultTemplate: TemplateConfig = {
             marginBottom: slide.body ? 40 : 0,
             maxWidth: 920,
           }}
-        >
-          {slide.title}
-        </div>
+        />
 
         {/* Body */}
         {slide.body && (
-          <div
+          <RtlText
+            text={slide.body}
             style={{
-              display: "flex",
-              textAlign: "center",
               fontSize: 32,
               fontWeight: 400,
               color: isCover || isCta ? "#FFF9E5" : "#4D4D4D",
               lineHeight: 1.6,
               maxWidth: 860,
             }}
-          >
-            {slide.body}
-          </div>
+          />
         )}
 
         {/* Bottom bar */}
