@@ -234,7 +234,16 @@ function ProjectPageInner() {
       const raw = localStorage.getItem(userKey(CANVAS_KEY, userId))
       if (!raw) return
       const saved = JSON.parse(raw)
-      if (saved?.sessionKey !== sessionKey) return
+      // Match by exact sessionKey OR by draft id. The second match handles
+      // the user navigating back to /project?post_id=<draftId> after
+      // viewing /core_posts — the URL has dropped the original ?idea=
+      // param so sessionKey no longer matches, but it's still the same
+      // in-progress draft and we want to restore its hook list + selection
+      // so the user keeps the full idea-flow layout instead of falling
+      // into the single-hook "saved" rendering.
+      const matchesSession = saved?.sessionKey === sessionKey
+      const matchesDraft = !!postId && saved?.savedPostId === postId
+      if (!matchesSession && !matchesDraft) return
       // Recovery: if we previously auto-saved a post under this hook flow but
       // the URL doesn't carry post_id (e.g. the tab was opened before the URL
       // sync was wired up), navigate to the saved-flow URL so the DB load fires
