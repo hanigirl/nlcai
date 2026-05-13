@@ -829,8 +829,11 @@ function CalendarFeatureBanner() {
       />
 
       {/* Live text overlay — two lines anchored to the start (visual
-          right in RTL), vertically centered. */}
-      <div className="absolute inset-y-0 start-0 flex flex-col justify-center gap-1 px-8 max-w-[500px]">
+          right in RTL), vertically centered. `ps-[83px]` insets from
+          the right; `pe-[180px]` keeps the text clear of the calendar
+          illustration on the left so the title + badge don't overlap
+          the artwork on narrower widths. */}
+      <div className="absolute inset-y-0 start-0 end-0 flex flex-col justify-center gap-1 ps-[83px] pe-[180px]">
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-small-bold text-text-primary-default">
             תזמון פורמטים של תוכן בלוח שנה
