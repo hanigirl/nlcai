@@ -30,8 +30,9 @@
  *     this stays instant and avoids server round trips on every keystroke.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
+import confetti from "canvas-confetti"
 import { FileText, Inbox, Search } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -45,6 +46,59 @@ import {
 } from "@/lib/timing-storage"
 import { FormatStatusChip } from "@/components/format-status-chip"
 import { HEADER_CHIP_FORMATS } from "@/components/core-post-sheet"
+
+/**
+ * Help-card state — onboarding cap.
+ *
+ * Per Hani: a brand-new tool should re-show short explainers a few times
+ * even if the user clicked "got it" too fast, so they get multiple
+ * natural exposures. 5 page loads is the industry sweet spot (Linear /
+ * Notion / Figma sit in the 3–5 range — enough reinforcement, not so
+ * many that it nags).
+ *
+ * Persisted shape:
+ *   { views: number, dismissed: boolean }
+ *
+ * Visibility rule:
+ *   show if !dismissed AND views < MAX_HELP_VIEWS
+ *
+ * "הבנתי" sets `dismissed = true` (permanent opt-out). Otherwise each
+ * panel mount counts as one view; the card simply stops appearing once
+ * the user has seen it `MAX_HELP_VIEWS` times.
+ */
+const QUEUE_HELP_KEY = "nlcai.ui.queue-help"
+const MAX_HELP_VIEWS = 5
+
+type HelpState = { views: number; dismissed: boolean }
+
+function readHelpState(): HelpState {
+  if (typeof window === "undefined") return { views: 0, dismissed: false }
+  try {
+    const raw = window.localStorage.getItem(QUEUE_HELP_KEY)
+    if (!raw) return { views: 0, dismissed: false }
+    const parsed = JSON.parse(raw) as unknown
+    if (typeof parsed !== "object" || parsed === null) {
+      return { views: 0, dismissed: false }
+    }
+    const obj = parsed as Record<string, unknown>
+    return {
+      views: typeof obj.views === "number" ? obj.views : 0,
+      dismissed: obj.dismissed === true,
+    }
+  } catch {
+    return { views: 0, dismissed: false }
+  }
+}
+
+function writeHelpState(state: HelpState): void {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.setItem(QUEUE_HELP_KEY, JSON.stringify(state))
+  } catch {
+    // localStorage can throw in private mode / when quota is hit — the
+    // help card simply re-appears next mount, which is benign.
+  }
+}
 
 
 /**
@@ -116,6 +170,37 @@ export function QueuePanel({
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState("")
   const [draggingId, setDraggingId] = useState<string | null>(null)
+  // Help card — onboarding visibility. See `readHelpState` for the
+  // visibility rule (≤ MAX_HELP_VIEWS shown OR explicit "הבנתי" dismiss).
+  // Initial state is computed from storage synchronously so the card
+  // doesn't flicker in on first paint when it should be hidden.
+  const [helpVisible, setHelpVisible] = useState<boolean>(() => {
+    const state = readHelpState()
+    return !state.dismissed && state.views < MAX_HELP_VIEWS
+  })
+  // Count one view per panel mount. Increments only when the card is
+  // actually rendered this mount (helpVisible was true at init) — we
+  // don't want to burn views during a session that already hit the cap.
+  // Guarded by a ref to survive React 18's StrictMode double-mount in
+  // dev so a single page-load doesn't get counted twice.
+  const viewCountedRef = useRef(false)
+  useEffect(() => {
+    if (!helpVisible) return
+    if (viewCountedRef.current) return
+    viewCountedRef.current = true
+    const state = readHelpState()
+    writeHelpState({ ...state, views: state.views + 1 })
+    // intentionally one-shot — we only want to count the first mount,
+    // not subsequent visibility flips. The empty dep array is correct
+    // because helpVisible is checked at first render and won't change
+    // back to true mid-session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const dismissHelp = useCallback(() => {
+    setHelpVisible(false)
+    const state = readHelpState()
+    writeHelpState({ ...state, dismissed: true })
+  }, [])
 
   // Refresh the scheduled-id set from localStorage. Cheap (synchronous read)
   // — we recompute on mount and on every relevant storage event.
@@ -339,10 +424,14 @@ export function QueuePanel({
       // px-6 pb-6`; relative positioning keeps the panel inside that
       // padding area, leaving a 72px+ gap above. Fixed pulls the panel
       // out of flow and pins it to viewport edges. The calendar page
-      // adds matching `pe-[320px]` so its grid doesn't render under us.
+      // adds matching `pe-[420px]` so its grid doesn't render under us.
       // z-30 = above content but below the topbar (z-50) so the topbar's
       // shadow + sticky behavior still wins.
-      className="fixed top-14 bottom-0 end-0 z-30 w-[400px] flex flex-col border-s border-border-neutral-default bg-white dark:bg-gray-10 overflow-hidden"
+      // Width tuned to be the minimum that fits all four format chips on
+      // one line (the longest label is "דיבור למצלמה"). Larger than the
+      // standard 400 side-panel size; smaller than 520 to avoid eating
+      // into the calendar grid.
+      className="fixed top-14 bottom-0 end-0 z-30 w-[420px] flex flex-col border-s border-border-neutral-default bg-white dark:bg-gray-10 overflow-hidden"
       aria-label="פאנל פוסטים לתזמון"
     >
       <div className="px-4 py-3 border-b border-border-neutral-default flex items-center gap-2">
@@ -383,7 +472,7 @@ export function QueuePanel({
             <span className="sr-only">טוען פוסטים...</span>
           </div>
         ) : error ? (
-          <ErrorState message={error} />
+          <QueueErrorState message={error} />
         ) : noPostsAtAll ? (
           <EmptyNoPostsState />
         ) : allScheduled ? (
@@ -395,8 +484,10 @@ export function QueuePanel({
             <p className="text-small text-text-neutral-default">לא נמצאו פוסטים</p>
           </div>
         ) : (
-          <ul className="flex flex-col gap-2">
-            {filtered.map((item) => {
+          <div className="flex flex-col gap-3">
+            {helpVisible && <QueueHelpCard onDismiss={dismissHelp} />}
+            <ul className="flex flex-col gap-2">
+              {filtered.map((item) => {
               const isDragging = draggingId === item.corePostId
               const displayText =
                 item.hookText?.trim() ||
@@ -414,19 +505,19 @@ export function QueuePanel({
                 formatsWithMedia: item.formatsWithMedia,
                 hasBody: item.hasBody,
               }
+              // Per Hani 2026-05-13: show ALL four formats with their
+              // status (not just the still-ready ones). The queue card
+              // now mirrors the /core_posts card visual 1:1 — full chips
+              // row up top so the user sees "what's done" and "what's
+              // still to do" at a glance, without opening the post. The
+              // post-level filter above (`unscheduled.some(... ready)`)
+              // still controls whether the post appears in the queue at
+              // all, so the panel keeps its "stuff that needs scheduling"
+              // identity.
               const formatStates = HEADER_CHIP_FORMATS.map((format) => ({
                 format,
                 state: getFormatReadiness(readinessInput, format),
-              })).filter(({ format, state }) => {
-                if (state === "ready") return true
-                if (
-                  state === "published" &&
-                  publishedInSession.has(`${item.corePostId}:${format}`)
-                ) {
-                  return true
-                }
-                return false
-              })
+              }))
               return (
                 <li
                   key={item.corePostId}
@@ -443,38 +534,142 @@ export function QueuePanel({
                   role="button"
                   tabIndex={0}
                   aria-label={`גררו לתזמון: ${displayText}`}
-                  className={`group rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2.5 text-right cursor-grab active:cursor-grabbing transition-all hover:border-yellow-50 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+                  className={`group rounded-[16px] border border-border-neutral-default bg-white dark:bg-gray-10 p-4 text-right cursor-grab active:cursor-grabbing transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
                     isDragging ? "opacity-50 cursor-grabbing" : ""
                   }`}
                 >
                   <div className="flex flex-col gap-2">
-                    <p className="text-small text-text-primary-default line-clamp-3 leading-snug">
-                      {displayText}
-                    </p>
-                    {formatStates.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {formatStates.map(({ format, state }) => (
+                    {/* Full format chips row — mirrors /core_posts card.
+                        Per Hani 2026-05-13: "ממש הניראות של פוסט ליבה,
+                        רק בלי תיאור ובלי האקשנס" — same chip palette,
+                        same group-hover yellow tint on neutral chips,
+                        same card hover. Set-state chips (scheduled /
+                        published) keep their green identity untouched
+                        — it's a meaningful "this format is on the
+                        calendar / aired" signal we never erase. */}
+                    <div className="flex flex-wrap gap-1">
+                      {formatStates.map(({ format, state }) => {
+                        const isSetState =
+                          state === "scheduled" || state === "published"
+                        const hoverTintClass = isSetState
+                          ? undefined
+                          : state === "ready"
+                            ? "group-hover:bg-yellow-90 group-hover:text-yellow-30 group-hover:border-yellow-30"
+                            : "group-hover:bg-yellow-90 group-hover:text-yellow-30"
+                        return (
                           <FormatStatusChip
                             key={format}
                             format={format}
                             state={state}
-                            size="xs"
+                            size="sm"
+                            className={hoverTintClass}
                           />
-                        ))}
-                      </div>
-                    )}
+                        )
+                      })}
+                    </div>
+                    <p className="text-sm font-medium text-text-primary-default line-clamp-3 leading-snug mt-3">
+                      {displayText}
+                    </p>
                   </div>
                 </li>
               )
             })}
-          </ul>
+            </ul>
+          </div>
         )}
       </div>
     </aside>
   )
 }
 
-function EmptyNoPostsState() {
+/**
+ * Help card explaining the dashed-chip state. Shows above the queue list
+ * until the user clicks "הבנתי"; persists dismissal in localStorage so it
+ * doesn't reappear across reloads. Design mirrors the Figma node 407:2405:
+ * a centered card with an example chip (the talking_head "ready" chip the
+ * user actually sees in the list), a bold title, a description that
+ * highlights "מכילים מדיה", and a primary CTA. The soft yellow blur in
+ * the top-right is a decorative echo of the chip's "primary" accent —
+ * the design used a yellow ellipse asset; the radial-style glow gets
+ * the same warmth without shipping another image.
+ */
+function QueueHelpCard({ onDismiss }: { onDismiss: () => void }) {
+  // Two-phase dismissal so the card animates out cleanly before the
+  // parent unmounts it.
+  //   click → `dismissing = true` → fade + slide + collapse height/padding
+  //   transitionend (opacity) → `onDismiss()` → parent stops rendering this
+  // We track the transition on `opacity` because every transition end
+  // bubbles up; gating on a single property keeps `onDismiss` from firing
+  // once per animated property.
+  const [dismissing, setDismissing] = useState(false)
+  const handleClick = () => setDismissing(true)
+  const handleTransitionEnd = (e: React.TransitionEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return
+    if (e.propertyName !== "opacity") return
+    if (dismissing) onDismiss()
+  }
+
+  return (
+    <div
+      dir="rtl"
+      onTransitionEnd={handleTransitionEnd}
+      className={`relative overflow-hidden flex flex-col items-center gap-[18px] p-4 bg-white dark:bg-gray-10 border border-border-neutral-default rounded-xl text-center transition-all duration-300 ease-out max-h-[500px] ${
+        dismissing
+          ? "opacity-0 -translate-y-2 max-h-0 !p-0 !border-transparent"
+          : ""
+      }`}
+    >
+      {/* Decorative yellow glow — RTL `-end-12` puts it on the visual
+          right (where the original design's ellipse2 sat). Blurred and
+          softly tinted so it reads as a brand accent, not a card
+          background. */}
+      <div
+        aria-hidden
+        className="absolute -top-12 -end-12 size-32 rounded-full bg-yellow-80/40 blur-2xl pointer-events-none"
+      />
+
+      {/* Example chip — the literal "ready" state from FormatStatusChip
+          so what we explain in copy is what the user sees in the
+          queue 1:1. shadow-sm matches the Figma drop-shadow on the
+          example chip. */}
+      <div className="relative">
+        <FormatStatusChip
+          format="talking_head"
+          state="ready"
+          size="sm"
+          className="shadow-sm"
+        />
+      </div>
+
+      <div className="relative flex flex-col items-center gap-1 text-center w-full">
+        <p className="text-small-bold text-text-primary-default">
+          פורמט מקווקו הוא פורמט מוכן לתזמון
+        </p>
+        <p className="text-xs-body text-text-neutral-default leading-snug">
+          פורמטים עם קו מקווקו{" "}
+          <span className="text-text-primary-default font-medium">
+            מכילים מדיה
+          </span>{" "}
+          וניתנים לתיזמון בלוח
+          <br />
+          תמיד אפשר להוסיף מדיה לפורמט בעמוד העריכה
+        </p>
+      </div>
+
+      <Button
+        size="sm"
+        onClick={handleClick}
+        aria-label="סגירת הסבר על פורמט מקווקו"
+        className="relative"
+        disabled={dismissing}
+      >
+        הבנתי
+      </Button>
+    </div>
+  )
+}
+
+export function EmptyNoPostsState() {
   return (
     <div className="flex flex-col items-center text-center gap-3 py-10 px-3">
       <div className="size-12 rounded-full bg-bg-surface flex items-center justify-center">
@@ -495,63 +690,159 @@ function EmptyNoPostsState() {
   )
 }
 
-function EmptyAllScheduledState() {
+/**
+ * Brand-yellow confetti palette — same set the post-creation celebration
+ * fires. Kept in sync with `src/components/core-post-celebration.tsx` so
+ * any future palette adjustment lives in one place visually (the two
+ * files don't share an import yet because both stick to plain
+ * "consumer of canvas-confetti" patterns).
+ */
+const ALL_SCHEDULED_CONFETTI_COLORS = [
+  "#FFC300", // yellow-50 (brand)
+  "#FFCF33", // yellow-60
+  "#FFDB66", // yellow-70
+  "#FFE799", // yellow-80
+  "#332700", // yellow-10 (dark accent)
+]
+
+/**
+ * "All scheduled" empty state — Figma node 410:3897.
+ *
+ * White card, gray-90 border, soft yellow glow in the bottom-end corner,
+ * brand paper-plane illustration, two-line copy, outline CTA to /project.
+ * Per Hani 2026-05-14: fires the brand confetti burst on mount as a
+ * delight moment ("you actually scheduled everything for the week"),
+ * matching the celebration animation used after publishing a post
+ * (`core-post-celebration.tsx`). The burst is anchored to the card so it
+ * lands ABOVE the paper plane and rains down through the card area.
+ *
+ * Confetti fires once per mount. If the user navigates away and comes
+ * back to a still-all-scheduled state, it fires again — that's the
+ * spec; we don't gate via SessionStorage. A repeated "you're done!"
+ * moment is OK because reaching this state is itself an achievement
+ * the user just chose to revisit.
+ */
+export function EmptyAllScheduledState() {
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const node = cardRef.current
+    if (!node) return
+    // Origin: horizontally centered on the card, vertically just above
+    // its top edge so particles arc DOWN into the card. Math.max guards
+    // against the card being scrolled near the very top of the viewport
+    // (in which case `top - 30` could go negative and the confetti
+    // would render off-screen above the fold).
+    const rect = node.getBoundingClientRect()
+    const origin = {
+      x: (rect.left + rect.width / 2) / window.innerWidth,
+      y: Math.max(0.04, (rect.top - 12) / window.innerHeight),
+    }
+    confetti({
+      particleCount: 90,
+      spread: 80,
+      startVelocity: 38,
+      scalar: 0.9,
+      origin,
+      colors: ALL_SCHEDULED_CONFETTI_COLORS,
+    })
+  }, [])
+
   return (
-    <div className="flex flex-col items-center text-center gap-3 py-10 px-3">
-      <div className="size-12 rounded-full bg-bg-surface-primary-default flex items-center justify-center">
-        <Inbox className="size-5 text-text-primary-default" aria-hidden />
-      </div>
-      <div>
+    <div
+      ref={cardRef}
+      dir="rtl"
+      className="relative overflow-hidden bg-white dark:bg-gray-10 border border-border-neutral-default rounded-xl p-4 flex flex-col items-center gap-2 text-center"
+    >
+      {/* Decorative yellow ellipse — soft brand glow in the bottom-end
+          corner (Figma asset was a blurred yellow ellipse; recreated
+          with `blur-3xl` + a tinted bg circle). Visually it sits in
+          the bottom-left in RTL display (logical `end`), matching the
+          source design's left-offset glow. */}
+      <div
+        aria-hidden
+        className="absolute -bottom-12 -end-12 size-40 rounded-full bg-yellow-50/30 blur-3xl pointer-events-none"
+      />
+
+      {/* Paper-plane illustration — the "celebrate" variant (with
+          sparkle accents). Sibling to `paper-plane-empty.png` used
+          by EmptyNoneReadyState; the celebrate version signals
+          "achievement / done" while the empty version signals "ready
+          to send". Same shape language, different decoration. */}
+      <img
+        src="/images/paper-plane-celebrate.png"
+        alt=""
+        className="relative size-[57px] object-contain"
+      />
+
+      <div className="relative flex flex-col gap-1 items-center w-full">
         <p className="text-small-bold text-text-primary-default">
-          כל הפוסטים מתוזמנים
+          יסס! כל הפוסטים מתוזמנים!
         </p>
-        <p className="text-xs-body text-text-neutral-default mt-1 leading-relaxed">
-          רוצים להוסיף עוד תוכן לשבוע?
+        <p className="text-xs-body text-text-neutral-default">
+          רוצים להכין עוד תוכן לשבוע?
         </p>
       </div>
-      <Button asChild variant="outline" size="sm" className="mt-1">
-        <Link href="/project">צרו פוסט נוסף</Link>
+
+      <Button
+        asChild
+        variant="outline"
+        size="sm"
+        className="relative mt-1"
+      >
+        <Link href="/">יצירת פוסט נוסף</Link>
       </Button>
     </div>
   )
 }
 
 /**
- * Phase 6: residual empty-state when there ARE unscheduled posts in the
- * inventory but none of them pass the READY bar (no media + no drive_url, or
- * empty body). The CTA points to /core_posts where the user can open each
- * post's Sheet and finish the missing piece — that's the surface that owns
- * "what's left to prepare" for the post inventory at large.
+ * Empty state: there are unscheduled posts in the inventory but none pass
+ * the READY bar (no media + no drive_url, or empty body). Matches the
+ * Figma node 407:2446 — bordered card, paper-plane glyph rotated, bold
+ * title, two-line description. No CTA button in the spec; the second
+ * line of the description already directs the user to the core-post
+ * editor as the place to add media.
  *
- * `count` is the size of the unscheduled-but-not-ready list; we surface it
- * so the user knows scale ("1 post" vs "12 posts") without having to navigate
- * to find out.
+ * The `count` prop is kept on the signature for backward compatibility
+ * with the call site but is no longer surfaced — the new copy speaks to
+ * the user state ("there are no scheduling-ready posts") rather than the
+ * raw inventory count.
  */
-function EmptyNoneReadyState({ count }: { count: number }) {
+export function EmptyNoneReadyState({ count: _count }: { count: number }) {
   return (
-    <div className="flex flex-col items-center text-center gap-3 py-10 px-3">
-      <div className="size-12 rounded-full bg-bg-surface flex items-center justify-center">
-        <FileText className="size-5 text-text-neutral-default" aria-hidden />
+    <div
+      dir="rtl"
+      className="bg-white dark:bg-gray-10 border border-border-neutral-default rounded-xl p-4 flex flex-col items-center text-center gap-2"
+    >
+      {/* Paper-plane illustration — Hani's brand asset. Replaces the
+          earlier Lucide `Send` placeholder. Lives in /public/images so
+          Next-Image isn't required (one decorative PNG, no responsive
+          sizing needed). `alt=""` because the heading below carries
+          the meaning; this is purely decorative. */}
+      <div className="size-[55px] flex items-center justify-center">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/images/paper-plane-empty.png"
+          alt=""
+          className="size-10 object-contain"
+        />
       </div>
-      <div>
+      <div className="flex flex-col gap-1 w-full">
         <p className="text-small-bold text-text-primary-default">
-          {count === 1
-            ? "פוסט אחד מחכה למדיה או סקריפט"
-            : `${count} פוסטים מחכים למדיה או סקריפט`}
+          עדיין אין פוסטים מוכנים לתזמון
         </p>
-        <p className="text-xs-body text-text-neutral-default mt-1 leading-relaxed">
-          כדי לתזמן פוסט, צריך סקריפט והעלאת מדיה לפחות לפורמט אחד —
-          או קישור לדרייב במקום מדיה
+        <p className="text-xs-body text-text-neutral-default leading-snug">
+          על מנת לתזמן פוסט הוא חייב להכיל מדיה או קישור לדרייב
+          <br />
+          אפשר לערוך את המדיה בעריכת כל פוסט ליבה
         </p>
       </div>
-      <Button asChild variant="outline" size="sm" className="mt-1">
-        <Link href="/core_posts">פתחו פוסט להשלמה</Link>
-      </Button>
     </div>
   )
 }
 
-function ErrorState({ message }: { message: string }) {
+export function QueueErrorState({ message }: { message: string }) {
   return (
     <div className="flex flex-col items-center text-center gap-2 py-10 px-3">
       <p className="text-small-bold text-button-destructive-default">{message}</p>

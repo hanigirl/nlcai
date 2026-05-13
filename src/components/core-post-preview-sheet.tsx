@@ -20,7 +20,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
-import { ExternalLink, Image as ImageIcon, X } from "lucide-react"
+import { ExternalLink, Image as ImageIcon, Pencil, X } from "lucide-react"
 
 import {
   Sheet,
@@ -233,23 +233,23 @@ export function CorePostPreviewSheet({
               )}
             </div>
             <TooltipProvider delayDuration={0} skipDelayDuration={0}>
-              <div className="flex items-center gap-1 shrink-0">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={handleEditClick}
-                      aria-label="פתיחה בעמוד הפוסט"
-                      className="rounded-lg"
-                    >
-                      <ExternalLink className="size-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    פתיחה בעמוד הפוסט
-                  </TooltipContent>
-                </Tooltip>
+              <div className="flex items-center gap-2 shrink-0">
+                {/* Open in canvas editor — small outline button with
+                    pencil affordance, mirroring the master Sheet
+                    header. No "תזמון פוסט" CTA here because this
+                    preview only opens FROM /calendar (the user is
+                    already in the scheduling surface; offering it
+                    again would be a loop). */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleEditClick}
+                  aria-label="עריכה"
+                  className="gap-1.5"
+                >
+                  <Pencil className="size-3.5" aria-hidden />
+                  עריכה
+                </Button>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <SheetClose asChild>
@@ -310,15 +310,19 @@ export function CorePostPreviewSheet({
                         : state === "published"
                           ? publishedAt
                           : undefined
-                    // A chip becomes a per-format script toggle ONLY when
-                    // there's a script to show — i.e. the format isn't
-                    // empty. Empty chips render as decorative state pills,
-                    // matching the existing "no script yet" reading.
-                    // Lessons.md "Visual hole != signal": we keep the
-                    // empty chip visible (don't hide it) but it stays
-                    // non-interactive so the cognitive contract is
-                    // honest — "this format has no content".
-                    const isInteractive = state !== "empty"
+                    // A chip is clickable ONLY when it's actually ready
+                    // to schedule — script + (media OR drive link) is in
+                    // place. The `incomplete` state (script-only, no
+                    // media) used to be clickable, but Hani: "the chip
+                    // is a 'pick this to schedule' affordance — picking
+                    // a half-ready format leads to a dead end on the
+                    // calendar." So we treat ready / scheduled /
+                    // published as interactive, and empty / incomplete
+                    // as decorative state pills.
+                    const isInteractive =
+                      state === "ready" ||
+                      state === "scheduled" ||
+                      state === "published"
                     const isActive = previewFormat === format
                     return (
                       <div role="listitem" key={format}>

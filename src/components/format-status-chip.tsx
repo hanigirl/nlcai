@@ -1,33 +1,35 @@
 "use client"
 
-// PHASE-3 INTERIM: Using Tailwind color classes per Hani's instruction
-// while waiting for custom format-color palette. To migrate later:
-// replace FORMAT_COLOR_CLASSES with semantic tokens from globals.css.
-
 /**
  * FormatStatusChip — single source of truth for "this (post, format) is in
  * state X" across the timing feature.
  *
- * Why one component for three surfaces?
- *   Before this, three places drew the same idea three different ways:
+ * 3-state visual model (2026-05-13):
+ *   ChipState = "not-started" | "ready" | "set"
  *
- *     1. /core_posts cards used `FormatCompletionChip` with a 3-state model
- *        (missing | duplicated | ready).
- *     2. core-post-sheet header used `FormatChip` — a passive name+icon pill
- *        with no state at all.
- *     3. queue-panel rows used a tiny inline pill (label only).
+ *   Mapping from the 5-state internal `FormatReadiness` (kept in
+ *   `timing-storage.ts` for nuance the model still tracks):
+ *     empty       → not-started   (default placeholder, no media)
+ *     incomplete  → not-started   (started but missing media)
+ *     ready       → ready          (script + media ready, awaiting calendar)
+ *     scheduled   → set            (on the board, future)
+ *     published   → set            (on the board, past — visualized only on
+ *                                   the calendar surface, not on the chip)
  *
- *   The lessons.md "ישות אחת = surface אחד" rule applies fractally: a
- *   "format readiness" is one concept and should look like one chip, no
- *   matter where it's drawn. When the user sees the same shape in three
- *   places, they learn the visual language once and reuse it. When each
- *   surface invents its own visual, the user has to re-learn each time.
+ * Visual rules (per Hani's spec):
+ *   not-started → bg-gray-50, gray text/icon, NO border
+ *   ready       → bg-gray-50, gray text/icon, DASHED gray border
+ *   set         → bg-teal-50, teal-700 text/icon, SOLID teal-700 border
+ *                 + for type=full only: a green check badge REPLACES the
+ *                   format icon. The label conveys which format it is.
+ *                 + for type=icon: just the format icon in teal-700 (no badge,
+ *                   the format icon itself conveys format identity).
  *
- * Per-format readiness model (2026-05-06):
- *   FormatReadiness = "empty" | "ready" | "scheduled" | "published"
- *   Defined in `timing-storage.ts`. The mapping is enforced here and only
- *   here — callers pass `state` (already-derived) so this stays a pure
- *   presentational component.
+ * No per-format hue (intentional trade-off — see Hani's brief 2026-05-13):
+ *   The previous Tailwind blue/purple/orange/teal palette is gone. The
+ *   format identity now lives entirely in the icon glyph; the chip state
+ *   is uniform across formats so "what's still on my plate" is the
+ *   primary read.
  *
  * Wrappers, not props:
  *   The base component is presentational only — no onClick, no href. There
@@ -36,13 +38,10 @@
  *       moves focus there. Used in the Sheet header chips row.
  *     - `FormatStatusChipLink` — button that fires a callback. Used in
  *       /core_posts cards (click → open Sheet).
- *   This separation keeps the visual contract identical across surfaces
- *   while letting each context choose the right semantic element.
  */
 
 import {
   Check,
-  FileText,
   Image as ImageIcon,
   Images,
   Layers,
@@ -59,8 +58,7 @@ import type { FormatId, FormatReadiness } from "@/lib/timing-storage"
 
 /**
  * Hebrew labels for format ids. Kept in this file so callers don't pass them
- * — the component owns the visual language top-to-bottom (icon, label,
- * status-overlay icon, copy).
+ * — the component owns the visual language top-to-bottom (icon, label, copy).
  */
 const FORMAT_LABELS: Record<string, string> = {
   story: "סטורי",
@@ -71,9 +69,8 @@ const FORMAT_LABELS: Record<string, string> = {
 }
 
 /**
- * Format → outline icon. Used as the primary signifier on the chip.
- * `static` is treated as a synonym for `image_post` because the brief
- * mentions both — the deeper component contract still keys on FormatId.
+ * Format → outline icon. The visual signifier of which format the chip
+ * represents. `static` is an alias for `image_post`.
  */
 const FORMAT_ICONS: Record<string, LucideIcon> = {
   story: Layers,
@@ -97,20 +94,14 @@ function getFormatLabel(format: string): string {
 
 /**
  * Format an ISO timestamp or a YYYY-MM-DD date as Hebrew short DD/MM.
- * Returns null if parsing fails — callers can render the chip without a date
- * suffix instead of showing garbage.
- *
- * We accept both shapes because:
- *   - `getScheduledByPostAndFormat().scheduledDate` is YYYY-MM-DD (a calendar
- *     day, no timezone).
- *   - `getPublishedMark().publishedAt` is an ISO timestamp.
+ * The chip itself no longer renders a date suffix (post-2026-05-13 spec),
+ * but the helper is re-exported for surfaces (calendar tooltip, chip menu)
+ * that want to render the same short form alongside chips.
  */
 function formatShortHebrewDate(value: string | undefined): string | null {
   if (!value) return null
   try {
     let date: Date
-    // YYYY-MM-DD shape — parse as local date so a "May 6th" input doesn't
-    // get pulled into the previous calendar day in negative-UTC timezones.
     const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
     if (ymd) {
       const [, y, m, d] = ymd
@@ -126,231 +117,151 @@ function formatShortHebrewDate(value: string | undefined): string | null {
 }
 
 /* ------------------------------------------------------------------ */
-/*  State → visual treatment                                            */
+/*  State model — 5-state internal → 3-state visual                     */
 /* ------------------------------------------------------------------ */
 
-type Size = "xs" | "sm" | "md"
+export type ChipState = "not-started" | "ready" | "set"
 
 /**
- * Class strings for each (state, size) combination. Inlined as constants
- * rather than computed at render time so:
- *   1. Tailwind's static extractor finds every class string at build time
- *      (template literals with state interpolation can be lossy).
- *   2. State changes don't trigger any class recomputation — the chip just
- *      swaps the precomputed string.
- *
- * Sizes are tuned to:
- *   - xs = tightest variant. Used in dense lists where multiple chips
- *     stack per row (e.g. queue-panel cards showing all ready formats).
- *   - sm = pills inside cards (/core_posts grid).
- *   - md = sticky chips row in the Sheet header where they need to read as
- *     navigation, not decoration.
+ * Project the 5-state internal readiness onto the 3-state visual chip.
+ * Exported so call sites that want to mirror the chip's projection
+ * (e.g. calendar day-cell logic) can stay aligned without re-deriving.
  */
-const baseChipClass =
-  "inline-flex items-center gap-1.5 rounded-full border whitespace-nowrap transition-colors tabular-nums"
-
-const sizeClass: Record<Size, string> = {
-  xs: "h-5 px-2 text-[10px] leading-none gap-1",
-  sm: "h-7 px-2.5 text-xs-body",
-  md: "h-8 px-3 text-small",
-}
-
-/* ------------------------------------------------------------------ */
-/*  Per-format color identity (PHASE-3 INTERIM)                         */
-/* ------------------------------------------------------------------ */
-
-/**
- * Format → color family. Each format gets a distinct hue so the user can
- * tell formats apart at a glance, regardless of state. Hani approved the
- * Tailwind palette as INTERIM until a custom format-color palette lands;
- * see the file header comment for migration notes.
- *
- *   talking_head → blue   (ריל)
- *   carousel     → purple (קרוסלה)
- *   image_post   → orange (תמונה)
- *   static       → orange (alias for image_post)
- *   story        → teal   (סטורי — turquoise, distinct from talking_head blue)
- *
- * Unknown formats fall back to gray (kept neutral so a stray format id
- * doesn't poison the visual language).
- */
-type FormatColorFamily = "blue" | "purple" | "orange" | "teal" | "gray"
-
-const FORMAT_COLOR_FAMILY: Record<string, FormatColorFamily> = {
-  talking_head: "blue",
-  carousel: "purple",
-  image_post: "orange",
-  static: "orange",
-  story: "teal",
-}
-
-function getFormatColorFamily(
-  format: string,
-  state?: FormatReadiness,
-): FormatColorFamily {
-  // Empty (never duplicated) is the only state that flattens to gray —
-  // it's the "not yet" signal across formats. Incomplete (duplicated +
-  // script, no media) keeps the per-format hue so the user can tell
-  // which format was started, just with a softer treatment via the
-  // dashed border + lighter shade in FORMAT_COLOR_CLASSES.
-  if (state === "empty") return "gray"
-  return FORMAT_COLOR_FAMILY[format] ?? "gray"
-}
-
-/**
- * Static (state × family) class lookup. Tailwind's JIT cannot resolve
- * `bg-${color}-100` at build time — we MUST list every literal string here
- * for the extractor to keep them in the bundle. Adding a new format =
- * adding a new family row; adding a new state = adding a new column.
- *
- * Mapping by state (per Hani's brief):
- *   empty     → {c}-50  bg, dashed {c}-200 border, {c}-600 text
- *   ready     → {c}-100 bg,        {c}-300 border, {c}-800 text
- *   scheduled → IDENTICAL to published (Hani: only the badge glyph differs)
- *   published → {c}-50  bg,        {c}-400 border, {c}-700 text
- *
- * Border-dashed is set on `empty` only; all other states use a solid
- * border. We keep the border *width* identical across states (1px) so
- * chips don't shift size when their state changes (avoiding layout jitter
- * inside flex/grid rows).
- */
-const FORMAT_COLOR_CLASSES: Record<
-  FormatColorFamily,
-  Record<FormatReadiness, string>
-> = {
-  blue: {
-    empty: "bg-blue-50 text-blue-600 border-dashed border-blue-200",
-    incomplete: "bg-blue-50 text-blue-700 border-dashed border-blue-300",
-    ready: "bg-blue-100 text-blue-800 border-blue-300",
-    scheduled: "bg-blue-50 text-blue-700 border-blue-400",
-    published: "bg-blue-50 text-blue-700 border-blue-400",
-  },
-  purple: {
-    empty: "bg-purple-50 text-purple-600 border-dashed border-purple-200",
-    incomplete: "bg-purple-50 text-purple-700 border-dashed border-purple-300",
-    ready: "bg-purple-100 text-purple-800 border-purple-300",
-    scheduled: "bg-purple-50 text-purple-700 border-purple-400",
-    published: "bg-purple-50 text-purple-700 border-purple-400",
-  },
-  orange: {
-    empty: "bg-orange-50 text-orange-600 border-dashed border-orange-200",
-    incomplete: "bg-orange-50 text-orange-700 border-dashed border-orange-300",
-    ready: "bg-orange-100 text-orange-800 border-orange-300",
-    scheduled: "bg-orange-50 text-orange-700 border-orange-400",
-    published: "bg-orange-50 text-orange-700 border-orange-400",
-  },
-  teal: {
-    empty: "bg-teal-50 text-teal-600 border-dashed border-teal-200",
-    incomplete: "bg-teal-50 text-teal-700 border-dashed border-teal-300",
-    ready: "bg-teal-100 text-teal-800 border-teal-300",
-    scheduled: "bg-teal-50 text-teal-700 border-teal-400",
-    published: "bg-teal-50 text-teal-700 border-teal-400",
-  },
-  gray: {
-    // Empty state uses design-system tokens (light surface) per Hani —
-    // pre-color-rollout look. Tailwind grays were too dark/ugly.
-    empty:
-      "bg-bg-surface text-text-neutral-default border-dashed border-border-neutral-default",
-    incomplete:
-      "bg-gray-50 text-gray-700 border-dashed border-gray-300",
-    ready: "bg-gray-100 text-gray-800 border-gray-300",
-    scheduled: "bg-gray-50 text-gray-700 border-gray-400",
-    published: "bg-gray-50 text-gray-700 border-gray-400",
-  },
-}
-
-/**
- * Public: same matrix as classes, but for ad-hoc consumers (e.g. the
- * calendar day-cell chip) that need just a background color hint without
- * pulling the full chip component. Returns the FAMILY name; the consumer
- * picks its own shade. Kept colocated so there's still one source of truth.
- */
-export function getFormatColorFamilyName(format: FormatId): FormatColorFamily {
-  return getFormatColorFamily(format)
-}
-
-/**
- * Static class lookup for the calendar day-cell chip and any other surface
- * that wants the same per-format hue but doesn't render a full FormatStatusChip
- * (e.g. it has its own checkbox + dropdown layout).
- *
- * Returns the bg/border/text trio for `(format, state)`. The hover variant
- * is included so day-cell chips highlight on hover with a slightly deeper
- * shade in their own color family — matching the legacy `hover:bg-yellow-90`
- * pattern but format-aware.
- *
- * IMPORTANT: classes are listed as full literals so Tailwind's static
- * extractor keeps them in the bundle.
- */
-const FORMAT_HOVER_BG: Record<FormatColorFamily, string> = {
-  blue: "hover:bg-blue-100",
-  purple: "hover:bg-purple-100",
-  orange: "hover:bg-orange-100",
-  teal: "hover:bg-teal-100",
-  gray: "hover:bg-gray-100",
-}
-
-export function getFormatChipClasses(
-  format: FormatId,
-  state: FormatReadiness,
-): { container: string; hover: string } {
-  const family = getFormatColorFamily(format, state)
-  return {
-    container: FORMAT_COLOR_CLASSES[family][state],
-    hover: FORMAT_HOVER_BG[family],
+export function toChipState(state: FormatReadiness): ChipState {
+  switch (state) {
+    case "empty":
+    case "incomplete":
+      return "not-started"
+    case "ready":
+      return "ready"
+    case "scheduled":
+    case "published":
+      return "set"
   }
 }
 
+/* ------------------------------------------------------------------ */
+/*  Size / type tokens                                                  */
+/* ------------------------------------------------------------------ */
+
+type Size = "xs" | "sm" | "md"
+export type FormatChipType = "full" | "icon"
+
 /**
- * Status overlay icon — sits next to the format icon inside the chip.
- * Currently null for every state; the corner badge is the sole signal.
+ * Base chip class — always applied regardless of state or size.
+ * Gap is intentionally not set here: each size variant in
+ * `sizeClassFull` owns its own gap so the icon-to-label spacing
+ * stays in sync with Figma per-size (xs/sm/md).
  */
-const stateOverlayIcon: Record<FormatReadiness, LucideIcon | null> = {
-  empty: null,
-  incomplete: null,
-  ready: null,
-  scheduled: null,
-  published: null,
+const baseChipClass =
+  "inline-flex items-center justify-center rounded-full border whitespace-nowrap transition-colors tabular-nums"
+
+/**
+ * Size tokens for type=full (icon + label).
+ *   xs → tightest variant (queue rows where multiple chips stack).
+ *   sm → cards (/core_posts grid), schedule picker, header.
+ *   md → Sheet header where the chip reads as navigation.
+ *
+ * type=icon overrides the horizontal padding to make a square 28×28 button.
+ */
+// Full chip spacing matches the Figma chip component (node 328:8515):
+//   sm → py-1.5 (6px), px-2 (8px), gap-0.5 (2px). Overrides the gap-1.5
+//   baseline from `baseChipClass` because the icon-to-label gap in
+//   Hani's design is tight (the chip reads as one token, not two
+//   visually separated pieces).
+const sizeClassFull: Record<Size, string> = {
+  xs: "h-5 px-1.5 text-[10px] leading-none gap-1",
+  sm: "h-7 px-2 text-xs-body gap-0.5",
+  md: "h-8 px-3 text-small gap-1",
+}
+const sizeClassIcon: Record<Size, string> = {
+  xs: "size-5 p-0",
+  sm: "size-7 p-0",
+  md: "size-8 p-0",
 }
 
 /**
- * Custom clock-hands SVG (no outer circle). Lucide's `Clock` ships with a
- * built-in circle that — inside the badge's own circle — reads as a
- * double ring. Hani's call: keep only the hands. Hour hand short and up,
- * minute hand pointing to roughly 4 o'clock.
+ * Icon size scales with the chip: xs gets 10px, sm 12px, md 14px.
  */
-function ClockHandsIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={3}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
-      <line x1="12" y1="12" x2="12" y2="7" />
-      <line x1="12" y1="12" x2="15.5" y2="14" />
-    </svg>
-  )
+function iconSizeFor(size: Size): string {
+  return size === "xs" ? "size-2.5" : size === "sm" ? "size-3" : "size-3.5"
 }
 
 /* ------------------------------------------------------------------ */
-/*  Aria label                                                          */
+/*  State → visual treatment (3 neutral classes, no per-format hue)     */
 /* ------------------------------------------------------------------ */
 
 /**
- * Spoken-form label — what a screen reader will announce. We always
- * concatenate format + state + (date) so the chip is comprehensible without
- * sight, even when it's pure-decoration in the page tree.
+ * Per-state class strings. Listed as full literals so Tailwind's static
+ * extractor keeps every class in the bundle.
+ *
+ * Colors source the project's design-system tokens defined in globals.css:
+ *   gray-98 (#FAFAFA), gray-50 (#808080), green-success-97 (#F0FDFA),
+ *   green-success-50 (#00786F). These match Hani's Figma `chip` component
+ *   variables 1:1 — do NOT use Tailwind's default `teal-*` / `gray-100+`
+ *   palettes here; the project tokens deliberately diverge.
  */
-function buildAriaLabel(
-  format: FormatId,
-  state: FormatReadiness,
-  shortDate: string | null,
-): string {
+const chipStateClasses: Record<ChipState, string> = {
+  "not-started": "bg-gray-98 text-gray-50 border-transparent",
+  "ready": "bg-gray-98 text-gray-50 border-dashed border-gray-50",
+  "set": "bg-green-success-97 text-green-success-50 border-solid border-green-success-50",
+}
+
+/**
+ * Optional hover variants, used by surfaces that wrap the chip in their
+ * own clickable container (e.g. day-cell on /calendar). The base chip is
+ * non-interactive, so this is opt-in via `getFormatChipClasses`.
+ */
+const chipStateHover: Record<ChipState, string> = {
+  "not-started": "hover:bg-gray-95",
+  "ready": "hover:bg-gray-95",
+  "set": "hover:bg-green-success-97/80",
+}
+
+/**
+ * Public class lookup for day-cell chips and any surface that wants the
+ * same visual treatment without rendering a full `FormatStatusChip` (e.g.
+ * a chip that needs its own checkbox + dropdown layout).
+ *
+ * The `format` parameter is preserved for backwards compatibility but no
+ * longer affects the result — colors are uniform across formats per the
+ * 2026-05-13 spec. We accept either a `FormatReadiness` (5-state) or a
+ * `ChipState` (3-state) and project accordingly.
+ */
+export function getFormatChipClasses(
+  _format: FormatId,
+  state: FormatReadiness | ChipState,
+): { container: string; hover: string } {
+  const chipState: ChipState = isChipState(state) ? state : toChipState(state)
+  return {
+    container: chipStateClasses[chipState],
+    hover: chipStateHover[chipState],
+  }
+}
+
+function isChipState(s: string): s is ChipState {
+  return s === "not-started" || s === "ready" || s === "set"
+}
+
+/**
+ * Back-compat shim — returns a constant string now that colors are
+ * uniform. Kept so existing call sites that import it still type-check;
+ * safe to delete once those imports are migrated.
+ */
+export function getFormatColorFamilyName(_format: FormatId): "gray" {
+  return "gray"
+}
+
+/* ------------------------------------------------------------------ */
+/*  Aria + visible labels                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Spoken-form label. The 5-state distinction (empty vs incomplete,
+ * scheduled vs published) is preserved here so screen readers still get
+ * the nuance the visual chip flattens.
+ */
+function buildAriaLabel(format: FormatId, state: FormatReadiness): string {
   const fmt = getFormatLabel(format)
   switch (state) {
     case "empty":
@@ -360,33 +271,10 @@ function buildAriaLabel(
     case "ready":
       return `${fmt}: מוכן`
     case "scheduled":
-      return shortDate ? `${fmt}: מתוזמן ל-${shortDate}` : `${fmt}: מתוזמן`
+      return `${fmt}: מתוזמן`
     case "published":
-      return shortDate ? `${fmt}: פורסם ב-${shortDate}` : `${fmt}: פורסם`
+      return `${fmt}: פורסם`
   }
-}
-
-/* ------------------------------------------------------------------ */
-/*  Visible label (in-chip text)                                        */
-/* ------------------------------------------------------------------ */
-
-/**
- * The text shown inside the chip. Differs from aria-label intentionally:
- * the visible label is short for scannability, the aria-label is full for
- * comprehension. They share a date format so the spoken date matches what's
- * on screen.
- *
- *   empty     → just the format name      "ריל"
- *   ready     → just the format name      "ריל"  (color = state signal)
- *   scheduled → just the format name      "ריל"  (Clock overlay = state signal)
- *   published → just the format name      "ריל"  (green V corner badge = state signal)
- */
-function buildVisibleLabel(
-  format: FormatId,
-  _state: FormatReadiness,
-  _shortDate: string | null,
-): string {
-  return getFormatLabel(format)
 }
 
 /* ------------------------------------------------------------------ */
@@ -399,127 +287,142 @@ export type FormatStatusChipProps = {
   /** Derived readiness state — caller is responsible for projection. */
   state: FormatReadiness
   /**
-   * ISO timestamp (`publishedAt`) OR YYYY-MM-DD (`scheduledDate`). Only
-   * rendered when state is `scheduled` or `published`. Ignored otherwise.
-   */
-  date?: string
-  /**
    * `sm` for in-card pills (/core_posts, queue-panel), `md` for the
    * navigation-style chips row in the Sheet header. Defaults to `sm`.
    */
   size?: Size
+  /**
+   * Chip type — `full` (icon + label) or `icon` (compact 28×28 circle,
+   * label hidden). Default `full`.
+   */
+  type?: FormatChipType
   /**
    * Pure positioning override — keep this to layout concerns only (margins,
    * grid placement). Visual treatment lives inside the component.
    */
   className?: string
   /**
-   * When true AND state is `scheduled` or `published`, render a small green
-   * check badge in the top-left corner of the chip — the at-a-glance "this
-   * format is on the calendar" signal for /core_posts cards.
-   *
-   * Off by default. Only enabled by /core_posts cards via
-   * `FormatStatusChipLink`. Sheet header, queue panel, schedule picker, and
-   * calendar day-cell consumers leave this off — they each carry the
-   * scheduled signal in their own surface-appropriate way (header chip
-   * scrolls, calendar uses opacity + position, queue panel shows a
-   * single chip).
+   * Back-compat no-ops. The post-2026-05-13 chip doesn't render a date or
+   * a scheduled-corner badge, but these props are kept so existing call
+   * sites still type-check.
    */
+  date?: string
   showScheduledBadge?: boolean
+  /**
+   * When set + type=icon, suppresses the top-right ✓ corner badge while
+   * keeping the green palette (`set` state colors). Used by the calendar
+   * SlotCard to render a "scheduled elsewhere for this post" cue — same
+   * green background as the slot-anchored format, no checkmark because
+   * the ✓ is reserved for "scheduled HERE".
+   */
+  hideCornerBadge?: boolean
+  /**
+   * When set + type=icon, renders the top-right ✓ corner badge in a muted
+   * gray palette instead of emerald — same shape and position, weaker
+   * affordance. Per Hani 2026-05-13: used by the calendar SlotCard to
+   * mark "scheduled at ANOTHER slot for this post" so the ✓ STILL conveys
+   * "this format is on the calendar" but doesn't compete with the
+   * green-✓ "scheduled HERE" anchor sitting next to it. Pairs with a
+   * dashed border on the chip (the "weaker set" body treatment).
+   *
+   * Ignored when `hideCornerBadge` is also set (hide wins — no badge).
+   */
+  cornerBadgeMuted?: boolean
 }
 
 /**
  * Pure presentational chip. NEVER renders an interactive element — no
  * onClick, no href, no role. Wrap in `FormatStatusChipScrollTo` or
  * `FormatStatusChipLink` for the two interactive contexts we care about.
- *
- * The aria-label exists even on the base render because callers may drop
- * this inside a non-button container (e.g. inside a `<li>` whose handler
- * is on the li itself). The label is read on focus IF a wrapper makes it
- * focusable; on a non-interactive base render, screen readers will still
- * surface it during element navigation.
  */
 export function FormatStatusChip({
   format,
   state,
-  date,
   size = "sm",
+  type = "full",
   className,
-  showScheduledBadge = false,
+  hideCornerBadge = false,
+  cornerBadgeMuted = false,
 }: FormatStatusChipProps) {
   const FormatIcon = getFormatIcon(format)
-  const OverlayIcon = stateOverlayIcon[state]
-  const shortDate = formatShortHebrewDate(date)
-  const visibleLabel = buildVisibleLabel(format, state, shortDate)
-  const ariaLabel = buildAriaLabel(format, state, shortDate)
+  const chipState = toChipState(state)
+  const ariaLabel = buildAriaLabel(format, state)
+  const isFull = type === "full"
+  const isSet = chipState === "set"
+  const iconSize = iconSizeFor(size)
 
-  // Per-format color identity (PHASE-3 INTERIM, see file header).
-  // Empty state uses gray regardless of format — Hani's call: this gives two
-  // axes of differentiation (filled vs empty AND between formats).
-  const colorClasses =
-    FORMAT_COLOR_CLASSES[getFormatColorFamily(format, state)][state]
+  // Post-2026-05-13 (Hani, Figma node 328:8515): the format icon is now
+  // visible in EVERY state — including `set`. The ✓ corner badge
+  // signals "done" on top of the format icon instead of replacing it,
+  // so format identity stays legible across all chip variants.
+  //
+  // `hideCornerBadge` keeps the chip's green palette but suppresses the
+  // ✓ — used to mark "scheduled at ANOTHER slot for this post" on the
+  // calendar (✓ stays reserved for "scheduled HERE"). `cornerBadgeMuted`
+  // is the softer counterpart — shows ✓ in green-success-70 instead of
+  // emerald, signaling "on the calendar elsewhere" without competing
+  // with the bold green anchor that sits next to it.
+  const showCornerCheckBadge = isSet && !hideCornerBadge
 
-  // Icon size scales with the chip: xs gets 10px, sm 12px, md 14px.
-  const iconSize =
-    size === "xs" ? "size-2.5" : size === "sm" ? "size-3" : "size-3.5"
+  // "Weaker set" — same green palette as `set`, but with a DASHED
+  // border replacing the solid one. Used by the calendar SlotCard to
+  // mark a format that's scheduled at ANOTHER slot for this post.
+  // Two variants share this body treatment:
+  //   - `hideCornerBadge` (legacy): no ✓ at all
+  //   - `cornerBadgeMuted` (post-2026-05-13): ✓ rendered in gray
+  // Solid border + green ✓ stays reserved for "scheduled HERE".
+  const isWeakerSet =
+    chipState === "set" && (hideCornerBadge || cornerBadgeMuted)
+  const stateClass = isWeakerSet
+    ? "bg-green-success-97 text-green-success-50 border-dashed border-green-success-50"
+    : chipStateClasses[chipState]
 
-  // Per Hani: corner badge marks "on the calendar."
-  //   scheduled → orange disc + clock hands   (calendared, not yet aired)
-  //   published → green disc + V (Check)      (calendared AND aired)
-  // Same disc shape; color + icon disambiguate future vs. past. Always
-  // shown across surfaces for consistency; `showScheduledBadge` is kept
-  // on the prop as a no-op so existing call sites don't break.
-  const showBadge = state === "scheduled" || state === "published"
-
-  // The chip itself is `inline-flex` and the badge sits absolute on top, so
-  // we need a wrapper with `relative` to anchor the badge. We KEEP the chip
-  // as the existing span (no markup change) and add `relative` to it
-  // directly — avoids an extra element when the badge is off, AND lets the
-  // badge sit `absolute top-0 left-0` regardless of dir, which is what we
-  // want (visual top-left in both LTR and RTL — see brief).
   return (
     <span
       className={[
         baseChipClass,
-        sizeClass[size],
-        colorClasses,
-        showBadge ? "relative" : "",
+        // `relative` anchors the corner badge for icon+set; harmless on
+        // other variants. Pair with the chip's existing `rounded-full` —
+        // we keep overflow visible so the badge can overhang the circle.
+        "relative",
+        isFull ? sizeClassFull[size] : sizeClassIcon[size],
+        stateClass,
         className,
       ]
         .filter(Boolean)
         .join(" ")}
       aria-label={ariaLabel}
-      data-state={state}
+      data-state={chipState}
+      data-readiness={state}
       data-format={format}
     >
       <FormatIcon className={`${iconSize} shrink-0`} aria-hidden />
-      {OverlayIcon && (
-        <OverlayIcon className={`${iconSize} shrink-0`} aria-hidden />
-      )}
-      <span className="leading-none">{visibleLabel}</span>
-      {showBadge && (
-        // 14×14 disc anchored to the chip's visual top-left corner. We use
-        // `left-0`/`top-0` (NOT logical `start-0`) because the brief pins it
-        // visually to the LEFT regardless of document direction. The state
-        // itself is conveyed by the chip's aria-label; the badge is purely
-        // visual reinforcement, hence aria-hidden.
+      {isFull && <span className="leading-none">{getFormatLabel(format)}</span>}
+      {showCornerCheckBadge && (
+        // Corner ✓ badge. 12×12 disc with a 6px white check inside,
+        // positioned -5px / -5px to overhang the chip's top-right edge
+        // (sizes + offsets match Figma node 328:8515 1:1). `ring-2
+        // ring-white` gives the badge a crisp halo so it reads as a
+        // separate element even on a tinted parent surface.
         //
-        // Per Hani: gray badge for "waiting" (scheduled, not yet aired);
-        // green badge for "done" (published). Same disc shape + white
-        // icon — only the disc color and inner glyph change.
+        // Uses PHYSICAL `right`, not logical `end`: the Figma chip
+        // anchors the badge to the physical top-right corner so the
+        // visual position is identical in LTR and RTL contexts. With
+        // logical properties the badge would flip to the visual top-
+        // LEFT in RTL — which is wrong; the Hebrew chips on Hani's
+        // /core_posts and /calendar surfaces have the badge at the
+        // visual top-right (same as the design source).
+        //
+        // `cornerBadgeMuted` swaps emerald → green-success-70
+        // (#A4BBB6, a desaturated teal in the same family as the
+        // chip body) for the weaker "scheduled elsewhere" variant.
         <span
-          aria-hidden="true"
-          className={[
-            "absolute -top-1 -left-1 inline-flex items-center justify-center",
-            "size-3.5 rounded-full ring-2 ring-white shadow-sm",
-            state === "scheduled" ? "bg-gray-400" : "bg-emerald-500",
-          ].join(" ")}
+          aria-hidden
+          className={`absolute -top-[5px] -right-[5px] inline-flex items-center justify-center size-3 rounded-full ring-2 ring-white ${
+            cornerBadgeMuted ? "bg-green-success-70" : "bg-emerald-500"
+          }`}
         >
-          {state === "scheduled" ? (
-            <ClockHandsIcon className="size-2.5 text-white" />
-          ) : (
-            <Check className="size-2.5 text-white" strokeWidth={3} />
-          )}
+          <Check className="size-1.5 text-white" strokeWidth={3} />
         </span>
       )}
     </span>
@@ -541,19 +444,6 @@ export type FormatStatusChipScrollToProps = FormatStatusChipProps & {
   targetId: string
 }
 
-/**
- * Anchor wrapper for the Sheet header chips row.
- *
- * Why an `<a>` and not a `<button>`?  Because this IS navigation within
- * the Sheet (anchor-style jump to a section), and the URL hash is the
- * canonical representation. Native `<a href="#id">` gives us:
- *   - keyboard activation (Enter)
- *   - context menu "open in new tab" (harmless here, but principled)
- *   - screen reader announcement of "link"
- *
- * We intercept the click only to do smooth scrolling and focus management;
- * the default anchor behavior is the fallback.
- */
 export function FormatStatusChipScrollTo({
   targetId,
   className,
@@ -562,12 +452,9 @@ export function FormatStatusChipScrollTo({
   const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
     if (typeof document === "undefined") return
     const target = document.getElementById(targetId)
-    if (!target) return // Native hash navigation will handle the (failed) jump.
+    if (!target) return
     e.preventDefault()
     target.scrollIntoView({ behavior: "smooth", block: "start" })
-    // Move focus so screen readers announce the section. The target may not
-    // be focusable by default — we add tabIndex=-1 only if it isn't already
-    // focusable, then remove on blur to keep the tab order clean.
     const wasFocusable = target.hasAttribute("tabindex")
     if (!wasFocusable) target.setAttribute("tabindex", "-1")
     target.focus({ preventScroll: true })
@@ -578,8 +465,6 @@ export function FormatStatusChipScrollTo({
       }
       target.addEventListener("blur", cleanup)
     }
-    // Update the hash without adding a history entry — replaces so the
-    // back button still escapes the Sheet rather than walking through chips.
     history.replaceState(null, "", `#${targetId}`)
   }
 
@@ -587,8 +472,6 @@ export function FormatStatusChipScrollTo({
     <a
       href={`#${targetId}`}
       onClick={handleClick}
-      // The chip's own focus-visible ring is a yellow-50 ring; we apply it
-      // to the anchor so keyboard users see the focused chip clearly.
       className={[
         "rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 focus-visible:ring-offset-1",
         "hover:opacity-90",
@@ -611,35 +494,40 @@ export type FormatStatusChipLinkProps = FormatStatusChipProps &
     onClick: () => void
   }
 
-/**
- * Button wrapper for /core_posts cards.
- *
- * Why a `<button>` and not an `<a>`?  Because clicking does NOT navigate —
- * it opens a Sheet in place. Calling this an `<a>` would lie to assistive
- * tech and break right-click "open in new tab" expectations.
- */
 export function FormatStatusChipLink({
   onClick,
   className,
+  chipClassName,
   format,
   state,
-  date,
   size,
+  type,
+  date,
   showScheduledBadge,
   ...buttonProps
-}: FormatStatusChipLinkProps) {
+}: FormatStatusChipLinkProps & {
+  /**
+   * Optional className forwarded to the INNER `FormatStatusChip` span
+   * (the part that actually paints bg/border/text). Use this when the
+   * surrounding surface needs to tint the chip's background on its own
+   * hover/focus — e.g. /core_posts cards apply
+   * `group-hover:bg-bg-surface-primary-default-80` so the chip echoes
+   * the card's yellow hover state, matching the edit-arrow button.
+   *
+   * Separate from `className` (which targets the button wrapper) so
+   * focus rings + click affordances stay on the button while the chip
+   * paint is overridable independently.
+   */
+  chipClassName?: string
+}) {
   return (
     <button
       type="button"
       onClick={(e) => {
-        // Cards in /core_posts are themselves clickable, so chip clicks
-        // need to stop bubbling — otherwise the click fires twice (once on
-        // the chip, once on the card behind it).
         e.stopPropagation()
         onClick()
       }}
       onKeyDown={(e) => {
-        // Same reason: prevent the parent card's keydown from also firing.
         if (e.key === "Enter" || e.key === " ") {
           e.stopPropagation()
         }
@@ -656,9 +544,11 @@ export function FormatStatusChipLink({
       <FormatStatusChip
         format={format}
         state={state}
-        date={date}
         size={size}
+        type={type}
+        date={date}
         showScheduledBadge={showScheduledBadge}
+        className={chipClassName}
       />
     </button>
   )
@@ -668,16 +558,5 @@ export function FormatStatusChipLink({
 /*  Export helpers                                                      */
 /* ------------------------------------------------------------------ */
 
-/**
- * Re-export the date formatter so callers (e.g. the calendar grid) can
- * render the same DD/MM short form alongside chips without re-implementing
- * the locale logic.
- */
 export { formatShortHebrewDate as formatChipDate }
-
-/**
- * Re-export the format → label / icon helpers. Some surfaces (Sheet body,
- * calendar tooltip) want the same icon glyph next to a header that isn't
- * itself a chip — keeping a single source for the mapping prevents drift.
- */
 export { getFormatIcon as getFormatChipIcon, getFormatLabel as getFormatChipLabel }

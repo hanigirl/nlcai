@@ -371,26 +371,11 @@ function PopulatedSectionBody({
         )}
       </div>
 
-      {/* Published checkbox — only when scheduled or already published. */}
-      {(state === "scheduled" || state === "published") && (
-        <div className="flex items-start gap-2.5 pt-1">
-          <Checkbox
-            id={`published-${format}`}
-            checked={state === "published"}
-            onCheckedChange={onTogglePublished}
-            className="mt-0.5"
-            aria-label={`סמנו את ${label} כפורסם`}
-          />
-          <Label
-            htmlFor={`published-${format}`}
-            className="text-small text-text-primary-default cursor-pointer"
-          >
-            {state === "published"
-              ? `סומן כפורסם${publishedAt ? ` ב-${formatChipDate(publishedAt) ?? ""}` : ""}`
-              : `סמנו את ${label} כפורסם`}
-          </Label>
-        </div>
-      )}
+      {/* Published checkbox removed 2026-05-13 per Hani —
+          marking "published" is being reworked. The underlying handler
+          (`onTogglePublished`) + storage are kept intact so the data
+          flow doesn't break and we can reintroduce a different control
+          later without rewiring callers. */}
 
       {/* Light divider visual cue between this section and the next.
           We use a thin border under the section block instead of a

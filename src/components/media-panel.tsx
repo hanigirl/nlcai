@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Skeleton } from "@/components/ui/skeleton"
 import type { SlideData } from "@/lib/carousel-templates"
 import { CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import {
@@ -155,6 +156,7 @@ export function MediaPanel({
 
         {formatId === "carousel" && (
           <CarouselFlow
+            postId={postId ?? null}
             carouselText={carouselText}
             images={carouselImages}
             slides={carouselSlides}
@@ -1026,12 +1028,14 @@ function TalkingHeadFlow({
 /* ------------------------------------------------------------------ */
 
 function CarouselFlow({
+  postId,
   carouselText,
   images,
   slides,
   onImagesChange,
   onSlidesChange,
 }: {
+  postId: string | null
   carouselText: string
   images: string[] | null
   slides: SlideData[] | null
@@ -1209,34 +1213,17 @@ function CarouselFlow({
     )
   }
 
-  // --- No images yet → show template selection + generate button ---
+  // --- No images yet → script preview (top) + template (coming soon) + link input ---
+  // Per Hani 2026-05-13: PNG generation isn't ready yet, so the template
+  // grid is parked as a "coming soon" placeholder row and the active
+  // entry path is a carousel link (Drive / Canva). Same Input visual as
+  // the per-format DriveLinkBlock so the user reads the two surfaces as
+  // the same affordance.
   return (
     <div className="flex flex-col gap-5">
-      {/* Template selection */}
-      <div className="flex flex-col gap-2">
-        <p className="text-small-bold text-text-primary-default">בחר טמפלט:</p>
-        <div className="grid grid-cols-2 gap-3">
-          {CAROUSEL_TEMPLATES.map((tmpl) => (
-            <button
-              key={tmpl.id}
-              onClick={() => setSelectedTemplate(tmpl.id)}
-              className={`flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-all ${
-                selectedTemplate === tmpl.id
-                  ? "border-yellow-50 bg-bg-surface-primary-default"
-                  : "border-border-neutral-default hover:border-gray-80"
-              }`}
-            >
-              <div
-                className="w-full aspect-square rounded-lg"
-                style={{ backgroundColor: tmpl.previewBg }}
-              />
-              <span className="text-xs text-text-primary-default">{tmpl.name}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Source text preview */}
+      {/* 1. Carousel script preview — moved to TOP so the user reads
+            "what the carousel says" before anything else, mirroring the
+            top-of-card script preview pattern used elsewhere. */}
       {carouselText && (
         <div className="rounded-lg border border-border-neutral-default bg-bg-surface p-3">
           <p className="text-xs text-text-neutral-default mb-1">טקסט הקרוסלה</p>
@@ -1246,34 +1233,96 @@ function CarouselFlow({
         </div>
       )}
 
-      {/* Generate button */}
-      <Button
-        onClick={handleGenerate}
-        disabled={generating || !carouselText.trim()}
-        className="w-full gap-2"
-      >
-        {generating ? (
-          <>
-            <Loader2 className="size-4 animate-spin" />
-            מייצר סליידים...
-          </>
-        ) : (
-          <>
-            <Layers className="size-4" />
-            צור קרוסלה
-          </>
-        )}
-      </Button>
+      {/* 2. Template selection — "coming soon" placeholders. Non-interactive
+            empty squares so the user sees that templates are a planned
+            feature without being able to pick one (the underlying PNG
+            generation isn't shippable yet). */}
+      <div className="flex flex-col gap-2">
+        <p className="text-small-bold text-text-primary-default">
+          בחירת טמפלט{" "}
+          <span className="text-text-neutral-default font-normal">(בקרוב)</span>
+        </p>
+        <div className="grid grid-cols-4 gap-2" aria-hidden="true">
+          {[0, 1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="aspect-square rounded-xl bg-bg-surface border border-border-neutral-default"
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* 3. Carousel link input — Drive/Canva. Same Input visual as the
+            per-format DriveLinkBlock; persists to the per-format meta
+            slice (`carousel.driveUrl`), so the same value drives the
+            scheduler's "has a drive link" readiness check. */}
+      <CarouselLinkBlock postId={postId} />
 
       {error && (
         <p className="text-sm text-button-destructive-default text-center">{error}</p>
       )}
+    </div>
+  )
+}
 
-      {!carouselText.trim() && (
-        <p className="text-xs text-text-primary-disabled text-center">
-          עדכן את טקסט הקרוסלה בכרטיס כדי ליצור סליידים
-        </p>
-      )}
+/**
+ * Carousel link block — saves to `byFormat.carousel.driveUrl` via the
+ * per-format meta slice, identical to DriveLinkBlock's behavior so the
+ * same value drives readiness on /core_posts + the calendar. Auto-saves
+ * on blur and Enter (paste + tab-away should "just work"). The label +
+ * subtitle pair mirrors Hani's mockup; the Input itself uses the
+ * design-system component at `inputSize="small"`.
+ */
+function CarouselLinkBlock({ postId }: { postId: string | null }) {
+  const inputId = "carousel-link"
+  // Read once from localStorage at mount — CarouselFlow only mounts when
+  // the carousel media panel actually opens, and a single open session is
+  // for a single post, so we don't need to re-sync on postId changes.
+  // Reading inside the useState initializer keeps this off the render
+  // path on subsequent renders and avoids the "setState in effect"
+  // lint rule.
+  const [local, setLocal] = useState<string>(() => {
+    if (typeof window === "undefined" || !postId) return ""
+    return getFormatMeta(postId, "carousel").driveUrl ?? ""
+  })
+
+  const commit = () => {
+    if (!postId) return
+    const trimmed = local.trim()
+    setFormatMeta(postId, "carousel", {
+      driveUrl: trimmed || undefined,
+    })
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label
+        htmlFor={inputId}
+        className="text-small-bold text-text-primary-default font-bold"
+      >
+        לינק לקרוסלה
+      </Label>
+      <p className="text-xs-body text-text-neutral-default">
+        אפשר לשים לינק לדרייב או לקאנבה
+      </p>
+      <Input
+        id={inputId}
+        dir="rtl"
+        inputSize="small"
+        type="url"
+        value={local}
+        onChange={(e) => setLocal(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.currentTarget.blur()
+          }
+        }}
+        placeholder="https://drive.google.com/... או https://canva.com/..."
+        className="text-right mt-1"
+        disabled={!postId}
+        aria-label="לינק לקרוסלה"
+      />
     </div>
   )
 }
@@ -1371,6 +1420,15 @@ function MediaUploadFlow({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [previewKind, setPreviewKind] = useState<"image" | "video" | null>(null)
   const [uploading, setUploading] = useState(false)
+  // Hydration phase = "we still don't know if there's existing media". True
+  // while the /api/core-posts fetch is in flight. Without this, the panel
+  // briefly renders the empty upload CTA before flipping to the preview
+  // — which reads as "the image wasn't saved" to the user.
+  const [hydrating, setHydrating] = useState<boolean>(() => !!postId)
+  // Image element loading — flips false on `<img onLoad>`. Hides the
+  // <img> behind a skeleton until the bytes have actually decoded, so
+  // there's no flash of empty box between "src set" and "image painted".
+  const [imageLoading, setImageLoading] = useState(false)
 
   // Hydrate the drive URL from storage when the panel opens for this
   // (post, format) pair. We use `getFormatMeta` so the post-level legacy
@@ -1378,6 +1436,7 @@ function MediaUploadFlow({
   useEffect(() => {
     if (!postId) {
       setDriveUrl("")
+      setHydrating(false)
       return
     }
     const meta = getFormatMeta(postId, format as FormatId)
@@ -1388,6 +1447,59 @@ function MediaUploadFlow({
     // a fresh open.
     setPreviewUrl(null)
     setPreviewKind(null)
+    setHydrating(true)
+    setImageLoading(false)
+  }, [postId, format])
+
+  // Hydrate the upload preview from media_assets when the panel opens.
+  // Without this, an already-uploaded image/video for this (post, format)
+  // is invisible the next time the user opens the panel — they see the
+  // empty CTA and think "nothing got saved". The detail endpoint already
+  // returns `formatMedia` (a per-format URL map) post-2026-05-13, so we
+  // can read straight from there without a new endpoint.
+  //
+  // The kind is inferred from URL extension; we can't trust the file's
+  // original MIME because the URL we get back is a public storage URL
+  // that doesn't carry it. The check mirrors the Sheet's `MediaSlot`
+  // detection so the preview type stays consistent across surfaces.
+  useEffect(() => {
+    if (!postId) return
+    let cancelled = false
+    fetch(`/api/core-posts/${postId}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.post) return
+        const map = data.post.formatMedia as
+          | Record<string, string>
+          | undefined
+        const existingUrl = map?.[format]
+        if (!existingUrl) return
+        const looksLikeVideo = /\.(mp4|webm|mov|m3u8)(\?|#|$)/i.test(
+          existingUrl,
+        )
+        setPreviewUrl(existingUrl)
+        setPreviewKind(looksLikeVideo ? "video" : "image")
+        // For images, keep the skeleton on until the <img> actually
+        // decodes (the URL being set doesn't mean the bytes are painted
+        // yet). For videos, the <video> element shows its own poster +
+        // controls, so we don't need an extra placeholder.
+        if (!looksLikeVideo) setImageLoading(true)
+      })
+      .catch((err) => {
+        // Surface the failure but don't block the panel — the user can
+        // still upload a fresh asset, it just won't have a preview of
+        // whatever they had before.
+        console.warn(
+          "[media-upload-flow] failed to hydrate preview",
+          err,
+        )
+      })
+      .finally(() => {
+        if (!cancelled) setHydrating(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [postId, format])
 
   const accepted = acceptedMimeForFormat(format)
@@ -1625,9 +1737,15 @@ function MediaUploadFlow({
         aria-hidden
       />
 
-      {previewUrl ? (
+      {hydrating ? (
+        // Skeleton phase — we haven't checked yet whether this (post,
+        // format) has saved media. Showing the empty upload CTA here
+        // would briefly read as "nothing got saved" before the URL
+        // arrives and the image renders. Skeleton bridges that gap.
+        <Skeleton className="aspect-square w-full rounded-xl" />
+      ) : previewUrl ? (
         <div className="flex flex-col gap-3">
-          <div className="aspect-square rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
+          <div className="relative aspect-square rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
             {previewKind === "video" ? (
               <video
                 src={
@@ -1641,12 +1759,28 @@ function MediaUploadFlow({
                 className="w-full h-full object-cover"
               />
             ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={previewUrl}
-                alt="המדיה שהועלתה"
-                className="w-full h-full object-cover"
-              />
+              <>
+                {imageLoading && (
+                  // Overlay skeleton — covers the <img> until the bytes
+                  // decode. We keep the <img> mounted underneath so the
+                  // browser actually starts the request; the onLoad
+                  // handler tears the skeleton down.
+                  <Skeleton
+                    className="absolute inset-0 rounded-xl"
+                    aria-hidden
+                  />
+                )}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={previewUrl}
+                  alt="המדיה שהועלתה"
+                  onLoad={() => setImageLoading(false)}
+                  onError={() => setImageLoading(false)}
+                  className={`w-full h-full object-cover transition-opacity duration-200 ${
+                    imageLoading ? "opacity-0" : "opacity-100"
+                  }`}
+                />
+              </>
             )}
           </div>
           <Button

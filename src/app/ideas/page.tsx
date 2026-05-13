@@ -124,7 +124,10 @@ export default function IdeasPage() {
   }, [generating])
 
   const STORAGE_KEY = "generatedIdeas_v23"
-  const SESSION_KEYS_STORAGE = "ideaSessionKeys_v1"
+  // Note: previously persisted as `ideaSessionKeys_v1`. The "חדש" group
+  // is now session-only (memory-resident in `sessionKeysRef`); the old
+  // key is intentionally left orphaned in localStorage so a future visit
+  // doesn't show stale "new" items. Safe to delete in the future.
 
   const dedupe = useCallback((arr: IdeaNote[]): IdeaNote[] => {
     const seen = new Set<string>()
@@ -159,19 +162,15 @@ export default function IdeasPage() {
           loadedIdeas = dedupe(JSON.parse(saved))
         }
 
-        const savedSession = localStorage.getItem(userKey(SESSION_KEYS_STORAGE, user.id))
-        if (savedSession) {
-          const sessionArr = JSON.parse(savedSession) as string[]
-          const loadedKeys = new Set(loadedIdeas.map((i) => i.text.trim()))
-          const validKeys = sessionArr.filter((k) => loadedKeys.has(k))
-          if (validKeys.length > 0) {
-            sessionKeysRef.current = new Set(validKeys)
-          } else if (loadedIdeas.length > 0) {
-            sessionKeysRef.current = new Set(loadedIdeas.slice(0, 9).map((i) => i.text.trim()))
-          }
-        } else if (loadedIdeas.length > 0) {
-          sessionKeysRef.current = new Set(loadedIdeas.slice(0, 9).map((i) => i.text.trim()))
-        }
+        // "חדש" is a session-only marker — it fills as the user
+        // generates ideas during the CURRENT tab lifetime, and resets
+        // to empty on every page load. We used to restore the previous
+        // session's keys from localStorage (and fall back to the first
+        // 9 ideas), which made yesterday's "חדש" group still show
+        // today — confusing when the user only sees the badge as a
+        // freshness signal. Now: blank slate on mount, and only
+        // `handleGenerateMore` populates the set. Reloading the page
+        // → ideas regroup by their createdAt date.
       } catch (err) { console.error("[ideas][session-keys-restore]", err) }
 
       // Load favorites from DB (persists across devices/logins)
@@ -413,10 +412,12 @@ export default function IdeasPage() {
     } catch (err) {
       console.error("Ideas stream error:", err)
     } finally {
-      // Save to localStorage once at the end (no-op until userId resolved)
+      // Save ideas to localStorage so they persist across reloads.
+      // We DON'T save sessionKeysRef any more — "חדש" is meant to
+      // surface only what was generated in this tab's lifetime, so
+      // surviving a reload would defeat the freshness signal.
       if (userId) {
         saveToStorage(ideasRef.current, userId)
-        localStorage.setItem(userKey(SESSION_KEYS_STORAGE, userId), JSON.stringify([...sessionKeysRef.current]))
       }
       setGenerating(false)
       setSkeletonCount(0)

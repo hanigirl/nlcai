@@ -23,6 +23,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* TEMP: Figma capture script — remove after /calendar capture */}
+        <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+      </head>
       <body className={`${rubik.variable} font-sans antialiased`}>
         <ThemeProvider
           attribute="class"

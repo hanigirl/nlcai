@@ -77,6 +77,11 @@
   --color-green-20: #2E7D32;
   --color-green-10: #1B5E20;
 
+  /* Primitive tokens: Green Success (teal-leaning — used by chip "set" state) */
+  --color-green-success-97: #F0FDFA;
+  --color-green-success-70: #A4BBB6;
+  --color-green-success-50: #00786F;
+
   /* Primitive tokens: Gray */
   --color-gray-98: #FAFAFA;
   --color-gray-95: #F2F2F2;

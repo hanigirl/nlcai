@@ -46,27 +46,51 @@ export async function GET(
     // single batched lookup against media_assets and project to a set of
     // format ids that have at least one non-cover asset. The Sheet uses
     // this to render the per-format status chips without an N+1 fan-out.
+    //
+    // Alongside that boolean set we also build `formatMedia` — a map of
+    // format → first non-cover URL. Without it, the Sheet has no way to
+    // tell story / carousel / image_post media apart: it would fall back
+    // to a single post-level `primaryMediaUrl` and show the same asset
+    // (typically the talking_head video) on every tab. Per Hani 2026-05-13:
+    // each format must surface its own upload.
+    //
+    // Precedence inside a format: prefer `video` over `image`, since a
+    // talking_head row has both (cover is filtered out by the assetType
+    // check above) and `video` is the primary playable asset.
     const variantIds = variants.map((v) => v.id)
     const formatsWithMedia: string[] = []
+    const formatMedia: Record<string, string> = {}
     if (variantIds.length > 0) {
       const { data: mediaRows } = await supabase
         .from("media_assets")
-        .select("format_variant_id, url, asset_type")
+        .select("format_variant_id, url, asset_type, created_at")
         .in("format_variant_id", variantIds)
+        .order("created_at", { ascending: false })
       const variantToFormat: Record<string, string> = {}
       for (const v of variants) variantToFormat[v.id] = v.format
       const seen = new Set<string>()
+      const formatBestType: Record<string, string> = {}
       for (const m of (mediaRows ?? []) as unknown as {
         format_variant_id: string
         url: string | null
         asset_type: string | null
       }[]) {
-        if (m.url && m.asset_type !== "cover") {
-          const fmt = variantToFormat[m.format_variant_id]
-          if (fmt && !seen.has(fmt)) {
-            seen.add(fmt)
-            formatsWithMedia.push(fmt)
-          }
+        if (!m.url || m.asset_type === "cover") continue
+        const fmt = variantToFormat[m.format_variant_id]
+        if (!fmt) continue
+        if (!seen.has(fmt)) {
+          seen.add(fmt)
+          formatsWithMedia.push(fmt)
+        }
+        // Pick the canonical URL for this format. Video wins over image
+        // (talking_head has both video + cover; carousel can have many
+        // images — first one is fine for the Sheet's "primary" slot).
+        const prevType = formatBestType[fmt]
+        const isVideo = m.asset_type === "video"
+        const prevIsVideo = prevType === "video"
+        if (!formatMedia[fmt] || (isVideo && !prevIsVideo)) {
+          formatMedia[fmt] = m.url
+          formatBestType[fmt] = m.asset_type ?? "image"
         }
       }
     }
@@ -120,6 +144,7 @@ export async function GET(
         ...(post as Record<string, unknown>),
         formatPosts,
         formatsWithMedia,
+        formatMedia,
         videoUrl,
         coverUrl,
         coverPillColor,

@@ -41,7 +41,6 @@ import {
   CheckCircle2,
   ChevronRight,
   Copy,
-  ExternalLink,
   Image as ImageIcon,
   Link2,
   Loader2,
@@ -170,6 +169,13 @@ export type CorePostSheetProps = {
    * calendar itself just closes the Sheet).
    */
   onScheduleClick?: () => void
+  /**
+   * Hide the header "תזמון פוסט" / "מתוזמן ל-…" CTA entirely. Used when
+   * the Sheet is opened from a surface where scheduling is already the
+   * ambient context (e.g. the /calendar QueuePanel — the user is on the
+   * scheduling board, surfacing the schedule CTA again would loop).
+   */
+  hideScheduleButton?: boolean
 }
 
 /**
@@ -398,6 +404,7 @@ export function CorePostSheet({
   initialFormat,
   onDeleted,
   onScheduleClick,
+  hideScheduleButton = false,
 }: CorePostSheetProps) {
   const router = useRouter()
 
@@ -637,6 +644,33 @@ export function CorePostSheet({
     }
   }, [scheduledRows])
 
+  /**
+   * Short date label for the header "תזמון פוסט" button when ANY format is
+   * already scheduled — flips the CTA from "schedule this" to "מתוזמן ל-DD
+   * בחודש" so the user reads the current state at a glance. We pick the
+   * EARLIEST scheduled row so the user sees the next thing on the calendar
+   * (not whatever happens to be index 0).
+   */
+  const nextScheduledShort = useMemo(() => {
+    if (scheduledRows.length === 0) return null
+    const sorted = [...scheduledRows].sort((a, b) =>
+      a.date < b.date ? -1 : a.date > b.date ? 1 : 0,
+    )
+    const earliest = sorted[0]
+    try {
+      const [y, m, d] = earliest.date.split("-").map((s) => parseInt(s, 10))
+      const date = new Date(y, m - 1, d)
+      // Short Hebrew form ("12 במאי") — enough to identify the slot in
+      // a small button label without dragging year or time in.
+      return date.toLocaleDateString("he-IL", {
+        day: "numeric",
+        month: "long",
+      })
+    } catch {
+      return earliest.date
+    }
+  }, [scheduledRows])
+
   // --- handlers ------------------------------------------------------------
   const handleOpenFull = () => {
     if (!postId) return
@@ -788,23 +822,51 @@ export function CorePostSheet({
                   initial focus from triggering them on Sheet open. */}
               {selectedFormat === null && (
                 <TooltipProvider delayDuration={0} skipDelayDuration={0}>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={handleOpenFull}
-                          aria-label="פתיחה בעמוד הפוסט"
-                          className="rounded-lg"
+                  <div className="flex items-center gap-4 shrink-0">
+                    {/* Primary action — scheduling is the most common exit
+                        path from the master view (Hani: "מתי לפרסם").
+                        Two visual states:
+                          - Not scheduled → primary Button "תזמון פוסט"
+                            that opens /calendar.
+                          - Already scheduled → non-interactive label
+                            with a checkmark and "מתוזמן ל-DD בחודש".
+                            It's a status read-out, not an action; the
+                            user can re-schedule via drag on /calendar.
+                        Suppressed entirely when the host context is
+                        already the scheduling board (`hideScheduleButton`). */}
+                    {!hideScheduleButton && (
+                      nextScheduledShort ? (
+                        <span
+                          className="inline-flex items-center gap-1.5 text-green-success-50 text-xs-body leading-none"
+                          aria-label={`מתוזמן ל-${nextScheduledShort}`}
                         >
-                          <ExternalLink className="size-4" />
+                          <Check className="size-3.5 shrink-0" aria-hidden />
+                          מתוזמן ל-{nextScheduledShort}
+                        </span>
+                      ) : (
+                        <Button
+                          size="sm"
+                          onClick={handleGoToCalendar}
+                          aria-label="תזמון פוסט"
+                        >
+                          תזמון פוסט
                         </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom">
-                        פתיחה בעמוד הפוסט
-                      </TooltipContent>
-                    </Tooltip>
+                      )
+                    )}
+                    {/* Secondary action — open the canvas editor at
+                        /project. Pencil makes the affordance explicit
+                        without leaning on the prior ExternalLink icon
+                        (which read as "open in new tab" to some users). */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleOpenFull}
+                      aria-label="עריכה"
+                      className="gap-1.5"
+                    >
+                      <Pencil className="size-3.5" aria-hidden />
+                      עריכה
+                    </Button>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <SheetClose asChild>
@@ -975,16 +1037,35 @@ export function CorePostSheet({
                           : state === "published"
                             ? publishedAt
                             : undefined
+                      // Per Hani: only formats that have media are
+                      // navigable from this row — the chip becomes
+                      // a non-interactive `FormatStatusChip` for the
+                      // others. The detail view requires a media
+                      // asset to be useful (it's the editor for the
+                      // format's script + media), so navigating to a
+                      // medialess format would land the user on a
+                      // surface with nothing to do but upload.
+                      const hasMedia =
+                        post?.formatsWithMedia?.includes(format) ?? false
 
                       return (
                         <div role="listitem" key={format}>
-                          <FormatStatusChipLink
-                            format={format}
-                            state={state}
-                            date={dateValue ?? undefined}
-                            size="md"
-                            onClick={() => navigateToFormat(format)}
-                          />
+                          {hasMedia ? (
+                            <FormatStatusChipLink
+                              format={format}
+                              state={state}
+                              date={dateValue ?? undefined}
+                              size="md"
+                              onClick={() => navigateToFormat(format)}
+                            />
+                          ) : (
+                            <FormatStatusChip
+                              format={format}
+                              state={state}
+                              date={dateValue ?? undefined}
+                              size="md"
+                            />
+                          )}
                         </div>
                       )
                     })}
@@ -1489,20 +1570,55 @@ function MediaSlot({
       : `עריכת קאבר ל${label}`
 
   if (url) {
+    // Detect by URL extension only. The `kind` prop names the SLOT
+    // (video slot vs. cover slot) — it does NOT promise the content
+    // type, since story / image_post upload images into the video
+    // slot too. Forcing `<video>` on every "video"-kind slot turned
+    // those uploads into broken video elements (per Hani 2026-05-13:
+    // "the image isn't saved" — really, it was saved, but it
+    // rendered through `<video>` which can't decode an image, so the
+    // user saw nothing). Supabase storage URLs carry the original
+    // extension, so the regex is reliable for our upload paths.
+    const isVideoUrl = /\.(mp4|webm|mov|m3u8)(\?|#|$)/i.test(url)
+
     return (
-      <div className="aspect-square rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={url}
-          alt={kind === "video" ? `מדיה של ${label}` : `קאבר של ${label}`}
-          className="w-full h-full object-cover"
-        />
+      <div className="aspect-[9/16] rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
+        {isVideoUrl ? (
+          <video
+            src={url}
+            className="w-full h-full object-cover"
+            controls
+            playsInline
+            preload="metadata"
+            onError={(e) => {
+              console.error(
+                "[core-post-sheet] video failed to load",
+                { kind, label, url: (e.target as HTMLVideoElement).src },
+              )
+            }}
+          >
+            <track kind="captions" />
+          </video>
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={url}
+            alt={`קאבר של ${label}`}
+            className="w-full h-full object-cover"
+            onError={(e) => {
+              console.error(
+                "[core-post-sheet] cover failed to load",
+                { kind, label, url: (e.target as HTMLImageElement).src },
+              )
+            }}
+          />
+        )}
       </div>
     )
   }
 
   return (
-    <div className="aspect-square rounded-xl bg-bg-surface border border-dashed border-border-neutral-default flex flex-col items-center justify-center gap-2 px-3 text-center">
+    <div className="aspect-[9/16] rounded-xl bg-bg-surface border border-dashed border-border-neutral-default flex flex-col items-center justify-center gap-2 px-3 text-center">
       <ImageIcon
         className="size-5 text-text-neutral-default"
         aria-hidden

@@ -357,57 +357,53 @@ function PickerRow({
   // chip can't carry on its own.
   //   - empty:     no helper. The dashed-border empty chip already says
   //                "not created" — duplicating it as text is noise.
-  //   - scheduled: explains the calendar-edit path (chip alone can't).
-  //   - published: surfaces the publish date (chip's `published` color
-  //                conveys state, but date is the empathy hit).
+  //   - scheduled / published: same copy. Per Hani 2026-05-13 the picker
+  //                            never shows a publish date — the row just
+  //                            reads as "already on the calendar". Both
+  //                            states map to the same disabled helper.
   const disabledHelper: string | null = (() => {
     if (state === "empty") return null
     if (state === "incomplete") return "צריך מדיה או קישור לדרייב"
-    if (state === "scheduled") return "כבר מתוזמן בלוח (אפשר להעביר מהלוח)"
-    if (state === "published") {
-      // Pull the publish date so the user knows when it shipped — small
-      // empathy hit that turns a generic "disabled" into "you already
-      // did this".
-      const mark = getPublishedMark(postId, format)
-      if (mark?.publishedAt) {
-        const d = new Date(mark.publishedAt)
-        if (!Number.isNaN(d.getTime())) {
-          const dateStr = d.toLocaleDateString("he-IL", {
-            day: "2-digit",
-            month: "2-digit",
-          })
-          return `כבר פורסם ב-${dateStr}`
-        }
-      }
-      return "כבר פורסם"
+    if (state === "scheduled" || state === "published") {
+      return "כבר מתוזמן בלוח"
     }
     return null
   })()
 
-  // Visual state — same shape as the legacy radio rows, so the move from
-  // single-select to multi-select doesn't break Hani's mental map. The
-  // `data-checked` attribute drives the "selected" treatment (yellow surface
-  // + yellow border); without it the row reads as default selectable.
-  const isSelected = isReady && isChecked
+  // Per Hani 2026-05-13: the row used to double-paint selection (yellow
+  // frame + bg fill AND the checkbox tick) which read as "two things got
+  // selected" instead of one. The checkbox is the single source of truth
+  // for selected-state now.
+  //
+  // We also drop the `focus-within` ring from the row. The Checkbox
+  // component already paints its own `focus-visible:ring-2` on the
+  // checkbox button — that's the accessible focus indicator. Echoing it
+  // on the whole row was what produced the persistent "yellow frame"
+  // after click: Radix Checkbox keeps focus after a mouse click, so the
+  // row's focus-within ring stayed on and visually re-painted "selected"
+  // even though we'd removed the explicit selected-state classes.
 
   return (
     <label
       htmlFor={isReady ? checkboxId : undefined}
-      data-checked={isSelected ? "true" : "false"}
       className={[
         // Layout — full-width row, content right-aligned for RTL.
         "group/row relative flex flex-col items-stretch gap-1.5 w-full text-right",
         "rounded-xl border px-3 py-2.5 transition-all",
-        // Visual states
+        // Visual states — note: NO selected-state visual on the row itself.
+        // The Checkbox component owns both "checked" and "focused".
         isReady
-          ? // Selectable: hover lifts to surface-hover; selected uses the
-            // primary surface treatment so it reads as the active choice.
-            "border-border-neutral-default bg-white dark:bg-gray-10 cursor-pointer hover:border-yellow-50 hover:bg-bg-surface data-[checked=true]:border-yellow-50 data-[checked=true]:bg-bg-surface-primary-default focus-within:outline-none focus-within:ring-2 focus-within:ring-yellow-50 focus-within:ring-offset-1"
+          ? "border-border-neutral-default bg-white dark:bg-gray-10 cursor-pointer hover:border-yellow-50 hover:bg-bg-surface"
           : // Disabled: muted surface, no hover, no focus ring.
             "border-border-neutral-default bg-bg-surface opacity-60 cursor-not-allowed",
       ].join(" ")}
     >
-      {/* Top line — checkbox + icon + label + status chip */}
+      {/* Single line — checkbox + icon + label + (inline helper) + chip.
+          Per Hani 2026-05-13: helper text used to live on its own line
+          below; she wants it inline next to the format name so the row
+          stays at a consistent height. The chip is pushed to the end
+          with `ms-auto`; helper text is `truncate` so it can't blow out
+          the row width. */}
       <div className="flex items-center gap-2.5">
         <Checkbox
           ref={checkboxRef}
@@ -427,29 +423,26 @@ function PickerRow({
           aria-hidden
         />
 
-        <span className="text-small text-text-primary-default flex-1">
+        <span className="text-small text-text-primary-default shrink-0">
           {label}
         </span>
+
+        {disabledHelper && (
+          <span
+            id={helperId}
+            className="text-xs-body text-text-neutral-default min-w-0 truncate"
+          >
+            {disabledHelper}
+          </span>
+        )}
 
         <FormatStatusChip
           format={format}
           state={state}
           size="sm"
-          className="shrink-0"
+          className="shrink-0 ms-auto"
         />
       </div>
-
-      {/* Helper line — disabled rows only. We use `id`+`aria-describedby`
-          on the checkbox so screen readers announce the reason as part of
-          the option's description. */}
-      {disabledHelper && (
-        <p
-          id={helperId}
-          className="text-xs-body text-text-neutral-default ps-7"
-        >
-          {disabledHelper}
-        </p>
-      )}
     </label>
   )
 }

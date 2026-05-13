@@ -122,7 +122,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, hookText, hookId, userResponse, formatPosts, videoUrl, idea, productId, triggerWord } = (await req.json()) as {
+    const { body, hookText, hookId, userResponse, formatPosts, videoUrl, idea, productId, triggerWord, title: providedTitle } = (await req.json()) as {
       body: string
       hookText: string
       hookId?: string
@@ -132,6 +132,14 @@ export async function POST(req: NextRequest) {
       idea?: string
       productId?: string | null
       triggerWord?: string
+      /**
+       * Optional pre-baked title. When provided we skip the AI-title
+       * generation entirely and persist this string as-is. Used by the
+       * duplicate-post flow (core-posts list) to stamp "עותק של: <orig>"
+       * — generating a fresh AI title there would lose the visual
+       * relationship between the original and its copy.
+       */
+      title?: string
     }
 
     // Empty body is intentional — drafts get created the moment the user
@@ -141,7 +149,13 @@ export async function POST(req: NextRequest) {
     const isDraft = !body || body.trim().length === 0
 
     let title = ""
-    if (!isDraft) {
+    // If the client supplied a title (e.g. duplicate flow), trust it
+    // — skip the AI generation path entirely. The duplicate flow needs
+    // a stable, user-visible "עותק של: …" prefix; running it through
+    // the LLM would rewrite the title and break that visual cue.
+    if (providedTitle && providedTitle.trim().length > 0) {
+      title = providedTitle.trim().slice(0, 120)
+    } else if (!isDraft) {
       title = body.split("\n")[0].slice(0, 60) // fallback
       try {
         const apiKey = await getUserApiKey(supabase, "anthropic_api_key")
