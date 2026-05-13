@@ -377,6 +377,17 @@ export function FormatStatusChip({
     ? "bg-green-success-97 text-green-success-50 border-dashed border-green-success-50"
     : chipStateClasses[chipState]
 
+  // Per Hani 2026-05-14: visually distinguish "not duplicated at all"
+  // (`empty`) from "duplicated but missing media" (`incomplete`).
+  // Both project to the same 3-state visual ("not-started"), so users
+  // couldn't tell them apart on a card row. Dimming the entire chip
+  // (icon + label) at 50% opacity for the literal `empty` case keeps
+  // the 3-state palette intact while making "this format isn't even
+  // on the post" read as quieter than "this format is on the post,
+  // just missing media".
+  const isUnusedFormat = state === "empty"
+  const opacityClass = isUnusedFormat ? "opacity-50" : ""
+
   return (
     <span
       className={[
@@ -387,6 +398,7 @@ export function FormatStatusChip({
         "relative",
         isFull ? sizeClassFull[size] : sizeClassIcon[size],
         stateClass,
+        opacityClass,
         className,
       ]
         .filter(Boolean)

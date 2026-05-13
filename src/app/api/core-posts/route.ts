@@ -19,6 +19,7 @@ interface FormatVariantRow {
   id: string
   core_post_id: string
   format: string
+  body: string | null
 }
 
 interface MediaAssetRow {
@@ -54,7 +55,7 @@ export async function GET() {
     if (postIds.length > 0) {
       const { data: vData } = await supabase
         .from("format_variants")
-        .select("id, core_post_id, format")
+        .select("id, core_post_id, format, body")
         .in("core_post_id", postIds)
       variants = (vData ?? []) as unknown as FormatVariantRow[]
     }
@@ -87,13 +88,22 @@ export async function GET() {
       }
     }
 
-    // Per-post: which formats have a duplicate, and which of those have media.
+    // Per-post: which formats have a USER-INTENT duplicate (= variant with
+    // either a non-empty script body or attached media), and which of those
+    // have media. Per Hani 2026-05-14: variants the system auto-created
+    // (empty `body`, no media) shouldn't surface under the format filter on
+    // /core_posts — "the user can't upload media without first duplicating",
+    // so a content-less variant is a ghost row from a legacy auto-create
+    // path and must not be conflated with a real duplicate.
     const formatsByPost: Record<string, string[]> = {}
     const formatsWithMediaByPost: Record<string, string[]> = {}
     for (const v of variants) {
+      const hasBody = !!v.body && v.body.trim().length > 0
+      const hasMedia = variantHasMedia.has(v.id)
+      if (!hasBody && !hasMedia) continue
       if (!formatsByPost[v.core_post_id]) formatsByPost[v.core_post_id] = []
       formatsByPost[v.core_post_id].push(v.format)
-      if (variantHasMedia.has(v.id)) {
+      if (hasMedia) {
         if (!formatsWithMediaByPost[v.core_post_id]) formatsWithMediaByPost[v.core_post_id] = []
         formatsWithMediaByPost[v.core_post_id].push(v.format)
       }
