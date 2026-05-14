@@ -29,8 +29,6 @@ import {
   TIMING_KEYS,
   getScheduledByPostId,
 } from "@/lib/timing-storage"
-import { createClient } from "@/lib/supabase/client"
-import { isOwner } from "@/lib/owner"
 
 type Props = {
   /** Required — the bar is hidden until the post has an id. */
@@ -45,16 +43,6 @@ type Props = {
 
 export function ScheduleInCalendarBar({ corePostId }: Props) {
   const [scheduledFor, setScheduledFor] = useState<string | null>(null)
-  // Owner-only CTA. /calendar is gated to the owner, so the entry-point
-  // bar shouldn't tease the surface to anyone else. Defaults to false so
-  // a slow auth fetch never flashes the CTA on /project for non-owners.
-  const [ownerView, setOwnerView] = useState(false)
-  useEffect(() => {
-    const supabase = createClient()
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (isOwner(user?.email)) setOwnerView(true)
-    })
-  }, [])
 
   // Per-format era: a single core post can have multiple scheduled rows
   // (one per format). The bar's job is just to nudge "you have something
@@ -86,7 +74,6 @@ export function ScheduleInCalendarBar({ corePostId }: Props) {
   }, [corePostId])
 
   if (!corePostId) return null
-  if (!ownerView) return null
 
   // Common shell — placed bottom-end so it never crosses the sidebar (which
   // is at the start in RTL). 32px from each edge keeps it readable on
