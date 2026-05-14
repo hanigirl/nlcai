@@ -66,6 +66,11 @@ export async function POST(req: NextRequest) {
     }
 
     let parsed: Record<string, string> = {}
+    // Claude returns a sibling boolean flag (`isWritingStyleDocument` or
+    // `isAudienceDocument`) that classifies the document type. Kept separate
+    // from `parsed` so the existing string-typed access patterns downstream
+    // don't need to change.
+    let documentTypeOk: boolean | null = null
     let aiError: string | null = null
     let fileSaveError: string | null = null
     let multipleProfilesDetected = false
@@ -106,56 +111,6 @@ export async function POST(req: NextRequest) {
           },
           { status: 413 }
         )
-      }
-
-      // Save original file to Supabase Storage. This is the *backup* of the
-      // raw file — used later for reparse (especially for PDF, which has no
-      // raw_file_text fallback). If it fails, surface a Hebrew-categorized
-      // warning so the user knows the parsed data was kept but the original
-      // file isn't recoverable.
-      try {
-        const category = type === "core" ? "style_file" : "audience_file"
-        const ext = file.name.split(".").pop() || "txt"
-        const storagePath = `${user.id}/${category}/${crypto.randomUUID()}.${ext}`
-
-        // Delete previous file in this category
-        const { data: existing } = await supabase
-          .from("user_media")
-          .select("id, storage_path")
-          .eq("user_id", user.id)
-          .eq("category", category)
-        if (existing && existing.length > 0) {
-          await supabase.storage.from("user-media").remove(existing.map((e: { storage_path: string }) => e.storage_path))
-          await supabase.from("user_media").delete().eq("user_id", user.id).eq("category", category)
-        }
-
-        // Upload new file — supabase returns {error} instead of throwing, must check
-        const { error: storageErr } = await supabase.storage.from("user-media").upload(storagePath, fileBuffer, {
-          contentType: file.type || "application/octet-stream",
-        })
-        if (storageErr) {
-          const classified = classifyUploadError(storageErr)
-          fileSaveError = `${classified.message} (גיבוי הקובץ ב-Storage נכשל; ${classified.kind})`
-          console.error("[parse-identity] storage upload:", classified.kind, classified.raw)
-        } else {
-          // Record in user_media — also returns {error} silently
-          const { error: insertErr } = await supabase.from("user_media").insert({
-            user_id: user.id,
-            category,
-            file_name: file.name,
-            storage_path: storagePath,
-            metadata: {},
-          } as never)
-          if (insertErr) {
-            const classified = classifyUploadError(insertErr)
-            fileSaveError = `${classified.message} (רישום הקובץ ב-DB נכשל; ${classified.kind})`
-            console.error("[parse-identity] user_media insert:", classified.kind, classified.raw)
-          }
-        }
-      } catch (err) {
-        const classified = classifyUploadError(err)
-        fileSaveError = `${classified.message} (חריגה בעת שמירת הקובץ; ${classified.kind})`
-        console.error("[parse-identity] file save threw:", classified.kind, classified.raw)
       }
     }
 
@@ -204,7 +159,20 @@ export async function POST(req: NextRequest) {
           const jsonStr = extractFirstJsonObject(raw)
           if (jsonStr) {
             try {
-              parsed = JSON.parse(jsonStr)
+              const rawParsed = JSON.parse(jsonStr) as Record<string, unknown>
+              // Strip the classification flag into its own variable so the
+              // rest of the code keeps treating `parsed` as string-only.
+              const flagKey =
+                type === "core" ? "isWritingStyleDocument" : "isAudienceDocument"
+              if (typeof rawParsed[flagKey] === "boolean") {
+                documentTypeOk = rawParsed[flagKey] as boolean
+              }
+              // Drop the flag and coerce remaining fields to strings.
+              parsed = {}
+              for (const [k, v] of Object.entries(rawParsed)) {
+                if (k === flagKey) continue
+                if (typeof v === "string") parsed[k] = v
+              }
               // Files describing 2+ personas make Claude emit multiple JSON
               // objects back-to-back. We keep the first (one-row-per-user
               // schema), but surface a notice so the user knows the rest
@@ -230,6 +198,142 @@ export async function POST(req: NextRequest) {
           aiError = err instanceof Error ? err.message : String(err)
           console.error("AI parsing failed, saving manual fields only:", aiError)
         }
+      }
+    }
+
+    // Writing-style validation. If a file was uploaded for core, the file
+    // MUST yield writing-style content (howISound, slangExamples,
+    // whatINeverDo). niche/productName/whoIAm could be inferred from any
+    // business doc — they don't count. Hard-fail regardless of whether the
+    // AI errored or just returned empty: the user uploaded what they think
+    // is a style file, and from their perspective both outcomes mean "the
+    // file didn't work." The manual fields are kept in the client form
+    // state, so a retry is cheap. We don't fall back to manual-only when a
+    // file is present, because the user explicitly intended to use the file.
+    // Two-layer check:
+    //   (1) Claude's own classification flag (`isWritingStyleDocument` /
+    //       `isAudienceDocument`) — primary signal; Claude saw the whole doc
+    //       and labeled it explicitly.
+    //   (2) Field-presence backstop — if the flag is missing (e.g. Claude
+    //       skipped it) we still demand at least one signature field.
+    // Earlier we only had (2), but the prompt encouraged aggressive
+    // extraction so non-style docs would still produce something in
+    // `howISound`, sneaking past the check. The flag gives Claude a place
+    // to say "this isn't the right doc" without us inferring from field
+    // emptiness alone.
+    // Reject only when:
+    //   (a) Claude classified the doc as NOT a style/audience doc, OR
+    //   (b) Claude didn't classify at all AND no signature fields were
+    //       extracted (no signal in either direction).
+    // We trust the classification flag as the primary gate so a real style
+    // doc isn't rejected for sparse extraction. The field-presence check
+    // is a backstop for the rare case where Claude skipped the flag.
+    if (file && type === "core") {
+      const hasWritingStyle = !!(
+        parsed.howISound?.trim() ||
+        parsed.slangExamples?.trim() ||
+        parsed.whatINeverDo?.trim()
+      )
+      const reject =
+        documentTypeOk === false ||
+        (documentTypeOk === null && !hasWritingStyle)
+      if (reject) {
+        console.warn("[parse-identity] core rejected:", {
+          documentTypeOk,
+          hasWritingStyle,
+          parsedKeys: Object.keys(parsed),
+        })
+        return NextResponse.json(
+          {
+            error: "no_writing_style_in_file",
+            message:
+              "בקובץ הזה אין תיאור של סגנון כתיבה שאפשר לקרוא. העלו קובץ שמתאר איך אתם נשמעים — מילים שאתם משתמשים בהן, טון הדיבור, ומה אתם לא אומרים.",
+          },
+          { status: 422 }
+        )
+      }
+    }
+
+    if (file && type === "audience") {
+      const hasAudienceContent = !!(
+        parsed.dailyPains?.trim() ||
+        parsed.emotionalPains?.trim() ||
+        parsed.fears?.trim() ||
+        parsed.dailyDesires?.trim() ||
+        parsed.emotionalDesires?.trim() ||
+        parsed.limitingBeliefs?.trim() ||
+        parsed.myths?.trim()
+      )
+      const reject =
+        documentTypeOk === false ||
+        (documentTypeOk === null && !hasAudienceContent)
+      if (reject) {
+        console.warn("[parse-identity] audience rejected:", {
+          documentTypeOk,
+          hasAudienceContent,
+          parsedKeys: Object.keys(parsed),
+        })
+        return NextResponse.json(
+          {
+            error: "no_audience_in_file",
+            message:
+              "בקובץ הזה אין ניתוח של קהל יעד שאפשר לקרוא. העלו קובץ שמתאר את הקהל — הכאבים, הפחדים, התשוקות והאמונות שלו.",
+          },
+          { status: 422 }
+        )
+      }
+    }
+
+    // Save original file to Supabase Storage. This is the *backup* of the
+    // raw file — used later for reparse (especially for PDF, which has no
+    // raw_file_text fallback). Runs only AFTER validation passes, so a bad
+    // upload doesn't wipe the user's previous file. If it fails, surface a
+    // Hebrew-categorized warning so the user knows the parsed data was kept
+    // but the original file isn't recoverable.
+    if (file && fileBuffer) {
+      try {
+        const category = type === "core" ? "style_file" : "audience_file"
+        const ext = file.name.split(".").pop() || "txt"
+        const storagePath = `${user.id}/${category}/${crypto.randomUUID()}.${ext}`
+
+        // Delete previous file in this category
+        const { data: existing } = await supabase
+          .from("user_media")
+          .select("id, storage_path")
+          .eq("user_id", user.id)
+          .eq("category", category)
+        if (existing && existing.length > 0) {
+          await supabase.storage.from("user-media").remove(existing.map((e: { storage_path: string }) => e.storage_path))
+          await supabase.from("user_media").delete().eq("user_id", user.id).eq("category", category)
+        }
+
+        // Upload new file — supabase returns {error} instead of throwing, must check
+        const { error: storageErr } = await supabase.storage.from("user-media").upload(storagePath, fileBuffer, {
+          contentType: file.type || "application/octet-stream",
+        })
+        if (storageErr) {
+          const classified = classifyUploadError(storageErr)
+          fileSaveError = `${classified.message} (גיבוי הקובץ ב-Storage נכשל; ${classified.kind})`
+          console.error("[parse-identity] storage upload:", classified.kind, classified.raw)
+        } else {
+          // Record in user_media — also returns {error} silently
+          const { error: insertErr } = await supabase.from("user_media").insert({
+            user_id: user.id,
+            category,
+            file_name: file.name,
+            storage_path: storagePath,
+            metadata: {},
+          } as never)
+          if (insertErr) {
+            const classified = classifyUploadError(insertErr)
+            fileSaveError = `${classified.message} (רישום הקובץ ב-DB נכשל; ${classified.kind})`
+            console.error("[parse-identity] user_media insert:", classified.kind, classified.raw)
+          }
+        }
+      } catch (err) {
+        const classified = classifyUploadError(err)
+        fileSaveError = `${classified.message} (חריגה בעת שמירת הקובץ; ${classified.kind})`
+        console.error("[parse-identity] file save threw:", classified.kind, classified.raw)
       }
     }
 

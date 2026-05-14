@@ -5,9 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation"
 import Image from "next/image"
 import { ArrowLeft, Paperclip, Loader2, Link2 } from "lucide-react"
 import logoNew from "../../../images/logo-new.png"
-import onboardingHero from "../../../images/onboarding-hero.png"
+import onboardingHero from "../../../images/art-onboarding.png"
 import { createClient } from "@/lib/supabase/client"
-import { parseCreatorInput } from "@/lib/creator-url"
+import { parseCreatorInput, validateCreatorInput } from "@/lib/creator-url"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
@@ -41,6 +41,12 @@ function OnboardingPageInner() {
     : 0
   const [currentStep, setCurrentStep] = useState(initialStep)
 
+  // Dev navigator — visible only when running locally OR when the URL has
+  // `?dev=1`. Lets the designer jump between steps without satisfying each
+  // step's validation. Production users never see this.
+  const devMode =
+    process.env.NODE_ENV === "development" || searchParams.get("dev") === "1"
+
   // Step 1 - Connections
   const [anthropicKey, setAnthropicKey] = useState("")
   const [heygenKey, setHeygenKey] = useState("")
@@ -69,7 +75,7 @@ function OnboardingPageInner() {
   const canProceed = () => {
     if (saving) return false
     if (currentStep === 0) {
-      return true // connections step — always possible (skip or save)
+      return anthropicKey.trim() && apifyKey.trim()
     }
     if (currentStep === 1) {
       return businessName.trim() && niche.trim() && expertise.trim()
@@ -78,7 +84,12 @@ function OnboardingPageInner() {
       return !!audienceFile
     }
     if (currentStep === 3) {
-      return creatorsList.some((c) => c.url.trim())
+      // Need at least one non-empty URL, AND none of the filled URLs can be
+      // invalid (random link, unsupported platform). Empty rows are fine —
+      // they just won't be saved.
+      const filled = creatorsList.filter((c) => c.url.trim())
+      if (filled.length === 0) return false
+      return filled.every((c) => !validateCreatorInput(c.url))
     }
     if (currentStep === 4) {
       return productsList.length > 0 && productsList.every((p) => p.name.trim())
@@ -334,6 +345,34 @@ function OnboardingPageInner() {
           ))}
         </div>
 
+        {/* Dev navigator — local/?dev=1 only. Jump between steps without
+            satisfying each step's validation. */}
+        {devMode && (
+          <div className="w-full max-w-2xl mb-6 flex flex-col items-center gap-2">
+            <div className="flex items-center gap-2 rounded-xl border border-dashed border-border-neutral-default bg-bg-surface px-3 py-2">
+              <span className="text-xs-body text-text-neutral-default">
+                מצב פיתוח · דלגו בין שלבים:
+              </span>
+              {STEPS.map((step, i) => (
+                <button
+                  key={step.id}
+                  type="button"
+                  onClick={() => setCurrentStep(i)}
+                  className={
+                    "text-xs-body rounded-md px-2 py-1 transition-colors " +
+                    (i === currentStep
+                      ? "bg-bg-surface-primary-default text-text-primary-default font-semibold"
+                      : "text-text-neutral-default hover:bg-bg-surface-hover")
+                  }
+                  aria-label={`קפיצה לשלב ${i + 1} — ${step.label}`}
+                >
+                  {i + 1}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Content area */}
         <div className="w-full max-w-lg flex flex-col gap-6">
           {/* Step 1 - Connections */}
@@ -351,7 +390,7 @@ function OnboardingPageInner() {
               <div className="flex flex-col gap-2">
                 <label className="text-small-bold text-text-primary-default flex items-center gap-2">
                   <Link2 className="size-4" />
-                  Claude API Key
+                  Claude API Key *
                 </label>
                 <Input
                   dir="ltr"
@@ -375,7 +414,7 @@ function OnboardingPageInner() {
               <div className="flex flex-col gap-2">
                 <label className="text-small-bold text-text-primary-default flex items-center gap-2">
                   <Link2 className="size-4" />
-                  Apify API Key
+                  Apify API Key *
                 </label>
                 <Input
                   dir="ltr"
@@ -592,16 +631,6 @@ function OnboardingPageInner() {
 
           {/* Navigation buttons */}
           <div className="flex items-center gap-3 justify-end">
-            {currentStep === 0 && (
-              <Button
-                variant="outline"
-                onClick={() => setCurrentStep(1)}
-                disabled={saving}
-                className="w-fit h-12 rounded-xl px-8"
-              >
-                דלג
-              </Button>
-            )}
             <Button
               onClick={handleNext}
               disabled={!canProceed()}
@@ -629,11 +658,14 @@ function OnboardingPageInner() {
       </div>
 
       {/* Left side */}
-      <div className="hidden flex-1 bg-bg-surface lg:flex items-center justify-center">
+      <div
+        className="hidden flex-1 lg:flex items-center justify-center"
+        style={{ backgroundColor: "#FAF7E6" }}
+      >
         <Image
           src={onboardingHero}
           alt=""
-          className="w-[550px] object-contain -translate-x-12"
+          className="w-[715px] object-contain"
           priority
         />
       </div>

@@ -5,6 +5,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Image from "next/image";
 import logoNew from "../../../images/logo-new.png";
+import onboardingHero from "../../../images/art-onboarding.png";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -503,8 +504,20 @@ function LoginPageInner() {
         </Card>
       </div>
 
-      {/* Left side */}
-      <div className="hidden flex-1 bg-bg-surface lg:block" />
+      {/* Left side — same hero artwork as /onboarding (Hani 2026-05-14:
+          carry the brand illustration onto the auth surface so signup
+          and login feel like the same product, not a generic form). */}
+      <div
+        className="hidden flex-1 lg:flex items-center justify-center"
+        style={{ backgroundColor: "#FAF7E6" }}
+      >
+        <Image
+          src={onboardingHero}
+          alt=""
+          className="w-[715px] object-contain"
+          priority
+        />
+      </div>
     </div>
   );
 }

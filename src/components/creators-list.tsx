@@ -3,6 +3,7 @@
 import { Plus, Trash2, Loader2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { validateCreatorInput } from "@/lib/creator-url"
 
 export interface CreatorEntry {
   id?: string
@@ -52,7 +53,9 @@ export function CreatorsList({
   return (
     <>
       <div className="flex flex-col gap-3">
-        {creators.map((creator, i) => (
+        {creators.map((creator, i) => {
+          const validationError = validateCreatorInput(creator.url)
+          return (
           <div
             key={creator.id ?? `new-${i}`}
             className="group flex flex-col gap-2 rounded-2xl bg-bg-surface px-3 py-2 animate-hook-bump"
@@ -69,11 +72,22 @@ export function CreatorsList({
                   dir="ltr"
                   value={creator.url}
                   onChange={(e) => updateAt(i, e.target.value)}
-                  className="bg-white dark:bg-gray-10 shadow-none"
+                  className={
+                    validationError
+                      ? "bg-white dark:bg-gray-10 shadow-none ring-1 ring-button-destructive-default focus-visible:ring-button-destructive-default"
+                      : "bg-white dark:bg-gray-10 shadow-none"
+                  }
+                  aria-invalid={validationError ? true : undefined}
                 />
-                <p className="text-xs-body text-text-neutral-default px-1">
-                  איסטגרם, טיקטוק או יוטיוב של היוצר
-                </p>
+                {validationError ? (
+                  <p className="text-xs-body text-button-destructive-default px-1">
+                    {validationError}
+                  </p>
+                ) : (
+                  <p className="text-xs-body text-text-neutral-default px-1">
+                    איסטגרם, טיקטוק או יוטיוב של היוצר
+                  </p>
+                )}
               </div>
               {creators.length > 1 && (
                 <button
@@ -90,7 +104,7 @@ export function CreatorsList({
               <Button
                 size="sm"
                 onClick={() => void onSaveCreator(i)}
-                disabled={savingIndex === i || !creator.url.trim()}
+                disabled={savingIndex === i || !creator.url.trim() || !!validationError}
                 className="self-end mt-1"
               >
                 {savingIndex === i && <Loader2 className="size-3.5 animate-spin" />}
@@ -98,7 +112,8 @@ export function CreatorsList({
               </Button>
             )}
           </div>
-        ))}
+          )
+        })}
       </div>
 
       <Button
