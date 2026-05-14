@@ -412,8 +412,25 @@ function ProjectPageInner() {
     finally { setThCoverLoading(false) }
   }
 
-  // The currently active hook text
-  const activeHook = flow === "hook" ? editableHook : flow === "saved" ? savedHookText : (selectedHook !== null ? hooks[selectedHook] : "")
+  // The currently active hook text.
+  //
+  // Selection precedence (Hani 2026-05-14): if the user picked a hook from
+  // the in-page list (`selectedHook` is a valid index and the row has text),
+  // THAT is the active hook — no matter which flow the page entered via.
+  // Otherwise fall back to the flow-specific source:
+  //   - `hook` flow  → `editableHook` (came in from /hooks with a single hook)
+  //   - `saved` flow → `savedHookText` (the hook persisted on the post row)
+  //   - `idea` flow  → empty until the user picks a generated hook
+  //
+  // The previous version pinned saved-flow to `savedHookText` unconditionally,
+  // so re-picking a hook on a saved post regenerated against the OLD hook.
+  const activeHook = (selectedHook !== null && hooks[selectedHook])
+    ? hooks[selectedHook]
+    : flow === "hook"
+      ? editableHook
+      : flow === "saved"
+        ? savedHookText
+        : ""
 
   // Sync cover text with active hook (only set if empty)
   useEffect(() => {
@@ -693,12 +710,16 @@ function ProjectPageInner() {
       .finally(() => { draftInFlightRef.current = false })
   }, [flow, savedPostId, postId, selectedHook, hooks, hookIds, idea])
 
-  // If the user re-picks a hook (or edits its text) after the draft already
-  // exists, keep the row's hook_text in sync. Debounced so rapid clicking
-  // between hooks doesn't fire a PATCH per click.
+  // If the user re-picks a hook (or edits its text) after the draft / saved
+  // post already exists, keep the row's hook_text in sync. Debounced so
+  // rapid clicking between hooks doesn't fire a PATCH per click. Runs in
+  // both `idea` AND `saved` flows post-2026-05-14 — without this, picking
+  // an alternative hook on a saved post would only sync to DB at "generate"
+  // time, and any other surface reading the post (Sheet, queue panel)
+  // would still see the previous hook until then.
   useEffect(() => {
     if (!savedPostId) return
-    if (flow !== "idea") return
+    if (flow !== "idea" && flow !== "saved") return
     if (selectedHook === null) return
     const chosenText = hooks[selectedHook]?.trim()
     if (!chosenText) return
