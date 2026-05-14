@@ -46,6 +46,7 @@ import {
 } from "@/lib/timing-storage"
 import { FormatStatusChip } from "@/components/format-status-chip"
 import { HEADER_CHIP_FORMATS } from "@/components/core-post-sheet"
+import { GeneratingStatus } from "@/components/generating-status"
 
 /**
  * Help-card state — onboarding cap.
@@ -461,15 +462,36 @@ export function QueuePanel({
           height of the rail and scrolls independently. */}
       <div className="flex-1 overflow-y-auto px-4 py-3">
         {loading ? (
-          <div className="flex flex-col gap-2">
-            {[0, 1, 2].map((i) => (
-              <div
-                key={i}
-                className="h-16 rounded-xl bg-bg-surface animate-pulse"
-                aria-hidden
+          // Loading state — narrate + show shape. The text loader
+          // (cycling 2 messages, same `GeneratingStatus` pattern from
+          // /ideas + /hooks) explains WHAT is happening; the skeleton
+          // boxes below it preserve the visual rhythm of the eventual
+          // post list so the layout doesn't jump when the data lands.
+          // `subtitle={null}` because the default copy ("תהליך זה
+          // יכול לקחת מספר דקות") overstates the actual hydrate time.
+          <div
+            className="flex flex-col gap-4"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <div className="text-center px-3">
+              <GeneratingStatus
+                messages={[
+                  "בודקים פוסטים מוכנים לתזמון...",
+                  "מייבאים פוסטים עם מדיה...",
+                ]}
+                subtitle={null}
               />
-            ))}
-            <span className="sr-only">טוען פוסטים...</span>
+            </div>
+            <div className="flex flex-col gap-2">
+              {[0, 1, 2].map((i) => (
+                <div
+                  key={i}
+                  className="h-36 rounded-xl bg-bg-surface animate-pulse"
+                  aria-hidden
+                />
+              ))}
+            </div>
           </div>
         ) : error ? (
           <QueueErrorState message={error} />
@@ -487,12 +509,18 @@ export function QueuePanel({
           <div className="flex flex-col gap-3">
             {helpVisible && <QueueHelpCard onDismiss={dismissHelp} />}
             <ul className="flex flex-col gap-2">
-              {filtered.map((item) => {
+              {filtered.map((item, index) => {
               const isDragging = draggingId === item.corePostId
               const displayText =
                 item.hookText?.trim() ||
                 item.title?.trim() ||
                 "פוסט ללא הוק"
+              // Stagger the entrance animation top → bottom. 60ms per row
+              // gives a light rolling feel; clamped at ~600ms total so
+              // long lists don't get a slow trailing tail. `animation-fill-mode`
+              // default ("forwards" via tailwindcss-animate keyframes) leaves
+              // each item at its final opacity/transform after the play.
+              const animationDelay = `${Math.min(index * 60, 600)}ms`
               // Queue cards show formats that are still actionable
               // (state === "ready"), AND formats the user just published
               // during this session — those keep showing with a green V
@@ -534,7 +562,8 @@ export function QueuePanel({
                   role="button"
                   tabIndex={0}
                   aria-label={`גררו לתזמון: ${displayText}`}
-                  className={`group rounded-[16px] border border-border-neutral-default bg-white dark:bg-gray-10 p-4 text-right cursor-grab active:cursor-grabbing transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+                  style={{ animationDelay }}
+                  className={`group animate-in fade-in slide-in-from-top-2 fill-mode-both duration-300 ease-out rounded-[16px] border border-border-neutral-default bg-white dark:bg-gray-10 p-4 text-right cursor-grab active:cursor-grabbing transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
                     isDragging ? "opacity-50 cursor-grabbing" : ""
                   }`}
                 >
