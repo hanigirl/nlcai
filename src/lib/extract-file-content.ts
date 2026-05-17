@@ -45,12 +45,19 @@ export async function extractFileContent(
     }
   }
 
-  if (name.endsWith(".txt") || name.endsWith(".md") || name.endsWith(".rtf")) {
+  if (name.endsWith(".txt") || name.endsWith(".md")) {
     const text = buffer.toString("utf8").trim()
     if (!text) {
       return { kind: "unsupported", message: "הקובץ ריק." }
     }
     return { kind: "text", text }
+  }
+
+  if (name.endsWith(".rtf")) {
+    return {
+      kind: "unsupported",
+      message: "פורמט RTF לא נתמך. שמרו את הקובץ כ-docx או טקסט ונסו שוב.",
+    }
   }
 
   return { kind: "unsupported", message: "פורמט לא נתמך. תומכים ב-pdf, docx, doc, txt, md." }

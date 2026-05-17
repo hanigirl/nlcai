@@ -13,6 +13,21 @@ import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { CreatorsList } from "@/components/creators-list"
 import { ProductsList, type ProductEntry } from "@/components/products-list"
+import {
+  EMPTY_CORE_IDENTITY,
+  isCoreIdentityComplete,
+  type CoreIdentityValues,
+} from "@/components/core-identity-form"
+import {
+  EMPTY_AUDIENCE_IDENTITY,
+  isAudienceIdentityComplete,
+  type AudienceIdentityValues,
+} from "@/components/audience-identity-form"
+import {
+  CoreIdentityGapDialog,
+  AudienceIdentityGapDialog,
+} from "@/components/identity-gap-dialog"
+import { ConfirmModal } from "@/components/confirm-modal"
 import { toast } from "sonner"
 import { validateIdentityFile } from "@/lib/validate-identity-file"
 
@@ -23,6 +38,125 @@ const STEPS = [
   { id: "creators", label: "יוצרים מובילים" },
   { id: "products", label: "המוצרים שלכם" },
 ]
+
+// Backend returns the saved snake_case row alongside the camelCase parsed
+// object. Stitch both into a CoreIdentityValues so the gap dialog can decide
+// which fields are still empty.
+function buildCoreIdentityFromResponse(
+  manual: { productName: string; niche: string; whoIAm: string },
+  parsed: Record<string, unknown> | undefined,
+  saved: Record<string, unknown> | undefined,
+): CoreIdentityValues {
+  const pickStr = (...vals: unknown[]): string => {
+    for (const v of vals) if (typeof v === "string" && v.trim()) return v
+    return ""
+  }
+  return {
+    productName: pickStr(manual.productName, parsed?.productName, saved?.product_name),
+    niche: pickStr(manual.niche, parsed?.niche, saved?.niche),
+    whoIAm: pickStr(manual.whoIAm, parsed?.whoIAm, saved?.who_i_am),
+    whoIServe: pickStr(parsed?.whoIServe, saved?.who_i_serve),
+    howISound: pickStr(parsed?.howISound, saved?.how_i_sound),
+    slangExamples: pickStr(parsed?.slangExamples, saved?.slang_examples),
+    whatINeverDo: pickStr(parsed?.whatINeverDo, saved?.what_i_never_do),
+  }
+}
+
+// Which fields did the FRESH upload (this session's manual + parsed) leave
+// empty? Stale DB values don't count — if the user uploads a new file, gaps
+// in that file should surface for confirmation even if the old DB row covers
+// them. The popup will still prefill from `saved` via initialValues, so the
+// user can keep, edit, or replace.
+function coreMissingKeysFromFresh(
+  manual: { productName: string; niche: string; whoIAm: string },
+  parsed: Record<string, unknown> | undefined,
+): Array<keyof CoreIdentityValues> {
+  const fresh: Record<keyof CoreIdentityValues, string> = {
+    productName: (manual.productName.trim() || (parsed?.productName as string) || "").toString(),
+    niche: (manual.niche.trim() || (parsed?.niche as string) || "").toString(),
+    whoIAm: (manual.whoIAm.trim() || (parsed?.whoIAm as string) || "").toString(),
+    whoIServe: ((parsed?.whoIServe as string) || "").toString(),
+    howISound: ((parsed?.howISound as string) || "").toString(),
+    slangExamples: ((parsed?.slangExamples as string) || "").toString(),
+    whatINeverDo: ((parsed?.whatINeverDo as string) || "").toString(),
+  }
+  return (Object.keys(fresh) as Array<keyof CoreIdentityValues>).filter(
+    (k) => !fresh[k].trim(),
+  )
+}
+
+// Audience equivalent of coreMissingKeysFromFresh — keys empty in `parsed`
+// only, ignoring any pre-existing DB row.
+function audienceMissingKeysFromFresh(
+  parsed: Record<string, unknown> | undefined,
+): Array<keyof AudienceIdentityValues> {
+  const keys: Array<keyof AudienceIdentityValues> = [
+    "location",
+    "employment",
+    "education",
+    "income",
+    "behavioral",
+    "awarenessLevel",
+    "dailyPains",
+    "emotionalPains",
+    "unresolvedConsequences",
+    "fears",
+    "failedSolutions",
+    "limitingBeliefs",
+    "myths",
+    "dailyDesires",
+    "emotionalDesires",
+    "smallWins",
+    "idealSolution",
+    "bottomLine",
+    "crossAudienceQuotes",
+    "idealSolutionWords",
+    "identityStatements",
+  ]
+  return keys.filter((k) => {
+    const v = parsed?.[k]
+    return typeof v !== "string" || !v.trim()
+  })
+}
+
+function buildAudienceIdentityFromResponse(
+  parsed: Record<string, unknown> | undefined,
+  saved: Record<string, unknown> | undefined,
+): AudienceIdentityValues {
+  const pickStr = (...vals: unknown[]): string => {
+    for (const v of vals) if (typeof v === "string" && v.trim()) return v
+    return ""
+  }
+  return {
+    location: pickStr(parsed?.location, saved?.location),
+    employment: pickStr(parsed?.employment, saved?.employment),
+    education: pickStr(parsed?.education, saved?.education),
+    income: pickStr(parsed?.income, saved?.income),
+    behavioral: pickStr(parsed?.behavioral, saved?.behavioral),
+    awarenessLevel: pickStr(parsed?.awarenessLevel, saved?.awareness_level),
+    dailyPains: pickStr(parsed?.dailyPains, saved?.daily_pains),
+    emotionalPains: pickStr(parsed?.emotionalPains, saved?.emotional_pains),
+    unresolvedConsequences: pickStr(
+      parsed?.unresolvedConsequences,
+      saved?.unresolved_consequences,
+    ),
+    fears: pickStr(parsed?.fears, saved?.fears),
+    failedSolutions: pickStr(parsed?.failedSolutions, saved?.failed_solutions),
+    limitingBeliefs: pickStr(parsed?.limitingBeliefs, saved?.limiting_beliefs),
+    myths: pickStr(parsed?.myths, saved?.myths),
+    dailyDesires: pickStr(parsed?.dailyDesires, saved?.daily_desires),
+    emotionalDesires: pickStr(parsed?.emotionalDesires, saved?.emotional_desires),
+    smallWins: pickStr(parsed?.smallWins, saved?.small_wins),
+    idealSolution: pickStr(parsed?.idealSolution, saved?.ideal_solution),
+    bottomLine: pickStr(parsed?.bottomLine, saved?.bottom_line),
+    crossAudienceQuotes: pickStr(
+      parsed?.crossAudienceQuotes,
+      saved?.cross_audience_quotes,
+    ),
+    idealSolutionWords: pickStr(parsed?.idealSolutionWords, saved?.ideal_solution_words),
+    identityStatements: pickStr(parsed?.identityStatements, saved?.identity_statements),
+  }
+}
 
 export default function OnboardingPage() {
   return (
@@ -69,8 +203,39 @@ function OnboardingPageInner() {
   // Step 5 - Products
   const [productsList, setProductsList] = useState<ProductEntry[]>([])
 
-
   const [saving, setSaving] = useState(false)
+
+  // Gap-fill dialog state. After parse-identity succeeds, if any required
+  // field is still empty, open the matching dialog with prefill so the user
+  // completes the gaps before we advance.
+  const [coreGapOpen, setCoreGapOpen] = useState(false)
+  const [coreGapValues, setCoreGapValues] =
+    useState<CoreIdentityValues>(EMPTY_CORE_IDENTITY)
+  const [coreGapSaving, setCoreGapSaving] = useState(false)
+  const [coreGapMode, setCoreGapMode] = useState<"gaps" | "verify">("gaps")
+  const [coreGapMissingKeys, setCoreGapMissingKeys] = useState<
+    Array<keyof CoreIdentityValues> | undefined
+  >(undefined)
+  const [audienceGapOpen, setAudienceGapOpen] = useState(false)
+  const [audienceGapValues, setAudienceGapValues] =
+    useState<AudienceIdentityValues>(EMPTY_AUDIENCE_IDENTITY)
+  const [audienceGapSaving, setAudienceGapSaving] = useState(false)
+  const [audienceGapMode, setAudienceGapMode] = useState<"gaps" | "verify">("gaps")
+  const [audienceGapMissingKeys, setAudienceGapMissingKeys] = useState<
+    Array<keyof AudienceIdentityValues> | undefined
+  >(undefined)
+  // When true, the popup's save button just closes the dialog without
+  // touching the DB or advancing — used by the dev preview buttons.
+  const [gapPreviewMode, setGapPreviewMode] = useState(false)
+
+  // Track whether parse-identity already ran successfully for the current step.
+  // A second file selection while this is true triggers the replace confirmation
+  // so users don't accidentally mix two files' worth of partial data.
+  const [styleParseDone, setStyleParseDone] = useState(false)
+  const [audienceParseDone, setAudienceParseDone] = useState(false)
+  // Pending file replacement waits in this state until the user confirms.
+  const [pendingStyleFile, setPendingStyleFile] = useState<File | null>(null)
+  const [pendingAudienceFile, setPendingAudienceFile] = useState<File | null>(null)
 
   const canProceed = () => {
     if (saving) return false
@@ -78,15 +243,12 @@ function OnboardingPageInner() {
       return anthropicKey.trim() && apifyKey.trim()
     }
     if (currentStep === 1) {
-      return businessName.trim() && niche.trim() && expertise.trim()
+      return businessName.trim() && niche.trim() && expertise.trim() && !!styleFile
     }
     if (currentStep === 2) {
       return !!audienceFile
     }
     if (currentStep === 3) {
-      // Need at least one non-empty URL, AND none of the filled URLs can be
-      // invalid (random link, unsupported platform). Empty rows are fine —
-      // they just won't be saved.
       const filled = creatorsList.filter((c) => c.url.trim())
       if (filled.length === 0) return false
       return filled.every((c) => !validateCreatorInput(c.url))
@@ -101,7 +263,6 @@ function OnboardingPageInner() {
     setSaving(true)
     try {
       if (currentStep === 0) {
-        // Connections step — save keys if provided, then advance
         const supabase = createClient()
         const { data: { user } } = await supabase.auth.getUser()
 
@@ -114,14 +275,13 @@ function OnboardingPageInner() {
             const { error } = await supabase.from("users").update(updates as never).eq("id", user.id)
             if (error) {
               console.error("Failed to save API keys:", error)
-              alert(`שגיאה בשמירת ה-API keys: ${error.message}`)
+              toast.error(`שגיאה בשמירת ה-API keys: ${error.message}`, { duration: 12000 })
               return
             }
           }
         }
         setCurrentStep(1)
       } else if (currentStep === 1) {
-        // Business step — save business info + parse style file
         if (styleFile) {
           const validation = validateIdentityFile(styleFile)
           if (validation) {
@@ -141,19 +301,16 @@ function OnboardingPageInner() {
             productName: businessName,
             niche,
             whoIAm: expertise,
-          })
+          }),
         )
         let res: Response
         try {
-          res = await fetch("/api/parse-identity", {
-            method: "POST",
-            body: formData,
-          })
+          res = await fetch("/api/parse-identity", { method: "POST", body: formData })
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
           toast.error(
             `החיבור נקטע באמצע ההעלאה (${msg}). בדקו את החיבור לאינטרנט ונסו שוב.`,
-            { duration: 12000 }
+            { duration: 12000 },
           )
           return
         }
@@ -166,22 +323,55 @@ function OnboardingPageInner() {
           }
           return
         }
-        // Surface file-save warnings even on success — the parsed data was saved
-        // but the original file wasn't backed up; user needs to know.
         if (resData.fileSaveError) {
           toast.error(`הקובץ לא נשמר במלואו: ${resData.fileSaveError}`, { duration: 12000 })
         }
         if (resData.notice) {
           toast(resData.notice, { duration: 15000 })
         }
-        if (resData.warning) {
+        if (resData.classificationWarning) {
+          toast(resData.classificationWarning, { duration: 12000 })
+        } else if (resData.warning) {
           toast.error(resData.warning, { duration: 12000 })
-        } else if (styleFile && !resData.fileSaveError && !resData.notice) {
-          toast.success("הקובץ עלה ונותח בהצלחה")
         }
-        setCurrentStep(2)
+
+        // Stitch the response into the full identity shape so we can decide
+        // whether to advance, open a gap-fill popup, or open a verify popup.
+        // - classificationWarning set → ALWAYS open verify popup, never silent
+        //   advance. The file didn't match what we expected; the user must
+        //   confirm what we have or cancel and try a different file.
+        // - identity complete + no warning → advance directly.
+        // - identity incomplete → open gap-fill popup with only empty fields.
+        const identity = buildCoreIdentityFromResponse(
+          { productName: businessName, niche, whoIAm: expertise },
+          resData.parsed,
+          resData.saved,
+        )
+        // Gap detection: which keys did THIS upload's fresh data (manual +
+        // parsed) leave empty? Ignores stale DB values so the user always
+        // sees what the new file actually missed.
+        const missing = coreMissingKeysFromFresh(
+          { productName: businessName, niche, whoIAm: expertise },
+          resData.parsed,
+        )
+        setStyleParseDone(true)
+        if (resData.classificationWarning) {
+          setCoreGapMode("verify")
+          setCoreGapMissingKeys(undefined)
+          setCoreGapValues(identity)
+          setCoreGapOpen(true)
+        } else if (missing.length === 0) {
+          if (styleFile && !resData.fileSaveError && !resData.notice && !resData.warning) {
+            toast.success("הקובץ עלה ונותח בהצלחה")
+          }
+          setCurrentStep(2)
+        } else {
+          setCoreGapMode("gaps")
+          setCoreGapMissingKeys(missing)
+          setCoreGapValues(identity)
+          setCoreGapOpen(true)
+        }
       } else if (currentStep === 2) {
-        // Audience step — parse audience file
         if (audienceFile) {
           const validation = validateIdentityFile(audienceFile)
           if (validation) {
@@ -197,15 +387,12 @@ function OnboardingPageInner() {
         formData.append("type", "audience")
         let res: Response
         try {
-          res = await fetch("/api/parse-identity", {
-            method: "POST",
-            body: formData,
-          })
+          res = await fetch("/api/parse-identity", { method: "POST", body: formData })
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
           toast.error(
             `החיבור נקטע באמצע ההעלאה (${msg}). בדקו את החיבור לאינטרנט ונסו שוב.`,
-            { duration: 12000 }
+            { duration: 12000 },
           )
           return
         }
@@ -224,14 +411,32 @@ function OnboardingPageInner() {
         if (resData.notice) {
           toast(resData.notice, { duration: 15000 })
         }
-        if (resData.warning) {
+        if (resData.classificationWarning) {
+          toast(resData.classificationWarning, { duration: 12000 })
+        } else if (resData.warning) {
           toast.error(resData.warning, { duration: 12000 })
-        } else if (audienceFile && !resData.fileSaveError && !resData.notice) {
-          toast.success("הקובץ עלה ונותח בהצלחה")
         }
-        setCurrentStep(3)
+
+        const identity = buildAudienceIdentityFromResponse(resData.parsed, resData.saved)
+        const missing = audienceMissingKeysFromFresh(resData.parsed)
+        setAudienceParseDone(true)
+        if (resData.classificationWarning) {
+          setAudienceGapMode("verify")
+          setAudienceGapMissingKeys(undefined)
+          setAudienceGapValues(identity)
+          setAudienceGapOpen(true)
+        } else if (missing.length === 0) {
+          if (audienceFile && !resData.fileSaveError && !resData.notice && !resData.warning) {
+            toast.success("הקובץ עלה ונותח בהצלחה")
+          }
+          setCurrentStep(3)
+        } else {
+          setAudienceGapMode("gaps")
+          setAudienceGapMissingKeys(missing)
+          setAudienceGapValues(identity)
+          setAudienceGapOpen(true)
+        }
       } else if (currentStep === 3) {
-        // Creators step — save user-specified top creators
         const supabase = createClient()
         const { data: { user } } = await supabase.auth.getUser()
         if (user) {
@@ -239,7 +444,6 @@ function OnboardingPageInner() {
             .map((c) => parseCreatorInput(c.url))
             .filter((p): p is NonNullable<typeof p> => p !== null)
           if (parsed.length > 0) {
-            // Replace any existing selections so the list is authoritative
             await supabase.from("user_top_creators").delete().eq("user_id", user.id)
             const payload = parsed.map((p) => ({
               user_id: user.id,
@@ -252,14 +456,13 @@ function OnboardingPageInner() {
               .insert(payload as never)
             if (insErr) {
               console.error("Failed to insert creators:", insErr)
-              alert(`שגיאה בשמירת היוצרים: ${insErr.message}`)
+              toast.error(`שגיאה בשמירת היוצרים: ${insErr.message}`, { duration: 12000 })
               return
             }
           }
         }
         setCurrentStep(4)
       } else {
-        // Products step (last) — save products + mark onboarding complete
         const supabase = createClient()
         const { data: { user } } = await supabase.auth.getUser()
 
@@ -279,11 +482,10 @@ function OnboardingPageInner() {
 
           if (insertError) {
             console.error("Failed to insert products:", insertError)
-            alert(`שגיאה בשמירת מוצרים: ${insertError.message}`)
+            toast.error(`שגיאה בשמירת מוצרים: ${insertError.message}`, { duration: 12000 })
             return
           }
 
-          // Parse product pages in the background (don't block navigation)
           if (insertedProducts) {
             const productsWithUrls = productsList
               .map((p, i) => ({ url: p.landingPageUrl, productId: (insertedProducts[i] as { id: string }).id, skip: p.noSalesPage }))
@@ -309,8 +511,182 @@ function OnboardingPageInner() {
     }
   }
 
+  const handleCoreGapSave = async (next: CoreIdentityValues) => {
+    if (gapPreviewMode) {
+      toast("תצוגה בלבד — הנתונים לא נשמרו")
+      setCoreGapOpen(false)
+      setGapPreviewMode(false)
+      return
+    }
+    setCoreGapSaving(true)
+    try {
+      const res = await fetch("/api/core-identity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        toast.error(
+          `שמירת הפרטים החסרים נכשלה: ${data.error || res.status}`,
+          { duration: 12000 },
+        )
+        return
+      }
+      setCoreGapOpen(false)
+      setCurrentStep(2)
+    } finally {
+      setCoreGapSaving(false)
+    }
+  }
+
+  // Closing the popup without "primary save" still persists current values so
+  // typed progress isn't lost. Errors are swallowed so the close action never
+  // gets stuck — worst case the user re-edits next time.
+  const handleCoreGapClose = (current: CoreIdentityValues) => {
+    setCoreGapOpen(false)
+    if (gapPreviewMode) {
+      setGapPreviewMode(false)
+      return
+    }
+    void fetch("/api/core-identity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(current),
+    }).catch((err) => console.warn("[onboarding] core gap close-save failed:", err))
+  }
+
+  const handleAudienceGapSave = async (next: AudienceIdentityValues) => {
+    if (gapPreviewMode) {
+      toast("תצוגה בלבד — הנתונים לא נשמרו")
+      setAudienceGapOpen(false)
+      setGapPreviewMode(false)
+      return
+    }
+    setAudienceGapSaving(true)
+    try {
+      const res = await fetch("/api/audience-identity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        toast.error(
+          `שמירת פרטי הקהל החסרים נכשלה: ${data.error || res.status}`,
+          { duration: 12000 },
+        )
+        return
+      }
+      setAudienceGapOpen(false)
+      setCurrentStep(3)
+    } finally {
+      setAudienceGapSaving(false)
+    }
+  }
+
+  const handleAudienceGapClose = (current: AudienceIdentityValues) => {
+    setAudienceGapOpen(false)
+    if (gapPreviewMode) {
+      setGapPreviewMode(false)
+      return
+    }
+    void fetch("/api/audience-identity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(current),
+    }).catch((err) => console.warn("[onboarding] audience gap close-save failed:", err))
+  }
+
+  // File replacement: overwrite the existing identity row with an empty one
+  // (preserving the manual fields for core), so the next parse-identity call
+  // starts clean. Without this, pickFilled would silently merge old + new.
+  const confirmStyleFileReplacement = async () => {
+    if (!pendingStyleFile) return
+    const file = pendingStyleFile
+    // For core, keep what the user typed in step 2 (productName/niche/whoIAm)
+    // and wipe the file-derived fields so the next parse can fill cleanly.
+    await fetch("/api/core-identity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        productName: businessName,
+        niche,
+        whoIAm: expertise,
+        whoIServe: "",
+        howISound: "",
+        slangExamples: "",
+        whatINeverDo: "",
+      }),
+    }).catch((err) => console.warn("[onboarding] core reset failed:", err))
+    setStyleFile(file)
+    setStyleParseDone(false)
+    setPendingStyleFile(null)
+  }
+
+  const confirmAudienceFileReplacement = async () => {
+    if (!pendingAudienceFile) return
+    const file = pendingAudienceFile
+    // Audience has no manual fields — wipe everything.
+    await fetch("/api/audience-identity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(EMPTY_AUDIENCE_IDENTITY),
+    }).catch((err) => console.warn("[onboarding] audience reset failed:", err))
+    setAudienceFile(file)
+    setAudienceParseDone(false)
+    setPendingAudienceFile(null)
+  }
+
   return (
     <div dir="rtl" className="flex min-h-screen">
+      {/* Gap-fill dialogs */}
+      <CoreIdentityGapDialog
+        open={coreGapOpen}
+        initialValues={coreGapValues}
+        saving={coreGapSaving}
+        mode={coreGapMode}
+        missingKeys={coreGapMissingKeys}
+        onCancel={handleCoreGapClose}
+        onSave={handleCoreGapSave}
+      />
+      <AudienceIdentityGapDialog
+        open={audienceGapOpen}
+        initialValues={audienceGapValues}
+        saving={audienceGapSaving}
+        mode={audienceGapMode}
+        missingKeys={audienceGapMissingKeys}
+        onCancel={handleAudienceGapClose}
+        onSave={handleAudienceGapSave}
+      />
+
+      {/* File replacement confirmations — show only when the user picks a
+          second file after the first already parsed. */}
+      <ConfirmModal
+        open={!!pendingStyleFile}
+        onOpenChange={(next) => {
+          if (!next) setPendingStyleFile(null)
+        }}
+        title="כבר העלית קובץ סגנון"
+        description="החלפת הקובץ תמחק את כל מה שחילצנו ושמרנו עד עכשיו, ותתחיל מחדש עם הקובץ החדש. ההמשך לא יערבב בין שני הקבצים."
+        confirmLabel="כן, החלף קובץ"
+        cancelLabel="ביטול, להישאר עם הקיים"
+        confirmVariant="destructive"
+        onConfirm={confirmStyleFileReplacement}
+      />
+      <ConfirmModal
+        open={!!pendingAudienceFile}
+        onOpenChange={(next) => {
+          if (!next) setPendingAudienceFile(null)
+        }}
+        title="כבר העלית קובץ ניתוח קהל"
+        description="החלפת הקובץ תמחק את כל מה שחילצנו ושמרנו עד עכשיו, ותתחיל מחדש עם הקובץ החדש. ההמשך לא יערבב בין שני הקבצים."
+        confirmLabel="כן, החלף קובץ"
+        cancelLabel="ביטול, להישאר עם הקיים"
+        confirmVariant="destructive"
+        onConfirm={confirmAudienceFileReplacement}
+      />
+
       {/* Right side - form */}
       <div className="flex w-full flex-col items-center px-6 py-12 lg:w-1/2">
         {/* Logo */}
@@ -345,8 +721,7 @@ function OnboardingPageInner() {
           ))}
         </div>
 
-        {/* Dev navigator — local/?dev=1 only. Jump between steps without
-            satisfying each step's validation. */}
+        {/* Dev navigator — local/?dev=1 only. */}
         {devMode && (
           <div className="w-full max-w-2xl mb-6 flex flex-col items-center gap-2">
             <div className="flex items-center gap-2 rounded-xl border border-dashed border-border-neutral-default bg-bg-surface px-3 py-2">
@@ -369,6 +744,117 @@ function OnboardingPageInner() {
                   {i + 1}
                 </button>
               ))}
+            </div>
+            <div className="flex items-center gap-2 rounded-xl border border-dashed border-border-neutral-default bg-bg-surface px-3 py-2">
+              <span className="text-xs-body text-text-neutral-default">תצוגת פופ-אפ:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setGapPreviewMode(true)
+                  setCoreGapMode("gaps")
+                  setCoreGapValues({
+                    productName: "אקדמיית UXtra",
+                    niche: "AI ועיצוב",
+                    whoIAm: "מנטורית עם 10 שנות ניסיון בעיצוב",
+                    whoIServe: "",
+                    howISound: "חמה, סיפורית, ישירה",
+                    slangExamples: "",
+                    whatINeverDo: "",
+                  })
+                  setCoreGapOpen(true)
+                }}
+                className="text-xs-body rounded-md px-2 py-1 text-text-neutral-default hover:bg-bg-surface-hover"
+              >
+                פופ-אפ סגנון
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setGapPreviewMode(true)
+                  setCoreGapMode("verify")
+                  setCoreGapValues({
+                    productName: "אקדמיית UXtra",
+                    niche: "AI ועיצוב",
+                    whoIAm: "מנטורית עם 10 שנות ניסיון בעיצוב",
+                    whoIServe: "מעצבי UI/UX שרוצים להתעדכן ב-AI",
+                    howISound: "חמה, סיפורית, ישירה",
+                    slangExamples: "תבינו, וזה כל ההבדל",
+                    whatINeverDo: "לא משתמשת בשפה קרה או טכנית מדי",
+                  })
+                  setCoreGapOpen(true)
+                }}
+                className="text-xs-body rounded-md px-2 py-1 text-text-neutral-default hover:bg-bg-surface-hover"
+              >
+                סגנון · אישור
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setGapPreviewMode(true)
+                  setAudienceGapMode("gaps")
+                  setAudienceGapValues({
+                    location: "תל אביב והמרכז",
+                    employment: "מעצבי UI/UX",
+                    education: "תארים, קורסים, אוטודידקטים",
+                    income: "",
+                    behavioral: "חיים על פיגמה, צורכים תוכן רב",
+                    awarenessLevel: "",
+                    dailyPains: "לא בטוחים אם הקובץ בנוי נכון לקוד",
+                    emotionalPains: "תחושת פער ועייפות",
+                    unresolvedConsequences: "",
+                    fears: "AI יחליף אותי",
+                    failedSolutions: "קורסים כלליים מדי",
+                    limitingBeliefs: "",
+                    myths: "",
+                    dailyDesires: "לעבוד מהר ולהבין פיגמה",
+                    emotionalDesires: "ביטחון ושקט",
+                    smallWins: "",
+                    idealSolution: "ידע פרקטי בגובה העיניים",
+                    bottomLine: "",
+                    crossAudienceQuotes: "",
+                    idealSolutionWords: "",
+                    identityStatements: "",
+                  })
+                  setAudienceGapOpen(true)
+                }}
+                className="text-xs-body rounded-md px-2 py-1 text-text-neutral-default hover:bg-bg-surface-hover"
+              >
+                פופ-אפ קהל
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setGapPreviewMode(true)
+                  setAudienceGapMode("verify")
+                  setAudienceGapValues({
+                    location: "תל אביב והמרכז",
+                    employment: "מעצבי UI/UX",
+                    education: "תארים, קורסים, אוטודידקטים",
+                    income: "ג׳וניורים לחוצים, סניורים מרוויחים טוב",
+                    behavioral: "חיים על פיגמה, צורכים תוכן רב",
+                    awarenessLevel: "מודעים לבעיה ולאיום של AI",
+                    dailyPains: "לא בטוחים אם הקובץ בנוי נכון לקוד",
+                    emotionalPains: "תחושת פער ועייפות",
+                    unresolvedConsequences: "להישאר מאחור, לאבד רלוונטיות",
+                    fears: "AI יחליף אותי",
+                    failedSolutions: "קורסים כלליים מדי",
+                    limitingBeliefs: "אני לא מספיק טכני",
+                    myths: "AI זה רק אוטומציות קטנות",
+                    dailyDesires: "לעבוד מהר ולהבין פיגמה",
+                    emotionalDesires: "ביטחון ושקט",
+                    smallWins: "אה, עכשיו זה ברור",
+                    idealSolution: "ידע פרקטי בגובה העיניים",
+                    bottomLine: "מחפשים בהירות, לא השראה",
+                    crossAudienceQuotes: "יש יותר מדי מידע",
+                    idealSolutionWords: "שתראה לי איך זה ביום־יום",
+                    identityStatements: "המעצב שסומכים עליו",
+                  })
+                  setAudienceGapOpen(true)
+                }}
+                className="text-xs-body rounded-md px-2 py-1 text-text-neutral-default hover:bg-bg-surface-hover"
+              >
+                קהל · אישור
+              </button>
             </div>
           </div>
         )}
@@ -512,8 +998,18 @@ function OnboardingPageInner() {
                     ref={fileInputRef}
                     type="file"
                     className="hidden"
-                    accept=".docx,.md,text/markdown"
-                    onChange={(e) => setStyleFile(e.target.files?.[0] ?? null)}
+                    accept=".docx,.doc,.txt,.md"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0] ?? null
+                      if (f && styleParseDone) {
+                        setPendingStyleFile(f)
+                      } else {
+                        setStyleFile(f)
+                      }
+                      // Reset the input element so picking the same file twice
+                      // still fires onChange (browsers de-dupe by default).
+                      e.target.value = ""
+                    }}
                   />
                 </div>
                 <p className="text-xs-body text-text-neutral-default text-start">
@@ -527,7 +1023,7 @@ function OnboardingPageInner() {
                     יוצרים אותו כאן
                   </a>
                   {" · "}
-                  ניתן להעלות קבצי doc, docx, md
+                  ניתן להעלות קבצי doc, docx, txt, md
                 </p>
               </div>
             </>
@@ -561,8 +1057,16 @@ function OnboardingPageInner() {
                     ref={audienceFileRef}
                     type="file"
                     className="hidden"
-                    accept=".docx,.md,text/markdown"
-                    onChange={(e) => setAudienceFile(e.target.files?.[0] ?? null)}
+                    accept=".docx,.doc,.txt,.md"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0] ?? null
+                      if (f && audienceParseDone) {
+                        setPendingAudienceFile(f)
+                      } else {
+                        setAudienceFile(f)
+                      }
+                      e.target.value = ""
+                    }}
                   />
                 </div>
                 <p className="text-xs-body text-text-neutral-default text-start">
@@ -576,7 +1080,7 @@ function OnboardingPageInner() {
                     יוצרים את זה כאן
                   </a>
                   {" · "}
-                  ניתן להעלות קבצי doc, docx, md
+                  ניתן להעלות קבצי doc, docx, txt, md
                 </p>
                 <p className="text-xs-body text-text-primary-default text-start font-semibold">
                   שימו לב — בשלב הזה תומכים בקהל יעד אחד לכל קובץ. אם בקובץ יש כמה קהלים, יישמר רק הראשון.

@@ -6,8 +6,15 @@
 // Vercel serverless body limit is 4.5MB by default — we cap at 4MB to leave
 // margin for FormData overhead. Anything larger never reaches the route.
 
+// Vercel serverless body limit is 4.5MB by default — we cap at 4MB to leave
+// margin for FormData overhead. The server also accepts larger PDFs (up to
+// 10MB) but those would need a different upload path.
 const MAX_BYTES = 4 * 1024 * 1024
-const SUPPORTED_EXTENSIONS = [".docx", ".doc", ".txt", ".md", ".rtf"] as const
+// RTF is intentionally excluded — extract-file-content reads it as UTF8 and
+// hands Claude raw `{\rtf1\ansi...}` markup, which classifies as garbage.
+// Until we add a real RTF parser, the user is better off being told upfront
+// to save as .docx.
+const SUPPORTED_EXTENSIONS = [".docx", ".doc", ".txt", ".md"] as const
 
 export interface FileValidationError {
   message: string

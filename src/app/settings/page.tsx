@@ -15,6 +15,19 @@ import { CreatorsList } from "@/components/creators-list"
 import { ProductsList, type ProductEntry } from "@/components/products-list"
 import { toast } from "sonner"
 import { validateIdentityFile } from "@/lib/validate-identity-file"
+import {
+  EMPTY_CORE_IDENTITY,
+  type CoreIdentityValues,
+} from "@/components/core-identity-form"
+import {
+  EMPTY_AUDIENCE_IDENTITY,
+  type AudienceIdentityValues,
+} from "@/components/audience-identity-form"
+import {
+  CoreIdentityGapDialog,
+  AudienceIdentityGapDialog,
+} from "@/components/identity-gap-dialog"
+import { ConfirmModal } from "@/components/confirm-modal"
 
 const GOOGLE_FONTS = [
   "Rubik", "Heebo", "Assistant", "Open Sans", "Noto Sans Hebrew", "Secular One",
@@ -64,6 +77,94 @@ const KEYS: KeyConfig[] = [
 function maskKey(key: string): string {
   if (key.length <= 4) return "••••"
   return "••••••" + key.slice(-4)
+}
+
+// Stitch parse-identity's response into a CoreIdentityValues for popup prefill.
+function buildCoreIdentityFromResponse(
+  manual: { productName: string; niche: string; whoIAm: string },
+  parsed: Record<string, unknown> | undefined,
+  saved: Record<string, unknown> | undefined,
+): CoreIdentityValues {
+  const pickStr = (...vals: unknown[]): string => {
+    for (const v of vals) if (typeof v === "string" && v.trim()) return v
+    return ""
+  }
+  return {
+    productName: pickStr(manual.productName, parsed?.productName, saved?.product_name),
+    niche: pickStr(manual.niche, parsed?.niche, saved?.niche),
+    whoIAm: pickStr(manual.whoIAm, parsed?.whoIAm, saved?.who_i_am),
+    whoIServe: pickStr(parsed?.whoIServe, saved?.who_i_serve),
+    howISound: pickStr(parsed?.howISound, saved?.how_i_sound),
+    slangExamples: pickStr(parsed?.slangExamples, saved?.slang_examples),
+    whatINeverDo: pickStr(parsed?.whatINeverDo, saved?.what_i_never_do),
+  }
+}
+
+function coreMissingKeysFromFresh(
+  manual: { productName: string; niche: string; whoIAm: string },
+  parsed: Record<string, unknown> | undefined,
+): Array<keyof CoreIdentityValues> {
+  const fresh: Record<keyof CoreIdentityValues, string> = {
+    productName: (manual.productName.trim() || (parsed?.productName as string) || "").toString(),
+    niche: (manual.niche.trim() || (parsed?.niche as string) || "").toString(),
+    whoIAm: (manual.whoIAm.trim() || (parsed?.whoIAm as string) || "").toString(),
+    whoIServe: ((parsed?.whoIServe as string) || "").toString(),
+    howISound: ((parsed?.howISound as string) || "").toString(),
+    slangExamples: ((parsed?.slangExamples as string) || "").toString(),
+    whatINeverDo: ((parsed?.whatINeverDo as string) || "").toString(),
+  }
+  return (Object.keys(fresh) as Array<keyof CoreIdentityValues>).filter(
+    (k) => !fresh[k].trim(),
+  )
+}
+
+function buildAudienceIdentityFromResponse(
+  parsed: Record<string, unknown> | undefined,
+  saved: Record<string, unknown> | undefined,
+): AudienceIdentityValues {
+  const pickStr = (...vals: unknown[]): string => {
+    for (const v of vals) if (typeof v === "string" && v.trim()) return v
+    return ""
+  }
+  return {
+    location: pickStr(parsed?.location, saved?.location),
+    employment: pickStr(parsed?.employment, saved?.employment),
+    education: pickStr(parsed?.education, saved?.education),
+    income: pickStr(parsed?.income, saved?.income),
+    behavioral: pickStr(parsed?.behavioral, saved?.behavioral),
+    awarenessLevel: pickStr(parsed?.awarenessLevel, saved?.awareness_level),
+    dailyPains: pickStr(parsed?.dailyPains, saved?.daily_pains),
+    emotionalPains: pickStr(parsed?.emotionalPains, saved?.emotional_pains),
+    unresolvedConsequences: pickStr(parsed?.unresolvedConsequences, saved?.unresolved_consequences),
+    fears: pickStr(parsed?.fears, saved?.fears),
+    failedSolutions: pickStr(parsed?.failedSolutions, saved?.failed_solutions),
+    limitingBeliefs: pickStr(parsed?.limitingBeliefs, saved?.limiting_beliefs),
+    myths: pickStr(parsed?.myths, saved?.myths),
+    dailyDesires: pickStr(parsed?.dailyDesires, saved?.daily_desires),
+    emotionalDesires: pickStr(parsed?.emotionalDesires, saved?.emotional_desires),
+    smallWins: pickStr(parsed?.smallWins, saved?.small_wins),
+    idealSolution: pickStr(parsed?.idealSolution, saved?.ideal_solution),
+    bottomLine: pickStr(parsed?.bottomLine, saved?.bottom_line),
+    crossAudienceQuotes: pickStr(parsed?.crossAudienceQuotes, saved?.cross_audience_quotes),
+    idealSolutionWords: pickStr(parsed?.idealSolutionWords, saved?.ideal_solution_words),
+    identityStatements: pickStr(parsed?.identityStatements, saved?.identity_statements),
+  }
+}
+
+function audienceMissingKeysFromFresh(
+  parsed: Record<string, unknown> | undefined,
+): Array<keyof AudienceIdentityValues> {
+  const keys: Array<keyof AudienceIdentityValues> = [
+    "location", "employment", "education", "income", "behavioral",
+    "awarenessLevel", "dailyPains", "emotionalPains", "unresolvedConsequences",
+    "fears", "failedSolutions", "limitingBeliefs", "myths", "dailyDesires",
+    "emotionalDesires", "smallWins", "idealSolution", "bottomLine",
+    "crossAudienceQuotes", "idealSolutionWords", "identityStatements",
+  ]
+  return keys.filter((k) => {
+    const v = parsed?.[k]
+    return typeof v !== "string" || !v.trim()
+  })
 }
 
 interface UploadingFile {
@@ -127,6 +228,31 @@ function SettingsPageInner() {
   const [audienceOriginalFile, setAudienceOriginalFile] = useState<{ name: string; url: string } | null>(null)
   const styleFileRef = useRef<HTMLInputElement>(null)
   const audienceFileRef = useRef<HTMLInputElement>(null)
+
+  // Gap/verify dialog state (replicates onboarding behavior: file-for-file
+  // replacement on the backend, popup for filling whatever the new file left
+  // empty).
+  const [coreGapOpen, setCoreGapOpen] = useState(false)
+  const [coreGapValues, setCoreGapValues] = useState<CoreIdentityValues>(EMPTY_CORE_IDENTITY)
+  const [coreGapMode, setCoreGapMode] = useState<"gaps" | "verify">("gaps")
+  const [coreGapMissingKeys, setCoreGapMissingKeys] = useState<
+    Array<keyof CoreIdentityValues> | undefined
+  >(undefined)
+  const [coreGapSaving, setCoreGapSaving] = useState(false)
+  const [audienceGapOpen, setAudienceGapOpen] = useState(false)
+  const [audienceGapValues, setAudienceGapValues] =
+    useState<AudienceIdentityValues>(EMPTY_AUDIENCE_IDENTITY)
+  const [audienceGapMode, setAudienceGapMode] = useState<"gaps" | "verify">("gaps")
+  const [audienceGapMissingKeys, setAudienceGapMissingKeys] = useState<
+    Array<keyof AudienceIdentityValues> | undefined
+  >(undefined)
+  const [audienceGapSaving, setAudienceGapSaving] = useState(false)
+
+  // Replace-confirmation state. Triggered when the user clicks "העלה" while
+  // an existing file is already in user_media — warns that the upload will
+  // wipe whatever the new file doesn't itself supply.
+  const [pendingStyleReplace, setPendingStyleReplace] = useState(false)
+  const [pendingAudienceReplace, setPendingAudienceReplace] = useState(false)
 
   // Top creators (user-specified inspiration sources for the ideas pipeline)
   const [topCreators, setTopCreators] = useState<{ id?: string; url: string }[]>([{ url: "" }])
@@ -576,7 +702,18 @@ function SettingsPageInner() {
     })()
   }
 
-  const handleUploadStyle = async () => {
+  // Intercept the click: if a file already exists, ask before wiping. The
+  // backend now always replaces file-for-file, so we owe the user a warning.
+  const handleUploadStyleClick = () => {
+    if (!styleFileToUpload) return
+    if (styleOriginalFile) {
+      setPendingStyleReplace(true)
+      return
+    }
+    void runStyleUpload()
+  }
+
+  const runStyleUpload = async () => {
     if (!styleFileToUpload) return
     const file = styleFileToUpload
     const validation = validateIdentityFile(file)
@@ -615,28 +752,61 @@ function SettingsPageInner() {
         }
         return
       }
-      // Success path: identity row was saved. Surface backup-failure separately
-      // so the user knows the parsed data is safe but the original file isn't.
       if (resData.fileSaveError) {
         toast.error(`הקובץ לא נשמר במלואו: ${resData.fileSaveError}`, { duration: 12000 })
       }
       if (resData.notice) {
         toast(resData.notice, { duration: 15000 })
       }
-      if (resData.warning) {
+      setStyleOriginalFile((prev) => ({ name: file.name, url: prev?.url ?? "" }))
+      setStyleFileToUpload(null)
+      await refreshIdentityFile("style_file")
+
+      // Decide what comes next: verify popup (classifier flagged the file),
+      // gap popup (some required fields empty), or just a success toast.
+      const identity = buildCoreIdentityFromResponse(
+        { productName: businessName, niche: businessNiche, whoIAm: businessExpertise },
+        resData.parsed,
+        resData.saved,
+      )
+      const missing = coreMissingKeysFromFresh(
+        { productName: businessName, niche: businessNiche, whoIAm: businessExpertise },
+        resData.parsed,
+      )
+      if (resData.classificationWarning) {
+        setCoreGapMode("verify")
+        setCoreGapMissingKeys(undefined)
+        setCoreGapValues(identity)
+        setCoreGapOpen(true)
+      } else if (missing.length > 0) {
+        setCoreGapMode("gaps")
+        setCoreGapMissingKeys(missing)
+        setCoreGapValues(identity)
+        setCoreGapOpen(true)
+      } else if (resData.warning) {
         toast.error(resData.warning, { duration: 12000 })
       } else if (!resData.fileSaveError && !resData.notice) {
         toast.success("הקובץ עלה ונותח בהצלחה")
       }
-      setStyleOriginalFile((prev) => ({ name: file.name, url: prev?.url ?? "" }))
-      setStyleFileToUpload(null)
-      await refreshIdentityFile("style_file")
     } finally {
       setUploadingStyle(false)
     }
   }
 
-  const handleUploadAudience = async () => {
+  // Bridge for the legacy onClick reference. Kept so the JSX below doesn't
+  // need a rename — the click handler now routes through the confirm.
+  const handleUploadStyle = handleUploadStyleClick
+
+  const handleUploadAudienceClick = () => {
+    if (!audienceFileToUpload) return
+    if (audienceOriginalFile) {
+      setPendingAudienceReplace(true)
+      return
+    }
+    void runAudienceUpload()
+  }
+
+  const runAudienceUpload = async () => {
     if (!audienceFileToUpload) return
     const file = audienceFileToUpload
     const validation = validateIdentityFile(file)
@@ -676,17 +846,93 @@ function SettingsPageInner() {
       if (resData.notice) {
         toast(resData.notice, { duration: 15000 })
       }
-      if (resData.warning) {
+      setAudienceOriginalFile((prev) => ({ name: file.name, url: prev?.url ?? "" }))
+      setAudienceFileToUpload(null)
+      await refreshIdentityFile("audience_file")
+
+      const identity = buildAudienceIdentityFromResponse(resData.parsed, resData.saved)
+      const missing = audienceMissingKeysFromFresh(resData.parsed)
+      if (resData.classificationWarning) {
+        setAudienceGapMode("verify")
+        setAudienceGapMissingKeys(undefined)
+        setAudienceGapValues(identity)
+        setAudienceGapOpen(true)
+      } else if (missing.length > 0) {
+        setAudienceGapMode("gaps")
+        setAudienceGapMissingKeys(missing)
+        setAudienceGapValues(identity)
+        setAudienceGapOpen(true)
+      } else if (resData.warning) {
         toast.error(resData.warning, { duration: 12000 })
       } else if (!resData.fileSaveError && !resData.notice) {
         toast.success("הקובץ עלה ונותח בהצלחה")
       }
-      setAudienceOriginalFile((prev) => ({ name: file.name, url: prev?.url ?? "" }))
-      setAudienceFileToUpload(null)
-      await refreshIdentityFile("audience_file")
     } finally {
       setUploadingAudience(false)
     }
+  }
+
+  const handleUploadAudience = handleUploadAudienceClick
+
+  // Popup save = POST current values to the identity API. Closes on success.
+  const handleCoreGapSave = async (next: CoreIdentityValues) => {
+    setCoreGapSaving(true)
+    try {
+      const res = await fetch("/api/core-identity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        toast.error(`שמירת הפרטים החסרים נכשלה: ${data.error || res.status}`, { duration: 12000 })
+        return
+      }
+      setCoreGapOpen(false)
+      toast.success("השדות נשמרו")
+    } finally {
+      setCoreGapSaving(false)
+    }
+  }
+
+  // Popup close (X / cancel / outside click) — persist whatever was typed so
+  // progress isn't lost between sessions.
+  const handleCoreGapClose = (current: CoreIdentityValues) => {
+    setCoreGapOpen(false)
+    void fetch("/api/core-identity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(current),
+    }).catch((err) => console.warn("[settings] core gap close-save failed:", err))
+  }
+
+  const handleAudienceGapSave = async (next: AudienceIdentityValues) => {
+    setAudienceGapSaving(true)
+    try {
+      const res = await fetch("/api/audience-identity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        toast.error(`שמירת פרטי הקהל החסרים נכשלה: ${data.error || res.status}`, { duration: 12000 })
+        return
+      }
+      setAudienceGapOpen(false)
+      toast.success("השדות נשמרו")
+    } finally {
+      setAudienceGapSaving(false)
+    }
+  }
+
+  const handleAudienceGapClose = (current: AudienceIdentityValues) => {
+    setAudienceGapOpen(false)
+    void fetch("/api/audience-identity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(current),
+    }).catch((err) => console.warn("[settings] audience gap close-save failed:", err))
   }
 
   const TABS: { id: SettingsTab; label: string }[] = [
@@ -756,6 +1002,58 @@ function SettingsPageInner() {
 
   return (
     <AppShell>
+      {/* Identity gap/verify dialogs + replace confirmations — surface here
+          (above the tabs) so they cover the whole settings view regardless
+          of which tab is active when the parse returns. */}
+      <CoreIdentityGapDialog
+        open={coreGapOpen}
+        initialValues={coreGapValues}
+        saving={coreGapSaving}
+        mode={coreGapMode}
+        missingKeys={coreGapMissingKeys}
+        onCancel={handleCoreGapClose}
+        onSave={handleCoreGapSave}
+      />
+      <AudienceIdentityGapDialog
+        open={audienceGapOpen}
+        initialValues={audienceGapValues}
+        saving={audienceGapSaving}
+        mode={audienceGapMode}
+        missingKeys={audienceGapMissingKeys}
+        onCancel={handleAudienceGapClose}
+        onSave={handleAudienceGapSave}
+      />
+      <ConfirmModal
+        open={pendingStyleReplace}
+        onOpenChange={(next) => {
+          if (!next) setPendingStyleReplace(false)
+        }}
+        title="להחליף את קובץ סגנון הכתיבה?"
+        description="הקובץ החדש יחליף לגמרי את הקיים. כל שדה שהקובץ החדש לא יכיל יישמר ריק (ניתן להשלים אותו בפופ-אפ שיופיע מיד אחרי הניתוח)."
+        confirmLabel="כן, החלף קובץ"
+        cancelLabel="ביטול"
+        confirmVariant="destructive"
+        onConfirm={async () => {
+          setPendingStyleReplace(false)
+          await runStyleUpload()
+        }}
+      />
+      <ConfirmModal
+        open={pendingAudienceReplace}
+        onOpenChange={(next) => {
+          if (!next) setPendingAudienceReplace(false)
+        }}
+        title="להחליף את קובץ ניתוח הקהל?"
+        description="הקובץ החדש יחליף לגמרי את הקיים. כל שדה שהקובץ החדש לא יכיל יישמר ריק (ניתן להשלים אותו בפופ-אפ שיופיע מיד אחרי הניתוח)."
+        confirmLabel="כן, החלף קובץ"
+        cancelLabel="ביטול"
+        confirmVariant="destructive"
+        onConfirm={async () => {
+          setPendingAudienceReplace(false)
+          await runAudienceUpload()
+        }}
+      />
+
       <div dir="rtl" className="mx-auto max-w-[1200px] flex flex-col gap-8">
         <h2 className="text-text-primary-default">הגדרות</h2>
 

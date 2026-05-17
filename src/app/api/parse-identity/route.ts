@@ -16,12 +16,12 @@ import { classifyUploadError } from "@/lib/upload-errors"
 // land in the empty-fields state we're trying to prevent.
 export const maxDuration = 60
 
-// Reject files past these limits up front. 30K Hebrew chars ≈ 15K tokens,
-// which fits comfortably under maxDuration=60 even with Anthropic latency.
-// Anything larger usually means the user dumped a doc with noise — the model
-// doesn't get a better identity from it, and the round-trip risks timing out.
-const MAX_TEXT_CHARS = 30_000
-const MAX_PDF_BYTES = 5 * 1024 * 1024
+// Hard upper bound only — 200K Hebrew chars ≈ 100K tokens, well within Claude's
+// 200K context window. Real audience research / brand-voice docs routinely run
+// 40–80K, and users sometimes paste in whole personal essays — better to accept
+// and let Claude focus on signal than to bounce them.
+const MAX_TEXT_CHARS = 200_000
+const MAX_PDF_BYTES = 10 * 1024 * 1024
 
 
 export async function POST(req: NextRequest) {
@@ -201,87 +201,27 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Writing-style validation. If a file was uploaded for core, the file
-    // MUST yield writing-style content (howISound, slangExamples,
-    // whatINeverDo). niche/productName/whoIAm could be inferred from any
-    // business doc — they don't count. Hard-fail regardless of whether the
-    // AI errored or just returned empty: the user uploaded what they think
-    // is a style file, and from their perspective both outcomes mean "the
-    // file didn't work." The manual fields are kept in the client form
-    // state, so a retry is cheap. We don't fall back to manual-only when a
-    // file is present, because the user explicitly intended to use the file.
-    // Two-layer check:
-    //   (1) Claude's own classification flag (`isWritingStyleDocument` /
-    //       `isAudienceDocument`) — primary signal; Claude saw the whole doc
-    //       and labeled it explicitly.
-    //   (2) Field-presence backstop — if the flag is missing (e.g. Claude
-    //       skipped it) we still demand at least one signature field.
-    // Earlier we only had (2), but the prompt encouraged aggressive
-    // extraction so non-style docs would still produce something in
-    // `howISound`, sneaking past the check. The flag gives Claude a place
-    // to say "this isn't the right doc" without us inferring from field
-    // emptiness alone.
-    // Reject only when:
-    //   (a) Claude classified the doc as NOT a style/audience doc, OR
-    //   (b) Claude didn't classify at all AND no signature fields were
-    //       extracted (no signal in either direction).
-    // We trust the classification flag as the primary gate so a real style
-    // doc isn't rejected for sparse extraction. The field-presence check
-    // is a backstop for the rare case where Claude skipped the flag.
-    if (file && type === "core") {
-      const hasWritingStyle = !!(
-        parsed.howISound?.trim() ||
-        parsed.slangExamples?.trim() ||
-        parsed.whatINeverDo?.trim()
-      )
-      const reject =
-        documentTypeOk === false ||
-        (documentTypeOk === null && !hasWritingStyle)
-      if (reject) {
-        console.warn("[parse-identity] core rejected:", {
-          documentTypeOk,
-          hasWritingStyle,
-          parsedKeys: Object.keys(parsed),
-        })
-        return NextResponse.json(
-          {
-            error: "no_writing_style_in_file",
-            message:
-              "בקובץ הזה אין תיאור של סגנון כתיבה שאפשר לקרוא. העלו קובץ שמתאר איך אתם נשמעים — מילים שאתם משתמשים בהן, טון הדיבור, ומה אתם לא אומרים.",
-          },
-          { status: 422 }
-        )
-      }
+    // Classification is advisory only. We used to hard-reject when Claude
+    // labeled the doc as not-style/not-audience, but that produced too many
+    // false negatives on short / bullet-style / atypical docs. The onboarding
+    // review form now forces the user to confirm and fill every field, so a
+    // bad upload can't sneak partial data through anyway. Surface the warning
+    // as a notice; let the user see what (if anything) we managed to extract
+    // and complete the form by hand.
+    let classificationWarning: string | null = null
+    if (file && type === "core" && documentTypeOk === false) {
+      classificationWarning =
+        "הקובץ שהעליתם לא נראה כתיאור של סגנון כתיבה. השלימו ידנית את השדות בטופס הבא."
+      console.warn("[parse-identity] core flagged not-style by Claude:", {
+        parsedKeys: Object.keys(parsed),
+      })
     }
-
-    if (file && type === "audience") {
-      const hasAudienceContent = !!(
-        parsed.dailyPains?.trim() ||
-        parsed.emotionalPains?.trim() ||
-        parsed.fears?.trim() ||
-        parsed.dailyDesires?.trim() ||
-        parsed.emotionalDesires?.trim() ||
-        parsed.limitingBeliefs?.trim() ||
-        parsed.myths?.trim()
-      )
-      const reject =
-        documentTypeOk === false ||
-        (documentTypeOk === null && !hasAudienceContent)
-      if (reject) {
-        console.warn("[parse-identity] audience rejected:", {
-          documentTypeOk,
-          hasAudienceContent,
-          parsedKeys: Object.keys(parsed),
-        })
-        return NextResponse.json(
-          {
-            error: "no_audience_in_file",
-            message:
-              "בקובץ הזה אין ניתוח של קהל יעד שאפשר לקרוא. העלו קובץ שמתאר את הקהל — הכאבים, הפחדים, התשוקות והאמונות שלו.",
-          },
-          { status: 422 }
-        )
-      }
+    if (file && type === "audience" && documentTypeOk === false) {
+      classificationWarning =
+        "הקובץ שהעליתם לא נראה כניתוח של קהל יעד. השלימו ידנית את השדות בטופס הבא."
+      console.warn("[parse-identity] audience flagged not-audience by Claude:", {
+        parsedKeys: Object.keys(parsed),
+      })
     }
 
     // Save original file to Supabase Storage. This is the *backup* of the
@@ -338,17 +278,21 @@ export async function POST(req: NextRequest) {
     }
 
     // If AI failed and there's nothing else meaningful to persist, refuse the
-    // upsert and surface the error. Without this gate, a failed parse would
-    // create an empty identity row (or overwrite-via-fallback an existing one),
-    // and the user later can't generate hooks because the row "exists" but is
-    // empty. Audience flow has no manual fields, so any AI failure there is
-    // fatal. Core flow has manualFields — if the user typed niche/whoIAm/etc.,
-    // those are still worth saving on their own.
+    // upsert and surface the error. We only HARD fail when the failure is
+    // something the user can't recover from in the review form (bad API key,
+    // network blackout) — `claude_returned_empty` and `no_json_block_in_response`
+    // are soft: we still persist the row (possibly empty) and surface a
+    // warning, so the review form opens and the user can complete fields
+    // by hand. Core flow also accepts manual fields as content.
     const hasManualCoreContent =
       type === "core" &&
       [manual.productName, manual.niche, manual.whoIAm, manual.whoIServe, manual.howISound, manual.slangExamples, manual.whatINeverDo]
         .some((v) => typeof v === "string" && v.trim().length > 0)
-    if (aiError && !hasManualCoreContent) {
+    const aiErrorIsSoft =
+      aiError === "claude_returned_empty" ||
+      aiError === "no_json_block_in_response" ||
+      aiError === "anthropic_not_connected"
+    if (aiError && !aiErrorIsSoft && !hasManualCoreContent) {
       return NextResponse.json(
         {
           error: "ai_parse_failed",
@@ -365,44 +309,29 @@ export async function POST(req: NextRequest) {
     const rawFileText =
       fileContent?.kind === "text" ? fileContent.text : null
 
-    // Pull existing values so a partial parse can't wipe good prior data.
-    const { data: existingCore } =
-      type === "core"
-        ? await supabase
-            .from("core_identities")
-            .select("*")
-            .eq("user_id", user.id)
-            .maybeSingle()
-        : { data: null }
-    const { data: existingAudience } =
-      type === "audience"
-        ? await supabase
-            .from("audience_identities")
-            .select("*")
-            .eq("user_id", user.id)
-            .maybeSingle()
-        : { data: null }
-
-    // pickFilled: prefer first non-empty value in the order given.
+    // pickFilled: prefer first non-empty value in the order given. NO existing
+    // DB fallback — uploading a file is a full file-for-file replacement.
+    // Anything the new file doesn't supply gets saved as empty so the user
+    // can see real gaps in the popup (rather than have them silently masked
+    // by leftover data from a prior session).
     const pickFilled = (...vals: (string | undefined | null)[]): string => {
       for (const v of vals) {
         if (typeof v === "string" && v.trim().length > 0) return v
       }
       return ""
     }
-    const cur = (existingCore ?? existingAudience) as Record<string, string | null> | null
 
     // Save to DB — manual fields take priority over parsed (non-empty manual fields won't be overwritten)
     if (type === "core") {
       const row = {
         user_id: user.id,
-        niche: pickFilled(manual.niche, parsed.niche, cur?.niche),
-        product_name: pickFilled(manual.productName, parsed.productName, cur?.product_name),
-        who_i_am: pickFilled(manual.whoIAm, parsed.whoIAm, cur?.who_i_am),
-        who_i_serve: pickFilled(manual.whoIServe, parsed.whoIServe, cur?.who_i_serve),
-        how_i_sound: pickFilled(parsed.howISound, manual.howISound, cur?.how_i_sound),
-        slang_examples: pickFilled(parsed.slangExamples, manual.slangExamples, cur?.slang_examples),
-        what_i_never_do: pickFilled(parsed.whatINeverDo, manual.whatINeverDo, cur?.what_i_never_do),
+        niche: pickFilled(manual.niche, parsed.niche),
+        product_name: pickFilled(manual.productName, parsed.productName),
+        who_i_am: pickFilled(manual.whoIAm, parsed.whoIAm),
+        who_i_serve: pickFilled(manual.whoIServe, parsed.whoIServe),
+        how_i_sound: pickFilled(parsed.howISound, manual.howISound),
+        slang_examples: pickFilled(parsed.slangExamples, manual.slangExamples),
+        what_i_never_do: pickFilled(parsed.whatINeverDo, manual.whatINeverDo),
         ...(rawFileText ? { raw_file_text: rawFileText } : {}),
       }
 
@@ -428,6 +357,7 @@ export async function POST(req: NextRequest) {
         saved: row,
         ...(aiError ? { warning: `${anthropicErrorToHebrew(aiError)} השדות הידניים נשמרו, אבל הקובץ לא נותח.` } : {}),
         ...(fileSaveError ? { fileSaveError } : {}),
+        ...(classificationWarning ? { classificationWarning } : {}),
         ...(multipleProfilesDetected
           ? {
               notice:
@@ -438,27 +368,27 @@ export async function POST(req: NextRequest) {
     } else {
       const row = {
         user_id: user.id,
-        location: pickFilled(parsed.location, cur?.location),
-        employment: pickFilled(parsed.employment, cur?.employment),
-        education: pickFilled(parsed.education, cur?.education),
-        income: pickFilled(parsed.income, cur?.income),
-        behavioral: pickFilled(parsed.behavioral, cur?.behavioral),
-        awareness_level: pickFilled(parsed.awarenessLevel, cur?.awareness_level),
-        daily_pains: pickFilled(parsed.dailyPains, cur?.daily_pains),
-        emotional_pains: pickFilled(parsed.emotionalPains, cur?.emotional_pains),
-        unresolved_consequences: pickFilled(parsed.unresolvedConsequences, cur?.unresolved_consequences),
-        fears: pickFilled(parsed.fears, cur?.fears),
-        failed_solutions: pickFilled(parsed.failedSolutions, cur?.failed_solutions),
-        limiting_beliefs: pickFilled(parsed.limitingBeliefs, cur?.limiting_beliefs),
-        myths: pickFilled(parsed.myths, cur?.myths),
-        daily_desires: pickFilled(parsed.dailyDesires, cur?.daily_desires),
-        emotional_desires: pickFilled(parsed.emotionalDesires, cur?.emotional_desires),
-        small_wins: pickFilled(parsed.smallWins, cur?.small_wins),
-        ideal_solution: pickFilled(parsed.idealSolution, cur?.ideal_solution),
-        bottom_line: pickFilled(parsed.bottomLine, cur?.bottom_line),
-        cross_audience_quotes: pickFilled(parsed.crossAudienceQuotes, cur?.cross_audience_quotes),
-        ideal_solution_words: pickFilled(parsed.idealSolutionWords, cur?.ideal_solution_words),
-        identity_statements: pickFilled(parsed.identityStatements, cur?.identity_statements),
+        location: pickFilled(parsed.location),
+        employment: pickFilled(parsed.employment),
+        education: pickFilled(parsed.education),
+        income: pickFilled(parsed.income),
+        behavioral: pickFilled(parsed.behavioral),
+        awareness_level: pickFilled(parsed.awarenessLevel),
+        daily_pains: pickFilled(parsed.dailyPains),
+        emotional_pains: pickFilled(parsed.emotionalPains),
+        unresolved_consequences: pickFilled(parsed.unresolvedConsequences),
+        fears: pickFilled(parsed.fears),
+        failed_solutions: pickFilled(parsed.failedSolutions),
+        limiting_beliefs: pickFilled(parsed.limitingBeliefs),
+        myths: pickFilled(parsed.myths),
+        daily_desires: pickFilled(parsed.dailyDesires),
+        emotional_desires: pickFilled(parsed.emotionalDesires),
+        small_wins: pickFilled(parsed.smallWins),
+        ideal_solution: pickFilled(parsed.idealSolution),
+        bottom_line: pickFilled(parsed.bottomLine),
+        cross_audience_quotes: pickFilled(parsed.crossAudienceQuotes),
+        ideal_solution_words: pickFilled(parsed.idealSolutionWords),
+        identity_statements: pickFilled(parsed.identityStatements),
         ...(rawFileText ? { raw_file_text: rawFileText } : {}),
       }
 
@@ -484,6 +414,7 @@ export async function POST(req: NextRequest) {
         saved: row,
         ...(aiError ? { warning: `${anthropicErrorToHebrew(aiError)} הנתונים לא נשמרו מהקובץ.` } : {}),
         ...(fileSaveError ? { fileSaveError } : {}),
+        ...(classificationWarning ? { classificationWarning } : {}),
         ...(multipleProfilesDetected
           ? {
               notice:
