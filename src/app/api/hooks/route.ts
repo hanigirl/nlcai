@@ -9,6 +9,11 @@ import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
 
+// Pipeline is generate → judge×N → polish×N — 3 sequential LLM rounds.
+// At count=10 this lands around 20-40s; Vercel's 10s default would always
+// time out. 60s gives headroom; bump to 300s if we ever exceed.
+export const maxDuration = 60
+
 const USE_DUMMY = false
 
 export async function POST(req: NextRequest) {

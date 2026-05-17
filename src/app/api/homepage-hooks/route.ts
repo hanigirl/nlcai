@@ -19,6 +19,11 @@ import { fetchLearningInsights } from "@/lib/learning-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
 import { withRetry } from "@/lib/supabase/retry"
 
+// Streaming SSE pipeline (plan → write+judge+polish per hook). Even with a
+// reduced HOOK_COUNT=10 in one batch, full run lands at ~30-60s. Vercel's
+// 10s default cuts the stream mid-batch.
+export const maxDuration = 60
+
 const USE_DUMMY = false
 
 export async function POST(req: NextRequest) {
@@ -225,9 +230,11 @@ ${audienceIdentity.limiting_beliefs}
     }
 
     // ============= PIPELINE STEP 1 — PLANNING =============
-    // Generate 20 angle plans: { category, angle, target_emotion, audience_quote, specific_topic }
+    // Generate angle plans: { category, angle, target_emotion, audience_quote, specific_topic }
     // Home page shows the first 4; the rest live in /hooks as the user's hook inventory.
-    const HOOK_COUNT = 20
+    // Kept at 10 so the full pipeline fits inside Vercel's maxDuration window
+    // and so users don't burn ~2x their Anthropic budget per onboarding.
+    const HOOK_COUNT = 10
 
     const categoriesCatalog = TEMPLATE_LIBRARY
       .map((g) => `- ${g.category} (${g.contentType}, "${g.label}"): ${g.goal}`)
@@ -236,12 +243,12 @@ ${audienceIdentity.limiting_beliefs}
     // Hard quota — aggressive. User marked these as favorites, and their creator
     // viral posts are the highest-signal source. Plans should be saturated from
     // them before falling back to generic audience content.
-    //   - Favorites: 3 plans per favorite, capped at 15 (so at least 5 slots
-    //     remain for other coverage).
+    //   - Favorites: 2 plans per favorite, capped at HOOK_COUNT-3 so at least
+    //     3 slots remain for other coverage.
     //   - Creator viral: fills whatever remains, up to their count.
     //   - Trends: pure top-up if creator content is thin.
     //   - Audience-only: the very last resort.
-    const favoriteQuota = Math.min(favoriteIdeas.length * 3, 15)
+    const favoriteQuota = Math.min(favoriteIdeas.length * 2, Math.max(HOOK_COUNT - 3, 0))
     const creatorQuota = Math.min(creatorIdeas.length, Math.max(HOOK_COUNT - favoriteQuota - 2, 0))
     const trendQuota = Math.min(trendIdeas.length, Math.max(HOOK_COUNT - favoriteQuota - creatorQuota, 0))
     const audienceOnly = Math.max(HOOK_COUNT - favoriteQuota - creatorQuota - trendQuota, 0)
@@ -269,8 +276,8 @@ ${quotaSection}
 ${categoriesCatalog}
 
 ## הוראות
-1. הפק ${HOOK_COUNT} זוויות שונות. **גוון קשיח בין הקטגוריות** — תכלול לפחות **8 קטגוריות שונות** מתוך 15 הקטגוריות הזמינות. אסור יותר מ-3 זוויות באותה קטגוריה (שומר על מגוון תבניות בכתיבה).
-2. פיזור חובה: חייב לכלול לפחות 3 קטגוריות מ-awareness (myth_breaking/common_mistakes/diagnosis), לפחות 2 מ-connection (personal_story/empowerment/identification/agenda), ולפחות 3 מ-authority (lists/real_reason/how_to/discovery/one_shift/comparisons/day_in_life/challenge).
+1. הפק ${HOOK_COUNT} זוויות שונות. **גוון קשיח בין הקטגוריות** — תכלול לפחות **5 קטגוריות שונות** מתוך 15 הקטגוריות הזמינות. אסור יותר מ-3 זוויות באותה קטגוריה (שומר על מגוון תבניות בכתיבה).
+2. פיזור חובה: חייב לכלול לפחות 2 קטגוריות מ-awareness (myth_breaking/common_mistakes/diagnosis), לפחות 1 מ-connection (personal_story/empowerment/identification/agenda), ולפחות 2 מ-authority (lists/real_reason/how_to/discovery/one_shift/comparisons/day_in_life/challenge).
 3. לכל זווית — בחר נושא ספציפי מהמחקר/קהל היעד (כלי, שיטה, כאב ספציפי, רצון). אסור גנרי.
 4. השתמש בשפת הקהל מ-cross_audience_quotes ו-identity_statements.
 5. הזווית צריכה להיות מובחנת — לא חפיפה בין שתי זוויות.
