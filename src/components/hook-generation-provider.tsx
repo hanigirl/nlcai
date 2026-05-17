@@ -47,7 +47,7 @@ export function useHookGeneration(): HookGenContextValue {
 
 // Mirrors HOOK_COUNT in /api/homepage-hooks. Keep in sync — used only
 // for the progress toast denominator ("X מתוך TOTAL").
-const TOTAL_HOOKS = 10
+const TOTAL_HOOKS = 6
 const TOAST_ID = "hook-generation-status"
 
 export function HookGenerationProvider({ children }: { children: React.ReactNode }) {

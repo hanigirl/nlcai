@@ -232,9 +232,10 @@ ${audienceIdentity.limiting_beliefs}
     // ============= PIPELINE STEP 1 — PLANNING =============
     // Generate angle plans: { category, angle, target_emotion, audience_quote, specific_topic }
     // Home page shows the first 4; the rest live in /hooks as the user's hook inventory.
-    // Kept at 10 so the full pipeline fits inside Vercel's maxDuration window
-    // and so users don't burn ~2x their Anthropic budget per onboarding.
-    const HOOK_COUNT = 10
+    // Temporary: dropped to 6 because the full write→judge→polish chain still
+    // exceeded the 60s Vercel cap at 10 (504 in prod). Until we slim the pipeline
+    // or move to Pro plan (300s ceiling), 6 keeps every run inside the budget.
+    const HOOK_COUNT = 6
 
     const categoriesCatalog = TEMPLATE_LIBRARY
       .map((g) => `- ${g.category} (${g.contentType}, "${g.label}"): ${g.goal}`)
@@ -276,8 +277,8 @@ ${quotaSection}
 ${categoriesCatalog}
 
 ## הוראות
-1. הפק ${HOOK_COUNT} זוויות שונות. **גוון קשיח בין הקטגוריות** — תכלול לפחות **5 קטגוריות שונות** מתוך 15 הקטגוריות הזמינות. אסור יותר מ-3 זוויות באותה קטגוריה (שומר על מגוון תבניות בכתיבה).
-2. פיזור חובה: חייב לכלול לפחות 2 קטגוריות מ-awareness (myth_breaking/common_mistakes/diagnosis), לפחות 1 מ-connection (personal_story/empowerment/identification/agenda), ולפחות 2 מ-authority (lists/real_reason/how_to/discovery/one_shift/comparisons/day_in_life/challenge).
+1. הפק ${HOOK_COUNT} זוויות שונות. **גוון קשיח בין הקטגוריות** — תכלול לפחות **3 קטגוריות שונות** מתוך 15 הקטגוריות הזמינות. אסור יותר מ-2 זוויות באותה קטגוריה (שומר על מגוון תבניות בכתיבה).
+2. פיזור חובה: חייב לכלול לפחות 1 קטגוריה מ-awareness (myth_breaking/common_mistakes/diagnosis), לפחות 1 מ-connection (personal_story/empowerment/identification/agenda), ולפחות 1 מ-authority (lists/real_reason/how_to/discovery/one_shift/comparisons/day_in_life/challenge).
 3. לכל זווית — בחר נושא ספציפי מהמחקר/קהל היעד (כלי, שיטה, כאב ספציפי, רצון). אסור גנרי.
 4. השתמש בשפת הקהל מ-cross_audience_quotes ו-identity_statements.
 5. הזווית צריכה להיות מובחנת — לא חפיפה בין שתי זוויות.
