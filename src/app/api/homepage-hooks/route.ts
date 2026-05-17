@@ -56,11 +56,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const [{ data: coreIdentity }, { data: audienceIdentity }, { data: products }, { data: favoritedRows }, learningInsights] = await Promise.all([
+    const [{ data: coreIdentity }, { data: audienceIdentity }, { data: products }, { data: favoritedRows }, { data: existingHooks }, learningInsights] = await Promise.all([
       supabase.from("core_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("audience_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("products").select("id, name, type, page_summary").eq("user_id", user.id),
       supabase.from("idea_favorites").select("idea_text").eq("user_id", user.id),
+      // Pull recent hook inventory so the planner can avoid repeating
+      // angles across successive generations. 50 is enough to cover several
+      // batches without bloating the prompt.
+      supabase.from("hooks").select("hook_text").eq("user_id", user.id).order("created_at", { ascending: false }).limit(50),
       fetchLearningInsights(supabase, user.id, "hook"),
     ])
 
@@ -272,6 +276,12 @@ ${identitySection}
 ${audienceSection}
 ${productsSection}
 ${trendContext ? `## מחקר מהשטח:\n${trendContext}\n` : ""}
+${(existingHooks && existingHooks.length > 0) ? `
+## 🚫 הוקים שכבר קיימים אצל המשתמש (אסור לחזור על אותם נושאים / זוויות!):
+${(existingHooks as { hook_text: string }[]).slice(0, 50).map((h, i) => `${i + 1}. ${h.hook_text}`).join("\n")}
+
+**זה קריטי**: עברתי על הרשימה. ה-${HOOK_COUNT} זוויות החדשות חייבות לפתוח **נושאים אחרים**, **זוויות אחרות**, **כאבים/רצונות אחרים** ממה שכבר קיים. אם זווית חדשה נראית דומה לאחת מהקיימות — תזרוק/י אותה ובחר/י משהו אחר. גיוון מהאינוונטר הקיים זה תנאי, לא המלצה.
+` : ""}
 ${quotaSection}
 ## קטגוריות הוקים זמינות (תבחר אחת לכל זווית):
 ${categoriesCatalog}
