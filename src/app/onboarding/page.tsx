@@ -267,10 +267,28 @@ function OnboardingPageInner() {
         const { data: { user } } = await supabase.auth.getUser()
 
         if (user) {
+          // Validate every entered key against its provider before persisting.
+          // Catches the recurring "pasted into wrong field" bug + dead keys.
+          // Each entry runs format + live check via the same endpoint Settings uses.
+          const entries: Array<["anthropic_api_key" | "heygen_api_key" | "apify_api_key", string, string]> = []
+          if (anthropicKey.trim()) entries.push(["anthropic_api_key", anthropicKey.trim(), "Anthropic"])
+          if (heygenKey.trim()) entries.push(["heygen_api_key", heygenKey.trim(), "HeyGen"])
+          if (apifyKey.trim()) entries.push(["apify_api_key", apifyKey.trim(), "Apify"])
+
+          for (const [keyName, value, label] of entries) {
+            const v = await fetch("/api/validate-api-key", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ keyName, value }),
+            }).then((r) => r.json()).catch(() => ({ ok: false, message: "תקלת רשת" }))
+            if (!v.ok) {
+              toast.error(`${label}: ${v.message ?? "המפתח לא עבר ולידציה"}`, { duration: 12000 })
+              return
+            }
+          }
+
           const updates: Record<string, string> = {}
-          if (anthropicKey.trim()) updates.anthropic_api_key = anthropicKey.trim()
-          if (heygenKey.trim()) updates.heygen_api_key = heygenKey.trim()
-          if (apifyKey.trim()) updates.apify_api_key = apifyKey.trim()
+          for (const [keyName, value] of entries) updates[keyName] = value
           if (Object.keys(updates).length > 0) {
             const { error } = await supabase.from("users").update(updates as never).eq("id", user.id)
             if (error) {

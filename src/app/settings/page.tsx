@@ -393,13 +393,34 @@ function SettingsPageInner() {
     const value = inputValues[keyName].trim()
     if (!value) return
     setSaving(keyName)
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    await supabase.from("users").update({ [keyName]: value } as never).eq("id", user.id)
-    setStoredKeys((prev) => ({ ...prev, [keyName]: value }))
-    setInputValues((prev) => ({ ...prev, [keyName]: "" }))
-    setSaving(null)
+    try {
+      // Validate format + live against the provider before persisting.
+      // Catches: keys pasted into wrong field, typos, expired keys, 0 credits.
+      const validation = await fetch("/api/validate-api-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keyName, value }),
+      }).then((r) => r.json()).catch(() => ({ ok: false, code: "network", message: "תקלת רשת" }))
+
+      if (!validation.ok) {
+        toast.error(validation.message ?? "המפתח לא עבר ולידציה", { duration: 12000 })
+        return
+      }
+
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const { error } = await supabase.from("users").update({ [keyName]: value } as never).eq("id", user.id)
+      if (error) {
+        toast.error(`שגיאה בשמירת המפתח: ${error.message}`, { duration: 10000 })
+        return
+      }
+      setStoredKeys((prev) => ({ ...prev, [keyName]: value }))
+      setInputValues((prev) => ({ ...prev, [keyName]: "" }))
+      toast.success("המפתח אומת ונשמר בהצלחה")
+    } finally {
+      setSaving(null)
+    }
 
     if (keyName === "anthropic_api_key") {
       setReparsing(true)
