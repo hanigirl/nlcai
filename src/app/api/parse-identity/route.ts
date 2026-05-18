@@ -149,7 +149,10 @@ export async function POST(req: NextRequest) {
 
           const message = await client.messages.create({
             model: "claude-sonnet-4-6",
-            max_tokens: 4096,
+            // 4096 was leaving Hebrew responses truncated on long audience docs.
+            // 21 fields × 100-300 Hebrew chars each ≈ 6-12k tokens once Hebrew is
+            // counted. 8192 fits the full envelope without bloating short outputs.
+            max_tokens: 8192,
             messages: [{ role: "user", content: userContent }],
           })
 
@@ -193,6 +196,63 @@ export async function POST(req: NextRequest) {
           )
           if (!aiError && !hasAnyField) {
             aiError = "claude_returned_empty"
+          }
+
+          // Critical-fields retry. Real bug seen in production: Claude returns
+          // a structurally-valid JSON but leaves all five "pain/fear/desire"
+          // fields empty even when the document discusses them. The downstream
+          // /api/homepage-hooks gate then rejects the user with audience_missing
+          // and the home page crashes. When we re-ran the SAME prompt manually
+          // on these users it filled 17+ fields — so the failure is model
+          // variance, not a prompt or input problem. Surgical retry asks Claude
+          // for those five fields only (smaller output, ~5-15s vs full re-parse)
+          // and merges the result.
+          if (type === "audience" && !aiError && documentTypeOk !== false) {
+            const CRITICAL = ["dailyPains", "emotionalPains", "fears", "dailyDesires", "emotionalDesires"] as const
+            const allEmpty = CRITICAL.every((k) => !parsed[k] || !parsed[k].trim())
+            if (allEmpty) {
+              console.warn("[parse-identity] audience parse left all 5 critical fields empty — retrying with focused prompt")
+              try {
+                const retryInstruction = `הסיבוב הקודם השאיר את 5 השדות הבאים ריקים: dailyPains, emotionalPains, fears, dailyDesires, emotionalDesires. המסמך הזה כן מתאר את הקהל, אז יש בו תוכן עבור השדות האלה — קראי אותו שוב בעיון וחלצי את הכאבים, הפחדים והרצונות (גם אם הם מוסקים מההקשר ולא בציטוטים ישירים). החזירי JSON עם 5 השדות האלה בלבד, ללא טקסט נוסף, ללא markdown fences. אם לאחר עיון שני באמת אין כלום בקובץ עבור שדה מסוים — השאירי אותו ריק.`
+                const retryUserContent: Anthropic.ContentBlockParam[] =
+                  fileContent.kind === "pdf"
+                    ? [
+                        {
+                          type: "document",
+                          source: {
+                            type: "base64",
+                            media_type: "application/pdf",
+                            data: fileContent.base64,
+                          },
+                        },
+                        { type: "text", text: retryInstruction },
+                      ]
+                    : [{ type: "text", text: `${retryInstruction}\n\n--- הטקסט ---\n${fileContent.text}` }]
+                const retryMessage = await client.messages.create({
+                  model: "claude-sonnet-4-6",
+                  max_tokens: 2048,
+                  messages: [{ role: "user", content: retryUserContent }],
+                })
+                const retryRaw = retryMessage.content.find((b) => b.type === "text")?.text ?? ""
+                const retryJsonStr = extractFirstJsonObject(retryRaw)
+                if (retryJsonStr) {
+                  const retryParsed = JSON.parse(retryJsonStr) as Record<string, unknown>
+                  let filled = 0
+                  for (const k of CRITICAL) {
+                    const v = retryParsed[k]
+                    if (typeof v === "string" && v.trim()) {
+                      parsed[k] = v
+                      filled++
+                    }
+                  }
+                  console.log(`[parse-identity] audience retry filled ${filled}/${CRITICAL.length} critical fields`)
+                }
+              } catch (retryErr) {
+                // Non-fatal — fall through with original parse. The gap popup
+                // will still ask the user to fill these manually.
+                console.error("[parse-identity] audience retry failed:", retryErr instanceof Error ? retryErr.message : retryErr)
+              }
+            }
           }
         } catch (err) {
           aiError = err instanceof Error ? err.message : String(err)
