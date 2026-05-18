@@ -57,7 +57,20 @@ if (delErr) {
   process.exit(1)
 }
 
-// 2. Flip onboarding_completed = false in user_metadata. updateUserById
+// 2. Clear stored API keys — first reset only flipped the flag, the user
+// then re-uploaded with the same wrong-provider key still in the field,
+// and onboarding "succeeded" with an empty parse. Force them to re-enter
+// every key so the new validation actually runs.
+const { error: keysErr } = await admin
+  .from("users")
+  .update({ anthropic_api_key: null, apify_api_key: null, heygen_api_key: null })
+  .eq("id", user.id)
+if (keysErr) {
+  console.error("clear api keys failed:", keysErr.message)
+  process.exit(1)
+}
+
+// 3. Flip onboarding_completed = false in user_metadata. updateUserById
 // merges user_metadata, so we explicitly set the flag to false rather than
 // trying to remove the key.
 const { error: updErr } = await admin.auth.admin.updateUserById(user.id, {
@@ -66,6 +79,18 @@ const { error: updErr } = await admin.auth.admin.updateUserById(user.id, {
 if (updErr) {
   console.error("updateUserById failed:", updErr.message)
   process.exit(1)
+}
+
+// 4. Kill all active sessions. Without this, the user's existing JWT in
+// the browser cookie still carries onboarding_completed:true (JWTs are
+// not re-issued on metadata change until refresh), so the middleware
+// trusts the stale flag and lets them through to home — which then
+// crashes because the data they need is gone. Forcing a re-login is
+// the cleanest way to pick up the new metadata.
+const { error: sessErr } = await admin.auth.admin.signOut(user.id, "global")
+if (sessErr) {
+  // Non-fatal — if signOut isn't available, instruct the user to clear cookies.
+  console.warn("signOut failed (user must clear cookies manually):", sessErr.message)
 }
 
 console.log(JSON.stringify({
