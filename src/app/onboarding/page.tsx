@@ -559,19 +559,27 @@ function OnboardingPageInner() {
   }
 
   // Closing the popup without "primary save" still persists current values so
-  // typed progress isn't lost. Errors are swallowed so the close action never
-  // gets stuck — worst case the user re-edits next time.
+  // typed progress isn't lost. In gaps mode the dialog is locked — the only
+  // way the user reaches this is by clicking "אשלים בהגדרות", which we honor
+  // by saving what we have and bouncing them to /settings/business so the
+  // missing fields can be completed there. Otherwise (verify / preview) the
+  // popup just closes.
   const handleCoreGapClose = (current: CoreIdentityValues) => {
     setCoreGapOpen(false)
     if (gapPreviewMode) {
       setGapPreviewMode(false)
       return
     }
+    const isGapsMode = coreGapMode === "gaps"
     void fetch("/api/core-identity", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(current),
     }).catch((err) => console.warn("[onboarding] core gap close-save failed:", err))
+    if (isGapsMode) {
+      toast("נמשיך מאוחר יותר בעמוד ההגדרות", { duration: 8000 })
+      router.push("/settings?tab=business")
+    }
   }
 
   const handleAudienceGapSave = async (next: AudienceIdentityValues) => {
@@ -609,11 +617,20 @@ function OnboardingPageInner() {
       setGapPreviewMode(false)
       return
     }
+    // Same locked-mode escape hatch as core: save progress, send the user
+    // to settings to finish. The home page would otherwise hit
+    // audience_missing and the React tree crashes — exactly the bug we're
+    // fixing here.
+    const isGapsMode = audienceGapMode === "gaps"
     void fetch("/api/audience-identity", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(current),
     }).catch((err) => console.warn("[onboarding] audience gap close-save failed:", err))
+    if (isGapsMode) {
+      toast("נמשיך מאוחר יותר בעמוד ההגדרות", { duration: 8000 })
+      router.push("/settings?tab=business")
+    }
   }
 
   // File replacement: overwrite the existing identity row with an empty one

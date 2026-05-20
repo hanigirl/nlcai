@@ -26,10 +26,17 @@ import {
 //   header (sticky top), scroll body, footer (sticky bottom). Description in
 //   verify mode is rendered as a red notice box so the user immediately sees
 //   that the upload was rejected.
+//
+// `locked` mode (gaps with critical fields missing): hides the X, blocks
+// escape + click-outside, and replaces the cancel button with a "defer to
+// settings" path. Without this, users hit X, the row lands partial, and
+// downstream pipelines (hooks/ideas) fail with audience_missing — leading
+// to the crash chain we saw in prod for two users back-to-back.
 function DialogShell({
   open,
   onOpenChange,
   mode,
+  locked,
   title,
   verifyMessage,
   gapMessage,
@@ -46,6 +53,7 @@ function DialogShell({
   open: boolean
   onOpenChange: (open: boolean) => void
   mode: "gaps" | "verify"
+  locked?: boolean
   title: string
   verifyMessage: string
   gapMessage: string
@@ -60,9 +68,18 @@ function DialogShell({
   onSecondary: () => void
 }) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      // Locked: swallow programmatic close requests so the only paths out
+      // are the primary button (after all required fields are filled) and
+      // the explicit secondary "defer to settings" action.
+      onOpenChange={locked ? () => {} : onOpenChange}
+    >
       <DialogContent
         dir="rtl"
+        showCloseButton={!locked}
+        onPointerDownOutside={(e) => { if (locked) e.preventDefault() }}
+        onEscapeKeyDown={(e) => { if (locked) e.preventDefault() }}
         className={`${contentMaxWidth} max-h-[85vh] p-0 flex flex-col gap-0 overflow-hidden`}
       >
         <DialogHeader className="shrink-0 px-6 pt-6 pb-4 border-b border-border-neutral-default">
@@ -85,10 +102,10 @@ function DialogShell({
 
         <div className="shrink-0 px-6 py-4 border-t border-border-neutral-default bg-bg-surface flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button
-            variant="outline"
+            variant={locked ? "ghost" : "outline"}
             onClick={onSecondary}
             disabled={saving}
-            className="border-border-neutral-default text-text-neutral-default"
+            className={locked ? "text-text-neutral-default" : "border-border-neutral-default text-text-neutral-default"}
           >
             {secondaryLabel}
           </Button>
@@ -157,10 +174,11 @@ export function CoreIdentityGapDialog({
         if (!o) onCancel(values)
       }}
       mode={mode}
+      locked={mode === "gaps"}
       contentMaxWidth="max-w-lg"
       title={mode === "verify" ? "אשרו את פרטי הסגנון" : "השלימו את הפרטים החסרים"}
       verifyMessage="הקובץ שהעליתם לא זוהה כתיאור של סגנון כתיבה. בדקו את הפרטים השמורים ועדכנו במידת הצורך, או סגרו והעלו קובץ אחר."
-      gapMessage="הקובץ עלה ונותח, אבל חסרים לנו עוד כמה פרטים כדי ליצור עבורכם תוכן מדויק."
+      gapMessage="הקובץ עלה ונותח, אבל חסרים לנו עוד כמה פרטים חיוניים כדי שהמערכת תוכל לעבוד עבורכם. ההשלמה לוקחת רק דקה."
       body={
         <div className="flex flex-col gap-4">
           {fieldsToShow.map((field) => (
@@ -198,7 +216,7 @@ export function CoreIdentityGapDialog({
         </div>
       }
       primaryLabel={mode === "verify" ? "שמירה ידנית" : "שמור והמשך"}
-      secondaryLabel={mode === "verify" ? "סגירה והעלאת קובץ אחר" : "ביטול"}
+      secondaryLabel={mode === "verify" ? "סגירה והעלאת קובץ אחר" : "אשלים בהגדרות אחר כך"}
       primaryDisabled={!allFilled}
       saving={saving}
       onPrimary={() => void onSave(values)}
@@ -256,10 +274,11 @@ export function AudienceIdentityGapDialog({
         if (!o) onCancel(values)
       }}
       mode={mode}
+      locked={mode === "gaps"}
       contentMaxWidth="max-w-xl"
       title={mode === "verify" ? "אשרו את פרטי הקהל" : "השלימו את פרטי הקהל החסרים"}
       verifyMessage="הקובץ שהעליתם לא זוהה כניתוח קהל יעד. בדקו את הפרטים השמורים ועדכנו במידת הצורך, או סגרו והעלו קובץ אחר."
-      gapMessage="הקובץ עלה ונותח, אבל חסרים לנו עוד כמה פרטים כדי לדבר בדיוק לקהל שלכם."
+      gapMessage="הקובץ עלה ונותח, אבל חסרים לנו עוד כמה פרטים חיוניים כדי שהמערכת תוכל לדבר בדיוק לקהל שלכם. ההשלמה לוקחת רק דקה."
       body={
         <div className="flex flex-col gap-6">
           {groupsToShow.map((group) => (
@@ -303,7 +322,7 @@ export function AudienceIdentityGapDialog({
         </div>
       }
       primaryLabel={mode === "verify" ? "שמירה ידנית" : "שמור והמשך"}
-      secondaryLabel={mode === "verify" ? "סגירה והעלאת קובץ אחר" : "ביטול"}
+      secondaryLabel={mode === "verify" ? "סגירה והעלאת קובץ אחר" : "אשלים בהגדרות אחר כך"}
       primaryDisabled={!allFilled}
       saving={saving}
       onPrimary={() => void onSave(values)}
