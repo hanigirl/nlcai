@@ -317,13 +317,26 @@ export async function POST(req: NextRequest) {
           // retry — exactly when it's most needed. One real user (audience file,
           // 9.5K chars, well within Sonnet's budget) hit this and ended up with
           // 21 blank fields in the gap dialog because the retry never fired.
-          if (type === "audience" && !aiError && documentTypeOk !== false) {
+          // Two important loosenings here:
+          //   - dropped the `documentTypeOk !== false` gate. Haiku occasionally
+          //     misclassifies a clearly-audience doc as not-audience AND
+          //     simultaneously returns mostly-empty fields. The retry should
+          //     still get a shot — the focused prompt makes it clear what we
+          //     want regardless of classification.
+          //   - relaxed the threshold from "all 5 critical empty" to "3+
+          //     critical empty". One real user (Korin) had a sparse run where
+          //     Haiku only filled 2 demographic fields; all 5 critical were
+          //     empty in her case, but having even one critical filled would
+          //     have blocked the retry under the old rule and left her with
+          //     a near-empty row. 3+ catches the "mostly sparse" case while
+          //     still avoiding unnecessary retries on a healthy parse.
+          if (type === "audience" && !aiError) {
             const CRITICAL = ["dailyPains", "emotionalPains", "fears", "dailyDesires", "emotionalDesires"] as const
-            const allEmpty = CRITICAL.every((k) => !parsed[k] || !parsed[k].trim())
-            if (allEmpty) {
-              console.warn("[parse-identity] audience parse left all 5 critical fields empty — retrying with focused prompt")
+            const emptyCount = CRITICAL.filter((k) => !parsed[k] || !parsed[k].trim()).length
+            if (emptyCount >= 3) {
+              console.warn(`[parse-identity] audience parse left ${emptyCount}/5 critical fields empty — retrying with focused prompt`)
               try {
-                const retryInstruction = `הסיבוב הקודם השאיר את 5 השדות הבאים ריקים: dailyPains, emotionalPains, fears, dailyDesires, emotionalDesires. המסמך הזה כן מתאר את הקהל, אז יש בו תוכן עבור השדות האלה — קראי אותו שוב בעיון וחלצי את הכאבים, הפחדים והרצונות (גם אם הם מוסקים מההקשר ולא בציטוטים ישירים). החזירי JSON עם 5 השדות האלה בלבד, ללא טקסט נוסף, ללא markdown fences. אם לאחר עיון שני באמת אין כלום בקובץ עבור שדה מסוים — השאירי אותו ריק.`
+                const retryInstruction = `הסיבוב הקודם הותיר רוב/כל 5 השדות הבאים ריקים: dailyPains, emotionalPains, fears, dailyDesires, emotionalDesires. המסמך מתאר קהל יעד באופן מובהק — קראי אותו שוב בעיון וחלצי את הכאבים, הפחדים והרצונות, גם אם הם מוסקים מההקשר ולא בציטוטים ישירים. החזירי JSON עם 5 השדות האלה בלבד, ללא טקסט נוסף וללא markdown fences. אם לאחר עיון שני באמת אין כלום בקובץ עבור שדה מסוים — השאירי אותו ריק.`
                 const retryUserContent: Anthropic.ContentBlockParam[] =
                   fileContent.kind === "pdf"
                     ? [
