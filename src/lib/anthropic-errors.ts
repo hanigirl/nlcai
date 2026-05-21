@@ -27,6 +27,14 @@ const PATTERNS: Array<{ test: (m: string) => boolean; message: string }> = [
     message: "הקריאה ל-Anthropic לקחה יותר מדי זמן. נסו שוב.",
   },
   {
+    // Our own per-call AbortSignal.timeout fired before the parse finished.
+    // The row gets persisted with whatever we extracted (often nothing), and
+    // the gap popup picks up the missing fields for manual completion.
+    test: (m) => /^ai_timeout$|request was aborted|aborted/i.test(m),
+    message:
+      "הניתוח לקח יותר מדי זמן. אפשר להשלים את הפרטים ידנית בפופאפ שייפתח, או לנסות שוב עם קובץ קצר יותר.",
+  },
+  {
     test: (m) =>
       /^anthropic_not_connected$|claude api key not connected/i.test(m),
     message: "מפתח Claude לא מחובר. חברו אותו בהגדרות → חיבור חשבונות.",

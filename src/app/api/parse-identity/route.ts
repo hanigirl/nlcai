@@ -214,14 +214,15 @@ export async function POST(req: NextRequest) {
           // Tight per-call budget, NO SDK-level retries. SDK defaults (10min
           // timeout, 2 retries with exponential backoff) routinely pile up
           // past 60s on a mildly-overloaded Anthropic and surface as opaque
-          // 504s — exactly the bug we just shipped a half-fix for. Even
-          // maxRetries: 1 can blow the ceiling (45s + 45s = 90s on Hobby's
-          // 60s cap). maxRetries: 0 guarantees a single attempt; our own
-          // critical-fields retry below is the only retry layer we need, and
-          // the gap dialog catches whatever the AI couldn't extract.
+          // 504s. maxRetries: 0 guarantees a single attempt; our own
+          // critical-fields retry below is the only retry layer we need,
+          // and the gap dialog catches whatever the AI couldn't extract.
+          // SDK timeout is slightly higher than the AbortSignal on each
+          // call below so our signal is what actually cancels the request —
+          // we want a clean AbortError, not the SDK's own timeout handling.
           const client = new Anthropic({
             apiKey: anthropicApiKey,
-            timeout: 45000,
+            timeout: 50000,
             maxRetries: 0,
           })
 
@@ -246,10 +247,11 @@ export async function POST(req: NextRequest) {
                 ]
 
           // AbortSignal.timeout at the fetch layer is the safety belt over
-          // the SDK's own timeout — guarantees the call returns within 35s
-          // even if anything inside the SDK behaves unexpectedly. Leaves
-          // ~25s of headroom under Vercel's 60s ceiling for the retry +
-          // storage save + DB upsert that follow.
+          // the SDK's own timeout — guarantees the call returns within 45s
+          // even if anything inside the SDK behaves unexpectedly. Combined
+          // with the parallel storage save (max ~10s, overlapped with this
+          // call) and the retry (~12s), worst case lands at ~59s, safely
+          // under Vercel's 60s ceiling.
           const message = await client.messages.create({
             model: "claude-sonnet-4-6",
             // 4096 was leaving Hebrew responses truncated on long audience docs.
@@ -258,7 +260,7 @@ export async function POST(req: NextRequest) {
             max_tokens: 8192,
             messages: [{ role: "user", content: userContent }],
           }, {
-            signal: AbortSignal.timeout(35000),
+            signal: AbortSignal.timeout(45000),
           })
 
           const textBlock = message.content.find((b) => b.type === "text")
@@ -334,18 +336,16 @@ export async function POST(req: NextRequest) {
                       ]
                     : [{ type: "text", text: `${retryInstruction}\n\n--- הטקסט ---\n${fileContent.text}` }]
                 // Haiku for the focused 5-field retry — 4-5x faster than
-                // Sonnet, plenty smart for narrow targeted extraction, and
-                // the speed difference (3-8s vs 15-30s) is what keeps the
-                // combined parse inside Vercel's function ceiling.
-                // AbortSignal caps the retry at 15s — well above Haiku's
-                // typical 3-8s for this prompt, but a hard ceiling if
-                // something stalls.
+                // Sonnet, plenty smart for narrow targeted extraction.
+                // AbortSignal caps at 12s — well above Haiku's typical
+                // 3-8s for this prompt, but tight enough that retry +
+                // main call still fit inside the function budget.
                 const retryMessage = await client.messages.create({
                   model: "claude-haiku-4-5-20251001",
                   max_tokens: 2048,
                   messages: [{ role: "user", content: retryUserContent }],
                 }, {
-                  signal: AbortSignal.timeout(15000),
+                  signal: AbortSignal.timeout(12000),
                 })
                 const retryRaw = retryMessage.content.find((b) => b.type === "text")?.text ?? ""
                 const retryJsonStr = extractFirstJsonObject(retryRaw)
@@ -369,7 +369,16 @@ export async function POST(req: NextRequest) {
             }
           }
         } catch (err) {
-          aiError = err instanceof Error ? err.message : String(err)
+          // Distinguish our own AbortSignal timeout from a real Anthropic
+          // failure. AbortError = "parse took too long, let the gap dialog
+          // catch the empty fields" (soft), not "Anthropic is broken" (hard).
+          // Without this branch the user saw a red "Request was aborted"
+          // toast and got bounced out instead of into the recoverable popup.
+          const msg = err instanceof Error ? err.message : String(err)
+          const isAbort =
+            (err instanceof Error && err.name === "AbortError") ||
+            /aborted/i.test(msg)
+          aiError = isAbort ? "ai_timeout" : msg
           console.error("AI parsing failed, saving manual fields only:", aiError)
         }
       }
@@ -421,7 +430,8 @@ export async function POST(req: NextRequest) {
     const aiErrorIsSoft =
       aiError === "claude_returned_empty" ||
       aiError === "no_json_block_in_response" ||
-      aiError === "anthropic_not_connected"
+      aiError === "anthropic_not_connected" ||
+      aiError === "ai_timeout"
     if (aiError && !aiErrorIsSoft && !hasManualCoreContent) {
       return NextResponse.json(
         {
