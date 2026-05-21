@@ -140,16 +140,18 @@ export async function POST(req: NextRequest) {
               ? CORE_IDENTITY_PARSE_PROMPT
               : AUDIENCE_IDENTITY_PARSE_PROMPT
 
-          // Tight per-call budget + single retry. SDK defaults (10min timeout,
-          // 2 retries with exponential backoff) can pile up to 60-90s on a
-          // mildly-overloaded Anthropic, blowing past Vercel's function ceiling
-          // and surfacing as opaque 504s to the user. 45s + 1 retry keeps any
-          // single parse attempt safely inside budget; if Anthropic is genuinely
-          // down we fail fast and the gap dialog catches the empty fields.
+          // Tight per-call budget, NO SDK-level retries. SDK defaults (10min
+          // timeout, 2 retries with exponential backoff) routinely pile up
+          // past 60s on a mildly-overloaded Anthropic and surface as opaque
+          // 504s — exactly the bug we just shipped a half-fix for. Even
+          // maxRetries: 1 can blow the ceiling (45s + 45s = 90s on Hobby's
+          // 60s cap). maxRetries: 0 guarantees a single attempt; our own
+          // critical-fields retry below is the only retry layer we need, and
+          // the gap dialog catches whatever the AI couldn't extract.
           const client = new Anthropic({
             apiKey: anthropicApiKey,
             timeout: 45000,
-            maxRetries: 1,
+            maxRetries: 0,
           })
 
           const userContent: Anthropic.ContentBlockParam[] =
