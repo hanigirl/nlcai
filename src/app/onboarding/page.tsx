@@ -169,17 +169,21 @@ export default function OnboardingPage() {
 function OnboardingPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const stepParam = searchParams.get("step")
-  const initialStep = stepParam
-    ? Math.max(0, Math.min(STEPS.length - 1, parseInt(stepParam, 10) || 0))
-    : 0
-  const [currentStep, setCurrentStep] = useState(initialStep)
 
   // Dev navigator — visible only when running locally OR when the URL has
   // `?dev=1`. Lets the designer jump between steps without satisfying each
   // step's validation. Production users never see this.
   const devMode =
     process.env.NODE_ENV === "development" || searchParams.get("dev") === "1"
+
+  // ?step=N teleports the user to a specific step. Honored only in devMode —
+  // in production it was an unintended escape route: real users could land at
+  // /onboarding?step=4 and skip past identity collection entirely.
+  const stepParam = devMode ? searchParams.get("step") : null
+  const initialStep = stepParam
+    ? Math.max(0, Math.min(STEPS.length - 1, parseInt(stepParam, 10) || 0))
+    : 0
+  const [currentStep, setCurrentStep] = useState(initialStep)
 
   // Step 1 - Connections
   const [anthropicKey, setAnthropicKey] = useState("")
@@ -519,9 +523,21 @@ function OnboardingPageInner() {
           }
         }
 
-        await supabase.auth.updateUser({
-          data: { onboarding_completed: true },
+        // Server-validated completion — only sets the flag if the DB actually
+        // has content in every critical identity field. Refuses with 400 if
+        // the user bypassed an earlier step somehow (legacy state, manual API
+        // calls, etc.), and the toast points them back to fix it.
+        const completeRes = await fetch("/api/onboarding/complete", {
+          method: "POST",
         })
+        if (!completeRes.ok) {
+          const data = await completeRes.json().catch(() => ({}))
+          toast.error(
+            data.message || "לא הצלחנו לסיים את האונבורדינג. השלימו את הפרטים החסרים.",
+            { duration: 12000 },
+          )
+          return
+        }
         router.push("/welcome")
       }
     } finally {

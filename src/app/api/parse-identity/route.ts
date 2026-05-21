@@ -57,6 +57,21 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Reject calls with no file. The onboarding UI's canProceed already blocks
+    // the "continue without uploading" path, but a direct API call (or a buggy
+    // future client) could otherwise create an empty identity row — which is
+    // exactly how some legacy users ended up stranded on /onboarding-complete
+    // with all-blank data downstream.
+    if (!file) {
+      return NextResponse.json(
+        {
+          error: "file_required",
+          message: "חובה להעלות קובץ. לא ניתן להמשיך בלי תוכן.",
+        },
+        { status: 400 }
+      )
+    }
+
     let anthropicApiKey: string | null = null
     try {
       anthropicApiKey = await getUserApiKey(supabase, "anthropic_api_key")
@@ -125,7 +140,17 @@ export async function POST(req: NextRequest) {
               ? CORE_IDENTITY_PARSE_PROMPT
               : AUDIENCE_IDENTITY_PARSE_PROMPT
 
-          const client = new Anthropic({ apiKey: anthropicApiKey })
+          // Tight per-call budget + single retry. SDK defaults (10min timeout,
+          // 2 retries with exponential backoff) can pile up to 60-90s on a
+          // mildly-overloaded Anthropic, blowing past Vercel's function ceiling
+          // and surfacing as opaque 504s to the user. 45s + 1 retry keeps any
+          // single parse attempt safely inside budget; if Anthropic is genuinely
+          // down we fail fast and the gap dialog catches the empty fields.
+          const client = new Anthropic({
+            apiKey: anthropicApiKey,
+            timeout: 45000,
+            maxRetries: 1,
+          })
 
           const userContent: Anthropic.ContentBlockParam[] =
             fileContent.kind === "pdf"
@@ -228,8 +253,12 @@ export async function POST(req: NextRequest) {
                         { type: "text", text: retryInstruction },
                       ]
                     : [{ type: "text", text: `${retryInstruction}\n\n--- הטקסט ---\n${fileContent.text}` }]
+                // Haiku for the focused 5-field retry — 4-5x faster than
+                // Sonnet, plenty smart for narrow targeted extraction, and
+                // the speed difference (3-8s vs 15-30s) is what keeps the
+                // combined parse inside Vercel's function ceiling.
                 const retryMessage = await client.messages.create({
-                  model: "claude-sonnet-4-6",
+                  model: "claude-haiku-4-5-20251001",
                   max_tokens: 2048,
                   messages: [{ role: "user", content: retryUserContent }],
                 })

@@ -28,10 +28,13 @@ import {
 //   that the upload was rejected.
 //
 // `locked` mode (gaps with critical fields missing): hides the X, blocks
-// escape + click-outside, and replaces the cancel button with a "defer to
-// settings" path. Without this, users hit X, the row lands partial, and
-// downstream pipelines (hooks/ideas) fail with audience_missing — leading
-// to the crash chain we saw in prod for two users back-to-back.
+// escape + click-outside, and removes the secondary button entirely. The
+// only way forward is the primary "save and continue" button, which is
+// itself disabled until every shown field is filled. Closing the tab is
+// the only off-ramp — the middleware gate catches that user on the next
+// navigation. Without these constraints, users escaped the dialog with
+// blank rows and downstream pipelines (hooks/ideas) failed with
+// audience_missing.
 function DialogShell({
   open,
   onOpenChange,
@@ -101,14 +104,16 @@ function DialogShell({
         </div>
 
         <div className="shrink-0 px-6 py-4 border-t border-border-neutral-default bg-bg-surface flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button
-            variant={locked ? "ghost" : "outline"}
-            onClick={onSecondary}
-            disabled={saving}
-            className={locked ? "text-text-neutral-default" : "border-border-neutral-default text-text-neutral-default"}
-          >
-            {secondaryLabel}
-          </Button>
+          {!locked && (
+            <Button
+              variant="outline"
+              onClick={onSecondary}
+              disabled={saving}
+              className="border-border-neutral-default text-text-neutral-default"
+            >
+              {secondaryLabel}
+            </Button>
+          )}
           <Button
             onClick={onPrimary}
             disabled={primaryDisabled || saving}

@@ -1,0 +1,156 @@
+import { createServerClient } from "@supabase/ssr";
+import { NextResponse, type NextRequest } from "next/server";
+
+// Onboarding gate. Two jobs:
+//   1. Send anonymous users to /login.
+//   2. Send logged-in users with incomplete identity data back to /onboarding
+//      on any protected route, regardless of the user_metadata flag.
+//
+// The `onboarding_completed` flag in user_metadata is a routing cache only —
+// the real source of truth is whether the DB has content in the critical
+// identity fields. The flag can drift (legacy users, reset scripts, partial
+// rows from earlier flows), so we always re-check the DB on protected routes.
+// /onboarding, /settings, and /auth are recovery surfaces — incomplete users
+// must be able to reach them to finish their setup.
+export async function middleware(request: NextRequest) {
+  let supabaseResponse = NextResponse.next({ request });
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) =>
+            request.cookies.set(name, value)
+          );
+          supabaseResponse = NextResponse.next({ request });
+          cookiesToSet.forEach(({ name, value, options }) =>
+            supabaseResponse.cookies.set(name, value, options)
+          );
+        },
+      },
+    }
+  );
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const path = request.nextUrl.pathname;
+  const isAuthRoute = path.startsWith("/login") || path.startsWith("/auth");
+  const isOnboardingRoute = path.startsWith("/onboarding");
+  const isSettingsRoute = path.startsWith("/settings");
+
+  // Routes incomplete users can still reach. Everything outside this list
+  // requires a complete profile.
+  const isRecoveryRoute = isOnboardingRoute || isSettingsRoute || isAuthRoute;
+
+  // Anonymous → /login (except already on auth)
+  if (!user && !isAuthRoute) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    return NextResponse.redirect(url);
+  }
+
+  if (!user) return supabaseResponse;
+
+  // Logged in + on /login → bounce home. The home-page request will re-enter
+  // this middleware and run the completeness check below; an incomplete user
+  // ends up at /onboarding after one extra redirect.
+  if (path.startsWith("/login")) {
+    const url = request.nextUrl.clone();
+    url.pathname = user.user_metadata?.onboarding_completed ? "/" : "/onboarding";
+    return NextResponse.redirect(url);
+  }
+
+  // Recovery routes: let through, don't run the DB check (avoids redirect
+  // loops on /onboarding itself, and /settings is where incomplete users
+  // fix their data).
+  if (isRecoveryRoute) return supabaseResponse;
+
+  // Protected route — verify identity completeness against the DB. The flag
+  // alone isn't trusted because it can drift; the same audit script that
+  // surfaced our two broken users would otherwise miss this on the routing
+  // path too.
+  const [coreRes, audRes] = await Promise.all([
+    supabase
+      .from("core_identities")
+      .select("who_i_am, niche, how_i_sound")
+      .eq("user_id", user.id)
+      .maybeSingle(),
+    supabase
+      .from("audience_identities")
+      .select("daily_pains, emotional_pains, fears, daily_desires, emotional_desires")
+      .eq("user_id", user.id)
+      .maybeSingle(),
+  ]);
+
+  const hasText = (v: unknown) =>
+    typeof v === "string" && v.trim().length > 0;
+
+  const core = coreRes.data as
+    | { who_i_am: string | null; niche: string | null; how_i_sound: string | null }
+    | null;
+  const aud = audRes.data as
+    | {
+        daily_pains: string | null;
+        emotional_pains: string | null;
+        fears: string | null;
+        daily_desires: string | null;
+        emotional_desires: string | null;
+      }
+    | null;
+
+  const styleComplete =
+    !!core &&
+    [core.who_i_am, core.niche, core.how_i_sound].every(hasText);
+  const audienceComplete =
+    !!aud &&
+    [
+      aud.daily_pains,
+      aud.emotional_pains,
+      aud.fears,
+      aud.daily_desires,
+      aud.emotional_desires,
+    ].every(hasText);
+
+  if (!styleComplete || !audienceComplete) {
+    console.log("[middleware] incomplete profile redirect", {
+      userId: user.id,
+      styleComplete,
+      audienceComplete,
+    });
+    const url = request.nextUrl.clone();
+    url.pathname = "/onboarding";
+    return NextResponse.redirect(url);
+  }
+
+  // Data is complete; sync the flag if it's stale so future navigations can
+  // skip the DB roundtrip once we add a fast-path optimization. Fire-and-
+  // forget — a failed write just means the next request also pays the DB
+  // cost, which is fine.
+  if (!user.user_metadata?.onboarding_completed) {
+    console.log("[middleware] onboarding flag self-heal", { userId: user.id });
+    void supabase.auth.updateUser({
+      data: { onboarding_completed: true },
+    });
+  }
+
+  return supabaseResponse;
+}
+
+export const config = {
+  matcher: [
+    /*
+     * Match all request paths except:
+     * - _next/static, _next/image (Next.js internals)
+     * - favicon.ico, sitemap.xml, robots.txt
+     * - API routes
+     */
+    "/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|api).*)",
+  ],
+};
