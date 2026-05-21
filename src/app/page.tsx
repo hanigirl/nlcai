@@ -390,7 +390,15 @@ export default function Home() {
             Non-beta users see nothing — the endpoint returns enabled:false
             for them. */}
         {profileHealth && profileHealth.enabled && (() => {
+          // `missing` and `parse_failed` are what /api/profile/health actually
+          // returns today; the rest are reserved for finer-grained reasons we
+          // surface from the file-upload path. Keep all of them here so the
+          // banner stays in sync with both ends — a reason the client doesn't
+          // know about used to fall through `reasonCopy`'s switch and crash
+          // the home page with "Right side of assignment cannot be destructured".
           type FileIssueReason =
+            | "missing"
+            | "parse_failed"
             | "no_file"
             | "file_invalid"
             | "file_too_long"
@@ -430,10 +438,16 @@ export default function Home() {
           // parsing a full sentence.
           const reasonCopy = (reason: FileIssueReason, fileLabel: string): { title: string; description: string } => {
             switch (reason) {
+              case "missing":
               case "no_file":
                 return {
                   title: `עדיין לא הוזן ${fileLabel}`,
                   description: "אפשר להעלות קובץ או להזין ידנית בהגדרות.",
+                }
+              case "parse_failed":
+                return {
+                  title: `הניתוח של ${fileLabel} לא הצליח`,
+                  description: "אפשר לנסות להעלות שוב או להזין ידנית בהגדרות.",
                 }
               case "file_invalid":
                 return {
@@ -465,14 +479,21 @@ export default function Home() {
                   title: `הקובץ שהועלה עבור ${fileLabel} ריק או קצר מדי`,
                   description: "צריך להוסיף תוכן ולהעלות שוב.",
                 }
+              default:
+                // Safety net — a future server-side reason must never bring
+                // the home page down via undefined destructuring.
+                return {
+                  title: `יש בעיה ב-${fileLabel}`,
+                  description: "אפשר לעדכן את הפרטים בהגדרות.",
+                }
             }
           }
 
-          // Per-reason deep link. no_file points at the manual-entry sub-
-          // section (about/you), everything else points at the file-upload
-          // sub-section since the user is recovering from an upload failure.
+          // Per-reason deep link. `missing`/`no_file` point at the manual-entry
+          // sub-section (about/you), everything else points at the file-upload
+          // sub-section since the user is recovering from an upload/parse failure.
           const fileSettingsHref = (reason: FileIssueReason, kind: "style" | "audience") => {
-            if (reason === "no_file") {
+            if (reason === "missing" || reason === "no_file") {
               return kind === "style"
                 ? "/settings?tab=business&sub=about"
                 : "/settings?tab=business&sub=you"
@@ -480,9 +501,6 @@ export default function Home() {
             return "/settings?tab=business&sub=files"
           }
 
-          // The API still returns the older two-state shape today; this
-          // narrows it to the wider FileIssueReason vocabulary so adding
-          // server-side detection later doesn't require touching the JSX.
           const styleReason = profileHealth.styleFileIssue?.reason as FileIssueReason | undefined
           const audienceReason = profileHealth.audienceFileIssue?.reason as FileIssueReason | undefined
 
