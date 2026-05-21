@@ -1,6 +1,6 @@
 "use client"
 
-import { Suspense, useState, useRef } from "react"
+import { Suspense, useState, useRef, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Image from "next/image"
 import { ArrowLeft, Paperclip, Loader2, Link2 } from "lucide-react"
@@ -185,6 +185,15 @@ function OnboardingPageInner() {
     : 0
   const [currentStep, setCurrentStep] = useState(initialStep)
 
+  // Smart-resume state. The boot effect below fetches what the user already
+  // saved in earlier sessions and lands them on the first incomplete step,
+  // pre-filling fields they've filled before. Without this, a user with a
+  // partial profile (e.g. missing only audience identity) gets bounced here
+  // by the middleware and has to retype their API keys + business identity
+  // before they can even reach the step that's actually missing.
+  const [bootChecked, setBootChecked] = useState(false)
+  const stepsDoneAtMount = useRef<Set<number>>(new Set())
+
   // Step 1 - Connections
   const [anthropicKey, setAnthropicKey] = useState("")
   const [heygenKey, setHeygenKey] = useState("")
@@ -240,6 +249,175 @@ function OnboardingPageInner() {
   // Pending file replacement waits in this state until the user confirms.
   const [pendingStyleFile, setPendingStyleFile] = useState<File | null>(null)
   const [pendingAudienceFile, setPendingAudienceFile] = useState<File | null>(null)
+
+  // Smart-resume boot. Fires once on mount; reads everything the user has
+  // already saved, pre-fills the form, marks completed steps so handleNext
+  // can skip them, and lands the user on the first incomplete step.
+  useEffect(() => {
+    let cancelled = false
+    let redirecting = false
+    void (async () => {
+      try {
+        const supabase = createClient()
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) {
+          if (!cancelled) setBootChecked(true)
+          return
+        }
+
+        const [usersRes, coreRes, audRes, creatorsRes, productsRes] =
+          await Promise.all([
+            supabase
+              .from("users")
+              .select("anthropic_api_key, apify_api_key, heygen_api_key")
+              .eq("id", user.id)
+              .maybeSingle<{
+                anthropic_api_key: string | null
+                apify_api_key: string | null
+                heygen_api_key: string | null
+              }>(),
+            supabase
+              .from("core_identities")
+              .select("product_name, niche, who_i_am, how_i_sound")
+              .eq("user_id", user.id)
+              .maybeSingle<{
+                product_name: string | null
+                niche: string | null
+                who_i_am: string | null
+                how_i_sound: string | null
+              }>(),
+            supabase
+              .from("audience_identities")
+              .select(
+                "daily_pains, emotional_pains, fears, daily_desires, emotional_desires"
+              )
+              .eq("user_id", user.id)
+              .maybeSingle<{
+                daily_pains: string | null
+                emotional_pains: string | null
+                fears: string | null
+                daily_desires: string | null
+                emotional_desires: string | null
+              }>(),
+            supabase
+              .from("user_top_creators")
+              .select("id")
+              .eq("user_id", user.id)
+              .limit(1),
+            supabase
+              .from("products")
+              .select("id")
+              .eq("user_id", user.id)
+              .limit(1),
+          ])
+
+        if (cancelled) return
+
+        const hasText = (v: unknown) =>
+          typeof v === "string" && v.trim().length > 0
+
+        // Pre-fill the visible form fields. Users will never see these inputs
+        // if their step is already complete (we skip them), but keeping the
+        // form state in sync with the DB is the safe default — if anything
+        // does fall through, the user sees their data instead of blanks.
+        const usersRow = usersRes.data
+        if (usersRow?.anthropic_api_key) setAnthropicKey(usersRow.anthropic_api_key)
+        if (usersRow?.apify_api_key) setApifyKey(usersRow.apify_api_key)
+        if (usersRow?.heygen_api_key) setHeygenKey(usersRow.heygen_api_key)
+
+        const coreRow = coreRes.data
+        if (coreRow?.product_name) setBusinessName(coreRow.product_name)
+        if (coreRow?.niche) setNiche(coreRow.niche)
+        if (coreRow?.who_i_am) setExpertise(coreRow.who_i_am)
+
+        // Step completeness — same rules the middleware and
+        // /api/onboarding/complete use, so all three agree on "done".
+        const step0Done =
+          hasText(usersRow?.anthropic_api_key) && hasText(usersRow?.apify_api_key)
+        const step1Done =
+          !!coreRow &&
+          [coreRow.who_i_am, coreRow.niche, coreRow.how_i_sound].every(hasText)
+        const audRow = audRes.data
+        const step2Done =
+          !!audRow &&
+          [
+            audRow.daily_pains,
+            audRow.emotional_pains,
+            audRow.fears,
+            audRow.daily_desires,
+            audRow.emotional_desires,
+          ].every(hasText)
+        const step3Done = (creatorsRes.data?.length ?? 0) > 0
+        const step4Done = (productsRes.data?.length ?? 0) > 0
+
+        const doneFlags = [step0Done, step1Done, step2Done, step3Done, step4Done]
+        doneFlags.forEach((done, i) => {
+          if (done) stepsDoneAtMount.current.add(i)
+        })
+
+        // Find first incomplete step. If everything is already done the user
+        // shouldn't be on /onboarding at all — try to finalize and bounce.
+        const firstIncomplete = doneFlags.findIndex((d) => !d)
+        if (firstIncomplete === -1) {
+          const res = await fetch("/api/onboarding/complete", { method: "POST" })
+          if (res.ok) {
+            redirecting = true
+            router.replace("/welcome")
+            return
+          }
+          // Server still considers them incomplete (rare drift). Fall through
+          // to the original step 0 so they have somewhere to act.
+          setCurrentStep(0)
+        } else if (devMode && stepParam) {
+          // Dev override takes priority — same behavior as today.
+          setCurrentStep(initialStep)
+        } else {
+          setCurrentStep(firstIncomplete)
+        }
+      } catch (err) {
+        console.error("[onboarding] boot fetch failed:", err)
+      } finally {
+        if (!cancelled && !redirecting) setBootChecked(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // Mount-only — running this once is the point; later state changes are
+    // handled by the step handlers themselves.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Find the next step the user actually needs to do, skipping ones that were
+  // already complete at mount. Returns -1 when nothing's left.
+  const findNextStep = (from: number): number => {
+    for (let i = from + 1; i < STEPS.length; i++) {
+      if (!stepsDoneAtMount.current.has(i)) return i
+    }
+    return -1
+  }
+
+  // Centralized "what's next" decision after a step handler finishes. If the
+  // next step is in stepsDoneAtMount we skip past it; if nothing's left we
+  // try the server-validated completion endpoint instead of setCurrentStep.
+  const advanceFromStep = async (current: number): Promise<void> => {
+    const next = findNextStep(current)
+    if (next !== -1) {
+      setCurrentStep(next)
+      return
+    }
+    const res = await fetch("/api/onboarding/complete", { method: "POST" })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      toast.error(
+        data.message ||
+          "לא הצלחנו לסיים את האונבורדינג. השלימו את הפרטים החסרים.",
+        { duration: 12000 },
+      )
+      return
+    }
+    router.push("/welcome")
+  }
 
   const canProceed = () => {
     if (saving) return false
@@ -302,7 +480,7 @@ function OnboardingPageInner() {
             }
           }
         }
-        setCurrentStep(1)
+        await advanceFromStep(0)
       } else if (currentStep === 1) {
         if (styleFile) {
           const validation = validateIdentityFile(styleFile)
@@ -386,7 +564,7 @@ function OnboardingPageInner() {
           if (styleFile && !resData.fileSaveError && !resData.notice && !resData.warning) {
             toast.success("הקובץ עלה ונותח בהצלחה")
           }
-          setCurrentStep(2)
+          await advanceFromStep(1)
         } else {
           setCoreGapMode("gaps")
           setCoreGapMissingKeys(missing)
@@ -451,7 +629,7 @@ function OnboardingPageInner() {
           if (audienceFile && !resData.fileSaveError && !resData.notice && !resData.warning) {
             toast.success("הקובץ עלה ונותח בהצלחה")
           }
-          setCurrentStep(3)
+          await advanceFromStep(2)
         } else {
           setAudienceGapMode("gaps")
           setAudienceGapMissingKeys(missing)
@@ -483,7 +661,7 @@ function OnboardingPageInner() {
             }
           }
         }
-        setCurrentStep(4)
+        await advanceFromStep(3)
       } else {
         const supabase = createClient()
         const { data: { user } } = await supabase.auth.getUser()
@@ -523,22 +701,10 @@ function OnboardingPageInner() {
           }
         }
 
-        // Server-validated completion — only sets the flag if the DB actually
-        // has content in every critical identity field. Refuses with 400 if
-        // the user bypassed an earlier step somehow (legacy state, manual API
-        // calls, etc.), and the toast points them back to fix it.
-        const completeRes = await fetch("/api/onboarding/complete", {
-          method: "POST",
-        })
-        if (!completeRes.ok) {
-          const data = await completeRes.json().catch(() => ({}))
-          toast.error(
-            data.message || "לא הצלחנו לסיים את האונבורדינג. השלימו את הפרטים החסרים.",
-            { duration: 12000 },
-          )
-          return
-        }
-        router.push("/welcome")
+        // Step 4 is the last in the sequence — advanceFromStep finds no
+        // next step and runs /api/onboarding/complete itself, which also
+        // does the /welcome push on success.
+        await advanceFromStep(4)
       }
     } finally {
       setSaving(false)
@@ -568,7 +734,7 @@ function OnboardingPageInner() {
         return
       }
       setCoreGapOpen(false)
-      setCurrentStep(2)
+      await advanceFromStep(1)
     } finally {
       setCoreGapSaving(false)
     }
@@ -621,7 +787,7 @@ function OnboardingPageInner() {
         return
       }
       setAudienceGapOpen(false)
-      setCurrentStep(3)
+      await advanceFromStep(2)
     } finally {
       setAudienceGapSaving(false)
     }
@@ -687,6 +853,13 @@ function OnboardingPageInner() {
     setAudienceFile(file)
     setAudienceParseDone(false)
     setPendingAudienceFile(null)
+  }
+
+  // Don't flash step 0 while the boot effect figures out where to land the
+  // user. Returning users would otherwise see the connections form for a few
+  // hundred milliseconds before snapping to their real first-incomplete step.
+  if (!bootChecked) {
+    return <div className="min-h-screen bg-white dark:bg-gray-10" />
   }
 
   return (

@@ -129,6 +129,77 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Kick off the file-save to Supabase Storage in parallel with the AI
+    // parse below. They have no dependency on each other and storage was
+    // adding 4-10s of sequential time on top of the AI call — enough on a
+    // mildly-overloaded Anthropic to push the function over Vercel's 60s
+    // ceiling. We await the result before the DB upsert so any storage
+    // error still surfaces to the client.
+    const fileSavePromise: Promise<{ error: string | null }> =
+      (file && fileBuffer)
+        ? (async () => {
+            try {
+              const category = type === "core" ? "style_file" : "audience_file"
+              const ext = file.name.split(".").pop() || "txt"
+              const storagePath = `${user.id}/${category}/${crypto.randomUUID()}.${ext}`
+
+              const { data: existing } = await supabase
+                .from("user_media")
+                .select("id, storage_path")
+                .eq("user_id", user.id)
+                .eq("category", category)
+              if (existing && existing.length > 0) {
+                await supabase.storage
+                  .from("user-media")
+                  .remove(existing.map((e: { storage_path: string }) => e.storage_path))
+                await supabase
+                  .from("user_media")
+                  .delete()
+                  .eq("user_id", user.id)
+                  .eq("category", category)
+              }
+
+              const { error: storageErr } = await supabase.storage
+                .from("user-media")
+                .upload(storagePath, fileBuffer, {
+                  contentType: file.type || "application/octet-stream",
+                })
+              if (storageErr) {
+                const classified = classifyUploadError(storageErr)
+                console.error("[parse-identity] storage upload:", classified.kind, classified.raw)
+                return {
+                  error: `${classified.message} (גיבוי הקובץ ב-Storage נכשל; ${classified.kind})`,
+                }
+              }
+
+              const { error: insertErr } = await supabase
+                .from("user_media")
+                .insert({
+                  user_id: user.id,
+                  category,
+                  file_name: file.name,
+                  storage_path: storagePath,
+                  metadata: {},
+                } as never)
+              if (insertErr) {
+                const classified = classifyUploadError(insertErr)
+                console.error("[parse-identity] user_media insert:", classified.kind, classified.raw)
+                return {
+                  error: `${classified.message} (רישום הקובץ ב-DB נכשל; ${classified.kind})`,
+                }
+              }
+
+              return { error: null }
+            } catch (err) {
+              const classified = classifyUploadError(err)
+              console.error("[parse-identity] file save threw:", classified.kind, classified.raw)
+              return {
+                error: `${classified.message} (חריגה בעת שמירת הקובץ; ${classified.kind})`,
+              }
+            }
+          })()
+        : Promise.resolve({ error: null })
+
     // Parse with AI
     if (fileContent) {
       if (!anthropicApiKey) {
@@ -174,6 +245,11 @@ export async function POST(req: NextRequest) {
                   },
                 ]
 
+          // AbortSignal.timeout at the fetch layer is the safety belt over
+          // the SDK's own timeout — guarantees the call returns within 35s
+          // even if anything inside the SDK behaves unexpectedly. Leaves
+          // ~25s of headroom under Vercel's 60s ceiling for the retry +
+          // storage save + DB upsert that follow.
           const message = await client.messages.create({
             model: "claude-sonnet-4-6",
             // 4096 was leaving Hebrew responses truncated on long audience docs.
@@ -181,6 +257,8 @@ export async function POST(req: NextRequest) {
             // counted. 8192 fits the full envelope without bloating short outputs.
             max_tokens: 8192,
             messages: [{ role: "user", content: userContent }],
+          }, {
+            signal: AbortSignal.timeout(35000),
           })
 
           const textBlock = message.content.find((b) => b.type === "text")
@@ -259,10 +337,15 @@ export async function POST(req: NextRequest) {
                 // Sonnet, plenty smart for narrow targeted extraction, and
                 // the speed difference (3-8s vs 15-30s) is what keeps the
                 // combined parse inside Vercel's function ceiling.
+                // AbortSignal caps the retry at 15s — well above Haiku's
+                // typical 3-8s for this prompt, but a hard ceiling if
+                // something stalls.
                 const retryMessage = await client.messages.create({
                   model: "claude-haiku-4-5-20251001",
                   max_tokens: 2048,
                   messages: [{ role: "user", content: retryUserContent }],
+                }, {
+                  signal: AbortSignal.timeout(15000),
                 })
                 const retryRaw = retryMessage.content.find((b) => b.type === "text")?.text ?? ""
                 const retryJsonStr = extractFirstJsonObject(retryRaw)
@@ -315,57 +398,13 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // Save original file to Supabase Storage. This is the *backup* of the
-    // raw file — used later for reparse (especially for PDF, which has no
-    // raw_file_text fallback). Runs only AFTER validation passes, so a bad
-    // upload doesn't wipe the user's previous file. If it fails, surface a
-    // Hebrew-categorized warning so the user knows the parsed data was kept
-    // but the original file isn't recoverable.
-    if (file && fileBuffer) {
-      try {
-        const category = type === "core" ? "style_file" : "audience_file"
-        const ext = file.name.split(".").pop() || "txt"
-        const storagePath = `${user.id}/${category}/${crypto.randomUUID()}.${ext}`
-
-        // Delete previous file in this category
-        const { data: existing } = await supabase
-          .from("user_media")
-          .select("id, storage_path")
-          .eq("user_id", user.id)
-          .eq("category", category)
-        if (existing && existing.length > 0) {
-          await supabase.storage.from("user-media").remove(existing.map((e: { storage_path: string }) => e.storage_path))
-          await supabase.from("user_media").delete().eq("user_id", user.id).eq("category", category)
-        }
-
-        // Upload new file — supabase returns {error} instead of throwing, must check
-        const { error: storageErr } = await supabase.storage.from("user-media").upload(storagePath, fileBuffer, {
-          contentType: file.type || "application/octet-stream",
-        })
-        if (storageErr) {
-          const classified = classifyUploadError(storageErr)
-          fileSaveError = `${classified.message} (גיבוי הקובץ ב-Storage נכשל; ${classified.kind})`
-          console.error("[parse-identity] storage upload:", classified.kind, classified.raw)
-        } else {
-          // Record in user_media — also returns {error} silently
-          const { error: insertErr } = await supabase.from("user_media").insert({
-            user_id: user.id,
-            category,
-            file_name: file.name,
-            storage_path: storagePath,
-            metadata: {},
-          } as never)
-          if (insertErr) {
-            const classified = classifyUploadError(insertErr)
-            fileSaveError = `${classified.message} (רישום הקובץ ב-DB נכשל; ${classified.kind})`
-            console.error("[parse-identity] user_media insert:", classified.kind, classified.raw)
-          }
-        }
-      } catch (err) {
-        const classified = classifyUploadError(err)
-        fileSaveError = `${classified.message} (חריגה בעת שמירת הקובץ; ${classified.kind})`
-        console.error("[parse-identity] file save threw:", classified.kind, classified.raw)
-      }
+    // Wait for the parallel storage save kicked off above to complete before
+    // we surface any errors or run the DB upsert. The error (if any) flows
+    // into the same fileSaveError variable the response payloads already
+    // know how to render.
+    const fileSaveResult = await fileSavePromise
+    if (fileSaveResult.error) {
+      fileSaveError = fileSaveResult.error
     }
 
     // If AI failed and there's nothing else meaningful to persist, refuse the
