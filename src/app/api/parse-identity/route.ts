@@ -248,14 +248,16 @@ export async function POST(req: NextRequest) {
                   },
                 ]
 
-          // AbortSignal.timeout at the fetch layer is the safety belt over
-          // the SDK's own timeout — guarantees the call returns within 45s
-          // even if anything inside the SDK behaves unexpectedly. Combined
-          // with the parallel storage save (max ~10s, overlapped with this
-          // call) and the retry (~12s), worst case lands at ~59s, safely
-          // under Vercel's 60s ceiling.
+          // Haiku 4.5 instead of Sonnet for the identity parse. Direct
+          // timing on a real 9.5K-char Hebrew audience doc: Sonnet 62s
+          // (over Hobby's 60s ceiling) vs Haiku 38s (under), with the same
+          // field count and comparable quality — this is narrow extraction
+          // ("copy what's in the text"), not reasoning, so the model
+          // difference doesn't show up in the output. Bonus: Haiku is ~4x
+          // cheaper to invoke. AbortSignal still caps at 45s as a safety
+          // belt under Vercel's function ceiling.
           const message = await client.messages.create({
-            model: "claude-sonnet-4-6",
+            model: "claude-haiku-4-5-20251001",
             // 4096 was leaving Hebrew responses truncated on long audience docs.
             // 21 fields × 100-300 Hebrew chars each ≈ 6-12k tokens once Hebrew is
             // counted. 8192 fits the full envelope without bloating short outputs.

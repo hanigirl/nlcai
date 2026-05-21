@@ -72,11 +72,18 @@ export async function POST(req: NextRequest) {
         ? CORE_IDENTITY_PARSE_PROMPT
         : AUDIENCE_IDENTITY_PARSE_PROMPT
 
-    const client = new Anthropic({ apiKey: anthropicApiKey })
+    // Match parse-identity: tight SDK config + Haiku for the narrow
+    // extraction task. Sonnet was hitting 60s+ on real Hebrew docs;
+    // Haiku finishes the same job in ~38s with comparable output.
+    const client = new Anthropic({
+      apiKey: anthropicApiKey,
+      timeout: 50000,
+      maxRetries: 0,
+    })
     let parsed: Record<string, string> = {}
     try {
       const message = await client.messages.create({
-        model: "claude-sonnet-4-6",
+        model: "claude-haiku-4-5-20251001",
         max_tokens: 4096,
         messages: [
           {
@@ -84,6 +91,8 @@ export async function POST(req: NextRequest) {
             content: `${systemPrompt}\n\n--- הטקסט ---\n${rawText}`,
           },
         ],
+      }, {
+        signal: AbortSignal.timeout(45000),
       })
 
       const textBlock = message.content.find((b) => b.type === "text")
