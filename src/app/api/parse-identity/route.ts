@@ -299,14 +299,6 @@ export async function POST(req: NextRequest) {
             aiError = "no_json_block_in_response"
           }
 
-          // Treat all-empty parse as a soft failure so the user gets feedback.
-          const hasAnyField = Object.values(parsed).some(
-            (v) => typeof v === "string" && v.trim().length > 0
-          )
-          if (!aiError && !hasAnyField) {
-            aiError = "claude_returned_empty"
-          }
-
           // Critical-fields retry. Real bug seen in production: Claude returns
           // a structurally-valid JSON but leaves all five "pain/fear/desire"
           // fields empty even when the document discusses them. The downstream
@@ -316,6 +308,13 @@ export async function POST(req: NextRequest) {
           // variance, not a prompt or input problem. Surgical retry asks Claude
           // for those five fields only (smaller output, ~5-15s vs full re-parse)
           // and merges the result.
+          //
+          // ORDER MATTERS: this MUST run before the "all-empty → claude_returned_empty"
+          // check below. The retry was designed exactly for the all-empty case,
+          // but if we mark aiError first the `!aiError` gate below would skip the
+          // retry — exactly when it's most needed. One real user (audience file,
+          // 9.5K chars, well within Sonnet's budget) hit this and ended up with
+          // 21 blank fields in the gap dialog because the retry never fired.
           if (type === "audience" && !aiError && documentTypeOk !== false) {
             const CRITICAL = ["dailyPains", "emotionalPains", "fears", "dailyDesires", "emotionalDesires"] as const
             const allEmpty = CRITICAL.every((k) => !parsed[k] || !parsed[k].trim())
@@ -369,6 +368,17 @@ export async function POST(req: NextRequest) {
                 console.error("[parse-identity] audience retry failed:", retryErr instanceof Error ? retryErr.message : retryErr)
               }
             }
+          }
+
+          // NOW that the retry has had its chance, treat a still-empty parse
+          // as a soft failure so the user gets feedback. The gap dialog opens
+          // with the missing fields, and downstream pipelines stay protected
+          // by the same soft-error contract as before.
+          const hasAnyField = Object.values(parsed).some(
+            (v) => typeof v === "string" && v.trim().length > 0
+          )
+          if (!aiError && !hasAnyField) {
+            aiError = "claude_returned_empty"
           }
         } catch (err) {
           // Distinguish our own AbortSignal timeout from a real Anthropic
