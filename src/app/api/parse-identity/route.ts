@@ -13,8 +13,10 @@ import { classifyUploadError } from "@/lib/upload-errors"
 
 // Vercel default is 10s. Identity parsing with Sonnet on a ~10K-char file can
 // take 30–45s end-to-end; without this it'd timeout silently and the row would
-// land in the empty-fields state we're trying to prevent.
-export const maxDuration = 60
+// land in the empty-fields state we're trying to prevent. 300s is the Pro
+// plan ceiling; on Hobby Vercel silently caps to the plan's 60s max, so this
+// is forward-compatible with the planned Pro upgrade without breaking now.
+export const maxDuration = 300
 
 // Hard upper bound only — 200K Hebrew chars ≈ 100K tokens, well within Claude's
 // 200K context window. Real audience research / brand-voice docs routinely run

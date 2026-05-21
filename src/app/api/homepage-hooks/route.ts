@@ -21,8 +21,9 @@ import { withRetry } from "@/lib/supabase/retry"
 
 // Streaming SSE pipeline (plan → write+judge+polish per hook). Even with a
 // reduced HOOK_COUNT=10 in one batch, full run lands at ~30-60s. Vercel's
-// 10s default cuts the stream mid-batch.
-export const maxDuration = 60
+// 10s default cuts the stream mid-batch. 300s is the Pro plan ceiling; on
+// Hobby Vercel silently caps to 60s.
+export const maxDuration = 300
 
 const USE_DUMMY = false
 

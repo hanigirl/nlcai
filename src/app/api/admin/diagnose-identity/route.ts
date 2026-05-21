@@ -11,7 +11,10 @@ import { extractFileContent, type FileContent } from "@/lib/extract-file-content
 import { extractFirstJsonObject } from "@/lib/extract-first-json"
 
 // Re-parsing PDFs/docx via Claude is the slow path; align with parse-identity.
-export const maxDuration = 60
+// Admin diagnostic — runs Claude against the stored raw_file_text to figure
+// out why a user's identity is empty. Same plan-ceiling pattern as the other
+// AI routes: 300s on Pro, silently capped to 60s on Hobby.
+export const maxDuration = 300
 
 type Type = "core" | "audience"
 

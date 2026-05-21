@@ -9,8 +9,9 @@ import {
 import { anthropicErrorToHebrew } from "@/lib/anthropic-errors"
 
 // Same reasoning as parse-identity: a 10s default timeout silently kills the
-// Claude call mid-flight on borderline files.
-export const maxDuration = 60
+// Claude call mid-flight on borderline files. 300s is the Pro plan ceiling;
+// Hobby caps silently to 60s.
+export const maxDuration = 300
 
 export async function POST(req: NextRequest) {
   try {

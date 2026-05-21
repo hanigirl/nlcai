@@ -11,8 +11,8 @@ import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-
 
 // Pipeline is generate → judge×N → polish×N — 3 sequential LLM rounds.
 // At count=10 this lands around 20-40s; Vercel's 10s default would always
-// time out. 60s gives headroom; bump to 300s if we ever exceed.
-export const maxDuration = 60
+// time out. 300s is the Pro plan ceiling; on Hobby it caps silently to 60s.
+export const maxDuration = 300
 
 const USE_DUMMY = false
 
