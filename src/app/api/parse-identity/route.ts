@@ -5,10 +5,12 @@ import { getUserApiKey } from "@/lib/api-keys"
 import {
   CORE_IDENTITY_PARSE_PROMPT,
   AUDIENCE_IDENTITY_PARSE_PROMPT,
+  CORE_IDENTITY_TOOL,
+  AUDIENCE_IDENTITY_TOOL,
+  AUDIENCE_CRITICAL_RETRY_TOOL,
 } from "@/lib/agents/identity-parser"
 import { anthropicErrorToHebrew } from "@/lib/anthropic-errors"
 import { extractFileContent, type FileContent } from "@/lib/extract-file-content"
-import { extractFirstJsonObject, hasMoreObjectsAfter } from "@/lib/extract-first-json"
 import { classifyUploadError } from "@/lib/upload-errors"
 
 // Vercel default is 10s. Identity parsing with Sonnet on a ~10K-char file can
@@ -248,57 +250,50 @@ export async function POST(req: NextRequest) {
                   },
                 ]
 
-          // Haiku 4.5 instead of Sonnet for the identity parse. Direct
-          // timing on a real 9.5K-char Hebrew audience doc: Sonnet 62s
-          // (over Hobby's 60s ceiling) vs Haiku 38s (under), with the same
-          // field count and comparable quality — this is narrow extraction
-          // ("copy what's in the text"), not reasoning, so the model
-          // difference doesn't show up in the output. Bonus: Haiku is ~4x
-          // cheaper to invoke. AbortSignal still caps at 45s as a safety
-          // belt under Vercel's function ceiling.
+          // Tool use instead of free-text JSON. Claude is forced to call our
+          // tool with input matching the schema — no JSON.parse failures
+          // from Hebrew gershayim, no markdown-fence extraction, no fields
+          // arriving as arrays/null. Tool name and schema live in
+          // identity-parser.ts next to the prompt. Haiku 4.5 stays the
+          // model: ~38s typical on a 9.5K-char Hebrew doc, well inside the
+          // 45s AbortSignal we cap below.
+          const tool = type === "core" ? CORE_IDENTITY_TOOL : AUDIENCE_IDENTITY_TOOL
           const message = await client.messages.create({
             model: "claude-haiku-4-5-20251001",
             // 4096 was leaving Hebrew responses truncated on long audience docs.
             // 21 fields × 100-300 Hebrew chars each ≈ 6-12k tokens once Hebrew is
             // counted. 8192 fits the full envelope without bloating short outputs.
             max_tokens: 8192,
+            tools: [tool],
+            tool_choice: { type: "tool", name: tool.name },
             messages: [{ role: "user", content: userContent }],
           }, {
-            signal: AbortSignal.timeout(45000),
+            signal: AbortSignal.timeout(50000),
           })
 
-          const textBlock = message.content.find((b) => b.type === "text")
-          const raw = textBlock?.text ?? ""
-
-          const jsonStr = extractFirstJsonObject(raw)
-          if (jsonStr) {
-            try {
-              const rawParsed = JSON.parse(jsonStr) as Record<string, unknown>
-              // Strip the classification flag into its own variable so the
-              // rest of the code keeps treating `parsed` as string-only.
-              const flagKey =
-                type === "core" ? "isWritingStyleDocument" : "isAudienceDocument"
-              if (typeof rawParsed[flagKey] === "boolean") {
-                documentTypeOk = rawParsed[flagKey] as boolean
-              }
-              // Drop the flag and coerce remaining fields to strings.
-              parsed = {}
-              for (const [k, v] of Object.entries(rawParsed)) {
-                if (k === flagKey) continue
-                if (typeof v === "string") parsed[k] = v
-              }
-              // Files describing 2+ personas make Claude emit multiple JSON
-              // objects back-to-back. We keep the first (one-row-per-user
-              // schema), but surface a notice so the user knows the rest
-              // were dropped intentionally.
-              if (hasMoreObjectsAfter(raw, jsonStr)) {
-                multipleProfilesDetected = true
-              }
-            } catch (parseErr) {
-              aiError = parseErr instanceof Error ? parseErr.message : String(parseErr)
-            }
+          const toolUseBlock = message.content.find((b) => b.type === "tool_use")
+          if (!toolUseBlock || toolUseBlock.type !== "tool_use") {
+            aiError = "no_tool_use_in_response"
           } else {
-            aiError = "no_json_block_in_response"
+            const rawParsed = toolUseBlock.input as Record<string, unknown>
+            // Strip the classification flag into its own variable so the
+            // rest of the code keeps treating `parsed` as string-only.
+            const flagKey =
+              type === "core" ? "isWritingStyleDocument" : "isAudienceDocument"
+            if (typeof rawParsed[flagKey] === "boolean") {
+              documentTypeOk = rawParsed[flagKey] as boolean
+            }
+            parsed = {}
+            for (const [k, v] of Object.entries(rawParsed)) {
+              if (k === flagKey) continue
+              if (typeof v === "string") parsed[k] = v
+            }
+            // Files describing 2+ personas no longer cause stray JSON
+            // objects (tool_use guarantees a single call), but we keep the
+            // flag for surface-level UX consistency. We can't detect this
+            // from the schema alone — leave it false; the gap dialog will
+            // catch any cross-persona confusion via empty/conflicting
+            // fields.
           }
 
           // Critical-fields retry. Real bug seen in production: Claude returns
@@ -351,22 +346,22 @@ export async function POST(req: NextRequest) {
                         { type: "text", text: retryInstruction },
                       ]
                     : [{ type: "text", text: `${retryInstruction}\n\n--- הטקסט ---\n${fileContent.text}` }]
-                // Haiku for the focused 5-field retry — 4-5x faster than
-                // Sonnet, plenty smart for narrow targeted extraction.
-                // AbortSignal caps at 12s — well above Haiku's typical
-                // 3-8s for this prompt, but tight enough that retry +
-                // main call still fit inside the function budget.
+                // Tool-use retry too — same reasons as the main call. The
+                // focused 5-field tool keeps the response tight (no extra
+                // fields to merge) and removes the JSON.parse risk entirely.
+                // AbortSignal caps at 12s — well above Haiku's typical 3-8s.
                 const retryMessage = await client.messages.create({
                   model: "claude-haiku-4-5-20251001",
                   max_tokens: 2048,
+                  tools: [AUDIENCE_CRITICAL_RETRY_TOOL],
+                  tool_choice: { type: "tool", name: AUDIENCE_CRITICAL_RETRY_TOOL.name },
                   messages: [{ role: "user", content: retryUserContent }],
                 }, {
                   signal: AbortSignal.timeout(12000),
                 })
-                const retryRaw = retryMessage.content.find((b) => b.type === "text")?.text ?? ""
-                const retryJsonStr = extractFirstJsonObject(retryRaw)
-                if (retryJsonStr) {
-                  const retryParsed = JSON.parse(retryJsonStr) as Record<string, unknown>
+                const retryToolUse = retryMessage.content.find((b) => b.type === "tool_use")
+                if (retryToolUse && retryToolUse.type === "tool_use") {
+                  const retryParsed = retryToolUse.input as Record<string, unknown>
                   let filled = 0
                   for (const k of CRITICAL) {
                     const v = retryParsed[k]
@@ -457,6 +452,7 @@ export async function POST(req: NextRequest) {
     const aiErrorIsSoft =
       aiError === "claude_returned_empty" ||
       aiError === "no_json_block_in_response" ||
+      aiError === "no_tool_use_in_response" ||
       aiError === "anthropic_not_connected" ||
       aiError === "ai_timeout"
     if (aiError && !aiErrorIsSoft && !hasManualCoreContent) {

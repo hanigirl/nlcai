@@ -1,3 +1,6 @@
+import type Anthropic from "@anthropic-ai/sdk"
+type AnthropicTool = Anthropic.Tool
+
 export const CORE_IDENTITY_PARSE_PROMPT = `את סוכנת שמפרסרת מידע על זהות יוצרת תוכן מתוך טקסט חופשי.
 
 **שלב ראשון — סיווג מקל (ברירת המחדל היא TRUE):**
@@ -48,17 +51,7 @@ JSON:
 }
 --- סוף דוגמאות ---
 
-פרסרי את הטקסט הבא והחזירי JSON בפורמט:
-{
-  "isWritingStyleDocument": false,
-  "niche": "",
-  "productName": "",
-  "whoIAm": "",
-  "whoIServe": "",
-  "howISound": "",
-  "slangExamples": "",
-  "whatINeverDo": ""
-}`
+קראי את הטקסט הבא והפעילי את הכלי \`extract_core_identity\` עם הנתונים שחילצת.`
 
 export const AUDIENCE_IDENTITY_PARSE_PROMPT = `את סוכנת שמפרסרת מידע על קהל יעד מתוך טקסט חופשי.
 
@@ -139,28 +132,158 @@ JSON:
 }
 --- סוף דוגמאות ---
 
-פרסרי את הטקסט הבא והחזירי JSON בפורמט:
-{
-  "isAudienceDocument": false,
-  "location": "",
-  "employment": "",
-  "education": "",
-  "income": "",
-  "behavioral": "",
-  "awarenessLevel": "",
-  "dailyPains": "",
-  "emotionalPains": "",
-  "unresolvedConsequences": "",
-  "fears": "",
-  "failedSolutions": "",
-  "limitingBeliefs": "",
-  "myths": "",
-  "dailyDesires": "",
-  "emotionalDesires": "",
-  "smallWins": "",
-  "idealSolution": "",
-  "bottomLine": "",
-  "crossAudienceQuotes": "",
-  "idealSolutionWords": "",
-  "identityStatements": ""
-}`
+קראי את הטקסט הבא והפעילי את הכלי \`extract_audience_identity\` עם הנתונים שחילצת.`
+
+// Tool schemas for Anthropic tool_use. Forcing tool_use is much more reliable
+// than asking for JSON in text:
+//   - no JSON.parse failures from Hebrew gershayim escaping issues
+//   - no markdown-fence extraction
+//   - the model can't omit required fields or send arrays where strings belong
+// We pair these with `tool_choice: { type: "tool", name: ... }` so Claude is
+// required to call the tool rather than answer in prose.
+export const CORE_IDENTITY_TOOL = {
+  name: "extract_core_identity",
+  description:
+    "החזירי את הזהות של היוצרת שחולצה מהטקסט. אם הטקסט לא מכיל מידע על שדה — החזירי מחרוזת ריקה ('') לאותו שדה. אל תמציאי תוכן.",
+  input_schema: {
+    type: "object",
+    properties: {
+      isWritingStyleDocument: {
+        type: "boolean",
+        description:
+          "האם המסמך מכיל אינפורמציה על סגנון הכתיבה/הזהות של היוצרת. ברירת המחדל היא true — רק מסמך לחלוטין לא רלוונטי (מתכון, חשבונית וכד׳) הוא false.",
+      },
+      productName: { type: "string", description: "שם העסק או המוצר" },
+      niche: { type: "string", description: "הנישה / תחום העיסוק" },
+      whoIAm: { type: "string", description: "מי היוצרת — רקע, ניסיון, תפקיד" },
+      whoIServe: { type: "string", description: "למי היוצרת פונה — קהל היעד שלה" },
+      howISound: {
+        type: "string",
+        description: "הטון, האנרגיה, אופי הדיבור של היוצרת",
+      },
+      slangExamples: {
+        type: "string",
+        description: "ביטויים, מילים, אמרות שחוזרות אצל היוצרת",
+      },
+      whatINeverDo: {
+        type: "string",
+        description: "קווים אדומים סגנוניים — מה היוצרת לא אומרת/לא עושה",
+      },
+    },
+    required: [
+      "isWritingStyleDocument",
+      "productName",
+      "niche",
+      "whoIAm",
+      "whoIServe",
+      "howISound",
+      "slangExamples",
+      "whatINeverDo",
+    ],
+  },
+} satisfies AnthropicTool
+
+export const AUDIENCE_IDENTITY_TOOL = {
+  name: "extract_audience_identity",
+  description:
+    "החזירי את הניתוח של קהל היעד שחולץ מהטקסט. אם הטקסט לא מכיל מידע על שדה — החזירי מחרוזת ריקה (''). אל תמציאי תוכן.",
+  input_schema: {
+    type: "object",
+    properties: {
+      isAudienceDocument: {
+        type: "boolean",
+        description:
+          "האם המסמך מכיל אינפורמציה על קהל היעד. ברירת המחדל היא true — רק מסמך לחלוטין לא רלוונטי (מתכון, מאמר טכני וכד׳) הוא false.",
+      },
+      location: { type: "string", description: "אזור גיאוגרפי של הקהל" },
+      employment: { type: "string", description: "תעסוקה, תפקידים, ענפים" },
+      education: { type: "string", description: "רמת השכלה, תחומים" },
+      income: { type: "string", description: "טווח הכנסה" },
+      behavioral: {
+        type: "string",
+        description: "התנהגות יומיומית — מה הקהל עושה / לא עושה",
+      },
+      awarenessLevel: {
+        type: "string",
+        description: "רמת מודעות לבעיה ולפתרונות שניסה",
+      },
+      dailyPains: { type: "string", description: "כאבים יומיומיים פיזיים/מעשיים" },
+      emotionalPains: { type: "string", description: "כאבים רגשיים" },
+      unresolvedConsequences: {
+        type: "string",
+        description: "מה יקרה אם לא יפתרו את הבעיה",
+      },
+      fears: { type: "string", description: "פחדים, חרדות" },
+      failedSolutions: { type: "string", description: "פתרונות שניסו ולא עבדו" },
+      limitingBeliefs: { type: "string", description: "אמונות מגבילות" },
+      myths: { type: "string", description: "מיתוסים שהקהל מאמין בהם" },
+      dailyDesires: { type: "string", description: "רצונות יומיומיים מעשיים" },
+      emotionalDesires: { type: "string", description: "רצונות רגשיים, איך הם רוצים להרגיש" },
+      smallWins: { type: "string", description: "ניצחונות קטנים שיעידו על התקדמות" },
+      idealSolution: { type: "string", description: "הפתרון האידיאלי בעיני הקהל" },
+      bottomLine: { type: "string", description: "מה הקהל באמת רוצה במהותו" },
+      crossAudienceQuotes: {
+        type: "string",
+        description: "ציטוטים/ביטויים בשפת הקהל שחוזרים",
+      },
+      idealSolutionWords: {
+        type: "string",
+        description: "המילים שבהן הקהל מתאר את הפתרון שלהם",
+      },
+      identityStatements: {
+        type: "string",
+        description: "משפטי זהות — איך הקהל רוצה לראות את עצמו",
+      },
+    },
+    required: [
+      "isAudienceDocument",
+      "location",
+      "employment",
+      "education",
+      "income",
+      "behavioral",
+      "awarenessLevel",
+      "dailyPains",
+      "emotionalPains",
+      "unresolvedConsequences",
+      "fears",
+      "failedSolutions",
+      "limitingBeliefs",
+      "myths",
+      "dailyDesires",
+      "emotionalDesires",
+      "smallWins",
+      "idealSolution",
+      "bottomLine",
+      "crossAudienceQuotes",
+      "idealSolutionWords",
+      "identityStatements",
+    ],
+  },
+} satisfies AnthropicTool
+
+// Focused 5-field tool for the audience critical-fields retry. We define a
+// dedicated tool so the response carries exactly those fields and nothing
+// else — keeps the retry output tight and the merge logic trivial.
+export const AUDIENCE_CRITICAL_RETRY_TOOL = {
+  name: "fill_audience_critical_fields",
+  description:
+    "מלאי את 5 השדות הקריטיים על בסיס המסמך. אם באמת אין תוכן עבור שדה — החזירי מחרוזת ריקה.",
+  input_schema: {
+    type: "object",
+    properties: {
+      dailyPains: { type: "string" },
+      emotionalPains: { type: "string" },
+      fears: { type: "string" },
+      dailyDesires: { type: "string" },
+      emotionalDesires: { type: "string" },
+    },
+    required: [
+      "dailyPains",
+      "emotionalPains",
+      "fears",
+      "dailyDesires",
+      "emotionalDesires",
+    ],
+  },
+} satisfies AnthropicTool

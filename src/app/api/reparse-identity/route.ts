@@ -5,6 +5,8 @@ import { getUserApiKey } from "@/lib/api-keys"
 import {
   CORE_IDENTITY_PARSE_PROMPT,
   AUDIENCE_IDENTITY_PARSE_PROMPT,
+  CORE_IDENTITY_TOOL,
+  AUDIENCE_IDENTITY_TOOL,
 } from "@/lib/agents/identity-parser"
 import { anthropicErrorToHebrew } from "@/lib/anthropic-errors"
 
@@ -80,11 +82,16 @@ export async function POST(req: NextRequest) {
       timeout: 50000,
       maxRetries: 0,
     })
+    // Tool-use parsing — same reasoning as parse-identity. Forces a clean
+    // schema-conformant response, no JSON.parse risk on Hebrew gershayim.
+    const tool = type === "core" ? CORE_IDENTITY_TOOL : AUDIENCE_IDENTITY_TOOL
     let parsed: Record<string, string> = {}
     try {
       const message = await client.messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 4096,
+        tools: [tool],
+        tool_choice: { type: "tool", name: tool.name },
         messages: [
           {
             role: "user",
@@ -92,19 +99,22 @@ export async function POST(req: NextRequest) {
           },
         ],
       }, {
-        signal: AbortSignal.timeout(45000),
+        signal: AbortSignal.timeout(50000),
       })
 
-      const textBlock = message.content.find((b) => b.type === "text")
-      const raw = textBlock?.text ?? ""
-      const jsonMatch = raw.match(/\{[\s\S]*\}/)
-      if (!jsonMatch) {
+      const toolUseBlock = message.content.find((b) => b.type === "tool_use")
+      if (!toolUseBlock || toolUseBlock.type !== "tool_use") {
         return NextResponse.json(
-          { error: "no_json_block_in_response", message: anthropicErrorToHebrew("no_json_block_in_response") },
+          { error: "no_tool_use_in_response", message: anthropicErrorToHebrew("no_tool_use_in_response") },
           { status: 500 }
         )
       }
-      parsed = JSON.parse(jsonMatch[0])
+      // Drop non-string values (booleans for the classification flag, etc.)
+      // so the downstream field-fill loop only has to think about strings.
+      const rawParsed = toolUseBlock.input as Record<string, unknown>
+      for (const [k, v] of Object.entries(rawParsed)) {
+        if (typeof v === "string") parsed[k] = v
+      }
     } catch (aiErr) {
       const raw = aiErr instanceof Error ? aiErr.message : String(aiErr)
       console.error("Reparse identity AI call failed:", raw)
