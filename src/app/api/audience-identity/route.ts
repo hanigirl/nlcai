@@ -33,12 +33,14 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json()
 
+  // location / education / income were removed from the user-facing form —
+  // they were demographic fields the parser tended to hallucinate (e.g.
+  // "אקדמאית" written into rows where the source doc never mentioned
+  // education). DB columns still exist but we no longer write to them; any
+  // legacy value stays untouched until a future cleanup migration.
   const row: AudienceIdentityInsert = {
     user_id: user.id,
-    location: (body.location as string) ?? "",
     employment: (body.employment as string) ?? "",
-    education: (body.education as string) ?? "",
-    income: (body.income as string) ?? "",
     behavioral: (body.behavioral as string) ?? "",
     awareness_level: (body.awarenessLevel as string) ?? "",
     daily_pains: (body.dailyPains as string) ?? "",

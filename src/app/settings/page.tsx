@@ -127,10 +127,7 @@ function buildAudienceIdentityFromResponse(
     return ""
   }
   return {
-    location: pickStr(parsed?.location, saved?.location),
     employment: pickStr(parsed?.employment, saved?.employment),
-    education: pickStr(parsed?.education, saved?.education),
-    income: pickStr(parsed?.income, saved?.income),
     behavioral: pickStr(parsed?.behavioral, saved?.behavioral),
     awarenessLevel: pickStr(parsed?.awarenessLevel, saved?.awareness_level),
     dailyPains: pickStr(parsed?.dailyPains, saved?.daily_pains),
@@ -155,7 +152,7 @@ function audienceMissingKeysFromFresh(
   parsed: Record<string, unknown> | undefined,
 ): Array<keyof AudienceIdentityValues> {
   const keys: Array<keyof AudienceIdentityValues> = [
-    "location", "employment", "education", "income", "behavioral",
+    "employment", "behavioral",
     "awarenessLevel", "dailyPains", "emotionalPains", "unresolvedConsequences",
     "fears", "failedSolutions", "limitingBeliefs", "myths", "dailyDesires",
     "emotionalDesires", "smallWins", "idealSolution", "bottomLine",

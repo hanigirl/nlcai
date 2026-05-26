@@ -296,42 +296,30 @@ export async function POST(req: NextRequest) {
             // fields.
           }
 
-          // Critical-fields retry. Real bug seen in production: Claude returns
-          // a structurally-valid JSON but leaves all five "pain/fear/desire"
-          // fields empty even when the document discusses them. The downstream
-          // /api/homepage-hooks gate then rejects the user with audience_missing
-          // and the home page crashes. When we re-ran the SAME prompt manually
-          // on these users it filled 17+ fields — so the failure is model
-          // variance, not a prompt or input problem. Surgical retry asks Claude
-          // for those five fields only (smaller output, ~5-15s vs full re-parse)
-          // and merges the result.
+          // Critical-fields retry. Real bug seen in production: the primary
+          // parse returns a structurally-valid response but leaves the five
+          // "pain/fear/desire" fields empty even when the document discusses
+          // them. The downstream /api/homepage-hooks gate then rejects the
+          // user with audience_missing and the home page crashes. When we
+          // re-ran the SAME prompt manually it filled 17+ fields — so the
+          // failure is model variance, not a prompt or input problem.
           //
-          // ORDER MATTERS: this MUST run before the "all-empty → claude_returned_empty"
-          // check below. The retry was designed exactly for the all-empty case,
-          // but if we mark aiError first the `!aiError` gate below would skip the
-          // retry — exactly when it's most needed. One real user (audience file,
-          // 9.5K chars, well within Sonnet's budget) hit this and ended up with
-          // 21 blank fields in the gap dialog because the retry never fired.
-          // Two important loosenings here:
-          //   - dropped the `documentTypeOk !== false` gate. Haiku occasionally
-          //     misclassifies a clearly-audience doc as not-audience AND
-          //     simultaneously returns mostly-empty fields. The retry should
-          //     still get a shot — the focused prompt makes it clear what we
-          //     want regardless of classification.
-          //   - relaxed the threshold from "all 5 critical empty" to "3+
-          //     critical empty". One real user (Korin) had a sparse run where
-          //     Haiku only filled 2 demographic fields; all 5 critical were
-          //     empty in her case, but having even one critical filled would
-          //     have blocked the retry under the old rule and left her with
-          //     a near-empty row. 3+ catches the "mostly sparse" case while
-          //     still avoiding unnecessary retries on a healthy parse.
+          // Retry uses **Sonnet** rather than Haiku (cost is fine — this only
+          // fires when Haiku failed; we'd rather pay for the rescue than
+          // strand the user). Threshold is "any critical field empty" — a
+          // missing critical field blocks onboarding, so we should always
+          // try to fill it once. 25s AbortSignal accommodates Sonnet's
+          // typical 8-18s response on Hebrew docs.
+          //
+          // ORDER MATTERS: this MUST run before the empty/critical checks
+          // below — those checks should reflect post-retry reality.
           if (type === "audience" && !aiError) {
             const CRITICAL = ["dailyPains", "emotionalPains", "fears", "dailyDesires", "emotionalDesires"] as const
-            const emptyCount = CRITICAL.filter((k) => !parsed[k] || !parsed[k].trim()).length
-            if (emptyCount >= 3) {
-              console.warn(`[parse-identity] audience parse left ${emptyCount}/5 critical fields empty — retrying with focused prompt`)
+            const emptyCountPre = CRITICAL.filter((k) => !parsed[k] || !parsed[k].trim()).length
+            if (emptyCountPre >= 1) {
+              console.warn(`[parse-identity] audience parse left ${emptyCountPre}/5 critical fields empty — Sonnet retry with focused prompt`)
               try {
-                const retryInstruction = `הסיבוב הקודם הותיר רוב/כל 5 השדות הבאים ריקים: dailyPains, emotionalPains, fears, dailyDesires, emotionalDesires. המסמך מתאר קהל יעד באופן מובהק — קראי אותו שוב בעיון וחלצי את הכאבים, הפחדים והרצונות, גם אם הם מוסקים מההקשר ולא בציטוטים ישירים. החזירי JSON עם 5 השדות האלה בלבד, ללא טקסט נוסף וללא markdown fences. אם לאחר עיון שני באמת אין כלום בקובץ עבור שדה מסוים — השאירי אותו ריק.`
+                const retryInstruction = `הסיבוב הקודם של מודל מהיר יותר הותיר ${emptyCountPre} מתוך 5 השדות הקריטיים הבאים ריקים: dailyPains, emotionalPains, fears, dailyDesires, emotionalDesires. המסמך מתאר קהל יעד באופן מובהק — קראי אותו שוב בעיון וחלצי את הכאבים, הפחדים והרצונות, גם אם הם מוסקים מההקשר ולא בציטוטים ישירים. השתמשי בכלי \`fill_audience_critical_fields\` בלבד. אם לאחר עיון שני באמת אין כלום בקובץ עבור שדה מסוים — השאירי אותו ריק.`
                 const retryUserContent: Anthropic.ContentBlockParam[] =
                   fileContent.kind === "pdf"
                     ? [
@@ -346,18 +334,14 @@ export async function POST(req: NextRequest) {
                         { type: "text", text: retryInstruction },
                       ]
                     : [{ type: "text", text: `${retryInstruction}\n\n--- הטקסט ---\n${fileContent.text}` }]
-                // Tool-use retry too — same reasons as the main call. The
-                // focused 5-field tool keeps the response tight (no extra
-                // fields to merge) and removes the JSON.parse risk entirely.
-                // AbortSignal caps at 12s — well above Haiku's typical 3-8s.
                 const retryMessage = await client.messages.create({
-                  model: "claude-haiku-4-5-20251001",
+                  model: "claude-sonnet-4-6",
                   max_tokens: 2048,
                   tools: [AUDIENCE_CRITICAL_RETRY_TOOL],
                   tool_choice: { type: "tool", name: AUDIENCE_CRITICAL_RETRY_TOOL.name },
                   messages: [{ role: "user", content: retryUserContent }],
                 }, {
-                  signal: AbortSignal.timeout(12000),
+                  signal: AbortSignal.timeout(25000),
                 })
                 const retryToolUse = retryMessage.content.find((b) => b.type === "tool_use")
                 if (retryToolUse && retryToolUse.type === "tool_use") {
@@ -366,24 +350,47 @@ export async function POST(req: NextRequest) {
                   for (const k of CRITICAL) {
                     const v = retryParsed[k]
                     if (typeof v === "string" && v.trim()) {
-                      parsed[k] = v
-                      filled++
+                      // Only fill if currently empty — don't overwrite Haiku's
+                      // good work with a (possibly shorter) Sonnet extract.
+                      if (!parsed[k] || !parsed[k].trim()) {
+                        parsed[k] = v
+                        filled++
+                      }
                     }
                   }
-                  console.log(`[parse-identity] audience retry filled ${filled}/${CRITICAL.length} critical fields`)
+                  console.log(`[parse-identity] audience Sonnet retry filled ${filled}/${emptyCountPre} previously-empty critical fields`)
                 }
               } catch (retryErr) {
-                // Non-fatal — fall through with original parse. The gap popup
-                // will still ask the user to fill these manually.
+                // Non-fatal — fall through. The critical-empty check below
+                // will decide whether the parse is salvageable or whether we
+                // must surface a hard error.
                 console.error("[parse-identity] audience retry failed:", retryErr instanceof Error ? retryErr.message : retryErr)
               }
             }
           }
 
-          // NOW that the retry has had its chance, treat a still-empty parse
-          // as a soft failure so the user gets feedback. The gap dialog opens
-          // with the missing fields, and downstream pipelines stay protected
-          // by the same soft-error contract as before.
+          // Hard critical-empty gate. Even after the Sonnet retry, if ALL five
+          // critical audience fields are empty, the parse is not usable: the
+          // /api/onboarding/complete check would reject this row anyway, and
+          // committing it silently would strand the user at the products step
+          // with a generic "missing data" toast (the exact bug we just fixed
+          // upstream for one user). Surfacing a parse-time error lets the
+          // onboarding UI tell the user what's wrong while they still have the
+          // file in hand. Non-critical fields don't trigger this — those can
+          // be filled later in settings without blocking anything.
+          if (type === "audience" && !aiError) {
+            const CRITICAL = ["dailyPains", "emotionalPains", "fears", "dailyDesires", "emotionalDesires"] as const
+            const allCriticalEmpty = CRITICAL.every((k) => !parsed[k] || !parsed[k].trim())
+            if (allCriticalEmpty) {
+              aiError = "critical_fields_empty"
+            }
+          }
+
+          // Soft fallback: nothing came back at all (even after retry). Lets
+          // the gap dialog open with all fields missing. Distinct from
+          // critical_fields_empty above — that one is hard because the row
+          // would block onboarding completion; this one is soft because the
+          // core flow can still recover via manual entry.
           const hasAnyField = Object.values(parsed).some(
             (v) => typeof v === "string" && v.trim().length > 0
           )
@@ -454,7 +461,12 @@ export async function POST(req: NextRequest) {
       aiError === "no_json_block_in_response" ||
       aiError === "no_tool_use_in_response" ||
       aiError === "anthropic_not_connected" ||
-      aiError === "ai_timeout"
+      aiError === "ai_timeout" ||
+      // Soft so the gap dialog can open for manual entry of the 5 critical
+      // fields — blocking the upload entirely would leave the user with no
+      // recovery path. The warning text in anthropic-errors.ts tells them
+      // what to check.
+      aiError === "critical_fields_empty"
     if (aiError && !aiErrorIsSoft && !hasManualCoreContent) {
       return NextResponse.json(
         {
@@ -529,12 +541,12 @@ export async function POST(req: NextRequest) {
           : {}),
       })
     } else {
+      // location / education / income intentionally not written — the fields
+      // were dropped from the audience identity. Any legacy DB value stays
+      // untouched (we don't null it here; the columns are inert).
       const row = {
         user_id: user.id,
-        location: pickFilled(parsed.location),
         employment: pickFilled(parsed.employment),
-        education: pickFilled(parsed.education),
-        income: pickFilled(parsed.income),
         behavioral: pickFilled(parsed.behavioral),
         awareness_level: pickFilled(parsed.awarenessLevel),
         daily_pains: pickFilled(parsed.dailyPains),

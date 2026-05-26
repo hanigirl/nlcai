@@ -29,6 +29,15 @@ export function isCoreIdentityComplete(v: CoreIdentityValues): boolean {
   )
 }
 
+// 3 core fields gate onboarding completion (server-validated in
+// /api/onboarding/complete). Everything else (whoIServe, slangExamples,
+// whatINeverDo, productName) is supportive context — useful but not blocking.
+export const CRITICAL_CORE_FIELDS: ReadonlyArray<keyof CoreIdentityValues> = [
+  "whoIAm",
+  "niche",
+  "howISound",
+]
+
 interface CoreIdentityFormProps {
   values: CoreIdentityValues
   onChange: (next: CoreIdentityValues) => void

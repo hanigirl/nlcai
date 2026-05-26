@@ -11,10 +11,7 @@ interface CoreIdentity {
 }
 
 interface AudienceIdentity {
-  location: string
   employment: string
-  education: string
-  income: string
   behavioral: string
   awareness_level: string
   daily_pains: string
@@ -83,11 +80,8 @@ ${coreIdentity.what_i_never_do}
     ? `
 ## Audience Identity — קהל היעד
 
-### דמוגרפיה
-- מיקום: ${audienceIdentity.location}
+### מי הם
 - תעסוקה: ${audienceIdentity.employment}
-- השכלה: ${audienceIdentity.education}
-- הכנסה: ${audienceIdentity.income}
 - התנהגות: ${audienceIdentity.behavioral}
 - רמת מודעות: ${audienceIdentity.awareness_level}
 

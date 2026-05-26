@@ -170,10 +170,7 @@ export async function POST(req: NextRequest) {
 
       const updates: Record<string, string> = {}
       const fieldMap: Record<string, string> = {
-        location: "location",
         employment: "employment",
-        education: "education",
-        income: "income",
         behavioral: "behavioral",
         awareness_level: "awarenessLevel",
         daily_pains: "dailyPains",

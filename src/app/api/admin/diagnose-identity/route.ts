@@ -224,10 +224,7 @@ export async function POST(req: NextRequest) {
     if (type === "audience") {
       const row = {
         user_id: userId,
-        location: pickFilled(parsed.location, cur?.location),
         employment: pickFilled(parsed.employment, cur?.employment),
-        education: pickFilled(parsed.education, cur?.education),
-        income: pickFilled(parsed.income, cur?.income),
         behavioral: pickFilled(parsed.behavioral, cur?.behavioral),
         awareness_level: pickFilled(parsed.awarenessLevel, cur?.awareness_level),
         daily_pains: pickFilled(parsed.dailyPains, cur?.daily_pains),

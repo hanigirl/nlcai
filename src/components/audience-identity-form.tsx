@@ -4,10 +4,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 
 export interface AudienceIdentityValues {
-  location: string
   employment: string
-  education: string
-  income: string
   behavioral: string
   awarenessLevel: string
   dailyPains: string
@@ -28,10 +25,7 @@ export interface AudienceIdentityValues {
 }
 
 export const EMPTY_AUDIENCE_IDENTITY: AudienceIdentityValues = {
-  location: "",
   employment: "",
-  education: "",
-  income: "",
   behavioral: "",
   awarenessLevel: "",
   dailyPains: "",
@@ -50,6 +44,18 @@ export const EMPTY_AUDIENCE_IDENTITY: AudienceIdentityValues = {
   idealSolutionWords: "",
   identityStatements: "",
 }
+
+// 5 audience fields gate onboarding completion (server-validated in
+// /api/onboarding/complete). Everything else is supportive context for the
+// hook generator — useful but not blocking. Listed here so the gap dialog,
+// parser retry, and complete check all agree on the same set.
+export const CRITICAL_AUDIENCE_FIELDS: ReadonlyArray<keyof AudienceIdentityValues> = [
+  "dailyPains",
+  "emotionalPains",
+  "fears",
+  "dailyDesires",
+  "emotionalDesires",
+]
 
 export function isAudienceIdentityComplete(v: AudienceIdentityValues): boolean {
   return (Object.keys(EMPTY_AUDIENCE_IDENTITY) as (keyof AudienceIdentityValues)[]).every(
@@ -71,12 +77,9 @@ export interface AudienceFieldGroup {
 
 export const AUDIENCE_IDENTITY_GROUPS: AudienceFieldGroup[] = [
   {
-    title: "דמוגרפיה",
+    title: "מי הם",
     fields: [
-      { key: "location", label: "מיקום", placeholder: "אזור, ערים מרכזיות" },
       { key: "employment", label: "תעסוקה", placeholder: "תפקיד, ענף, סוג עבודה" },
-      { key: "education", label: "השכלה", placeholder: "רמת השכלה, תחום" },
-      { key: "income", label: "הכנסה", placeholder: "נמוכה / בינונית / גבוהה / טווח" },
       {
         key: "behavioral",
         label: "התנהגות",

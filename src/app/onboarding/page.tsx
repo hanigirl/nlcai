@@ -91,10 +91,7 @@ function audienceMissingKeysFromFresh(
   parsed: Record<string, unknown> | undefined,
 ): Array<keyof AudienceIdentityValues> {
   const keys: Array<keyof AudienceIdentityValues> = [
-    "location",
     "employment",
-    "education",
-    "income",
     "behavioral",
     "awarenessLevel",
     "dailyPains",
@@ -128,10 +125,7 @@ function buildAudienceIdentityFromResponse(
     return ""
   }
   return {
-    location: pickStr(parsed?.location, saved?.location),
     employment: pickStr(parsed?.employment, saved?.employment),
-    education: pickStr(parsed?.education, saved?.education),
-    income: pickStr(parsed?.income, saved?.income),
     behavioral: pickStr(parsed?.behavioral, saved?.behavioral),
     awarenessLevel: pickStr(parsed?.awarenessLevel, saved?.awareness_level),
     dailyPains: pickStr(parsed?.dailyPains, saved?.daily_pains),
@@ -397,9 +391,29 @@ function OnboardingPageInner() {
     return -1
   }
 
+  // Snake_case DB column names returned by /api/onboarding/complete's
+  // `missing[]` mapped to the camelCase TS keys the gap dialogs expect.
+  // Keep in sync with the server's validation set in
+  // /api/onboarding/complete/route.ts.
+  const CORE_MISSING_MAP: Record<string, keyof CoreIdentityValues> = {
+    who_i_am: "whoIAm",
+    niche: "niche",
+    how_i_sound: "howISound",
+  }
+  const AUDIENCE_MISSING_MAP: Record<string, keyof AudienceIdentityValues> = {
+    daily_pains: "dailyPains",
+    emotional_pains: "emotionalPains",
+    fears: "fears",
+    daily_desires: "dailyDesires",
+    emotional_desires: "emotionalDesires",
+  }
+
   // Centralized "what's next" decision after a step handler finishes. If the
   // next step is in stepsDoneAtMount we skip past it; if nothing's left we
   // try the server-validated completion endpoint instead of setCurrentStep.
+  // When the server reports a 400 `incomplete` with a `missing[]` list, we
+  // open the right gap dialog in place rather than just toasting — the user
+  // already finished step 5 (products), there's nothing left to "go back to."
   const advanceFromStep = async (current: number): Promise<void> => {
     const next = findNextStep(current)
     if (next !== -1) {
@@ -409,6 +423,52 @@ function OnboardingPageInner() {
     const res = await fetch("/api/onboarding/complete", { method: "POST" })
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))
+      // Server reported missing critical fields. Open the appropriate gap
+      // dialog (core first if any core fields are missing, otherwise
+      // audience) prefilled with whatever's currently saved, so the user
+      // fixes in-place. The toast falls back to a generic message for any
+      // other 4xx/5xx (network, RLS, etc.).
+      if (
+        data?.error === "incomplete" &&
+        Array.isArray(data.missing) &&
+        data.missing.length > 0
+      ) {
+        const coreMissing = (data.missing as string[])
+          .map((k) => CORE_MISSING_MAP[k])
+          .filter((k): k is keyof CoreIdentityValues => Boolean(k))
+        const audienceMissing = (data.missing as string[])
+          .map((k) => AUDIENCE_MISSING_MAP[k])
+          .filter((k): k is keyof AudienceIdentityValues => Boolean(k))
+
+        if (coreMissing.length > 0) {
+          const fetchRes = await fetch("/api/core-identity").catch(() => null)
+          const fetchData = fetchRes && fetchRes.ok ? await fetchRes.json().catch(() => null) : null
+          const saved = (fetchData?.identity ?? {}) as Record<string, unknown>
+          const prefill = buildCoreIdentityFromResponse(
+            { productName: businessName, niche, whoIAm: expertise },
+            undefined,
+            saved,
+          )
+          setCoreGapMode("gaps")
+          setCoreGapMissingKeys(coreMissing)
+          setCoreGapValues(prefill)
+          setCoreGapOpen(true)
+          toast("חסרים שדות חיוניים בסגנון הכתיבה — השלימו ונמשיך", { duration: 8000 })
+          return
+        }
+        if (audienceMissing.length > 0) {
+          const fetchRes = await fetch("/api/audience-identity").catch(() => null)
+          const fetchData = fetchRes && fetchRes.ok ? await fetchRes.json().catch(() => null) : null
+          const saved = (fetchData?.identity ?? {}) as Record<string, unknown>
+          const prefill = buildAudienceIdentityFromResponse(undefined, saved)
+          setAudienceGapMode("gaps")
+          setAudienceGapMissingKeys(audienceMissing)
+          setAudienceGapValues(prefill)
+          setAudienceGapOpen(true)
+          toast("חסרים שדות חיוניים בקהל היעד — השלימו ונמשיך", { duration: 8000 })
+          return
+        }
+      }
       toast.error(
         data.message ||
           "לא הצלחנו לסיים את האונבורדינג. השלימו את הפרטים החסרים.",
@@ -734,7 +794,11 @@ function OnboardingPageInner() {
         return
       }
       setCoreGapOpen(false)
-      await advanceFromStep(1)
+      // currentStep, not a hardcoded 1: when the dialog was opened in-place
+      // from the products step (E flow), advancing from currentStep retries
+      // the /api/onboarding/complete check instead of jumping back to the
+      // audience step.
+      await advanceFromStep(currentStep)
     } finally {
       setCoreGapSaving(false)
     }
@@ -787,7 +851,9 @@ function OnboardingPageInner() {
         return
       }
       setAudienceGapOpen(false)
-      await advanceFromStep(2)
+      // currentStep, not a hardcoded 2: see handleCoreGapSave comment for
+      // why — same in-place fix scenario applies here.
+      await advanceFromStep(currentStep)
     } finally {
       setAudienceGapSaving(false)
     }
@@ -1017,10 +1083,7 @@ function OnboardingPageInner() {
                   setGapPreviewMode(true)
                   setAudienceGapMode("gaps")
                   setAudienceGapValues({
-                    location: "תל אביב והמרכז",
                     employment: "מעצבי UI/UX",
-                    education: "תארים, קורסים, אוטודידקטים",
-                    income: "",
                     behavioral: "חיים על פיגמה, צורכים תוכן רב",
                     awarenessLevel: "",
                     dailyPains: "לא בטוחים אם הקובץ בנוי נכון לקוד",
@@ -1051,10 +1114,7 @@ function OnboardingPageInner() {
                   setGapPreviewMode(true)
                   setAudienceGapMode("verify")
                   setAudienceGapValues({
-                    location: "תל אביב והמרכז",
                     employment: "מעצבי UI/UX",
-                    education: "תארים, קורסים, אוטודידקטים",
-                    income: "ג׳וניורים לחוצים, סניורים מרוויחים טוב",
                     behavioral: "חיים על פיגמה, צורכים תוכן רב",
                     awarenessLevel: "מודעים לבעיה ולאיום של AI",
                     dailyPains: "לא בטוחים אם הקובץ בנוי נכון לקוד",

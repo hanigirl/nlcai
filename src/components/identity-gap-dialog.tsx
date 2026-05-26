@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useMemo, type ReactNode } from "react"
-import { Loader2, AlertCircle } from "lucide-react"
+import { Loader2, AlertCircle, ChevronDown } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -14,12 +14,15 @@ import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import {
   CORE_IDENTITY_FIELDS,
+  CRITICAL_CORE_FIELDS,
   type CoreIdentityValues,
   type CoreIdentityField,
 } from "@/components/core-identity-form"
 import {
   AUDIENCE_IDENTITY_GROUPS,
+  CRITICAL_AUDIENCE_FIELDS,
   type AudienceIdentityValues,
+  type AudienceFieldGroup,
 } from "@/components/audience-identity-form"
 
 // Shared chrome for both identity dialogs. Three sections:
@@ -156,21 +159,82 @@ export function CoreIdentityGapDialog({
   onCancel,
   onSave,
 }: CoreGapDialogProps) {
-  // Snapshot which fields to show. Computed at open so typing into a field
-  // doesn't make it disappear from the list mid-session.
-  const fieldsToShow = useMemo<CoreIdentityField[]>(() => {
-    if (!open) return []
-    if (mode === "verify") return CORE_IDENTITY_FIELDS
-    if (missingKeys) {
-      const set = new Set(missingKeys)
-      return CORE_IDENTITY_FIELDS.filter((f) => set.has(f.key))
+  // Snapshot which fields to show, then split into required (critical) vs
+  // optional (everything else). Only required fields gate the save button —
+  // optional ones appear under a collapsible section so users who care can
+  // fill them, but users who just want to finish don't have to. Computed
+  // at open so typing doesn't make fields jump in/out.
+  const { requiredFields, optionalFields } = useMemo<{
+    requiredFields: CoreIdentityField[]
+    optionalFields: CoreIdentityField[]
+  }>(() => {
+    if (!open) return { requiredFields: [], optionalFields: [] }
+    const shown: CoreIdentityField[] =
+      mode === "verify"
+        ? CORE_IDENTITY_FIELDS
+        : missingKeys
+          ? CORE_IDENTITY_FIELDS.filter((f) => new Set(missingKeys).has(f.key))
+          : CORE_IDENTITY_FIELDS.filter((f) => !initialValues[f.key].trim())
+    const criticalSet = new Set<keyof CoreIdentityValues>(CRITICAL_CORE_FIELDS)
+    return {
+      requiredFields: shown.filter((f) => criticalSet.has(f.key)),
+      optionalFields: shown.filter((f) => !criticalSet.has(f.key)),
     }
-    return CORE_IDENTITY_FIELDS.filter((f) => !initialValues[f.key].trim())
   }, [open, initialValues, mode, missingKeys])
 
   const [values, setValues] = useState<CoreIdentityValues>(initialValues)
+  const [optionalOpen, setOptionalOpen] = useState(false)
 
-  const allFilled = fieldsToShow.every((f) => values[f.key].trim().length > 0)
+  // Verify mode treats EVERY shown field as required — the user is
+  // confirming/correcting the whole identity, not filling pure gaps. In gaps
+  // mode, only the critical fields gate the button so the user can finish
+  // fast without filling optional supportive fields.
+  const allRequiredFilled =
+    mode === "verify"
+      ? [...requiredFields, ...optionalFields].every(
+          (f) => values[f.key].trim().length > 0,
+        )
+      : requiredFields.every((f) => values[f.key].trim().length > 0)
+
+  const renderField = (field: CoreIdentityField) => (
+    <div key={field.key} className="flex flex-col gap-1.5">
+      <label
+        htmlFor={`core-field-${field.key}`}
+        className="text-small-bold text-text-primary-default px-1"
+      >
+        {field.label}
+        {(mode === "verify" || CRITICAL_CORE_FIELDS.includes(field.key)) && (
+          <span aria-hidden="true" className="text-button-destructive-default"> *</span>
+        )}
+      </label>
+      {field.multiline ? (
+        <Textarea
+          id={`core-field-${field.key}`}
+          placeholder={field.placeholder}
+          value={values[field.key]}
+          onChange={(e) => setValues({ ...values, [field.key]: e.target.value })}
+          aria-required={CRITICAL_CORE_FIELDS.includes(field.key) ? "true" : undefined}
+          className="min-h-[88px] rounded-2xl border-none bg-bg-surface px-4 py-3 text-base shadow-none placeholder:text-text-neutral-default resize-none"
+        />
+      ) : (
+        <Input
+          id={`core-field-${field.key}`}
+          placeholder={field.placeholder}
+          value={values[field.key]}
+          onChange={(e) => setValues({ ...values, [field.key]: e.target.value })}
+          aria-required={CRITICAL_CORE_FIELDS.includes(field.key) ? "true" : undefined}
+        />
+      )}
+      {field.hint && (
+        <p className="text-xs-body text-text-neutral-default px-1">{field.hint}</p>
+      )}
+    </div>
+  )
+
+  // In verify mode keep the old "show everything together" layout, since
+  // the user is reviewing the full identity. In gaps mode split required
+  // up top from optional in a collapsible section.
+  const showSplit = mode === "gaps" && optionalFields.length > 0
 
   return (
     <DialogShell
@@ -185,44 +249,36 @@ export function CoreIdentityGapDialog({
       verifyMessage="הקובץ שהעליתם לא זוהה כתיאור של סגנון כתיבה. בדקו את הפרטים השמורים ועדכנו במידת הצורך, או סגרו והעלו קובץ אחר."
       gapMessage="הקובץ עלה ונותח, אבל חסרים לנו עוד כמה פרטים חיוניים כדי שהמערכת תוכל לעבוד עבורכם. ההשלמה לוקחת רק דקה."
       body={
-        <div className="flex flex-col gap-4">
-          {fieldsToShow.map((field) => (
-            <div key={field.key} className="flex flex-col gap-1.5">
-              <label
-                htmlFor={`core-field-${field.key}`}
-                className="text-small-bold text-text-primary-default px-1"
-              >
-                {field.label}
-                <span aria-hidden="true" className="text-button-destructive-default"> *</span>
-              </label>
-              {field.multiline ? (
-                <Textarea
-                  id={`core-field-${field.key}`}
-                  placeholder={field.placeholder}
-                  value={values[field.key]}
-                  onChange={(e) => setValues({ ...values, [field.key]: e.target.value })}
-                  aria-required="true"
-                  className="min-h-[88px] rounded-2xl border-none bg-bg-surface px-4 py-3 text-base shadow-none placeholder:text-text-neutral-default resize-none"
-                />
-              ) : (
-                <Input
-                  id={`core-field-${field.key}`}
-                  placeholder={field.placeholder}
-                  value={values[field.key]}
-                  onChange={(e) => setValues({ ...values, [field.key]: e.target.value })}
-                  aria-required="true"
-                />
-              )}
-              {field.hint && (
-                <p className="text-xs-body text-text-neutral-default px-1">{field.hint}</p>
-              )}
-            </div>
-          ))}
-        </div>
+        showSplit ? (
+          <div className="flex flex-col gap-4">
+            {requiredFields.map(renderField)}
+            <button
+              type="button"
+              onClick={() => setOptionalOpen((v) => !v)}
+              className="flex items-center justify-between gap-2 rounded-xl border border-border-neutral-default px-3 py-2 text-small-bold text-text-primary-default hover:bg-bg-surface-hover"
+              aria-expanded={optionalOpen}
+            >
+              <span>אופציונלי — להעשרת הניתוח ({optionalFields.length})</span>
+              <ChevronDown
+                aria-hidden="true"
+                className={`size-4 transition-transform ${optionalOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+            {optionalOpen && (
+              <div className="flex flex-col gap-4 pt-1">
+                {optionalFields.map(renderField)}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {[...requiredFields, ...optionalFields].map(renderField)}
+          </div>
+        )
       }
       primaryLabel={mode === "verify" ? "שמירה ידנית" : "שמור והמשך"}
       secondaryLabel={mode === "verify" ? "סגירה והעלאת קובץ אחר" : "אשלים בהגדרות אחר כך"}
-      primaryDisabled={!allFilled}
+      primaryDisabled={!allRequiredFilled}
       saving={saving}
       onPrimary={() => void onSave(values)}
       onSecondary={() => onCancel(values)}
@@ -250,27 +306,101 @@ export function AudienceIdentityGapDialog({
   onCancel,
   onSave,
 }: AudienceGapDialogProps) {
-  const groupsToShow = useMemo(() => {
-    if (!open) return []
-    if (mode === "verify") return AUDIENCE_IDENTITY_GROUPS
-    if (missingKeys) {
-      const set = new Set(missingKeys)
-      return AUDIENCE_IDENTITY_GROUPS.map((g) => ({
+  // Split shown fields into critical (required) vs supportive (optional). In
+  // gaps mode only the 5 critical pain/fear/desire fields gate the save —
+  // others appear under a collapsible "אופציונלי" section so the dialog
+  // doesn't feel like a 21-field gauntlet for users who just want to finish.
+  // In verify mode every field is treated as required (the user is reviewing
+  // the full identity, not filling gaps).
+  const { requiredGroups, optionalGroups } = useMemo(() => {
+    if (!open) return { requiredGroups: [], optionalGroups: [] }
+    const baseGroups =
+      mode === "verify"
+        ? AUDIENCE_IDENTITY_GROUPS
+        : missingKeys
+          ? AUDIENCE_IDENTITY_GROUPS.map((g) => ({
+              title: g.title,
+              fields: g.fields.filter((f) => new Set(missingKeys).has(f.key)),
+            })).filter((g) => g.fields.length > 0)
+          : AUDIENCE_IDENTITY_GROUPS.map((g) => ({
+              title: g.title,
+              fields: g.fields.filter((f) => !initialValues[f.key].trim()),
+            })).filter((g) => g.fields.length > 0)
+    const criticalSet = new Set<keyof AudienceIdentityValues>(CRITICAL_AUDIENCE_FIELDS)
+    const required = baseGroups
+      .map((g) => ({
         title: g.title,
-        fields: g.fields.filter((f) => set.has(f.key)),
-      })).filter((g) => g.fields.length > 0)
-    }
-    return AUDIENCE_IDENTITY_GROUPS.map((g) => ({
-      title: g.title,
-      fields: g.fields.filter((f) => !initialValues[f.key].trim()),
-    })).filter((g) => g.fields.length > 0)
+        fields: g.fields.filter((f) => criticalSet.has(f.key)),
+      }))
+      .filter((g) => g.fields.length > 0)
+    const optional = baseGroups
+      .map((g) => ({
+        title: g.title,
+        fields: g.fields.filter((f) => !criticalSet.has(f.key)),
+      }))
+      .filter((g) => g.fields.length > 0)
+    return { requiredGroups: required, optionalGroups: optional }
   }, [open, initialValues, mode, missingKeys])
 
   const [values, setValues] = useState<AudienceIdentityValues>(initialValues)
+  const [optionalOpen, setOptionalOpen] = useState(false)
 
-  const allFilled = groupsToShow.every((g) =>
-    g.fields.every((f) => values[f.key].trim().length > 0),
+  const optionalFieldCount = optionalGroups.reduce((n, g) => n + g.fields.length, 0)
+
+  const allRequiredFilled =
+    mode === "verify"
+      ? [...requiredGroups, ...optionalGroups].every((g) =>
+          g.fields.every((f) => values[f.key].trim().length > 0),
+        )
+      : requiredGroups.every((g) =>
+          g.fields.every((f) => values[f.key].trim().length > 0),
+        )
+
+  const renderGroup = (
+    group: { title: string; fields: AudienceFieldGroup["fields"] },
+    showStar: boolean,
+  ) => (
+    <div key={group.title} className="flex flex-col gap-3">
+      <h4 className="text-small-bold text-text-primary-default border-b border-border-neutral-default pb-1.5">
+        {group.title}
+      </h4>
+      <div className="flex flex-col gap-3">
+        {group.fields.map((field) => (
+          <div key={field.key} className="flex flex-col gap-1.5">
+            <label
+              htmlFor={`aud-field-${field.key}`}
+              className="text-xs-body text-text-primary-default px-1"
+            >
+              {field.label}
+              {showStar && (
+                <span aria-hidden="true" className="text-button-destructive-default"> *</span>
+              )}
+            </label>
+            {field.multiline ? (
+              <Textarea
+                id={`aud-field-${field.key}`}
+                placeholder={field.placeholder}
+                value={values[field.key]}
+                onChange={(e) => setValues({ ...values, [field.key]: e.target.value })}
+                aria-required={showStar ? "true" : undefined}
+                className="min-h-[72px] rounded-2xl border-none bg-bg-surface px-4 py-3 text-base shadow-none placeholder:text-text-neutral-default resize-none"
+              />
+            ) : (
+              <Input
+                id={`aud-field-${field.key}`}
+                placeholder={field.placeholder}
+                value={values[field.key]}
+                onChange={(e) => setValues({ ...values, [field.key]: e.target.value })}
+                aria-required={showStar ? "true" : undefined}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   )
+
+  const showSplit = mode === "gaps" && optionalFieldCount > 0
 
   return (
     <DialogShell
@@ -283,52 +413,38 @@ export function AudienceIdentityGapDialog({
       contentMaxWidth="max-w-xl"
       title={mode === "verify" ? "אשרו את פרטי הקהל" : "השלימו את פרטי הקהל החסרים"}
       verifyMessage="הקובץ שהעליתם לא זוהה כניתוח קהל יעד. בדקו את הפרטים השמורים ועדכנו במידת הצורך, או סגרו והעלו קובץ אחר."
-      gapMessage="הקובץ עלה ונותח, אבל חסרים לנו עוד כמה פרטים חיוניים כדי שהמערכת תוכל לדבר בדיוק לקהל שלכם. ההשלמה לוקחת רק דקה."
+      gapMessage="הקובץ עלה ונותח. השלימו את השדות החיוניים למטה כדי שהמערכת תוכל לדבר בדיוק לקהל שלכם."
       body={
-        <div className="flex flex-col gap-6">
-          {groupsToShow.map((group) => (
-            <div key={group.title} className="flex flex-col gap-3">
-              <h4 className="text-small-bold text-text-primary-default border-b border-border-neutral-default pb-1.5">
-                {group.title}
-              </h4>
-              <div className="flex flex-col gap-3">
-                {group.fields.map((field) => (
-                  <div key={field.key} className="flex flex-col gap-1.5">
-                    <label
-                      htmlFor={`aud-field-${field.key}`}
-                      className="text-xs-body text-text-primary-default px-1"
-                    >
-                      {field.label}
-                      <span aria-hidden="true" className="text-button-destructive-default"> *</span>
-                    </label>
-                    {field.multiline ? (
-                      <Textarea
-                        id={`aud-field-${field.key}`}
-                        placeholder={field.placeholder}
-                        value={values[field.key]}
-                        onChange={(e) => setValues({ ...values, [field.key]: e.target.value })}
-                        aria-required="true"
-                        className="min-h-[72px] rounded-2xl border-none bg-bg-surface px-4 py-3 text-base shadow-none placeholder:text-text-neutral-default resize-none"
-                      />
-                    ) : (
-                      <Input
-                        id={`aud-field-${field.key}`}
-                        placeholder={field.placeholder}
-                        value={values[field.key]}
-                        onChange={(e) => setValues({ ...values, [field.key]: e.target.value })}
-                        aria-required="true"
-                      />
-                    )}
-                  </div>
-                ))}
+        showSplit ? (
+          <div className="flex flex-col gap-6">
+            {requiredGroups.map((g) => renderGroup(g, true))}
+            <button
+              type="button"
+              onClick={() => setOptionalOpen((v) => !v)}
+              className="flex items-center justify-between gap-2 rounded-xl border border-border-neutral-default px-3 py-2 text-small-bold text-text-primary-default hover:bg-bg-surface-hover"
+              aria-expanded={optionalOpen}
+            >
+              <span>אופציונלי — להעשרת הניתוח ({optionalFieldCount})</span>
+              <ChevronDown
+                aria-hidden="true"
+                className={`size-4 transition-transform ${optionalOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+            {optionalOpen && (
+              <div className="flex flex-col gap-6 pt-1">
+                {optionalGroups.map((g) => renderGroup(g, false))}
               </div>
-            </div>
-          ))}
-        </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-6">
+            {[...requiredGroups, ...optionalGroups].map((g) => renderGroup(g, true))}
+          </div>
+        )
       }
       primaryLabel={mode === "verify" ? "שמירה ידנית" : "שמור והמשך"}
       secondaryLabel={mode === "verify" ? "סגירה והעלאת קובץ אחר" : "אשלים בהגדרות אחר כך"}
-      primaryDisabled={!allFilled}
+      primaryDisabled={!allRequiredFilled}
       saving={saving}
       onPrimary={() => void onSave(values)}
       onSecondary={() => onCancel(values)}

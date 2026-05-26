@@ -78,10 +78,7 @@ export const AUDIENCE_IDENTITY_PARSE_PROMPT = `את סוכנת שמפרסרת מ
 JSON:
 {
   "isAudienceDocument": true,
-  "location": "אזור המרכז",
   "employment": "אמהות עובדות, הייטק",
-  "education": "",
-  "income": "גבוהה",
   "behavioral": "רצות מבוקר עד ערב, לא פוגשות חברות, מזניחות זוגיות",
   "awarenessLevel": "מודעות לבעיה, ניסו פתרונות, עדיין מחפשות",
   "dailyPains": "לו״ז עמוס, אין זמן לעצמן, חברויות וזוגיות נפגעות",
@@ -108,10 +105,7 @@ JSON:
 JSON:
 {
   "isAudienceDocument": false,
-  "location": "",
   "employment": "",
-  "education": "",
-  "income": "",
   "behavioral": "",
   "awarenessLevel": "",
   "dailyPains": "",
@@ -195,10 +189,7 @@ export const AUDIENCE_IDENTITY_TOOL = {
         description:
           "האם המסמך מכיל אינפורמציה על קהל היעד. ברירת המחדל היא true — רק מסמך לחלוטין לא רלוונטי (מתכון, מאמר טכני וכד׳) הוא false.",
       },
-      location: { type: "string", description: "אזור גיאוגרפי של הקהל" },
       employment: { type: "string", description: "תעסוקה, תפקידים, ענפים" },
-      education: { type: "string", description: "רמת השכלה, תחומים" },
-      income: { type: "string", description: "טווח הכנסה" },
       behavioral: {
         type: "string",
         description: "התנהגות יומיומית — מה הקהל עושה / לא עושה",
@@ -237,10 +228,7 @@ export const AUDIENCE_IDENTITY_TOOL = {
     },
     required: [
       "isAudienceDocument",
-      "location",
       "employment",
-      "education",
-      "income",
       "behavioral",
       "awarenessLevel",
       "dailyPains",
