@@ -353,15 +353,22 @@ function OnboardingPageInner() {
         // shouldn't be on /onboarding at all — try to finalize and bounce.
         const firstIncomplete = doneFlags.findIndex((d) => !d)
         if (firstIncomplete === -1) {
-          const res = await fetch("/api/onboarding/complete", { method: "POST" })
-          if (res.ok) {
-            redirecting = true
-            router.replace("/welcome")
-            return
+          // Dev override beats the welcome redirect: lets the designer reach
+          // /onboarding?dev=1 (with or without ?step=) on a completed account
+          // to preview the gap-dialog flow without resetting their identity.
+          if (devMode) {
+            setCurrentStep(initialStep)
+          } else {
+            const res = await fetch("/api/onboarding/complete", { method: "POST" })
+            if (res.ok) {
+              redirecting = true
+              router.replace("/welcome")
+              return
+            }
+            // Server still considers them incomplete (rare drift). Fall through
+            // to the original step 0 so they have somewhere to act.
+            setCurrentStep(0)
           }
-          // Server still considers them incomplete (rare drift). Fall through
-          // to the original step 0 so they have somewhere to act.
-          setCurrentStep(0)
         } else if (devMode && stepParam) {
           // Dev override takes priority — same behavior as today.
           setCurrentStep(initialStep)
