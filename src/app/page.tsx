@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState, useRef, useCallback } from "react"
-import { useRouter } from "next/navigation"
+import { useEffect, useState, useRef, useCallback, Suspense } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { toast } from "sonner"
 import { ArrowUp, Mic, Loader2 } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -14,6 +14,11 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { createClient } from "@/lib/supabase/client"
 import { userKey } from "@/lib/user-scoped-storage"
+import {
+  OnboardingProgressBanner,
+  makeStages,
+  type OnboardingBannerVariant,
+} from "@/components/onboarding-progress-banner"
 
 interface IdeaNote {
   text: string
@@ -38,8 +43,32 @@ type ProfileHealth = {
 
 const ANTHROPIC_BILLING_URL = "https://console.anthropic.com/settings/billing"
 
+// Wrap in Suspense: HomeContent reads useSearchParams (for the ?variant=a|b
+// onboarding-banner gate), which requires a Suspense boundary so the route
+// doesn't bail out of static rendering at build time.
 export default function Home() {
+  return (
+    <Suspense>
+      <HomeContent />
+    </Suspense>
+  )
+}
+
+function HomeContent() {
   const router = useRouter()
+
+  // --- Onboarding-progress banner (Notion task 3714d905) ---------------
+  // Gated behind ?variant=a|b. With NO param the page is byte-identical to
+  // production — the banner never mounts. Under the param we seed dummy data
+  // (2 of 3 stages done) locally, so the reviewer lands directly on the design
+  // with ZERO side effects: no API call, no DB read/write, no credits.
+  const searchParams = useSearchParams()
+  const bannerVariant = searchParams.get("variant") as OnboardingBannerVariant | null
+  const showBanner = bannerVariant === "a" || bannerVariant === "b"
+  // Review-only state toggle: lets the reviewer jump between setup states
+  // without driving the real onboarding flow. Default 2 (the requested 2/3).
+  const [bannerDone, setBannerDone] = useState(2)
+
   const [userName, setUserName] = useState("")
   const [idea, setIdea] = useState("")
   const [profileHealth, setProfileHealth] = useState<ProfileHealth | null>(null)
@@ -374,6 +403,37 @@ export default function Home() {
 
   return (
     <AppShell isHome>
+      {/* Review-only state toggle for the onboarding-progress banner. Visible
+          only under ?variant=a|b — lets the reviewer jump between setup states
+          (0/3 · 2/3 · 3/3) without driving the real onboarding flow. Not part
+          of the shipped design. */}
+      {showBanner && (
+        <div
+          dir="rtl"
+          className="fixed top-4 left-4 z-50 flex items-center gap-2 rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-sm"
+        >
+          <span className="text-xs-body text-text-neutral-default">תצוגת מצב:</span>
+          {[
+            { n: 0, label: "0/3" },
+            { n: 2, label: "2/3" },
+            { n: 3, label: "3/3" },
+          ].map((opt) => (
+            <button
+              key={opt.n}
+              type="button"
+              onClick={() => setBannerDone(opt.n)}
+              aria-pressed={bannerDone === opt.n}
+              className={`rounded-lg px-2.5 py-1 text-small-bold transition-colors ${
+                bannerDone === opt.n
+                  ? "bg-button-primary-default text-white"
+                  : "bg-bg-surface text-text-primary-default hover:bg-bg-surface-hover"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
       {modelFallback && (
         <div dir="rtl" className="fixed top-4 right-1/2 translate-x-1/2 z-50 max-w-md mx-auto rounded-xl border border-yellow-50 bg-yellow-95 px-4 py-2 shadow-sm">
           <p className="text-small text-text-primary-default text-center">
@@ -629,6 +689,15 @@ export default function Home() {
             <Typewriter className="text-p text-text-primary-default mt-4 h-6" />
           </div>
         </div>
+
+        {/* Onboarding-progress banner — sits BELOW the greeting/title per the
+            brief ("באנר מתחת לכותרת"). Only rendered under ?variant=a|b. */}
+        {showBanner && bannerVariant && (
+          <OnboardingProgressBanner
+            variant={bannerVariant}
+            stages={makeStages(bannerDone)}
+          />
+        )}
 
         <div className="flex flex-col gap-10">
           {/* Section 1: Hooks */}
