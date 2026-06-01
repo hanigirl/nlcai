@@ -188,7 +188,7 @@ export function WorkflowCard({
             <span className="text-small-bold text-text-primary-default">הגדרות אופציונאליות</span>
             <div className="flex gap-3">
               <div className="flex flex-col gap-1.5 flex-1">
-                <label className="text-small text-text-neutral-default">מוצר</label>
+                <label className="text-small text-text-neutral-default">לאיזה מוצר משויך?</label>
                 <Select
                   variant="homepage"
                   selectSize="small"
@@ -203,7 +203,7 @@ export function WorkflowCard({
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5 flex-1">
-                <label className="text-small text-text-neutral-default">מילת טריגר</label>
+                <label className="text-small text-text-neutral-default">מילת טריגר (הנעה לפעולה במאניצ׳אט)</label>
                 <Input
                   variant="homepage"
                   inputSize="small"

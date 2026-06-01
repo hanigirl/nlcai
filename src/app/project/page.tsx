@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
-import { Loader2, Smartphone, Video, Layers, Image, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, type LucideIcon } from "lucide-react"
+import { Loader2, Smartphone, Video, Layers, Image, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { AppShell } from "@/components/app-shell"
 import { InfiniteCanvas } from "@/components/infinite-canvas"
@@ -1541,6 +1541,10 @@ function ProjectPageInner() {
                         onMouseDown={(e) => e.stopPropagation()}
                         className="w-full min-h-[250px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text"
                       />
+                      <p className="flex w-full items-center gap-1.5 text-xs-body text-text-neutral-default">
+                        <Info className="size-4 shrink-0" aria-hidden="true" />
+                        <span>כל עריכה שלכם תשפיע על הלמידה של ה-AI להבין את סגנון הכתיבה שלכם ולהשתפר</span>
+                      </p>
                       <Button
                         disabled={activeCard !== "post"}
                         onClick={() => {
