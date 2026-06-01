@@ -150,7 +150,7 @@ export function ScheduleInCalendarBar({ corePostId, hasUploadedMedia = false }: 
             מתוזמן ב-{formatShortDate(scheduledFor)}
           </span>
           <Button asChild size="sm" variant="outline" className="gap-1.5">
-            <Link href="/calendar">
+            <Link href={`/calendar?post_id=${corePostId}`}>
               ערכו בלוח
               <Calendar className="size-3.5" />
             </Link>
@@ -162,7 +162,10 @@ export function ScheduleInCalendarBar({ corePostId, hasUploadedMedia = false }: 
             הפוסט נשמר — מתי לפרסם?
           </span>
           <Button asChild className="gap-1.5">
-            <Link href="/calendar">
+            {/* Deep-link to the calendar with this post pre-opened in the
+                side panel, ready to schedule — instead of dropping the user
+                on a generic calendar view. Per Hani. */}
+            <Link href={`/calendar?post_id=${corePostId}`}>
               <CalendarPlus className="size-4" />
               תיזמון פוסט
             </Link>

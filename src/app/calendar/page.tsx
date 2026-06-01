@@ -1147,6 +1147,22 @@ export default function CalendarPage() {
     }
   }
 
+  // Deep link from the /project schedule toast: `/calendar?post_id=<id>`
+  // opens that post's side panel straight away so the user lands ready to
+  // schedule, not on a blank calendar. Read once on mount via the URL (no
+  // useSearchParams → no Suspense boundary needed), then strip the param so
+  // a later refresh doesn't force the panel back open.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const pid = params.get("post_id")
+    if (!pid) return
+    openSheetForCorePost(pid)
+    const url = new URL(window.location.href)
+    url.searchParams.delete("post_id")
+    window.history.replaceState({}, "", url.toString())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   return (
     <AppShell>
       {/*
