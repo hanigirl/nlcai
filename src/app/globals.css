@@ -129,7 +129,9 @@
   /* Semantic token values (light) */
   --sem-text-primary: #1A1A1A;
   --sem-text-disabled: #B3B3B3;
-  --sem-text-neutral: #808080;
+  /* Subtitle/helper gray bumped one step darker (gray-50 → gray-40) for WCAG AA
+     contrast on white: #808080 ≈ 3.9:1 (fails) → #666666 ≈ 5.7:1 (passes). */
+  --sem-text-neutral: #666666;
   --sem-btn-default: #332700;
   --sem-btn-hover: #664E00;
   --sem-btn-disabled: #E6E6E6;
@@ -217,7 +219,9 @@
   /* Semantic token values (dark) */
   --sem-text-primary: #F2F2F2;
   --sem-text-disabled: #4D4D4D;
-  --sem-text-neutral: #999999;
+  /* Same one-step accessibility bump, but on a dark bg "more legible" means
+     lighter: gray-60 → gray-70 (#999999 ≈ 5.9:1 → #B3B3B3 ≈ 8:1). */
+  --sem-text-neutral: #B3B3B3;
   --sem-btn-default: #FFC300;
   --sem-btn-hover: #FFCF33;
   --sem-btn-disabled: #333333;

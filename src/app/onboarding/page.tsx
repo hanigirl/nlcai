@@ -997,22 +997,20 @@ function OnboardingPageInner() {
         </div>
 
         {/* Progress wizard */}
-        <div className="w-full max-w-2xl mb-10 flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
+        <div className="w-full max-w-2xl mb-10 flex flex-wrap items-center justify-center gap-x-2 gap-y-2">
           {STEPS.map((step, i) => (
-            <div key={step.id} className="flex items-center gap-3">
+            <div key={step.id} className="flex items-center gap-2">
               <span
                 className={
                   i === currentStep
-                    ? "text-small-bold text-text-primary-default"
-                    : i < currentStep
-                      ? "text-small text-text-neutral-default"
-                      : "text-small text-text-primary-disabled"
+                    ? "text-small-bold text-text-primary-default whitespace-nowrap"
+                    : "text-small text-text-neutral-default whitespace-nowrap"
                 }
               >
                 {step.label}
               </span>
               {i < STEPS.length - 1 && (
-                <div className="h-px w-8 bg-border-neutral-default" />
+                <div className="h-px w-5 bg-border-neutral-default" />
               )}
             </div>
           ))}
@@ -1185,6 +1183,7 @@ function OnboardingPageInner() {
                   >
                     console.anthropic.com
                   </a>
+                  {" "}והטעינו קרדיטים בסך של לפחות 5$
                 </p>
               </div>
 
@@ -1245,9 +1244,9 @@ function OnboardingPageInner() {
                   ספרו לנו על העסק שלכם
                 </h3>
                 <p className="text-small text-text-neutral-default">
-                  כדי לקחת את יצירת התוכן שלכם לנקסט לבל
+                  כדי לקחת את התכנים לנקסט לבל
                   <br />
-                  אנחנו צריכים למלא כמה פרטים עליכם ועל העסק שלכם
+                  מלאו את פרטי העסק, אפשר תמיד לשנות ולערוך מאוחר יותר
                 </p>
               </div>
 

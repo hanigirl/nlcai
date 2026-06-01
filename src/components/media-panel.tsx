@@ -133,6 +133,16 @@ export function MediaPanel({
 
       {/* Content */}
       <div className="overflow-y-auto h-[calc(100%-57px)] px-6 py-6">
+        {/* Sub-title helper — explains the two ways to provide media for the
+            format (local upload or an external Drive / Canva link). Shown for
+            every format panel, directly under the header title. Lives inside
+            the scroll area so it doesn't break the header height calc above. */}
+        {meta && (
+          <p className="mb-4 text-small text-text-neutral-default">
+            אפשר להעלות את המדיה של הפורמט מהמחשב שלכם או לתת קישור מגוגל דרייב או קנבה לתמונה / סרטון שמאוחסן שם.
+          </p>
+        )}
+
         {formatId === "talking_head" && (
           <TalkingHeadFlow
             avatar={thAvatar}

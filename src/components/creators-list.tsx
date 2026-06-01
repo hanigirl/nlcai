@@ -62,7 +62,7 @@ export function CreatorsList({
           >
             <div className="flex items-start gap-2">
               <span className="text-small text-text-neutral-default whitespace-nowrap select-none pt-2.5">
-                קישור לחשבון היוצר
+                קישור ליוצר בנישה שלכם
                 {showRequiredAsterisk && (
                   <span className="text-button-destructive-default"> *</span>
                 )}
