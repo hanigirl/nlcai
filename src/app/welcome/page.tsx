@@ -146,9 +146,19 @@ function WelcomePageInner() {
   const [animationDone, setAnimationDone] = useState(false)
   const [hooksDone, setHooksDone] = useState(false)
   const [ideasDone, setIdeasDone] = useState(false)
+  // Safety escape hatch for the final gate: flips true if the prefetches hang
+  // past MAX_GEN_WAIT_MS while we're holding on the last step, so a stalled
+  // generation never traps the user on the welcome screen.
+  const [forceReady, setForceReady] = useState(false)
 
   const kickedOffRef = useRef(false)
   const finalizedRef = useRef(false)
+
+  // Index of the final "הכל מוכן" step — the row we hold on until the data is
+  // genuinely ready, so the moment it ticks the home page can paint from cache.
+  const lastIndex = STEPS.length - 1
+  // The prefetches have landed (or we've waited long enough to stop blocking).
+  const dataReady = (hooksDone && ideasDone) || forceReady
 
   // Gate: only show this page once per user. If already seen, bounce to home.
   useEffect(() => {
@@ -188,8 +198,11 @@ function WelcomePageInner() {
     prefetchIdeas(userId).finally(() => setIdeasDone(true))
   }, [initChecked, previewMode, userId])
 
-  // Drive step progression and the final pause in one effect. When all steps
-  // have ticked off, wait FINAL_PAUSE_MS then mark the animation as done.
+  // Drive step progression and the final pause in one effect. The steps before
+  // the last run purely on their timers (a believable "this is what's happening
+  // behind the scenes" preview). The LAST step is the real sync point: it keeps
+  // spinning until the background prefetches have actually landed, so when it
+  // ticks off the home page is ready to paint from cache with zero dead time.
   useEffect(() => {
     if (!initChecked) return
     if (runningIndex < 0) {
@@ -198,13 +211,22 @@ function WelcomePageInner() {
       const t = setTimeout(() => setRunningIndex(0), 120)
       return () => clearTimeout(t)
     }
-    if (runningIndex < STEPS.length) {
+    if (runningIndex < lastIndex) {
       const t = setTimeout(() => setRunningIndex((i) => i + 1), STEPS[runningIndex].durationMs)
+      return () => clearTimeout(t)
+    }
+    if (runningIndex === lastIndex) {
+      // Hold the final "הכל מוכן" row spinning until the data is ready. By the
+      // time the animation reaches here the prefetches have usually finished, so
+      // this normally just runs the step's own duration; it only stretches when
+      // a generation is genuinely slow — and that stretch IS the correlation.
+      if (!dataReady) return
+      const t = setTimeout(() => setRunningIndex((i) => i + 1), STEPS[lastIndex].durationMs)
       return () => clearTimeout(t)
     }
     const t = setTimeout(() => setAnimationDone(true), FINAL_PAUSE_MS)
     return () => clearTimeout(t)
-  }, [runningIndex, initChecked])
+  }, [runningIndex, initChecked, dataReady, lastIndex])
 
   const finalize = useCallback(async () => {
     if (finalizedRef.current) return
@@ -219,23 +241,26 @@ function WelcomePageInner() {
     router.replace("/")
   }, [router, previewMode])
 
-  // Happy path: redirect when the animation finished AND both prefetches are done.
-  // In preview mode the prefetches are marked done immediately, so this fires
-  // as soon as the animation wraps up.
+  // Redirect the instant the animation wraps up. animationDone can only be set
+  // after the final step's data-ready gate has passed, so by here the home page
+  // is guaranteed to have its cache (or we've hit the safety escape below) —
+  // no separate prefetch check needed, and no dead time after the last tick.
   useEffect(() => {
-    if (!animationDone || !hooksDone || !ideasDone) return
+    if (!animationDone) return
     finalize()
-  }, [animationDone, hooksDone, ideasDone, finalize])
+  }, [animationDone, finalize])
 
-  // Safety net: if the prefetches hang (network, quota, overload), don't trap
-  // the user forever — force the redirect MAX_GEN_WAIT_MS after the animation
-  // has finished. The home page's own fallback handles the missing cache.
+  // Safety net for the final gate: if the prefetches hang (network, quota,
+  // overload) while we're holding on the last step, don't trap the user — flip
+  // forceReady after MAX_GEN_WAIT_MS so the step ticks and we redirect anyway.
+  // The home page's own fallback handles the missing cache.
   useEffect(() => {
     if (previewMode) return
-    if (!animationDone) return
-    const t = setTimeout(finalize, MAX_GEN_WAIT_MS)
+    if (runningIndex !== lastIndex) return
+    if (hooksDone && ideasDone) return
+    const t = setTimeout(() => setForceReady(true), MAX_GEN_WAIT_MS)
     return () => clearTimeout(t)
-  }, [animationDone, previewMode, finalize])
+  }, [runningIndex, lastIndex, hooksDone, ideasDone, previewMode])
 
   // Keep the page white while we gate — avoids a flash of content for returning users.
   if (!initChecked) {
