@@ -707,6 +707,24 @@ export function isReadyForScheduling(post: ReadinessPostInput): boolean {
   return false
 }
 
+/**
+ * "Does this post have an external media link?" — a Drive / Canva / any other
+ * media URL the user parked instead of uploading to our store. The `driveUrl`
+ * field is the generic external-link slot (named for the original Drive case,
+ * but it holds any pasted media URL).
+ *
+ * Checks the post-level legacy field AND every per-format slice, so a link
+ * pasted into a single format still counts. Used by the floating schedule bar
+ * to decide whether the post has anything publishable — a post with no media
+ * (no upload, no link) has nothing to schedule, so the bar stays hidden.
+ */
+export function hasExternalMediaLink(corePostId: string): boolean {
+  const meta = getCorePostMeta(corePostId)
+  if (meta.driveUrl && meta.driveUrl.trim().length > 0) return true
+  const slices = meta.byFormat ? Object.values(meta.byFormat) : []
+  return slices.some((slice) => !!slice?.driveUrl && slice.driveUrl.trim().length > 0)
+}
+
 // --- Storage keys --------------------------------------------------------
 
 /**

@@ -1709,7 +1709,19 @@ function ProjectPageInner() {
 
       {/* Floating schedule bar — appears once we have a saved post id, on
           top of the canvas. Picks up its state from timing-storage. */}
-      <ScheduleInCalendarBar corePostId={savedPostId} hookText={activeHook} />
+      <ScheduleInCalendarBar
+        corePostId={savedPostId}
+        hookText={activeHook}
+        hasUploadedMedia={
+          // A cover (thCoverImage) is a derived thumbnail, NOT media in a
+          // format — the server excludes it from formatsWithMedia too. Only
+          // an actual uploaded/recorded asset counts: avatar video or
+          // carousel images. (Old posts ship a cover but no real media, and
+          // were wrongly showing the schedule toast.)
+          !!thVideoUrl ||
+          (carouselImages?.length ?? 0) > 0
+        }
+      />
 
       <ConfirmModal
         open={pendingVideoDelete}

@@ -28,6 +28,7 @@ import { Button } from "@/components/ui/button"
 import {
   TIMING_KEYS,
   getScheduledByPostId,
+  hasExternalMediaLink,
 } from "@/lib/timing-storage"
 
 type Props = {
@@ -39,10 +40,28 @@ type Props = {
    * may want to surface this label later.
    */
   hookText?: string | null
+  /**
+   * Whether the user has uploaded/recorded media for this post (avatar video,
+   * carousel images, etc.). Combined with an external media link (Drive /
+   * Canva / other), this gates the bar: a post with NO media has nothing to
+   * schedule, so the bar stays hidden. Per Hani (2026-06-01).
+   */
+  hasUploadedMedia?: boolean
 }
 
-export function ScheduleInCalendarBar({ corePostId }: Props) {
+export function ScheduleInCalendarBar({ corePostId, hasUploadedMedia = false }: Props) {
   const [scheduledFor, setScheduledFor] = useState<string | null>(null)
+  // External media link (Drive / Canva / other) lives in timing-storage
+  // (localStorage), so it's tracked separately from the uploaded-media prop
+  // and refreshed on storage events below.
+  const [hasLink, setHasLink] = useState(false)
+  // Authoritative media signal from the server: `formatsWithMedia` lists every
+  // format with a non-cover asset (covers are excluded server-side). This is
+  // the only signal that sees media for `story` / `image_post` — those upload
+  // straight to `media_assets` and never touch the page's live React state.
+  // It's also what fixes old posts that ship a cover but no real media: their
+  // `formatsWithMedia` is empty, so the bar correctly stays hidden.
+  const [serverHasMedia, setServerHasMedia] = useState(false)
 
   // Per-format era: a single core post can have multiple scheduled rows
   // (one per format). The bar's job is just to nudge "you have something
@@ -59,6 +78,34 @@ export function ScheduleInCalendarBar({ corePostId }: Props) {
   useEffect(() => {
     if (!corePostId) return
     setScheduledFor(earliestScheduledDate(getScheduledByPostId(corePostId)))
+    setHasLink(hasExternalMediaLink(corePostId))
+  }, [corePostId])
+
+  // Pull the server's per-format media list. Runs on open (the reported bug:
+  // editing an OLD post) and whenever the post id changes. Live page state
+  // (hasUploadedMedia) still covers fresh talking_head / carousel uploads
+  // instantly; this catches everything else, including story / image_post.
+  useEffect(() => {
+    if (!corePostId) {
+      setServerHasMedia(false)
+      return
+    }
+    let cancelled = false
+    setServerHasMedia(false)
+    fetch(`/api/core-posts/${corePostId}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.post) return
+        const formats: string[] = data.post.formatsWithMedia ?? []
+        setServerHasMedia(formats.length > 0)
+      })
+      .catch(() => {
+        // Network/parse failure → leave serverHasMedia false; the live prop
+        // and link check still gate the bar.
+      })
+    return () => {
+      cancelled = true
+    }
   }, [corePostId])
 
   useEffect(() => {
@@ -68,12 +115,25 @@ export function ScheduleInCalendarBar({ corePostId }: Props) {
       if (e.key === TIMING_KEYS.scheduled) {
         setScheduledFor(earliestScheduledDate(getScheduledByPostId(corePostId)))
       }
+      // A pasted Drive/Canva/media link lands in the per-post meta key.
+      if (e.key.startsWith(TIMING_KEYS.metaPrefix)) {
+        setHasLink(hasExternalMediaLink(corePostId))
+      }
     }
     window.addEventListener("storage", onStorage)
     return () => window.removeEventListener("storage", onStorage)
   }, [corePostId])
 
   if (!corePostId) return null
+
+  // The "schedule this post" CTA only makes sense once the post HAS media —
+  // either the user uploaded/recorded something (live page state OR a
+  // server-side asset in any format), or there's an external media link
+  // (Drive / Canva / other). A post with no media has nothing to schedule, so
+  // the toast doesn't appear. The "already scheduled" badge is exempt: if a
+  // post got scheduled it necessarily had media. Per Hani.
+  const hasMedia = hasUploadedMedia || serverHasMedia || hasLink
+  if (!scheduledFor && !hasMedia) return null
 
   // Common shell — placed bottom-end so it never crosses the sidebar (which
   // is at the start in RTL). 32px from each edge keeps it readable on
