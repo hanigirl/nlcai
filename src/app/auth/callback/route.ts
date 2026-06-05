@@ -46,6 +46,16 @@ export async function GET(request: Request) {
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) return routeByOnboardingState(supabase, origin, explicitNext);
+    // A new Google user whose email isn't on the allowlist is rejected by the
+    // BEFORE INSERT trigger on auth.users, which surfaces here as GoTrue's
+    // "Database error saving new user". The only DB write during this exchange
+    // is the user row, and the only thing that blocks it is our allowlist
+    // trigger — so treat that signature as "not allowed" and show the friendly
+    // message instead of a generic auth error.
+    const msg = error.message.toLowerCase();
+    if (msg.includes("database error") || msg.includes("not allowed")) {
+      return NextResponse.redirect(`${origin}/login?error=notallowed`);
+    }
     return NextResponse.redirect(`${origin}/login?error=auth`);
   }
 

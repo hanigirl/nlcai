@@ -936,7 +936,21 @@ function OnboardingPageInner() {
   }
 
   return (
-    <div dir="rtl" className="flex min-h-screen">
+    <div dir="rtl" className="relative flex min-h-screen">
+      {/* Escape hatch — sign out and switch accounts. Logged-in users can't
+          reach /login directly (middleware bounces them back here), so this
+          is the only way out of an incomplete account. Top-right in RTL. */}
+      <button
+        type="button"
+        onClick={async () => {
+          const supabase = createClient()
+          await supabase.auth.signOut()
+          router.push("/login")
+        }}
+        className="absolute top-4 start-4 z-10 text-xs text-text-primary-default underline hover:opacity-80"
+      >
+        התחברות בחשבון אחר
+      </button>
       {/* Gap-fill dialogs */}
       <CoreIdentityGapDialog
         open={coreGapOpen}

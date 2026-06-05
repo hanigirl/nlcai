@@ -104,6 +104,12 @@ function LoginPageInner() {
           onClick: () => handleResendConfirmation(emailRef.current),
         },
       });
+    } else if (err === "notallowed") {
+      // Google signup blocked by the allowlist (we can't pre-check OAuth emails).
+      setMessage({
+        text: "כתובת המייל שלכם לא מופיעה ברשימה שלנו. רק מי שנרשם לתוכנית יכול להיכנס — בדקו שזו אותה כתובת שאיתה נרשמתם, או פנו אלינו.",
+        type: "error",
+      });
     } else {
       setMessage({
         text: "הקישור לא תקף. נסו להתחבר, או לבקש מייל אימות חדש.",
@@ -150,6 +156,39 @@ function LoginPageInner() {
     setLoading(true);
 
     if (isSignUp) {
+      // Gate signups to the approved cohort. Friendly pre-check so the user
+      // sees a clear message instead of a generic failure. The DB trigger
+      // (enforce_email_allowlist) is the REAL enforcement — if this probe
+      // itself errors we fail OPEN and let signUp proceed, since the trigger
+      // still blocks disallowed emails and we never want a flaky check to lock
+      // out a legitimate signup.
+      // The project's hand-written Database types resolve to `never` (they
+      // predate supabase-js's internal marker), so .rpc can't see this
+      // function's signature. Cast and call inline on `supabase` so the method
+      // keeps its `this` binding (extracting it to a variable loses `this` and
+      // makes the call throw). Wrap in try/catch and fail OPEN: the DB trigger
+      // is the real enforcement, so a flaky probe must never hang signup.
+      let allowed: boolean | null = null;
+      try {
+        const { data } = await (
+          supabase.rpc as unknown as (
+            fn: "is_email_allowed",
+            args: { check_email: string },
+          ) => Promise<{ data: boolean | null; error: unknown }>
+        )("is_email_allowed", { check_email: email });
+        allowed = data;
+      } catch {
+        allowed = null;
+      }
+      if (allowed === false) {
+        setMessage({
+          text: "כתובת המייל שלכם לא מופיעה ברשימה שלנו. רק מי שנרשם לתוכנית יכול להיכנס — בדקו שזו אותה כתובת שאיתה נרשמתם, או פנו אלינו.",
+          type: "error",
+        });
+        setLoading(false);
+        return;
+      }
+
       const { data, error } = await supabase.auth.signUp({
         email,
         password,

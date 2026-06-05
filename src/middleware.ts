@@ -44,10 +44,16 @@ export async function middleware(request: NextRequest) {
   const isAuthRoute = path.startsWith("/login") || path.startsWith("/auth");
   const isOnboardingRoute = path.startsWith("/onboarding");
   const isSettingsRoute = path.startsWith("/settings");
+  // Owner-only admin tools (e.g. /admin/allowlist). These are gated by
+  // isAdminEmail at the API layer, and they aren't content surfaces — so they
+  // must NOT require a complete content profile. Without this, the owner gets
+  // bounced to /onboarding before ever reaching the tool.
+  const isAdminRoute = path.startsWith("/admin");
 
-  // Routes incomplete users can still reach. Everything outside this list
-  // requires a complete profile.
-  const isRecoveryRoute = isOnboardingRoute || isSettingsRoute || isAuthRoute;
+  // Routes that bypass the profile-completeness check. Everything outside this
+  // list requires a complete profile.
+  const isRecoveryRoute =
+    isOnboardingRoute || isSettingsRoute || isAuthRoute || isAdminRoute;
 
   // Anonymous → /login (except already on auth)
   if (!user && !isAuthRoute) {
