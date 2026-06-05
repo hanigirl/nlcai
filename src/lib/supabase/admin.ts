@@ -13,7 +13,11 @@ export function createAdminClient() {
   })
 }
 
-const ADMIN_EMAILS = new Set(["hanigirl@gmail.com", "hani@uxtra.co.il"])
+const ADMIN_EMAILS = new Set([
+  "hanigirl@gmail.com",
+  "hani@uxtra.co.il",
+  "yahavrubin1@gmail.com",
+])
 
 export function isAdminEmail(email: string | null | undefined): boolean {
   return !!email && ADMIN_EMAILS.has(email.toLowerCase())
