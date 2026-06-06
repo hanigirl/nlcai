@@ -5,12 +5,13 @@
 // points).
 //
 // Why a short list, not open access: this is a private surface during
-// active iteration. Currently includes Hani (product) + Nataliya (mentor
-// reviewing the feature). If it should later open up, delete this module
-// and remove the isOwner checks at its call sites.
+// active iteration. Currently includes Hani (product), Nataliya (mentor
+// reviewing the feature), and Yahav. If it should later open up, delete
+// this module and remove the isOwner checks at its call sites.
 const OWNER_EMAILS = new Set([
   "hanigirl@gmail.com",
   "nataliya@nataliyarey.com",
+  "yahavrubin1@gmail.com",
 ])
 
 // Kept as a named export for backwards compat with any direct import; refers
