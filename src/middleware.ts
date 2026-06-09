@@ -13,6 +13,19 @@ import { NextResponse, type NextRequest } from "next/server";
 // /onboarding, /settings, and /auth are recovery surfaces — incomplete users
 // must be able to reach them to finish their setup.
 export async function middleware(request: NextRequest) {
+  // Domain cutover (Hani 2026-06-09): nextlevelappai.com is the canonical home.
+  // Permanently (301) redirect the legacy Vercel alias to it, preserving the
+  // path + query string. Only the exact production alias is matched — branch /
+  // preview deployments (nlcai-git-*.vercel.app, nlcai-*.vercel.app) keep
+  // working so pre-release builds are still testable. Runs before any auth/DB
+  // work so it's a cheap first hop.
+  if (request.headers.get("host") === "nlcai.vercel.app") {
+    const url = new URL(request.url);
+    url.protocol = "https";
+    url.host = "nextlevelappai.com";
+    return NextResponse.redirect(url, 301);
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
