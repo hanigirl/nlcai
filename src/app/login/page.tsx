@@ -35,6 +35,12 @@ function validateEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+// Shown whenever an email isn't on the invite list — across the Google-callback
+// path, the signup pre-check, AND a failed password login. Single source so the
+// three entry points never drift apart.
+const EMAIL_NOT_ALLOWED_MSG =
+  "כתובת המייל שלכם לא מופיעה ברשימה שלנו. רק מי שנרשם לתוכנית יכול להיכנס — בדקו שזו אותה כתובת שאיתה נרשמתם, או פנו אלינו.";
+
 function getHebrewError(errorMessage: string): string {
   if (errorMessage.includes("Invalid login credentials")) {
     return "המייל או הסיסמא שהזנתם לא נכונים";
@@ -106,10 +112,7 @@ function LoginPageInner() {
       });
     } else if (err === "notallowed") {
       // Google signup blocked by the allowlist (we can't pre-check OAuth emails).
-      setMessage({
-        text: "כתובת המייל שלכם לא מופיעה ברשימה שלנו. רק מי שנרשם לתוכנית יכול להיכנס — בדקו שזו אותה כתובת שאיתה נרשמתם, או פנו אלינו.",
-        type: "error",
-      });
+      setMessage({ text: EMAIL_NOT_ALLOWED_MSG, type: "error" });
     } else {
       setMessage({
         text: "הקישור לא תקף. נסו להתחבר, או לבקש מייל אימות חדש.",
@@ -147,6 +150,31 @@ function LoginPageInner() {
     return Object.keys(errors).length === 0;
   }
 
+  // Probe the allowlist for a friendly, specific message before/around an auth
+  // attempt. SECURITY DEFINER RPC that returns only a boolean — never the list.
+  // Fails OPEN (returns null) on any error: the DB trigger is the real gate, so
+  // a flaky probe must never block a legitimate signup or misreport a login.
+  //   true  → on the list
+  //   false → not on the list
+  //   null  → couldn't tell (probe errored) — treat as "don't claim not-allowed"
+  async function checkEmailAllowed(targetEmail: string): Promise<boolean | null> {
+    try {
+      // The project's hand-written Database types resolve to `never` for this
+      // function (they predate supabase-js's marker), so .rpc can't see its
+      // signature. Cast and call inline on `supabase` so the method keeps its
+      // `this` binding (extracting it to a variable loses `this` and throws).
+      const { data } = await (
+        supabase.rpc as unknown as (
+          fn: "is_email_allowed",
+          args: { check_email: string },
+        ) => Promise<{ data: boolean | null; error: unknown }>
+      )("is_email_allowed", { check_email: targetEmail });
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setMessage(null);
@@ -156,35 +184,12 @@ function LoginPageInner() {
     setLoading(true);
 
     if (isSignUp) {
-      // Gate signups to the approved cohort. Friendly pre-check so the user
-      // sees a clear message instead of a generic failure. The DB trigger
-      // (enforce_email_allowlist) is the REAL enforcement — if this probe
-      // itself errors we fail OPEN and let signUp proceed, since the trigger
-      // still blocks disallowed emails and we never want a flaky check to lock
-      // out a legitimate signup.
-      // The project's hand-written Database types resolve to `never` (they
-      // predate supabase-js's internal marker), so .rpc can't see this
-      // function's signature. Cast and call inline on `supabase` so the method
-      // keeps its `this` binding (extracting it to a variable loses `this` and
-      // makes the call throw). Wrap in try/catch and fail OPEN: the DB trigger
-      // is the real enforcement, so a flaky probe must never hang signup.
-      let allowed: boolean | null = null;
-      try {
-        const { data } = await (
-          supabase.rpc as unknown as (
-            fn: "is_email_allowed",
-            args: { check_email: string },
-          ) => Promise<{ data: boolean | null; error: unknown }>
-        )("is_email_allowed", { check_email: email });
-        allowed = data;
-      } catch {
-        allowed = null;
-      }
+      // Gate signups to the approved cohort. Friendly pre-check so the user sees
+      // a clear message instead of a generic failure. The DB trigger
+      // (enforce_email_allowlist) is the REAL enforcement; this probe fails open.
+      const allowed = await checkEmailAllowed(email);
       if (allowed === false) {
-        setMessage({
-          text: "כתובת המייל שלכם לא מופיעה ברשימה שלנו. רק מי שנרשם לתוכנית יכול להיכנס — בדקו שזו אותה כתובת שאיתה נרשמתם, או פנו אלינו.",
-          type: "error",
-        });
+        setMessage({ text: EMAIL_NOT_ALLOWED_MSG, type: "error" });
         setLoading(false);
         return;
       }
@@ -291,14 +296,29 @@ function LoginPageInner() {
             },
           });
         } else if (error.message.includes("Invalid login credentials")) {
-          setMessage({
-            text: "המייל או הסיסמא שהזנתם לא נכונים.",
-            type: "error",
-            action: {
-              label: "שכחתי סיסמא",
-              onClick: () => handleResetPassword(email),
-            },
-          });
+          // Login does no allowlist check of its own, so a failure here collapses
+          // three very different situations into one misleading message:
+          //   (a) the email was never invited (not on the list),
+          //   (b) it's on the list but they never finished signing up,
+          //   (c) it's a real account with the wrong password.
+          // Probe the allowlist to split (a) out — an un-invited email should be
+          // told it's not on the list, not "wrong password" (there's no account
+          // to have a password). (b) and (c) are indistinguishable client-side
+          // (Supabase obfuscates for anti-enumeration), so they share a message
+          // that points both ways: register, or reset the password.
+          const allowed = await checkEmailAllowed(email);
+          if (allowed === false) {
+            setMessage({ text: EMAIL_NOT_ALLOWED_MSG, type: "error" });
+          } else {
+            setMessage({
+              text: "המייל או הסיסמא שהזנתם לא נכונים. אם עדיין לא נרשמתם — הירשמו קודם.",
+              type: "error",
+              action: {
+                label: "שכחתי סיסמא",
+                onClick: () => handleResetPassword(email),
+              },
+            });
+          }
         } else {
           setMessage({ text: getHebrewError(error.message), type: "error" });
         }
