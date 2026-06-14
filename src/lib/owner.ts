@@ -13,6 +13,8 @@ const OWNER_EMAILS = new Set([
   "nataliya@nataliyarey.com",
   "yahavrubin1@gmail.com",
   "etel1108@gmail.com",
+  "avishagnextlevel@gmail.com", // Avishag
+  "ynmarketlink@gmail.com", // Tamar
 ])
 
 // Kept as a named export for backwards compat with any direct import; refers
