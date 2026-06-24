@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { toast } from "sonner"
-import { ArrowUp, Mic, Loader2 } from "lucide-react"
+import { ArrowUp, Mic, Loader2, Bug } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AppLink } from "@/components/ui/app-link"
 import { AppShell } from "@/components/app-shell"
@@ -12,6 +12,7 @@ import { StickyNote } from "@/components/sticky-note"
 import { HookCard } from "@/components/hook-card"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { BugReportModal } from "@/components/bug-report-modal"
 import { createClient } from "@/lib/supabase/client"
 import { userKey } from "@/lib/user-scoped-storage"
 import {
@@ -313,6 +314,7 @@ function HomeContent() {
 
   const [ideasError, setIdeasError] = useState("")
   const [modelFallback, setModelFallback] = useState(false)
+  const [bugModalOpen, setBugModalOpen] = useState(false)
 
   const STORAGE_KEY = "generatedIdeas_v23"
   const generatingRef = useRef(false)
@@ -952,6 +954,20 @@ function HomeContent() {
           WebkitMaskImage: "linear-gradient(to top, black 0%, transparent 80%)",
         }}
       />
+
+      {/* Floating "report a bug" button — bottom corner, to the left of the
+          right-pinned sidebar (3rem on desktop). Home page only. */}
+      <button
+        type="button"
+        dir="rtl"
+        onClick={() => setBugModalOpen(true)}
+        className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-full bg-button-primary-default px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0px_6px_8px_rgba(0,0,0,0.1)] transition hover:brightness-90 md:right-[4.5rem]"
+      >
+        <Bug className="size-[18px]" />
+        נתקלת בבאג?
+      </button>
+
+      <BugReportModal open={bugModalOpen} onOpenChange={setBugModalOpen} />
     </AppShell>
   )
 }
