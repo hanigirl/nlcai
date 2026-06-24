@@ -82,13 +82,15 @@ async function callApify<T>(actor: string, input: Record<string, unknown>, token
 async function fetchInstagramPosts(handles: string[], token: string): Promise<ApifyPost[]> {
   if (handles.length === 0) return []
   // apify~instagram-profile-scraper returns one PROFILE per handle, with a nested
-  // latestPosts[] array. We unwrap and flatten. resultsLimit controls posts-per-profile;
-  // we keep top 3 per creator downstream so 5 is plenty (and keeps CU burn low).
+  // latestPosts[] array. We unwrap and flatten. resultsLimit controls posts-per-profile.
+  // We pull 15 (not 5) so that after permanent URL-dedup there's still fresh material
+  // left per creator — with only 5, a creator whose 5 latest were all already shown
+  // would silently vanish until they posted something new.
   type RawPost = { url?: string; caption?: string; likesCount?: number; commentsCount?: number; hashtags?: string[]; ownerUsername?: string }
   type RawProfile = { username?: string; latestPosts?: RawPost[] }
   const profiles = await callApify<RawProfile>("apify~instagram-profile-scraper", {
     usernames: handles.map((h) => h.replace(/^@/, "").trim()),
-    resultsLimit: 5,
+    resultsLimit: 15,
   }, token)
   const out: ApifyPost[] = []
   for (const prof of profiles) {
@@ -124,7 +126,7 @@ async function fetchYoutubePosts(handles: string[], token: string): Promise<Apif
   const cleanHandles = handles.map((h) => h.replace(/^@/, "").trim().toLowerCase())
   const items = await callApify<Raw>("streamers~youtube-scraper", {
     startUrls: cleanHandles.map((h) => ({ url: `https://www.youtube.com/@${h}/videos` })),
-    maxResults: 5,
+    maxResults: 15,
   }, token)
   return items
     .filter((i) => i.url)
@@ -168,7 +170,7 @@ async function fetchTiktokPosts(handles: string[], token: string): Promise<Apify
   type Raw = { authorMeta?: { name?: string }; webVideoUrl?: string; text?: string; diggCount?: number; commentCount?: number; hashtags?: Array<{ name?: string } | string> }
   const items = await callApify<Raw>("clockworks~free-tiktok-scraper", {
     profiles: handles.map((h) => h.replace(/^@/, "").trim()),
-    resultsPerPage: 5,
+    resultsPerPage: 15,
   }, token)
   return items
     .filter((i) => i.authorMeta?.name && i.webVideoUrl)
@@ -284,6 +286,13 @@ export async function POST(req: NextRequest) {
     // links). Never expires — once shown, excluded forever on this device.
     const normalizeUrl = (u: string) => u.toLowerCase().replace(/\/+$/, "").trim()
     const seenUrls = new Set(previousUrls.filter(Boolean).map(normalizeUrl))
+    // TEXT dedup: hard server-side guard against re-emitting an idea the user has
+    // already seen. The prompt also *asks* Claude not to repeat previousIdeas, but
+    // that's a soft instruction — and the URL dedup misses cases where a post is
+    // re-offered with an empty/wrong url (so it never entered seenUrls). This set
+    // is the backstop that guarantees no identical card is ever shown twice.
+    const normalizeIdeaText = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim()
+    const seenIdeaTexts = new Set(previousIdeas.filter(Boolean).map(normalizeIdeaText))
 
     const [{ data: coreIdentity }, { data: audienceIdentity }] = await Promise.all([
       supabase.from("core_identities").select("*").eq("user_id", user.id).single(),
@@ -352,6 +361,13 @@ export async function POST(req: NextRequest) {
     const contentItems: ContentItem[] = []
     // Hoisted so the SSE stream below can surface failures to the UI.
     const missingCreators: string[] = []
+    // True when creators DID return posts from Apify, but every one of them was
+    // already shown to the user on a previous generation (permanent URL dedup).
+    // The user asked us to keep "never repeat a post" — so instead of silently
+    // falling back to trends-only, we surface this so the UI can explain WHY
+    // there are no creator ideas this round ("your creators haven't posted
+    // anything new since last time — here are trends instead").
+    let creatorsNoFreshContent = false
 
     if (hasCreators) {
       const topCreators = verifiedCreators.slice(0, 10)
@@ -497,18 +513,38 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // Dedup FIRST, then cap. URL-dedup against everything the user has ever been
+      // shown on this device is done PER-CREATOR here, before the diversity cap.
+      // Order matters: the old code capped to top-engagement posts first and only
+      // then dedup'd — so a creator whose top posts were all already-seen got
+      // dropped entirely, even when they had fresh (lower-engagement) posts left.
+      // Now every creator keeps their fresh posts; only creators with ZERO fresh
+      // posts (nothing new since last time) drop out.
+      const freshLists = creatorLists
+        .map((list) => list.filter((item) => !seenUrls.has(normalizeUrl(item.url))))
+        .filter((list) => list.length > 0)
+      const totalBefore = creatorLists.reduce((m, l) => m + l.length, 0)
+      const totalFresh = freshLists.reduce((m, l) => m + l.length, 0)
+      console.log(`Ideas API Step 5: ${creatorLists.length} creators → ${freshLists.length} with fresh content after URL dedup (dropped ${totalBefore - totalFresh} posts as already-seen)`)
+      // Creators DID return posts, but all of them were already shown before.
+      // Flag it so the UI can explain the trends-only fallback instead of it
+      // looking like the creators silently disappeared.
+      if (totalBefore > 0 && totalFresh === 0) {
+        creatorsNoFreshContent = true
+      }
+
       // Diversity cap: without this a single prolific creator (10+ viral posts)
       // pushes the others off the prompt window. With N creators contributing
-      // content, each gets at most ceil(9/N) posts — so 2 creators → 5 each,
+      // fresh content, each gets at most ceil(9/N) posts — so 2 creators → 5 each,
       // 3 creators → 3 each, etc. Floor of 2 so a sparse-feed creator still has
       // a backup in case the first one is promotional and gets skipped.
-      const creatorsWithContentCount = creatorLists.length
+      const creatorsWithContentCount = freshLists.length
       if (creatorsWithContentCount > 1) {
         const perCreatorCap = Math.max(2, Math.ceil(9 / creatorsWithContentCount))
-        for (let i = 0; i < creatorLists.length; i++) {
-          if (creatorLists[i].length > perCreatorCap) {
-            console.log(`Ideas API Step 5: capping creator list ${i} from ${creatorLists[i].length} → ${perCreatorCap} (diversity guarantee)`)
-            creatorLists[i] = creatorLists[i].slice(0, perCreatorCap)
+        for (let i = 0; i < freshLists.length; i++) {
+          if (freshLists[i].length > perCreatorCap) {
+            console.log(`Ideas API Step 5: capping creator list ${i} from ${freshLists[i].length} → ${perCreatorCap} (diversity guarantee)`)
+            freshLists[i] = freshLists[i].slice(0, perCreatorCap)
           }
         }
       }
@@ -517,19 +553,16 @@ export async function POST(req: NextRequest) {
       //   A#1 (viral), B#1, C#1, A#2, B#2, C#2, ...
       // Each creator's list is already engagement-sorted; creator order follows the
       // DB insertion order in user_top_creators (which is the user's own priority).
-      const interleaved: ContentItem[] = []
-      const maxDepth = creatorLists.reduce((m, l) => Math.max(m, l.length), 0)
+      // Because every creator with ≥1 fresh post survived the dedup above, this
+      // guarantees each of them is represented in the prompt — no more "only 2
+      // creators" when 4 have fresh content.
+      const maxDepth = freshLists.reduce((m, l) => Math.max(m, l.length), 0)
       for (let d = 0; d < maxDepth; d++) {
-        for (const list of creatorLists) {
-          if (list[d]) interleaved.push(list[d])
+        for (const list of freshLists) {
+          if (list[d]) contentItems.push(list[d])
         }
       }
-      // URL-dedup against everything the user has ever been shown on this device.
-      for (const item of interleaved) {
-        if (!seenUrls.has(normalizeUrl(item.url))) contentItems.push(item)
-      }
-      const droppedAsSeen = interleaved.length - contentItems.length
-      console.log(`Ideas API Step 5: interleaved ${interleaved.length} posts from ${creatorLists.length} creators → ${contentItems.length} fresh after URL dedup (dropped ${droppedAsSeen} as already-seen)`)
+      console.log(`Ideas API Step 5: interleaved ${contentItems.length} fresh posts from ${freshLists.length} creators`)
     }
 
     console.log(`Ideas API Step 5: ${contentItems.length} fresh content items from user creators`)
@@ -812,7 +845,15 @@ JSONL:
                   if (p.text && p.source) {
                     const key = p.text.trim()
                     if (sentTexts.has(key)) {
-                      console.log(`Ideas API: SKIPPED duplicate`)
+                      console.log(`Ideas API: SKIPPED duplicate (this stream)`)
+                      continue
+                    }
+                    // Hard guard against repeating an idea from a PREVIOUS
+                    // generation — Claude sometimes re-summarizes the same viral
+                    // post into the same card, and the URL dedup can miss it when
+                    // the post is re-offered with an empty/wrong url.
+                    if (seenIdeaTexts.has(normalizeIdeaText(p.text))) {
+                      console.log(`Ideas API: SKIPPED duplicate (already shown in a previous generation)`)
                       continue
                     }
                     // Drop hallucinated creator ideas — if Claude assigned the
@@ -867,6 +908,11 @@ JSONL:
           // rather than letting the failure go silent.
           if (missingCreators.length > 0) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ missing_creators: missingCreators })}\n\n`))
+          }
+          // All creator posts were already shown — these ideas are trends-only
+          // by necessity, not by failure. Tell the user explicitly.
+          if (creatorsNoFreshContent) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ creators_no_fresh: true })}\n\n`))
           }
           await runStream(PRIMARY_MODEL)
           console.log(`Ideas API: Stream complete. Total sent: ${sentTexts.size}. Full response length: ${fullText.length}`)

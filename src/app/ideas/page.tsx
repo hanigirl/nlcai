@@ -78,6 +78,9 @@ export default function IdeasPage() {
   // to double-check instead of wondering why their creator-set ideas are
   // skewed.
   const [missingCreators, setMissingCreators] = useState<string[]>([])
+  // True when the user's creators returned posts, but all were already shown
+  // before — so this round is trends-only by necessity, not failure.
+  const [creatorsNoFresh, setCreatorsNoFresh] = useState(false)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [skeletonCount, setSkeletonCount] = useState(0)
@@ -319,6 +322,7 @@ export default function IdeasPage() {
     setSkeletonCount(9)
     setError("")
     setMissingCreators([])
+    setCreatorsNoFresh(false)
     let newCount = 0
 
     // Reset session keys — new generation starts a fresh "חדש" group
@@ -387,6 +391,12 @@ export default function IdeasPage() {
             // stream in.
             if (Array.isArray(idea.missing_creators)) {
               setMissingCreators(idea.missing_creators)
+              continue
+            }
+            // Creators had content but it was all already shown — explain the
+            // trends-only fallback instead of letting creators silently vanish.
+            if (idea.creators_no_fresh) {
+              setCreatorsNoFresh(true)
               continue
             }
             if (idea.error) {
@@ -669,6 +679,18 @@ export default function IdeasPage() {
             >
               לעדכון רשימת היוצרים →
             </a>
+          </div>
+        )}
+
+        {/* "Creators have no new content" notice — the user's creators were
+            scraped fine, but every post was already shown in a previous round,
+            so this generation is trends-only. We never repeat a post, so this
+            is expected behavior, not a failure. */}
+        {creatorsNoFresh && (
+          <div className="w-full rounded-xl border border-yellow-50 bg-yellow-95 p-4 text-center mb-6">
+            <p className="text-small text-text-primary-default">
+              היוצרים שלך לא העלו תוכן חדש מאז הפעם הקודמת, אז הפעם הבאנו לך רעיונות מטרנדים. נסי שוב בעוד כמה ימים — או הוסיפי יוצרים נוספים כדי לקבל יותר רעיונות מהם.
+            </p>
           </div>
         )}
 
