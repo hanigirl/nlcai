@@ -127,6 +127,28 @@ export default function IdeasPage() {
   }, [generating])
 
   const STORAGE_KEY = "generatedIdeas_v23"
+  // Persistent, device-scoped record of every content URL the SERVER surfaced to
+  // the model — populated from the `surfaced_urls` SSE event, NOT from rendered
+  // cards. This is the authoritative "already seen this post" set: it survives
+  // reloads and is independent of whether the model echoed the post's url onto a
+  // card (it usually doesn't, which is what made the same post repeat forever).
+  const SEEN_URLS_KEY = "seenPostUrls_v1"
+  const seenUrlsRef = useRef<Set<string>>(new Set())
+  // Must match the server's normalizeUrl so a url surfaced on one round is
+  // recognised as seen on the next.
+  const normalizeUrl = useCallback((u: string) => u.toLowerCase().replace(/\/+$/, "").trim(), [])
+
+  const persistSeenUrls = useCallback((uid: string) => {
+    // Cap to the most-recent N so the set (and the request body that carries it)
+    // can't grow without bound across hundreds of generations.
+    const all = Array.from(seenUrlsRef.current)
+    const capped = all.slice(-4000)
+    seenUrlsRef.current = new Set(capped)
+    try {
+      localStorage.setItem(userKey(SEEN_URLS_KEY, uid), JSON.stringify(capped))
+    } catch (err) { console.error("[ideas][seen-urls-persist]", err) }
+  }, [])
+
   // Note: previously persisted as `ideaSessionKeys_v1`. The "חדש" group
   // is now session-only (memory-resident in `sessionKeysRef`); the old
   // key is intentionally left orphaned in localStorage so a future visit
@@ -157,6 +179,15 @@ export default function IdeasPage() {
         return
       }
       setUserId(user.id)
+
+      // Restore the authoritative "already surfaced" post URLs.
+      try {
+        const savedUrls = localStorage.getItem(userKey(SEEN_URLS_KEY, user.id))
+        if (savedUrls) {
+          const arr = JSON.parse(savedUrls) as string[]
+          seenUrlsRef.current = new Set(arr.filter(Boolean).map(normalizeUrl))
+        }
+      } catch (err) { console.error("[ideas][seen-urls-restore]", err) }
 
       let loadedIdeas: IdeaNote[] = []
       try {
@@ -201,7 +232,7 @@ export default function IdeasPage() {
       setLoading(false)
     }
     load()
-  }, [dedupe])
+  }, [dedupe, normalizeUrl])
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -343,15 +374,21 @@ export default function IdeasPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           previousIdeas: currentIdeas.map((i) => i.text),
-          // Every content URL ever shown on this device — localStorage-backed,
-          // never expires. Server uses this to filter contentItems + trends so
-          // no post is ever shown twice.
+          // Every content URL ever surfaced on this device — localStorage-backed,
+          // never expires. Two sources, unioned:
+          //  1. seenUrlsRef — the authoritative set the SERVER reported via
+          //     `surfaced_urls` (every post handed to the model, even if it never
+          //     reached a card). This is what actually prevents re-showing a post.
+          //  2. the url on each rendered card — kept for backward-compat with
+          //     ideas saved before the seen-set existed.
+          // Server uses this to filter contentItems + trends so no post repeats.
           previousUrls: Array.from(
-            new Set(
-              currentIdeas
+            new Set([
+              ...seenUrlsRef.current,
+              ...currentIdeas
                 .map((i) => i.url)
                 .filter((u): u is string => !!u && u.trim().length > 0),
-            ),
+            ]),
           ),
           existingCategories: [...new Set(currentIdeas.map((i) => i.category).filter(Boolean))],
           favoritedIdeas,
@@ -391,6 +428,18 @@ export default function IdeasPage() {
             // stream in.
             if (Array.isArray(idea.missing_creators)) {
               setMissingCreators(idea.missing_creators)
+              continue
+            }
+            // Authoritative seen-set: the canonical URLs of every post the server
+            // actually surfaced this round. Record them so these posts are never
+            // fed to the model again — regardless of whether they made it onto a
+            // card with their url intact. This is what stops the same creator post
+            // from repeating generation after generation.
+            if (Array.isArray(idea.surfaced_urls)) {
+              for (const u of idea.surfaced_urls) {
+                if (typeof u === "string" && u.trim()) seenUrlsRef.current.add(normalizeUrl(u))
+              }
+              if (userId) persistSeenUrls(userId)
               continue
             }
             // Creators had content but it was all already shown — explain the

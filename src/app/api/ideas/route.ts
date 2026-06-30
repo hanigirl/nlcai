@@ -814,12 +814,34 @@ JSONL:
       return { ...p, profileUrl: correctedProfileUrl, url: correctedUrl }
     }
 
+    // Every post URL we actually handed to Claude this round. The client persists
+    // these into its own "seen posts" store, INDEPENDENTLY of what ends up on a
+    // rendered card. This is the fix for the recurring-duplicate bug: previously
+    // the seen-set was rebuilt from each card's `url`, which is whatever Claude
+    // echoed — and Claude often drops the content url or swaps in the profile url,
+    // so the post never entered seenUrls and got re-surfaced (then re-summarized
+    // into slightly different text that slipped past the text dedup). By recording
+    // the canonical URLs the SERVER surfaced, a post can never be fed twice — so a
+    // creator with no new content truly drops out and the round-robin/trends fill in.
+    const surfacedUrls = Array.from(
+      new Set(contentItems.map((c) => c.url).filter((u): u is string => !!u && u.trim().length > 0)),
+    )
+
     const encoder = new TextEncoder()
     const stream = new ReadableStream({
       async start(controller) {
         let buffer = ""
         let fullText = ""
         const sentTexts = new Set<string>()
+        let surfacedEmitted = false
+        // Emit only on a SUCCESSFUL finish — if the whole generation errors out
+        // before any idea streams, we don't want to burn these posts (the user
+        // never saw them, so they should stay available for the retry).
+        const emitSurfaced = () => {
+          if (surfacedEmitted || surfacedUrls.length === 0) return
+          surfacedEmitted = true
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ surfaced_urls: surfacedUrls })}\n\n`))
+        }
 
         const runStream = async (model: string) => {
           const sr = client.messages.stream({
@@ -917,6 +939,7 @@ JSONL:
           await runStream(PRIMARY_MODEL)
           console.log(`Ideas API: Stream complete. Total sent: ${sentTexts.size}. Full response length: ${fullText.length}`)
           emitNoNewIdeasIfEmpty()
+          emitSurfaced()
           controller.enqueue(encoder.encode("data: [DONE]\n\n"))
           controller.close()
         } catch (err) {
@@ -925,6 +948,7 @@ JSONL:
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
               await runStream(FALLBACK_MODEL)
               emitNoNewIdeasIfEmpty()
+              emitSurfaced()
               controller.enqueue(encoder.encode("data: [DONE]\n\n"))
               controller.close()
               return
