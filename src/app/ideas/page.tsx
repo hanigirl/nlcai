@@ -499,9 +499,10 @@ export default function IdeasPage() {
             overlay={
               <button
                 onClick={(e) => { e.stopPropagation(); toggleFavorite(idea) }}
-                className={`absolute top-2 left-2 p-1 rounded-full transition-opacity ${isFav ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+                aria-label={isFav ? "הסרה ממועדפים" : "הוספה למועדפים"}
+                className={`absolute top-2 left-2 flex items-center justify-center size-7 rounded-md bg-yellow-90 text-yellow-30 hover:bg-bg-surface-hover transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${isFav ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
               >
-                <Star className={`size-3.5 ${isFav ? "fill-yellow-50 text-yellow-50" : "text-yellow-30 hover:text-yellow-10"}`} />
+                <Star className={`size-3.5 ${isFav ? "fill-yellow-50 text-yellow-50" : ""}`} />
               </button>
             }
           />
@@ -523,9 +524,10 @@ export default function IdeasPage() {
         </div>
         <button
           onClick={(e) => { e.stopPropagation(); toggleFavorite(idea) }}
-          className={`p-1 shrink-0 transition-opacity ${isFav ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+          aria-label={isFav ? "הסרה ממועדפים" : "הוספה למועדפים"}
+          className={`flex items-center justify-center size-7 shrink-0 rounded-md bg-yellow-90 text-yellow-30 hover:bg-bg-surface-hover transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${isFav ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
         >
-          <Star className={`size-3.5 ${isFav ? "fill-yellow-50 text-yellow-50" : "text-yellow-30"}`} />
+          <Star className={`size-3.5 ${isFav ? "fill-yellow-50 text-yellow-50" : ""}`} />
         </button>
       </div>
     )
