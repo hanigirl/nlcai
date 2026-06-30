@@ -5,6 +5,7 @@ import {
   ChevronRight,
   ChevronLeft,
   MoreVertical,
+  PanelLeftOpen,
 } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { Button } from "@/components/ui/button"
@@ -20,16 +21,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { toast } from "sonner"
 import { QueuePanel } from "@/components/queue-panel"
 import { CorePostSheet, type CorePostSheetData } from "@/components/core-post-sheet"
-import { ScheduleFormatPicker } from "@/components/schedule-format-picker"
+import { FormatThumbnail } from "@/components/format-thumbnail"
 import {
   FormatStatusChip,
   getFormatChipLabel,
@@ -37,7 +33,6 @@ import {
 import {
   DEFAULT_SCHEDULED_TIME,
   TIMING_KEYS,
-  getFormatReadiness,
   getPublishedMap,
   getScheduledPosts,
   schedulePost,
@@ -45,8 +40,6 @@ import {
   unmarkPublished,
   unschedulePost,
   type FormatId,
-  type FormatReadiness,
-  type ReadinessPostInput,
   type ScheduledPost,
 } from "@/lib/timing-storage"
 
@@ -54,11 +47,10 @@ import {
 // visual order so Sunday lands on the right edge — the user's natural start.
 const WEEKDAY_LABELS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"] as const
 
-// Hour grid 07:00–23:00 (17 hours). Matches Hani's reference: a "work day"
-// span that's wider than 9-to-5 so evening posts (typical IG/Reels times)
-// have a slot. If a post lacks a time it defaults to 09:00.
-const HOURS = Array.from({ length: 17 }, (_, i) => i + 7) // [7..23]
-const DEFAULT_HOUR = 9
+// The board no longer renders an hour grid (post-2026-06-30, Hani): each day
+// is a single cell that holds its scheduled cards. A post's time is still
+// tracked under the hood (queue/publish logic unchanged) — it's just not
+// drawn as a row anymore. New drops land on DEFAULT_SCHEDULED_TIME.
 
 // Format identity helpers — sourced from `format-status-chip` so the icon +
 // short Hebrew label used inside the day-cell chip stay aligned with every
@@ -100,39 +92,9 @@ function isPastDate(date: Date, today: Date): boolean {
   return startOfDay(date).getTime() < startOfDay(today).getTime()
 }
 
-/**
- * A "slot" is the intersection of a day and an hour. Past slots can't accept
- * drops. For days before today, every slot is past. For today, only hours
- * before the current wall-clock hour are past — the user can still schedule
- * "later today".
- */
-function isPastSlot(day: Date, hour: number, today: Date, currentHour: number): boolean {
-  if (isPastDate(day, today)) return true
-  if (isSameDay(day, today) && hour < currentHour) return true
-  return false
-}
-
 /** Build the 7 days of the week starting at `weekStart`. */
 function buildWeekGrid(weekStart: Date): Date[] {
   return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
-}
-
-/** Compose a slot key the postsBySlot map and dragOverSlot state agree on. */
-function slotKey(dateKey: string, hour: number): string {
-  return `${dateKey}T${String(hour).padStart(2, "0")}`
-}
-
-/**
- * Parse "HH:00" → integer hour, with safety net. Anything outside 7–23 falls
- * back to the default — we never want a bad time to make a post invisible.
- */
-function getHourFromTime(time?: string | null): number {
-  if (!time) return DEFAULT_HOUR
-  const h = parseInt(time.slice(0, 2), 10)
-  if (Number.isNaN(h) || h < HOURS[0] || h > HOURS[HOURS.length - 1]) {
-    return DEFAULT_HOUR
-  }
-  return h
 }
 
 /**
@@ -162,355 +124,172 @@ function formatWeekRange(weekStart: Date, weekEnd: Date): string {
   return `${startDay}–${endDay} ב${startMonth} ${endYear}`
 }
 
-// --- chip ----------------------------------------------------------------
+// --- format card --------------------------------------------------------
 
 /**
- * The 4 canonical formats, in display order. The day-cell card always
- * renders these 4 icons regardless of which formats are scheduled — gray
- * for "not on the calendar yet", green for "set" (scheduled somewhere).
+ * Day-cell card — ONE scheduled format in one time slot. Post-2026-06-24
+ * spec (Hani): the calendar's unit is the (core post × format), not the
+ * core post. A single core post scheduled on N formats paints N separate
+ * cards, each carrying its own format identity, media thumbnail, and
+ * reschedule / unschedule controls.
+ *
+ *   ┌─────────────────────────────────────┐
+ *   │ 🎬  hook text (truncated)   ⋮  [▣]  │
+ *   └─────────────────────────────────────┘
+ *
+ * This replaces the old multi-format chip (4 format icons + the
+ * scheduled-here / scheduled-elsewhere / ready color-and-dashed logic),
+ * which is all gone: a card is just "this format, scheduled here", so
+ * there are no cross-slot states left to encode.
+ *
+ * Interactions:
+ *   - Whole card is the drag handle → reschedule THIS format to another slot.
+ *   - Click the card body → open the Sheet (preview) for the core post,
+ *     landed on this format; the Sheet's "עריכה" button hands off to the
+ *     /project edit screen.
+ *   - Kebab → reschedule (date picker) / unschedule THIS format only.
+ *   - Published format → opacity-60 on the whole card.
  */
-const CANONICAL_FORMATS: FormatId[] = [
-  "story",
-  "talking_head",
-  "carousel",
-  "image_post",
-]
-
-/**
- * Day-cell card — interactive surface representing one scheduled post in
- * one time slot. Post-2026-05-13 spec (Hani):
- *
- *   ┌─────────────────────────────────┐
- *   │ Hook text (truncated, 2 lines)  │
- *   │                                 │
- *   │ [🟢] [⚪] [🟢] [⚪]             │  ← 4 format icons
- *   └─────────────────────────────────┘
- *
- * Visual rules:
- *   - Whole card is the drag handle (move this scheduling to another slot).
- *   - Click on card body → open Sheet to the post (no specific format).
- *   - Click on a format icon → open Sheet at that specific format.
- *   - Each of the 4 format icons reflects SLOT-LEVEL state (per Hani
- *     2026-05-13): green only for formats scheduled at THIS exact
- *     (date, hour), gray for everything else — even formats of the
- *     same post that are scheduled in OTHER slots. The calendar is
- *     slot-precise; cross-day status lives on /core_posts cards.
- *   - Published post: opacity-60 on the whole card.
- *
- * What we removed from the prior design:
- *   - The "..." dropdown menu (edit / move / unschedule). Those actions
- *     live in the Sheet now. Drag still works for re-scheduling.
- *   - The "mark as published" checkbox. Published state is set via the
- *     Sheet or storage layer; the chip just reflects it via opacity.
- */
-function ScheduledChip({
+function FormatCard({
   post,
+  hook,
+  mediaUrl,
   isPublished,
-  scheduledFormats,
-  scheduledElsewhere,
-  readyFormats,
-  formatDates,
   onCardClick,
-  onFormatClick,
   onUnschedule,
   onReschedule,
 }: {
   post: ScheduledPost
+  /** Resolved hook text for the core post (live > snapshot > placeholder). */
+  hook: string
+  /** Per-(post, format) media URL for the thumbnail. Undefined → icon fallback. */
+  mediaUrl?: string
   isPublished: boolean
-  /**
-   * The set of FormatIds of THIS post that are scheduled at THIS
-   * exact slot (date + hour). Drives the green-with-✓ state of the
-   * 4 format icons — the ✓ is the "scheduled HERE" marker.
-   */
-  scheduledFormats: Set<FormatId>
-  /**
-   * FormatIds of THIS post that are scheduled at OTHER slots
-   * (different date or hour). Rendered green-WITHOUT-✓ and with a
-   * dashed border: same set palette as `scheduledFormats`, but
-   * weaker — corner badge + solid border are reserved for
-   * "scheduled HERE."
-   */
-  scheduledElsewhere: Set<FormatId>
-  /**
-   * FormatIds of THIS post that are NOT on the calendar yet but have
-   * a script + media (or drive link) — i.e. `getFormatReadiness` returns
-   * "ready". Rendered with a dashed gray border so the user can see at
-   * a glance which formats could still join the calendar, even while
-   * looking at a slot. Hani 2026-05-13.
-   */
-  readyFormats: Set<FormatId>
-  /**
-   * Per-format YYYY-MM-DD where each format of THIS post is
-   * scheduled (one entry per scheduled format). Used to surface
-   * "מתוזמן 14.5" in the tooltip when a format is in the
-   * `scheduledElsewhere` set, so the user can see at a glance
-   * where the other instance lives.
-   */
-  formatDates: Map<FormatId, string>
-  /** Click on the card body — open Sheet for the post. */
+  /** Click on the card body — open the preview Sheet for the core post. */
   onCardClick: () => void
-  /** Click on a specific format icon — open Sheet at that format. */
-  onFormatClick: (format: FormatId) => void
-  /** Kebab menu → "הסרת הפוסט". Unschedules every format at THIS slot. */
+  /** Kebab → "הסרת הפורמט". Unschedules THIS format at THIS slot. */
   onUnschedule: () => void
-  /**
-   * Kebab menu → "תזמון לתאריך". Re-schedules every format at THIS
-   * slot to the picked YYYY-MM-DD, preserving each format's existing
-   * hour. The parent owns the loop because it already knows which
-   * formats share this slot (the deduper that collapsed them into one
-   * card lives there).
-   */
+  /** Kebab → "תזמון לתאריך". Re-schedules THIS format to the picked date. */
   onReschedule: (newDate: string) => void
 }) {
-  const hookLabel = post.hook?.trim() || "פוסט מתוזמן"
+  const formatLabel = getFormatChipLabel(post.format)
   const publishedTitle = post.publishedAt
-    ? `${hookLabel} — פורסם בתאריך ${new Date(post.publishedAt).toLocaleDateString("he-IL", { day: "2-digit", month: "2-digit" })}`
-    : hookLabel
+    ? `${formatLabel} · ${hook} — פורסם בתאריך ${new Date(post.publishedAt).toLocaleDateString("he-IL", { day: "2-digit", month: "2-digit" })}`
+    : `${formatLabel} · ${hook}`
 
-  // Local UI state for the date-picker dialog. Lives inside the chip
-  // because the parent doesn't need to know about it — the only thing
-  // bubbling up is the picked date via `onReschedule`. Closed on pick.
+  // Local UI state for the date-picker dialog — only the picked date bubbles
+  // up via onReschedule, so the parent doesn't need to know it exists.
   const [dateDialogOpen, setDateDialogOpen] = useState(false)
 
-  // Build the 4-chip status row that the hover popover renders. We keep
-  // this in a closure so the popover can reuse the same chip + state
-  // projection used to live inline on the card before the compact
-  // redesign (per Hani's 2026-05-13 spec: one-line card by default,
-  // status detail moves to hover).
-  const renderFormatChipsRow = () => (
-    <div className="flex items-center gap-1">
-      {CANONICAL_FORMATS.map((fmt) => {
-        const isScheduledHere = scheduledFormats.has(fmt)
-        const isScheduledElsewhere =
-          !isScheduledHere && scheduledElsewhere.has(fmt)
-        const isScheduledSomewhere =
-          isScheduledHere || isScheduledElsewhere
-        const isReady = !isScheduledSomewhere && readyFormats.has(fmt)
-        const label = getFormatChipLabel(fmt)
-        let elsewhereDateLabel = ""
-        if (isScheduledElsewhere) {
-          const isoDate = formatDates.get(fmt)
-          if (isoDate) {
-            const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate)
-            if (m) {
-              elsewhereDateLabel = `${parseInt(m[3], 10)}.${parseInt(m[2], 10)}`
-            } else {
-              elsewhereDateLabel = isoDate
-            }
-          }
-        }
-        const tooltip = isScheduledHere
-          ? `${label} — מתוזמן`
-          : isScheduledElsewhere
-            ? elsewhereDateLabel
-              ? `${label} — מתוזמן ${elsewhereDateLabel}`
-              : `${label} — מתוזמן ביום/שעה אחרים`
-            : isReady
-              ? `${label} — מוכן לתזמון`
-              : label
-        // 3-state projection:
-        //   scheduled (any slot) → green / "scheduled" chip state
-        //   ready (script + media, not yet on calendar) → dashed gray
-        //   else → solid gray "empty" pill
-        const chipState: FormatReadiness = isScheduledSomewhere
-          ? "scheduled"
-          : isReady
-            ? "ready"
-            : "empty"
-        return (
-          <Tooltip key={fmt}>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onFormatClick(fmt)
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.stopPropagation()
-                  }
-                }}
-                aria-label={tooltip}
-                className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-              >
-                <FormatStatusChip
-                  format={fmt}
-                  state={chipState}
-                  type="icon"
-                  size="sm"
-                  // "Scheduled elsewhere" → muted ✓ (gray-teal disc)
-                  // so the chip reads as "on the calendar" without
-                  // competing with the bold green ✓ that anchors
-                  // "scheduled HERE" on a sibling slot.
-                  cornerBadgeMuted={isScheduledElsewhere}
-                />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>{tooltip}</TooltipContent>
-          </Tooltip>
-        )
-      })}
-    </div>
-  )
-
   return (
-    <HoverCard openDelay={150} closeDelay={100}>
-      <HoverCardTrigger asChild>
-        <div
-          // Whole card is the drag handle. Dragstart writes the (post, format)
-          // tuple for THIS card; if the post has multiple formats at the same
-          // slot, the deduper picks one — re-scheduling moves just that one.
-          draggable
-          onDragStart={(e) => {
-            e.dataTransfer.setData(
-              "application/x-scheduled-chip",
-              JSON.stringify({
-                corePostId: post.corePostId,
-                format: post.format,
-              }),
-            )
-            e.dataTransfer.effectAllowed = "move"
-          }}
-          onClick={onCardClick}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault()
-              onCardClick()
-            }
-          }}
-          title={publishedTitle}
-          aria-label={`פוסט מתוזמן: ${hookLabel}`}
-          // Compact card per Hani 2026-05-13:
-          //   [hook truncated to one line] [kebab]
-          // Status detail moved into the HoverCard popover below. The
-          // anchored format icon ALSO moves out — it floats outside the
-          // card's top-end corner as a single FormatStatusChip badge.
-          // `overflow-visible` is critical: the floating chip overhangs
-          // the card edge, and `overflow-hidden` would clip it. The
-          // parent cell drops its own clip in the cell wrapper above.
-          className={`group/chip relative w-full h-full min-w-0 flex items-center gap-2 ps-2.5 pe-2 py-2 rounded-md border border-border-neutral-default bg-white cursor-grab active:cursor-grabbing transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
-            isPublished ? "opacity-60" : ""
-          }`}
-        >
-          {/* Floating format chip — sticks out the card's top-right
-              corner. Shows the format anchored at THIS slot (post.format
-              from the deduper). `pointer-events-none` keeps it
-              decorative: clicks pass through to the card body, drag
-              starts on the card itself, and the user opens per-format
-              detail via the chips inside the hover popover. */}
-          <div className="absolute -top-2 -right-2 z-10 pointer-events-none">
-            <FormatStatusChip
-              format={post.format}
-              state="scheduled"
-              type="icon"
-              size="sm"
-            />
-          </div>
+    <div
+      // Whole card is the drag handle — stamps the (post, format) tuple so a
+      // drop re-schedules exactly this format's row (upsert-keyed in storage).
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData(
+          "application/x-scheduled-chip",
+          JSON.stringify({ corePostId: post.corePostId, format: post.format }),
+        )
+        e.dataTransfer.effectAllowed = "move"
+      }}
+      onClick={onCardClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          onCardClick()
+        }
+      }}
+      title={publishedTitle}
+      aria-label={`${formatLabel} מתוזמן: ${hook}`}
+      className={`group/chip relative w-full min-w-0 flex flex-col gap-1.5 rounded-lg border border-border-neutral-default bg-white dark:bg-gray-10 p-1.5 cursor-grab active:cursor-grabbing transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+        isPublished ? "opacity-60" : ""
+      }`}
+    >
+      {/* Media — a small portrait slot mirroring the queue / core-post card
+          (aspect 4:5). Carousel (square) assets show fully (contain + padding);
+          everything else covers. A Drive-link-only format falls back to the
+          format icon on a neutral gray box. */}
+      <div className="relative aspect-[4/5] w-full overflow-hidden rounded-md bg-gray-95">
+        <FormatThumbnail
+          url={mediaUrl}
+          format={post.format}
+          className="size-full"
+          iconClassName="size-5"
+          fallbackClassName="bg-gray-95"
+          fit={post.format === "carousel" ? "contain" : "cover"}
+        />
 
-          {/* Hook — single truncated line. The card itself is intentionally
-              minimal; the full hook + format statuses show in the hover
-              popover. `min-w-0` is required so `truncate` actually clips
-              inside a flex row (flex items default to min-width: auto). */}
-          <span className="flex-1 min-w-0 truncate text-text-primary-default text-xs-body leading-tight">
-            {hookLabel}
-          </span>
-
-          {/* Kebab — always visible (per Hani's earlier spec). Click →
-              DropdownMenu with two items. We swallow click + drag +
-              keydown on the trigger so the outer card's onClick /
-              dragstart never fire while the user is interacting with
-              the menu. */}
-          <DropdownMenu dir="rtl">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={(e) => e.stopPropagation()}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.stopPropagation()
-                      }
-                    }}
-                    aria-label="פעולות"
-                    className="shrink-0 size-6 rounded-md bg-gray-95 text-text-neutral-default hover:bg-bg-surface-hover hover:text-text-primary-default inline-flex items-center justify-center transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-                  >
-                    <MoreVertical className="size-3.5" />
-                  </button>
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent>פעולות</TooltipContent>
-            </Tooltip>
-            <DropdownMenuContent
-              side="left"
-              align="start"
-              sideOffset={6}
-              className="min-w-[180px]"
+        {/* Kebab — hover/focus revealed, top-end over the media. Swallows
+            click + pointer + keydown so the outer card's onClick / dragstart
+            never fire while the menu is in use. */}
+        <DropdownMenu dir="rtl">
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
               onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") e.stopPropagation()
+              }}
+              aria-label="פעולות"
+              className="absolute top-1 end-1 z-10 size-5 rounded bg-white/90 text-text-neutral-default hover:bg-white hover:text-text-primary-default inline-flex items-center justify-center shadow-sm transition-all opacity-0 group-hover/chip:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
             >
-              <DropdownMenuItem
-                className="text-xs"
-                onSelect={() => setDateDialogOpen(true)}
-              >
-                תזמון לתאריך
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className="text-xs"
-                variant="destructive"
-                onSelect={() => onUnschedule()}
-              >
-                הסרת הפוסט
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          {/* Re-schedule date picker. Portalled by Radix, so it sits
-              outside the card's DOM and the card's onClick/drag handlers
-              don't fire while the user is picking a date. */}
-          <Dialog open={dateDialogOpen} onOpenChange={setDateDialogOpen}>
-            <DialogContent
-              dir="rtl"
-              className="sm:max-w-sm"
-              onClick={(e) => e.stopPropagation()}
+              <MoreVertical className="size-3" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            side="left"
+            align="start"
+            sideOffset={6}
+            className="min-w-[180px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <DropdownMenuItem className="text-xs" onSelect={() => setDateDialogOpen(true)}>
+              תזמון לתאריך
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-xs"
+              variant="destructive"
+              onSelect={() => onUnschedule()}
             >
-              <DialogHeader>
-                <DialogTitle>תזמון לתאריך</DialogTitle>
-              </DialogHeader>
-              <MiniMonthCalendar
-                currentDate={post.scheduledDate}
-                onPick={(newDate) => {
-                  setDateDialogOpen(false)
-                  onReschedule(newDate)
-                }}
-              />
-            </DialogContent>
-          </Dialog>
-        </div>
-      </HoverCardTrigger>
+              הסרת הפורמט
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
 
-      {/* Hover popover — full hook text + 4 format chips with statuses.
-          Portalled by Radix so it isn't clipped by the cell or grid.
-          Opens below the card with the anchor on the trailing edge
-          (RTL trailing = left), matching the user's screenshot. */}
-      <HoverCardContent
-        side="bottom"
-        align="end"
-        sideOffset={8}
-        className="w-72"
-      >
-        <div dir="rtl" className="flex flex-col gap-3">
-          {renderFormatChipsRow()}
-          <p className="text-small text-text-primary-default leading-relaxed">
-            {hookLabel}
-          </p>
+      {/* Text — hook + format chip, mirroring the queue card (compact). */}
+      <div className="flex min-w-0 flex-col gap-1">
+        <p className="line-clamp-2 text-xs-body leading-tight text-text-primary-default">
+          {hook}
+        </p>
+        <div className="flex">
+          <FormatStatusChip format={post.format} state="ready" size="xs" />
         </div>
-      </HoverCardContent>
-    </HoverCard>
+      </div>
+
+      {/* Re-schedule date picker. Portalled by Radix, so it sits outside the
+          card's DOM and the card's onClick / drag handlers don't fire while
+          the user is picking a date. */}
+      <Dialog open={dateDialogOpen} onOpenChange={setDateDialogOpen}>
+        <DialogContent dir="rtl" className="sm:max-w-sm" onClick={(e) => e.stopPropagation()}>
+          <DialogHeader>
+            <DialogTitle>תזמון לתאריך</DialogTitle>
+          </DialogHeader>
+          <MiniMonthCalendar
+            currentDate={post.scheduledDate}
+            onPick={(newDate) => {
+              setDateDialogOpen(false)
+              onReschedule(newDate)
+            }}
+          />
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }
 
@@ -519,7 +298,7 @@ function ScheduledChip({
 /* ------------------------------------------------------------------ */
 
 /**
- * Compact month grid used inside the ScheduledChip's "תזמון לתאריך"
+ * Compact month grid used inside the FormatCard's "תזמון לתאריך"
  * dialog. We keep it inline (not a shared component) because it's
  * tightly coupled to the chip's reschedule UX:
  *   - Picks ONE date (not a range, not a date+time).
@@ -684,25 +463,13 @@ export default function CalendarPage() {
   // within a session. (Re-computing on every render would make `isToday`
   // flicker if a render straddled midnight — rare, but cheap to avoid.)
   const [today] = useState<Date>(() => startOfDay(new Date()))
-  const [currentHour] = useState<number>(() => new Date().getHours())
-
-  // Minute-precision "now" cursor for the yellow now-line that overlays
-  // the grid. Updated every 60s so the line drifts down through the day
-  // naturally. We don't bother with sub-minute precision — visible drift
-  // at the second scale would be jittery, and the line's purpose is "where
-  // are we in the day, roughly" not "exact second of right now."
-  const [nowMinutes, setNowMinutes] = useState<number>(() => {
-    const n = new Date()
-    return n.getHours() * 60 + n.getMinutes()
-  })
-  useEffect(() => {
-    const id = setInterval(() => {
-      const n = new Date()
-      setNowMinutes(n.getHours() * 60 + n.getMinutes())
-    }, 60_000)
-    return () => clearInterval(id)
-  }, [])
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(today))
+
+  // Queue rail collapse. Owned here (not in QueuePanel) because the rail's
+  // width is reserved as `pe-[480px]` on the layout container below — the two
+  // must move together, so a single source of truth drives both the panel's
+  // slide-out and the grid's widening.
+  const [panelCollapsed, setPanelCollapsed] = useState(false)
 
   // Scheduled posts live in localStorage. We hydrate after mount to avoid
   // SSR/CSR mismatch (localStorage doesn't exist on the server).
@@ -728,18 +495,6 @@ export default function CalendarPage() {
   // Cleared when the Sheet closes so a subsequent open from the queue panel
   // doesn't accidentally inherit the previous chip's format.
   const [sheetInitialFormat, setSheetInitialFormat] = useState<FormatId | undefined>(undefined)
-
-  // Phase 3b: format-picker dialog state. Set when the user drops a post
-  // with >1 ready format — the dialog asks which one to schedule. Cleared
-  // on cancel/confirm. We hold the target slot here so the same data flows
-  // straight into `schedulePost` after the user picks.
-  const [formatPicker, setFormatPicker] = useState<{
-    corePostId: string
-    displayText: string | null
-    formatStates: Record<FormatId, FormatReadiness>
-    targetDate: string
-    targetTime: string
-  } | null>(null)
 
   useEffect(() => {
     const reload = () => {
@@ -786,15 +541,13 @@ export default function CalendarPage() {
   const [hookByPostId, setHookByPostId] = useState<Map<string, string>>(
     new Map(),
   )
-  // Readiness inputs per post — needed so the slot card can render
-  // not-yet-scheduled formats that have script + media as a "ready"
-  // (dashed) chip instead of the default "empty" gray pill. Hani
-  // 2026-05-13: "בפוסט שנמצא בלוח לפעמים יש פורמט נוסף שהוא מוכן
-  // לתזמון, אני רוצה שהוא יהיה מקווקו." We source the same shape
-  // the QueuePanel uses, so getFormatReadiness gives the same result
-  // across both surfaces.
-  const [readinessByPostId, setReadinessByPostId] = useState<
-    Map<string, ReadinessPostInput>
+  // Per-(post, format) media URL — drives the thumbnail on each format card.
+  // Sourced from the same /api/core-posts list as the hooks; the list
+  // endpoint now returns a `format_media` map (format → first non-cover URL,
+  // video preferred). A format that's "ready" only via a Drive link has no
+  // entry here and the card falls back to its format icon.
+  const [formatMediaByPost, setFormatMediaByPost] = useState<
+    Map<string, Record<string, string>>
   >(new Map())
   useEffect(() => {
     let cancelled = false
@@ -803,28 +556,21 @@ export default function CalendarPage() {
       .then((data) => {
         if (cancelled || !data) return
         const hookMap = new Map<string, string>()
-        const readinessMap = new Map<string, ReadinessPostInput>()
+        const mediaMap = new Map<string, Record<string, string>>()
         type ApiPost = {
           id: string
           hook_text?: string | null
           title?: string | null
-          body?: string | null
-          formats?: FormatId[] | null
-          formats_with_media?: FormatId[] | null
+          format_media?: Record<string, string> | null
         }
         for (const p of (data.posts ?? []) as ApiPost[]) {
           if (!p.id) continue
           const text = p.hook_text?.trim() || p.title?.trim()
           if (text) hookMap.set(p.id, text)
-          readinessMap.set(p.id, {
-            id: p.id,
-            formats: p.formats ?? [],
-            formatsWithMedia: p.formats_with_media ?? [],
-            hasBody: !!p.body?.trim(),
-          })
+          if (p.format_media) mediaMap.set(p.id, p.format_media)
         }
         setHookByPostId(hookMap)
-        setReadinessByPostId(readinessMap)
+        setFormatMediaByPost(mediaMap)
       })
       .catch((err) => {
         // Surface loudly so an invisible hook-resolution failure doesn't
@@ -841,46 +587,20 @@ export default function CalendarPage() {
   const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart])
   const isCurrentWeek = isSameDay(weekStart, startOfWeek(today))
 
-  // Group scheduled posts by `${dateKey}T${hour}` so the per-cell lookup is
-  // O(1) instead of O(n) on every render.
-  const postsBySlot = useMemo(() => {
+  // Group scheduled posts by day (YYYY-MM-DD) so each day-cell lookup is
+  // O(1). Within a day we sort by time so earlier posts sit on top — the
+  // time is still tracked even though the board no longer shows an hour grid.
+  const postsByDay = useMemo(() => {
     const map = new Map<string, ScheduledPost[]>()
     for (const post of scheduled) {
-      const hour = getHourFromTime(post.scheduledTime)
-      const key = slotKey(post.scheduledDate, hour)
-      const list = map.get(key) ?? []
+      const list = map.get(post.scheduledDate) ?? []
       list.push(post)
-      map.set(key, list)
+      map.set(post.scheduledDate, list)
     }
-    return map
-  }, [scheduled])
-
-  // Post-level format projection: every format-id this post has
-  // scheduled ANYWHERE on the calendar, alongside the date that
-  // format lives on. Used by SlotCard to mark "scheduled elsewhere"
-  // dots + show the date in their tooltip — same green palette as
-  // the here-anchored dots, dashed border, no ✓.
-  const scheduledFormatsByPost = useMemo(() => {
-    const map = new Map<string, Set<FormatId>>()
-    for (const p of scheduled) {
-      const set = map.get(p.corePostId) ?? new Set<FormatId>()
-      set.add(p.format)
-      map.set(p.corePostId, set)
-    }
-    return map
-  }, [scheduled])
-
-  const formatDatesByPost = useMemo(() => {
-    const map = new Map<string, Map<FormatId, string>>()
-    for (const p of scheduled) {
-      let inner = map.get(p.corePostId)
-      if (!inner) {
-        inner = new Map<FormatId, string>()
-        map.set(p.corePostId, inner)
-      }
-      // (corePostId, format) is unique in storage — schedulePost is
-      // upsert-keyed — so this overwrite never loses information.
-      inner.set(p.format, p.scheduledDate)
+    for (const list of map.values()) {
+      list.sort((a, b) =>
+        (a.scheduledTime ?? "").localeCompare(b.scheduledTime ?? ""),
+      )
     }
     return map
   }, [scheduled])
@@ -890,72 +610,37 @@ export default function CalendarPage() {
   const goThisWeek = () => setWeekStart(startOfWeek(today))
 
   // --- DnD handlers ------------------------------------------------------
-  const [dragOverSlot, setDragOverSlot] = useState<string | null>(null)
+  const [dragOverDay, setDragOverDay] = useState<string | null>(null)
 
   const handleDragOver = (
     e: React.DragEvent<HTMLDivElement>,
     day: Date,
-    hour: number,
-    slot: string,
+    dayKey: string,
   ) => {
-    if (isPastSlot(day, hour, today, currentHour)) return // past: no preventDefault → drop disallowed
+    if (isPastDate(day, today)) return // past day: no preventDefault → drop disallowed
     e.preventDefault()
     e.dataTransfer.dropEffect = "move"
-    if (dragOverSlot !== slot) setDragOverSlot(slot)
+    if (dragOverDay !== dayKey) setDragOverDay(dayKey)
   }
 
-  const handleDragLeave = (slot: string) => {
-    if (dragOverSlot === slot) setDragOverSlot(null)
-  }
-
-  /**
-   * Canonical four formats — kept aligned with Sheet/cards so the picker
-   * dialog renders the same slate everywhere. Defined inline (not imported)
-   * because it's a UI constant for THIS surface, not a storage concept.
-   */
-  const PICKER_FORMATS: FormatId[] = [
-    "story",
-    "talking_head",
-    "carousel",
-    "image_post",
-  ]
-
-  /**
-   * Pretty Hebrew label for a (date, time) tuple — used in the picker
-   * dialog header so the user sees exactly which slot they're committing
-   * to. Kept colocated because the layout of the label is calendar-specific.
-   */
-  function formatPickerTargetLabel(dateKey: string, time: string): string {
-    try {
-      const [y, m, d] = dateKey.split("-").map((s) => parseInt(s, 10))
-      const date = new Date(y, m - 1, d)
-      const dateStr = date.toLocaleDateString("he-IL", {
-        day: "2-digit",
-        month: "long",
-      })
-      return `${dateStr} בשעה ${time}`
-    } catch {
-      return `${dateKey} ${time}`
-    }
+  const handleDragLeave = (dayKey: string) => {
+    if (dragOverDay === dayKey) setDragOverDay(null)
   }
 
   const handleDrop = (
     e: React.DragEvent<HTMLDivElement>,
     day: Date,
-    hour: number,
     dayKey: string,
   ) => {
-    if (isPastSlot(day, hour, today, currentHour)) return
+    if (isPastDate(day, today)) return
     e.preventDefault()
-    setDragOverSlot(null)
-    const time = `${String(hour).padStart(2, "0")}:00`
+    setDragOverDay(null)
 
-    // Source 1: chip-to-chip reschedule. The chip stamps a dedicated MIME
+    // Source 1: card-to-card reschedule. A scheduled card stamps this MIME
     // type on dragstart with `{corePostId, format}` — the (post, format)
-    // tuple is the unique key for a scheduled row. Re-running schedulePost
-    // updates that row in place (same key → upsert), so the chip moves
-    // from its old slot to this one without any explicit "remove + add"
-    // dance. Idempotent: dropping on the same slot is a no-op.
+    // tuple is the unique key for a scheduled row. We keep the row's existing
+    // time and only move the date; re-running schedulePost upserts it in
+    // place (same key), so the card moves to this day. Same-day drop is a no-op.
     const rescheduleRaw = e.dataTransfer.getData(
       "application/x-scheduled-chip",
     )
@@ -965,6 +650,10 @@ export default function CalendarPage() {
           corePostId: string
           format: FormatId
         }
+        const existing = scheduled.find(
+          (p) => p.corePostId === corePostId && p.format === format,
+        )
+        const time = existing?.scheduledTime ?? DEFAULT_SCHEDULED_TIME
         schedulePost(corePostId, format, dayKey, time)
       } catch (err) {
         console.error("[calendar] failed to parse reschedule payload", err)
@@ -972,105 +661,30 @@ export default function CalendarPage() {
       return
     }
 
-    const corePostId = e.dataTransfer.getData("text/x-core-post-id")
-    if (!corePostId) return
-
-    // Read the readiness payload the queue panel set on drag start. If it's
-    // missing (e.g. a future drag source that doesn't supply it), we fall
-    // back to opening the dialog with no readiness info — the dialog will
-    // show all formats as empty, which is wrong, so we'd rather just bail
-    // gracefully. Today the only drag source is QueuePanel which always
-    // sets it, so this is just a safety net.
-    const raw = e.dataTransfer.getData("application/x-core-post-readiness")
-    if (!raw) {
-      console.warn("[calendar] drop missing readiness payload — bailing")
-      toast.error("לא ניתן לתזמן את הפוסט הזה")
-      return
+    // Source 2: a single ready-format card dragged from the queue rail. The
+    // rail is now per-format, so a drop schedules exactly that one format —
+    // no picker. The payload carries the resolved hook so the new card can
+    // render it without a refetch. Lands on the default time for the day.
+    const readyRaw = e.dataTransfer.getData("application/x-ready-format")
+    if (readyRaw) {
+      try {
+        const { corePostId, format, hook } = JSON.parse(readyRaw) as {
+          corePostId: string
+          format: FormatId
+          hook?: string | null
+        }
+        const trimmed = hook?.trim()
+        schedulePost(
+          corePostId,
+          format,
+          dayKey,
+          DEFAULT_SCHEDULED_TIME,
+          trimmed ? { hook: trimmed } : undefined,
+        )
+      } catch (err) {
+        console.error("[calendar] failed to parse ready-format payload", err)
+      }
     }
-    let payload: {
-      corePostId: string
-      formats: string[]
-      formatsWithMedia: string[]
-      hasBody: boolean
-      displayText: string | null
-    }
-    try {
-      payload = JSON.parse(raw)
-    } catch (err) {
-      console.error("[calendar] failed to parse readiness payload", err)
-      return
-    }
-
-    // Derive readiness for every canonical format. The picker shows them
-    // all (ready ones selectable, others disabled with a reason); we also
-    // use this same map to decide whether to bypass the dialog entirely.
-    const readinessInput: ReadinessPostInput = {
-      id: payload.corePostId,
-      formats: payload.formats,
-      formatsWithMedia: payload.formatsWithMedia,
-      hasBody: payload.hasBody,
-    }
-    const formatStates = Object.fromEntries(
-      PICKER_FORMATS.map((f) => [f, getFormatReadiness(readinessInput, f)]),
-    ) as Record<FormatId, FormatReadiness>
-
-    const readyFormats = PICKER_FORMATS.filter(
-      (f) => formatStates[f] === "ready",
-    )
-
-    // Bypass 0: no ready format means there's nothing to schedule.
-    // Surface a toast that points the user back to creating a script +
-    // media — opening the picker with zero selectable options would feel
-    // like a dead end.
-    if (readyFormats.length === 0) {
-      toast.error(
-        "הפוסט אינו מוכן לתזמון — צרו סקריפט והעלו מדיה לפחות לפורמט אחד",
-        { duration: 5000 },
-      )
-      return
-    }
-
-    // Per Hani: ALWAYS open the picker when there's at least one ready
-    // format — even if only one is ready. The picker confirms WHICH
-    // format we're scheduling and is the user's chance to back out
-    // before commit.
-    setFormatPicker({
-      corePostId,
-      displayText: payload.displayText,
-      formatStates,
-      targetDate: dayKey,
-      targetTime: time,
-    })
-  }
-
-  /**
-   * Confirm handler for the format picker. Commits the schedule for EACH
-   * selected format at the same (date, hour) slot — so a single drag can
-   * paint N chips on the calendar (one per format), each with its own
-   * semantic color.
-   *
-   * The picker guarantees `formats.length >= 1` (the confirm button is
-   * disabled otherwise), so the loop always commits at least one row.
-   * Kept on the page (not in the picker) so the picker stays I/O-free and
-   * re-usable from any future drag source.
-   */
-  const handleConfirmFormatPick = (formats: FormatId[]) => {
-    if (!formatPicker) return
-    // Persist the hook with each scheduled row so the calendar slot card
-    // can render the post's hook directly — without the cached hook the
-    // card falls back to a generic "פוסט מתוזמן" placeholder and the user
-    // can't tell which post is in which slot.
-    const hook = formatPicker.displayText?.trim() || undefined
-    for (const format of formats) {
-      schedulePost(
-        formatPicker.corePostId,
-        format,
-        formatPicker.targetDate,
-        formatPicker.targetTime,
-        hook ? { hook } : undefined,
-      )
-    }
-    setFormatPicker(null)
   }
 
   // --- Sheet open helpers ------------------------------------------------
@@ -1167,7 +781,7 @@ export default function CalendarPage() {
     <AppShell>
       {/*
         Two-column layout in a single full-height column container.
-        The AppShell <main> sets `pt-[72px] px-6 pb-6` and lets the area
+        The AppShell <main> sets `pt-8 px-6 pb-6` and lets the area
         scroll vertically. To make the queue panel a full-height rail, we
         size THIS container to fill the available height (viewport minus
         the AppShell padding) and lay out a horizontal row of:
@@ -1177,12 +791,16 @@ export default function CalendarPage() {
         to fill the height alongside the panel.
       */}
       <div
-        // Reserve 400px on the visual end (left in RTL) for the
-        // QueuePanel — matches the MediaPanel width, the smallest of
-        // our standard side panel sizes (400 / 520 / 680). Without the
-        // padding the calendar grid would render underneath the
-        // fixed-positioned panel.
-        className="w-full flex gap-5 h-[calc(100vh-72px-3rem)] min-h-0 pe-[420px]"
+        // Reserve 480px on the visual end (left in RTL) for the
+        // QueuePanel. The rail renders its ready-format cards two-up; at
+        // 480 each column is ≈218px — the same width as a /core_posts
+        // grid card. Must match the panel's own `w-[480px]` or the
+        // calendar grid renders underneath it. When the rail is collapsed
+        // the padding animates to 0 (in lockstep with the rail's slide-out)
+        // so the week grid expands to full width.
+        className={`w-full flex gap-5 h-[calc(100vh-2rem-3rem)] min-h-0 transition-[padding] duration-300 ease-in-out ${
+          panelCollapsed ? "pe-0" : "pe-[480px]"
+        }`}
         dir="rtl"
       >
         {/* Calendar column — header + week nav at standard page width,
@@ -1191,21 +809,16 @@ export default function CalendarPage() {
           {/* Header at the standard page width — keeps the title aligned
               with the rest of the system. */}
           <div className="max-w-[1200px] w-full mx-auto">
-            {/* Level 1 — page identity. Title (with leading illustration,
-                matching /core_posts + /hooks) + static subtitle that
-                explains the JTBD ("what can I do here?"). */}
-            <div className="flex flex-col gap-1.5 mb-6">
-              <div className="flex items-center gap-2">
-                <img
-                  src="/images/calendar-min.png"
-                  alt=""
-                  className="w-[48px] h-[48px]"
-                />
-                <h2 className="text-text-primary-default">תזמון</h2>
-              </div>
-              <p className="text-p text-text-neutral-default">
-                ניתן לתזמן פורמט אחד או יותר של פוסט ליבה מוכן. סקריפט + מדיה
-              </p>
+            {/* Level 1 — page identity. Title + leading illustration,
+                matching /core_posts + /hooks. Subtitle intentionally
+                omitted per Hani. */}
+            <div className="flex items-center gap-2 mb-6">
+              <img
+                src="/images/calendar-min.png"
+                alt=""
+                className="w-[48px] h-[48px]"
+              />
+              <h2 className="text-text-primary-default">תזמון</h2>
             </div>
 
             {/* Level 2 — week navigation. */}
@@ -1214,7 +827,7 @@ export default function CalendarPage() {
                 <Button variant="ghost" size="icon-sm" onClick={goPrev} aria-label="שבוע קודם">
                   <ChevronRight className="size-4" />
                 </Button>
-                <span className="text-p-bold text-text-primary-default text-center px-1 tabular-nums">
+                <span className="text-[16px] leading-none font-medium text-text-primary-default text-center px-1 tabular-nums">
                   {formatWeekRange(weekStart, weekEnd)}
                 </span>
                 <Button variant="ghost" size="icon-sm" onClick={goNext} aria-label="שבוע הבא">
@@ -1231,13 +844,11 @@ export default function CalendarPage() {
               `<main>`'s px-6/pb-6 so the grid hugs the sidebar on the
               start side, the queue panel on the end side, and the
               viewport bottom. No rounded corners — per Hani: edge-to-edge. */}
-          <div className="flex-1 min-h-0 min-w-0 -ms-6 -me-6 -mb-6 border-y border-border-neutral-default bg-white dark:bg-gray-10 overflow-auto">
-            {/* Top strip — empty corner + 7 day labels. Sticky so the day
-                headers stay pinned to the top while the hour grid scrolls
-                vertically beneath them. `z-20` keeps them above scheduled
-                chips (the dragOver ring uses z-10). */}
-            <div className="sticky top-0 z-20 grid grid-cols-[64px_repeat(7,minmax(0,1fr))] bg-bg-surface border-b border-border-neutral-default">
-              <div className="border-l border-border-neutral-default" aria-hidden />
+          <div className="flex-1 min-h-0 min-w-0 -ms-6 -me-6 -mb-6 border-y border-border-neutral-default bg-white dark:bg-gray-10 overflow-hidden flex flex-col">
+            {/* Top strip — 7 day labels, one per column. No hours column:
+                the board is a day-grid now, each day a single tall cell.
+                `z-20` keeps the headers above the dragOver ring (z-10). */}
+            <div className="shrink-0 z-20 grid grid-cols-7 bg-bg-surface border-b border-border-neutral-default">
               {days.map((day, i) => {
                 const isToday = isSameDay(day, today)
                 const isLastCol = i === days.length - 1
@@ -1263,288 +874,96 @@ export default function CalendarPage() {
               })}
             </div>
 
-            {/* Body — hours column + 7 day columns. The yellow now-line
-                is rendered inside today's column (below), scoped to that
-                column's width so it only marks "now" against today —
-                not against unrelated past/future days. */}
-            <div className="grid grid-cols-[64px_repeat(7,minmax(0,1fr))]">
-              <div className="grid grid-rows-[repeat(17,3.5rem)] border-l border-border-neutral-default">
-                {HOURS.map((hour, i) => {
-                  const isLastRow = i === HOURS.length - 1
-                  return (
-                    <div
-                      key={hour}
-                      className={`px-2 pt-1 text-xs-body text-text-neutral-default tabular-nums text-center ${isLastRow ? "" : "border-b"} border-border-neutral-default`}
-                    >
-                      {String(hour).padStart(2, "0")}:00
-                    </div>
-                  )
-                })}
-              </div>
-
+            {/* Body — 7 day columns, each ONE cell that fills the height and
+                scrolls its own stack of cards. No hour rows: a card is just
+                "this format, scheduled on this day". Dropping anywhere in a
+                column schedules to that day (the time is kept under the hood). */}
+            <div className="grid grid-cols-7 flex-1 min-h-0">
               {days.map((day, i) => {
                 const dayKey = toDateKey(day)
                 const isToday = isSameDay(day, today)
                 const dayOfWeek = day.getDay()
                 const isLastCol = i === days.length - 1
+                const past = isPastDate(day, today)
+                const isDragOver = dragOverDay === dayKey
+                const dayPosts = postsByDay.get(dayKey) ?? []
 
-                // Today gets a very subtle warm tint (yellow-95 at 40%)
-                // — visible enough to read as "this is today" but light
-                // enough that future hours still look interactive. The
-                // earlier gray bg-bg-surface read as "disabled column"
-                // which blocked Hani from dropping on future hours.
+                // Today gets a very subtle warm tint (yellow-95 at 40%) —
+                // visible enough to read as "this is today" but light enough
+                // that the column still looks interactive (droppable).
                 const dayBg = isToday
                   ? "bg-yellow-95/40"
                   : "bg-white dark:bg-gray-10"
 
-                // Now-line offset (only relevant for today's column).
-                // Computed locally so we can render it absolutely inside
-                // the column's relative container — keeps the line scoped
-                // to today's width.
-                const FIRST_HOUR = HOURS[0]
-                const LAST_HOUR = HOURS[HOURS.length - 1]
-                // Hour-row height in px — kept in sync with the
-                // `grid-rows-[repeat(17,3.5rem)]` template on the day
-                // column. 3.5rem × 16px = 56px. Drives the now-line
-                // vertical position; drift between the two values
-                // would put the yellow now-line at the wrong minute.
-                const ROW_H_PX = 56
-                let nowLineTopPx: number | null = null
-                if (isToday) {
-                  const minutesFromStart = nowMinutes - FIRST_HOUR * 60
-                  const gridSpanMinutes = (LAST_HOUR + 1 - FIRST_HOUR) * 60
-                  if (minutesFromStart >= 0 && minutesFromStart <= gridSpanMinutes) {
-                    nowLineTopPx = (minutesFromStart / 60) * ROW_H_PX
-                  }
-                }
-
                 return (
                   <div
                     key={day.toISOString()}
-                    className={`relative grid grid-rows-[repeat(17,3.5rem)] min-w-0 ${isLastCol ? "" : "border-l"} border-border-neutral-default ${dayBg}`}
+                    onDragOver={(e) => handleDragOver(e, day, dayKey)}
+                    onDragLeave={() => handleDragLeave(dayKey)}
+                    onDrop={(e) => handleDrop(e, day, dayKey)}
+                    aria-label={`${WEEKDAY_LABELS[dayOfWeek]} ${day.getDate()}${isToday ? " — היום" : ""}${past ? " — תאריך שעבר" : ""}`}
+                    className={`relative overflow-y-auto scrollbar-subtle min-w-0 transition-colors ${isLastCol ? "" : "border-l"} border-border-neutral-default ${dayBg} ${
+                      isDragOver ? "ring-2 ring-inset ring-yellow-50 bg-bg-surface-hover z-10" : ""
+                    } ${past ? "opacity-60 cursor-not-allowed" : ""}`}
                   >
-                    {nowLineTopPx !== null && (
-                      <div
-                        aria-hidden
-                        style={{ top: `${nowLineTopPx}px` }}
-                        className="absolute inset-x-0 h-0.5 bg-yellow-50 z-30 pointer-events-none"
-                      />
-                    )}
-                    {HOURS.map((hour) => {
-                      const slot = slotKey(dayKey, hour)
-                      const isPast = isPastSlot(day, hour, today, currentHour)
-                      const isDragOver = dragOverSlot === slot
-                      const slotPosts = postsBySlot.get(slot) ?? []
-                      const isLastRow = hour === HOURS[HOURS.length - 1]
-
-                      return (
-                        <div
-                          key={slot}
-                          onDragOver={(e) => handleDragOver(e, day, hour, slot)}
-                          onDragLeave={() => handleDragLeave(slot)}
-                          onDrop={(e) => handleDrop(e, day, hour, dayKey)}
-                          aria-label={`${WEEKDAY_LABELS[dayOfWeek]} ${day.getDate()} ${String(hour).padStart(2, "0")}:00${isToday ? " — היום" : ""}${isPast ? " — שעה שעברה" : ""}`}
-                          // `overflow-visible` (removed `overflow-hidden`)
-                          // lets the ScheduledChip's floating format
-                          // badge overhang the cell's top-end corner
-                          // per Hani's design. The chip itself is the
-                          // only content here and clips its own text
-                          // via line-clamp, so dropping the cell's
-                          // clip is safe.
-                          className={`relative p-1 min-w-0 transition-colors ${isLastRow ? "" : "border-b"} border-border-neutral-default ${
-                            isDragOver ? "ring-2 ring-inset ring-yellow-50 bg-bg-surface-hover z-10" : ""
-                          } ${isPast ? "opacity-60 cursor-not-allowed" : ""}`}
-                        >
-                          {/*
-                            Dedupe by corePostId within a slot. If multiple
-                            formats of the same post happen to share a slot,
-                            they collapse to ONE card — the 4-icon row inside
-                            the card already communicates which formats are
-                            scheduled, so showing multiple cards would be
-                            redundant. We keep the first occurrence's post
-                            data (hook, publishedAt, format) so drag still
-                            has a valid (corePostId, format) tuple to move.
-                          */}
-                          {(() => {
-                            const seen = new Set<string>()
-                            const uniquePosts = slotPosts.filter((p) => {
-                              if (seen.has(p.corePostId)) return false
-                              seen.add(p.corePostId)
-                              return true
-                            })
-                            return uniquePosts.map((post) => {
-                              // A slot is "published" only if ALL its scheduled
-                              // formats are marked published — otherwise the
-                              // post is still partly active and shouldn't fade.
-                              const allFormatsAtSlot = slotPosts
-                                .filter((p) => p.corePostId === post.corePostId)
-                                .map((p) => p.format)
-                              const isPublished = allFormatsAtSlot.every((f) =>
-                                publishedSet.has(`${post.corePostId}:${f}`),
-                              )
-                              // Two projections for the dots:
-                              //   scheduledFormats   — formats of this
-                              //                        post anchored
-                              //                        to THIS slot
-                              //                        (date+hour).
-                              //                        Rendered green
-                              //                        WITH the ✓.
-                              //   scheduledElsewhere — formats of the
-                              //                        same post that
-                              //                        live in OTHER
-                              //                        slots. Same
-                              //                        green palette,
-                              //                        no ✓ — green is
-                              //                        "on the
-                              //                        calendar"; ✓
-                              //                        narrows that to
-                              //                        "on the
-                              //                        calendar HERE."
-                              const scheduledFormats = new Set<FormatId>(
-                                allFormatsAtSlot,
-                              )
-                              const allScheduled =
-                                scheduledFormatsByPost.get(post.corePostId) ??
-                                new Set<FormatId>()
-                              const scheduledElsewhere = new Set<FormatId>()
-                              for (const f of allScheduled) {
-                                if (!scheduledFormats.has(f)) {
-                                  scheduledElsewhere.add(f)
-                                }
-                              }
-                              // "Ready but not scheduled" formats for this
-                              // post. `getFormatReadiness` returns "ready"
-                              // only when the format has a script + media
-                              // (or drive URL) AND isn't already on the
-                              // calendar / published — so a format already
-                              // in `allScheduled` is naturally excluded.
-                              // If we haven't hydrated readiness yet (the
-                              // API hasn't returned), the set is empty and
-                              // the chip falls back to its prior "empty"
-                              // rendering — no broken intermediate state.
-                              const readyFormats = new Set<FormatId>()
-                              const readinessInput = readinessByPostId.get(
+                    {/* Cards stack from the top. `min-h-full` keeps the whole
+                        column a drop target even when it's nearly empty. */}
+                    <div className="flex flex-col gap-1.5 p-2 min-h-full">
+                      {dayPosts.map((post) => {
+                        const isPublished = publishedSet.has(
+                          `${post.corePostId}:${post.format}`,
+                        )
+                        // Prefer the live hook over the snapshot persisted at
+                        // schedule time, then a placeholder.
+                        const hook =
+                          (
+                            hookByPostId.get(post.corePostId) ||
+                            post.hook ||
+                            ""
+                          ).trim() || "פוסט מתוזמן"
+                        const mediaUrl = formatMediaByPost.get(
+                          post.corePostId,
+                        )?.[post.format]
+                        return (
+                          <FormatCard
+                            key={`${post.corePostId}:${post.format}`}
+                            post={post}
+                            hook={hook}
+                            mediaUrl={mediaUrl}
+                            isPublished={isPublished}
+                            onCardClick={() =>
+                              openSheetForCorePost(
                                 post.corePostId,
+                                post.format,
+                                "preview",
                               )
-                              if (readinessInput) {
-                                for (const fmt of CANONICAL_FORMATS) {
-                                  if (
-                                    getFormatReadiness(readinessInput, fmt) ===
-                                    "ready"
-                                  ) {
-                                    readyFormats.add(fmt)
-                                  }
-                                }
-                              }
-                              // Prefer the live hook from the core-posts API
-                              // over the snapshot persisted at schedule time —
-                              // ensures edits to the hook propagate to the
-                              // calendar card without a re-schedule, and
-                              // backfills hooks for older schedules that
-                              // didn't snapshot one.
-                              const liveHook = hookByPostId.get(post.corePostId)
-                              const enrichedPost = liveHook
-                                ? { ...post, hook: liveHook }
-                                : post
-                              return (
-                                <ScheduledChip
-                                  key={`${post.corePostId}:${slot}`}
-                                  post={enrichedPost}
-                                  isPublished={isPublished}
-                                  scheduledFormats={scheduledFormats}
-                                  scheduledElsewhere={scheduledElsewhere}
-                                  readyFormats={readyFormats}
-                                  formatDates={
-                                    formatDatesByPost.get(post.corePostId) ??
-                                    new Map<FormatId, string>()
-                                  }
-                                  onCardClick={() =>
-                                    openSheetForCorePost(
-                                      post.corePostId,
-                                      undefined,
-                                      "edit",
-                                    )
-                                  }
-                                  onFormatClick={(format) =>
-                                    openSheetForCorePost(
-                                      post.corePostId,
-                                      format,
-                                      "edit",
-                                    )
-                                  }
-                                  onUnschedule={() => {
-                                    // Drop ALL formats of this post at
-                                    // this exact slot — the user sees
-                                    // ONE card here regardless of how
-                                    // many formats share the slot
-                                    // (the deduper above collapses
-                                    // them), so unscheduling should
-                                    // match that one-card mental
-                                    // model and not leave an
-                                    // invisible variant scheduled.
-                                    // QueuePanel filters by "not in
-                                    // scheduled set", so removing
-                                    // these rows automatically
-                                    // returns the post to the
-                                    // side panel as "ready to
-                                    // schedule" again — no extra
-                                    // wiring needed.
-                                    //
-                                    // Also clear the per-format
-                                    // PUBLISHED mark for each format
-                                    // we're sending back. Without this
-                                    // the queue card's chip would keep
-                                    // a green V (Hani 2026-05-13:
-                                    // "הפורמט שהחזרתי עדיין מופיע ב-V
-                                    // כאילו הוא מתוזמן בלוח") — the
-                                    // published mark in localStorage
-                                    // outlived the schedule row that
-                                    // sourced it, and getFormatReadiness
-                                    // returns "published" before
-                                    // checking schedule state. "Return
-                                    // to queue" means "this isn't
-                                    // done yet", so we drop the stale
-                                    // confirmation.
-                                    for (const f of allFormatsAtSlot) {
-                                      unschedulePost(post.corePostId, f)
-                                      unmarkPublished(post.corePostId, f)
-                                    }
-                                    toast.success("הפוסט הוחזר לתור")
-                                  }}
-                                  onReschedule={(newDate) => {
-                                    // Same one-card-per-slot mental
-                                    // model as onUnschedule: move
-                                    // EVERY format at this slot to
-                                    // the picked date, preserving
-                                    // each format's existing hour
-                                    // (which is the slot's hour). The
-                                    // chip the user clicked carries
-                                    // the slot's time on
-                                    // `post.scheduledTime`, and every
-                                    // format at the slot shares it by
-                                    // construction (they're grouped
-                                    // by hour up the tree).
-                                    const time =
-                                      post.scheduledTime ??
-                                      DEFAULT_SCHEDULED_TIME
-                                    for (const f of allFormatsAtSlot) {
-                                      schedulePost(
-                                        post.corePostId,
-                                        f,
-                                        newDate,
-                                        time,
-                                        { hook: enrichedPost.hook },
-                                      )
-                                    }
-                                    toast.success("התזמון עודכן")
-                                  }}
-                                />
+                            }
+                            onUnschedule={() => {
+                              // Send THIS format back to the queue and drop
+                              // its stale published mark (returning a format
+                              // means "it isn't done yet").
+                              unschedulePost(post.corePostId, post.format)
+                              unmarkPublished(post.corePostId, post.format)
+                              toast.success("הפורמט הוחזר לתור")
+                            }}
+                            onReschedule={(newDate) => {
+                              // Move THIS format to the picked date, keeping
+                              // its current time.
+                              const time =
+                                post.scheduledTime ?? DEFAULT_SCHEDULED_TIME
+                              schedulePost(
+                                post.corePostId,
+                                post.format,
+                                newDate,
+                                time,
+                                { hook },
                               )
-                            })
-                          })()}
-                        </div>
-                      )
-                    })}
+                              toast.success("התזמון עודכן")
+                            }}
+                          />
+                        )
+                      })}
+                    </div>
                   </div>
                 )
               })}
@@ -1555,14 +974,37 @@ export default function CalendarPage() {
 
         {/* Queue panel — full-height rail on the visual end (left in RTL).
             Sibling of the calendar column inside the outer flex row, so it
-            stretches to the full container height (`h-[calc(100vh-72px-3rem)]`).
+            stretches to the full container height (`h-[calc(100vh-2rem-3rem)]`).
             The panel itself uses `h-full` so its inner list scrolls
             independently of the calendar grid. */}
         <QueuePanel
-          onItemClick={(corePostId) =>
-            openSheetForCorePost(corePostId, undefined, "preview")
+          collapsed={panelCollapsed}
+          onToggleCollapse={() => setPanelCollapsed((v) => !v)}
+          onItemClick={(corePostId, format) =>
+            openSheetForCorePost(corePostId, format, "preview")
           }
         />
+
+        {/* Reopen affordance — shown only while the rail is collapsed. Pinned
+            to the end edge (left in RTL) just below the topbar, where the
+            rail's collapse button sat, so the open/close controls live on
+            the same edge. z-40 keeps it above the grid's dragOver ring. */}
+        {panelCollapsed && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon-sm"
+                onClick={() => setPanelCollapsed(false)}
+                aria-label="פתיחת פאנל הפוסטים לתזמון"
+                className="fixed top-20 end-3 z-40 bg-white dark:bg-gray-10 shadow-sm"
+              >
+                <PanelLeftOpen className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="left">פוסטים לתזמון</TooltipContent>
+          </Tooltip>
+        )}
       </div>
 
       {/* Single Sheet for both entry points (chip click on the board +
@@ -1590,29 +1032,6 @@ export default function CalendarPage() {
           setSheetOpen(false)
         }}
       />
-
-      {/* Format picker dialog — opens when the user drops a post that has
-          more than one ready format. The picker is purely presentational;
-          we drive open/close from `formatPicker` state and commit the
-          schedule on confirm. */}
-      {formatPicker && (
-        <ScheduleFormatPicker
-          open={!!formatPicker}
-          onOpenChange={(open) => {
-            if (!open) setFormatPicker(null)
-          }}
-          post={{
-            corePostId: formatPicker.corePostId,
-            displayText: formatPicker.displayText,
-            formatStates: formatPicker.formatStates,
-          }}
-          targetLabel={formatPickerTargetLabel(
-            formatPicker.targetDate,
-            formatPicker.targetTime,
-          )}
-          onConfirm={handleConfirmFormatPick}
-        />
-      )}
 
     </AppShell>
   )

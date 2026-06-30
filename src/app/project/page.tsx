@@ -265,6 +265,42 @@ function ProjectPageInner() {
     setSelectedProductId(ids[0] ?? null)
   }, [hookIdParam, selectedHook, hookIds, hookProductIds])
 
+  // Hook flow: reconcile editableHook against the DB (source of truth).
+  //
+  // The ?hook= URL param is a render-time snapshot taken in /hooks when the
+  // "create post" arrow is clicked — it's built from hook_text captured in the
+  // render closure, while the inline edit commits to that list state only
+  // *after* an awaited DB write. So a user who edits a hook and then opens it
+  // on the canvas can ship a pre-edit value in ?hook=, and the canvas (which
+  // otherwise only uses hook_id to look up product_ids) would show the stale
+  // hook forever. ?hook= is treated as a cache; the hooks row pointed to by
+  // ?hook_id= is authoritative. Runs once on entry — before the user can type
+  // into the canvas hook field — so it never clobbers an in-canvas edit.
+  const reconciledHookTextRef = useRef(false)
+  useEffect(() => {
+    if (flow !== "hook") return
+    if (!userId || !hookIdParam) return
+    if (reconciledHookTextRef.current) return
+    reconciledHookTextRef.current = true
+    const supabase = createClient()
+    supabase
+      .from("hooks")
+      .select("hook_text")
+      .eq("id", hookIdParam)
+      .eq("user_id", userId)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (error) {
+          console.error("[project][hook-text-reconcile]", error)
+          return
+        }
+        const fresh = (data as { hook_text: string | null } | null)?.hook_text?.trim()
+        // Resolves after the synchronous canvas-restore setEditableHook, so the
+        // DB value wins over any stale localStorage snapshot too.
+        if (fresh) setEditableHook(fresh)
+      })
+  }, [flow, userId, hookIdParam])
+
   useEffect(() => {
     if (restoredRef.current) return
     if (!userId) return

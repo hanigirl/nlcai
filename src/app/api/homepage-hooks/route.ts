@@ -38,6 +38,9 @@ export async function POST(req: NextRequest) {
     // still send plain strings — normalize both shapes.
     type FieldIdea = { text: string; source?: string; category?: string; url?: string }
     let fieldIdeas: FieldIdea[] = []
+    // Optional product focus — when the user picks "לפי מוצר" on /hooks, the
+    // whole batch is oriented around (and tagged with) this product.
+    let selectedProductId: string | null = null
     try {
       const body = await req.json()
       const raw = body.fieldIdeas ?? []
@@ -48,6 +51,9 @@ export async function POST(req: NextRequest) {
             : (x as FieldIdea),
         )
         .filter((i: FieldIdea) => !!i?.text)
+      if (typeof body.productId === "string" && body.productId.trim()) {
+        selectedProductId = body.productId.trim()
+      }
     } catch { /* no body */ }
 
     const supabase = await createClient()
@@ -268,6 +274,17 @@ ${trendIdeas.length > 0 ? `- **${trendQuota} זוויות יכולות להיו�
 - רק ${audienceOnly} זוויות מותר להבסיס אך ורק על מחקר הקהל ללא מקור מ-⭐/🔥/📈.
 ` : ""
 
+    // Product focus — set when the user picked "לפי מוצר" on /hooks. Forces
+    // every angle to orbit this product (soft promotion, not a hard sell).
+    const selectedProduct = selectedProductId
+      ? ((products as Array<{ id: string; name: string; type: string; page_summary: string | null }> | null) ?? []).find(
+          (p) => p.id === selectedProductId,
+        ) ?? null
+      : null
+    const productFocusSection = selectedProduct
+      ? `\n## 🎯 מיקוד במוצר ספציפי — חובה!\nכל ${HOOK_COUNT} ההוקים חייבים להיכתב סביב המוצר/שירות הבא ולקדם אותו בעקיפין — לדבר אל הקהל שלו, לגעת בכאב/רצון שהוא פותר, ולפתוח סקרנות סביב הנושא שלו (בלי מכירה בוטה):\n- **שם המוצר:** ${selectedProduct.name} (${selectedProduct.type === "front" ? "מוצר פרונט" : selectedProduct.type === "premium" ? "מוצר פרימיום" : "מגנט לידים"})\n${selectedProduct.page_summary ? `- **תיאור:** ${selectedProduct.page_summary}\n` : ""}`
+      : ""
+
     const planningPrompt = `אתה אסטרטג שיווק שמתכנן זוויות תוכן עבור יוצרי קונטנט בישראל.
 
 ## המטרה
@@ -284,6 +301,7 @@ ${(existingHooks as { hook_text: string }[]).slice(0, 50).map((h, i) => `${i + 1
 **זה קריטי**: עברתי על הרשימה. ה-${HOOK_COUNT} זוויות החדשות חייבות לפתוח **נושאים אחרים**, **זוויות אחרות**, **כאבים/רצונות אחרים** ממה שכבר קיים. אם זווית חדשה נראית דומה לאחת מהקיימות — תזרוק/י אותה ובחר/י משהו אחר. גיוון מהאינוונטר הקיים זה תנאי, לא המלצה.
 ` : ""}
 ${quotaSection}
+${productFocusSection}
 ## קטגוריות הוקים זמינות (תבחר אחת לכל זווית):
 ${categoriesCatalog}
 
@@ -659,7 +677,26 @@ ${formatTemplatesForPrompt()}
           // One Haiku call, ~$0.01. Writes product_ids back to DB. Client
           // picks it up when it reloads via loadHooks() after [DONE].
           const productList = (products as Array<{ id: string; name: string; page_summary: string }> | null) ?? []
-          if (generatedHooks.length > 0 && productList.length > 0) {
+          if (selectedProductId && generatedHooks.length > 0) {
+            // Explicit product focus — tag every hook with the chosen product
+            // directly and skip the auto-classifier (we already know it).
+            const pid = selectedProductId
+            const updateResults = await Promise.all(
+              generatedHooks.map((h) =>
+                withRetry(() =>
+                  supabase
+                    .from("hooks")
+                    .update({ product_ids: [pid] } as never)
+                    .eq("id", h.id),
+                ),
+              ),
+            )
+            const failedExplicit = updateResults.filter((r) => r.error).length
+            if (failedExplicit > 0) {
+              console.error(`Homepage Hooks: ${failedExplicit}/${generatedHooks.length} explicit product-tag updates failed after retries`)
+            }
+            console.log(`Homepage Hooks: tagged ${generatedHooks.length} hooks with chosen product ${pid}`)
+          } else if (generatedHooks.length > 0 && productList.length > 0) {
             try {
               const classification = await classifyHooksByProduct(client, {
                 hooks: generatedHooks,

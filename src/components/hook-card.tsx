@@ -125,7 +125,10 @@ export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onTog
             for copy, and the star's own yellow-50 fill when favorited.
           */}
 
-          {/* Favorite */}
+          {/* Favorite — bare star, one-to-one with the /ideas card favorite
+              (no yellow-90 pill): outline yellow-30 (→ yellow-10 on hover)
+              when off, solid yellow-50 fill when on. Kept identical to ideas
+              so the "save" star reads the same across surfaces. */}
           {onToggleFavorite && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -133,11 +136,11 @@ export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onTog
                   type="button"
                   onClick={onToggleFavorite}
                   aria-label={isFavorite ? "הסרה ממועדפים" : "הוספה למועדפים"}
-                  className={`flex items-center justify-center size-7 shrink-0 rounded-md bg-yellow-90 text-yellow-30 hover:bg-bg-surface-hover transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+                  className={`flex items-center justify-center p-1 shrink-0 rounded-full transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
                     isFavorite ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
                   }`}
                 >
-                  <Star className={`size-3.5 ${isFavorite ? "fill-yellow-50 text-yellow-50" : ""}`} />
+                  <Star className={`size-3.5 ${isFavorite ? "fill-yellow-50 text-yellow-50" : "text-yellow-30 hover:text-yellow-10"}`} />
                 </button>
               </TooltipTrigger>
               <TooltipContent>{isFavorite ? "הסרה ממועדפים" : "הוספה למועדפים"}</TooltipContent>

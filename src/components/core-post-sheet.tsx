@@ -361,9 +361,12 @@ function InlineCopyButton({
 function PostTriggerWordField({
   value,
   onSave,
+  className = "",
 }: {
   value: string
   onSave: (word: string) => void
+  /** Layout classes for the field wrapper (e.g. `flex-1` when sharing a row). */
+  className?: string
 }) {
   const [local, setLocal] = useState(value)
   useEffect(() => {
@@ -376,7 +379,7 @@ function PostTriggerWordField({
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className={`flex flex-col gap-1.5 w-full ${className}`}>
       <Label htmlFor="post-trigger-word">מילת טריגר</Label>
       <Input
         id="post-trigger-word"
@@ -389,7 +392,7 @@ function PostTriggerWordField({
           if (e.key === "Enter") e.currentTarget.blur()
         }}
         placeholder="טריגר"
-        className="text-right min-w-[72px] max-w-[96px]"
+        className="text-right w-full"
         aria-label="מילת טריגר לפוסט"
       />
     </div>
@@ -801,75 +804,27 @@ export function CorePostSheet({
                   </>
                 )}
               </div>
-              {/* Actions — DOM-last so they render on the visual LEFT in
-                  RTL flex. Only shown in the master view; in the detail
-                  view the only way out is the back button (per Hani: "to
-                  exit, the user goes back first"). Tooltips open instantly
-                  on hover; the SheetContent's `onOpenAutoFocus` prevents
-                  initial focus from triggering them on Sheet open. */}
+              {/* Close — sits on the visual LEFT (RTL). Master only; the
+                  detail view exits via its back button. The schedule + edit
+                  actions live in the fixed footer at the bottom of the panel
+                  (floats above the script). */}
               {selectedFormat === null && (
                 <TooltipProvider delayDuration={0} skipDelayDuration={0}>
-                  <div className="flex items-center gap-4 shrink-0">
-                    {/* Primary action — scheduling is the most common exit
-                        path from the master view (Hani: "מתי לפרסם").
-                        Two visual states:
-                          - Not scheduled → primary Button "תזמון פוסט"
-                            that opens /calendar.
-                          - Already scheduled → non-interactive label
-                            with a checkmark and "מתוזמן ל-DD בחודש".
-                            It's a status read-out, not an action; the
-                            user can re-schedule via drag on /calendar.
-                        Suppressed entirely when the host context is
-                        already the scheduling board (`hideScheduleButton`). */}
-                    {!hideScheduleButton && (
-                      nextScheduledShort ? (
-                        <span
-                          className="inline-flex items-center gap-1.5 text-green-success-50 text-xs-body leading-none"
-                          aria-label={`מתוזמן ל-${nextScheduledShort}`}
-                        >
-                          <Check className="size-3.5 shrink-0" aria-hidden />
-                          מתוזמן ל-{nextScheduledShort}
-                        </span>
-                      ) : (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <SheetClose asChild>
                         <Button
-                          size="sm"
-                          onClick={handleGoToCalendar}
-                          aria-label="תזמון פוסט"
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label="סגירה"
+                          className="rounded-lg shrink-0"
                         >
-                          תזמון פוסט
+                          <X className="size-4" />
                         </Button>
-                      )
-                    )}
-                    {/* Secondary action — open the canvas editor at
-                        /project. Pencil makes the affordance explicit
-                        without leaning on the prior ExternalLink icon
-                        (which read as "open in new tab" to some users). */}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleOpenFull}
-                      aria-label="עריכה"
-                      className="gap-1.5"
-                    >
-                      <Pencil className="size-3.5" aria-hidden />
-                      עריכה
-                    </Button>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <SheetClose asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label="סגירה"
-                            className="rounded-lg"
-                          >
-                            <X className="size-4" />
-                          </Button>
-                        </SheetClose>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom">סגירה</TooltipContent>
-                    </Tooltip>
-                  </div>
+                      </SheetClose>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">סגירה</TooltipContent>
+                  </Tooltip>
                 </TooltipProvider>
               )}
             </div>
@@ -890,6 +845,7 @@ export function CorePostSheet({
                 )}
               </div>
             )}
+
           </header>
 
           {/* Body — two screens (master + format detail) animated as a
@@ -913,86 +869,13 @@ export function CorePostSheet({
               dir="rtl"
               aria-hidden={selectedFormat !== null}
               className={[
-                "absolute inset-0 overflow-y-auto px-6 py-5 flex flex-col gap-7 text-right",
+                "absolute inset-0 overflow-y-auto px-6 pt-2 pb-5 flex flex-col gap-5 text-right",
                 "transition-transform duration-300 ease-out will-change-transform",
                 selectedFormat === null ? "translate-x-0" : "translate-x-full",
               ].join(" ")}
             >
             {post && (
               <>
-                {/* --- Master script ---
-                    Always visible above the format tabs. This is the core
-                    post script — the shared idea before format adaptation.
-                    Per Hani: "תמיד מול העיניים" — first thing the user sees
-                    on Sheet open. Linked product (post-level metadata) sits
-                    on the same row as the heading. Each tab below shows how
-                    that idea was adapted per format. */}
-                {post.body?.trim() && (
-                  <section aria-labelledby="master-script-heading">
-                    <div className="flex items-center justify-between gap-4 mb-3 flex-wrap">
-                      <h3
-                        id="master-script-heading"
-                        className="text-base font-bold text-text-primary-default"
-                      >
-                        הסקריפט
-                      </h3>
-                      <div className="flex items-center gap-4 shrink-0">
-                        {/* Product (RTL: appears on the right of this group) */}
-                        <div className="flex items-center gap-2">
-                          <Label htmlFor="product-id">מוצר</Label>
-                          <Select
-                            id="product-id"
-                            selectSize="small"
-                            value={meta.productId ?? ""}
-                            onChange={(e) =>
-                              patchMeta({ productId: e.target.value || null })
-                            }
-                            disabled={productsLoading}
-                            className="min-w-[140px]"
-                          >
-                            <option value="">ללא מוצר</option>
-                            {productsError && (
-                              <option value="" disabled>
-                                שגיאה בטעינת מוצרים
-                              </option>
-                            )}
-                            {!productsError &&
-                              products &&
-                              products.length === 0 && (
-                                <option value="" disabled>
-                                  לא הוספתם עדיין מוצרים
-                                </option>
-                              )}
-                            {!productsError &&
-                              products &&
-                              products.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                  {p.name}
-                                </option>
-                              ))}
-                          </Select>
-                        </div>
-                        {/* Trigger word (RTL: appears on the left of this group) */}
-                        <PostTriggerWordField
-                          value={meta.triggerWord ?? ""}
-                          onSave={(word) =>
-                            patchMeta({ triggerWord: word || undefined })
-                          }
-                        />
-                      </div>
-                    </div>
-                    <div className="relative bg-bg-surface border border-border-neutral-default rounded-md px-4 py-3 text-right">
-                      <CopyIconButton
-                        text={post.body}
-                        ariaLabel="העתיקו את הסקריפט המרכזי"
-                      />
-                      <p className="text-small text-text-primary-default whitespace-pre-wrap leading-relaxed pl-9">
-                        {post.body}
-                      </p>
-                    </div>
-                  </section>
-                )}
-
                 {/* --- Formats — chips that navigate to the format edit page ---
                     Per Hani: the side panel splits into two screens. Screen 1
                     (this Sheet) shows the master script + format chips.
@@ -1058,6 +941,95 @@ export function CorePostSheet({
                     })}
                   </div>
                 </section>
+
+                {/* divider */}
+                <div className="border-t border-border-neutral-default" />
+
+                {/* --- Post settings (הגדרות הפוסט) ---
+                    Product + trigger word. Moved out of the script heading
+                    into their own labelled section between the formats and the
+                    script, per the scheduler wireframe (node 541:1852). */}
+                <section aria-labelledby="settings-heading">
+                  <h3
+                    id="settings-heading"
+                    className="text-base font-bold text-text-primary-default mb-3"
+                  >
+                    הגדרות הפוסט
+                  </h3>
+                  <div className="flex gap-2">
+                    {/* Product — shares the row with the trigger field; both
+                        flex-1 so they split the container width with an 8px gap. */}
+                    <div className="flex flex-1 min-w-0 flex-col gap-1.5">
+                      <Label htmlFor="product-id">מוצר</Label>
+                      <Select
+                        id="product-id"
+                        selectSize="small"
+                        value={meta.productId ?? ""}
+                        onChange={(e) =>
+                          patchMeta({ productId: e.target.value || null })
+                        }
+                        disabled={productsLoading}
+                        className="w-full"
+                      >
+                        <option value="">ללא מוצר</option>
+                        {productsError && (
+                          <option value="" disabled>
+                            שגיאה בטעינת מוצרים
+                          </option>
+                        )}
+                        {!productsError &&
+                          products &&
+                          products.length === 0 && (
+                            <option value="" disabled>
+                              לא הוספתם עדיין מוצרים
+                            </option>
+                          )}
+                        {!productsError &&
+                          products &&
+                          products.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                      </Select>
+                    </div>
+                    {/* Trigger word — sits next to the product field (8px gap),
+                        filling the remaining width. */}
+                    <PostTriggerWordField
+                      className="flex-1 min-w-0"
+                      value={meta.triggerWord ?? ""}
+                      onSave={(word) =>
+                        patchMeta({ triggerWord: word || undefined })
+                      }
+                    />
+                  </div>
+                </section>
+
+                {/* divider */}
+                <div className="border-t border-border-neutral-default" />
+
+                {/* --- Master script ---
+                    The core post script — the shared idea before format
+                    adaptation. Sits last in the panel (Hani 2026-06-25). */}
+                {post.body?.trim() && (
+                  <section aria-labelledby="master-script-heading">
+                    <h3
+                      id="master-script-heading"
+                      className="text-base font-bold text-text-primary-default mb-3"
+                    >
+                      הסקריפט
+                    </h3>
+                    <div className="relative bg-bg-surface border border-border-neutral-default rounded-md px-4 py-3 text-right">
+                      <CopyIconButton
+                        text={post.body}
+                        ariaLabel="העתיקו את הסקריפט המרכזי"
+                      />
+                      <p className="text-small text-text-primary-default whitespace-pre-wrap leading-relaxed pl-9">
+                        {post.body}
+                      </p>
+                    </div>
+                  </section>
+                )}
 
               </>
             )}
@@ -1148,6 +1120,47 @@ export function CorePostSheet({
             })()}
             </div>
           </div>
+
+          {/* Master footer — fixed action bar that floats above the
+              scrolling script. Pinned to the panel bottom (`sticky bottom-0`)
+              with a soft top shadow so it reads as elevated over the content.
+              Holds [עריכה | תזמון פוסט]; DOM order [edit, schedule] → RTL puts
+              "תזמון פוסט" on the left and "עריכה" on the right. The schedule
+              slot is suppressed (and "עריכה" goes full width) when the host is
+              already the scheduling board (`hideScheduleButton`). */}
+          {post && selectedFormat === null && (
+            <footer className="sticky bottom-0 z-10 bg-white dark:bg-gray-10 border-t border-border-neutral-default shadow-[0_-2px_10px_rgba(0,0,0,0.05)] px-6 py-4 flex items-center gap-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleOpenFull}
+                aria-label="עריכה"
+                className="flex-1 gap-1.5"
+              >
+                <Pencil className="size-3.5" aria-hidden />
+                עריכה
+              </Button>
+              {!hideScheduleButton &&
+                (nextScheduledShort ? (
+                  <span
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 h-9 rounded-md bg-bg-surface text-green-success-50 text-small leading-none"
+                    aria-label={`מתוזמן ל-${nextScheduledShort}`}
+                  >
+                    <Check className="size-3.5 shrink-0" aria-hidden />
+                    מתוזמן ל-{nextScheduledShort}
+                  </span>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={handleGoToCalendar}
+                    aria-label="תזמון פוסט"
+                    className="flex-1"
+                  >
+                    תזמון פוסט
+                  </Button>
+                ))}
+            </footer>
+          )}
 
           {/* Screen 2 footer — schedule CTA. Only visible in format detail
               AND only to the owner (the /calendar surface is owner-gated).

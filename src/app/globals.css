@@ -314,6 +314,30 @@
   font-weight: 400;
 }
 
+/**
+ * Subtle scrollbar — transparent track + a soft rounded thumb. Used on the
+ * calendar's per-day scroll columns: each day is its own `overflow-y-auto`
+ * container, and in RTL the vertical scrollbar renders on the LEFT edge, so
+ * a day that overflows showed its default gray scrollbar TRACK as a stray
+ * "boundary" on the left of that column. Zeroing the track removes it; the
+ * thumb only appears while there's overflow to scroll.
+ */
+@utility scrollbar-subtle {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-gray-80) transparent;
+  &::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--color-gray-80);
+    border-radius: 9999px;
+  }
+}
+
 @keyframes fan-in {
   0% {
     opacity: 0;

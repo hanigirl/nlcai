@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react"
 import {
-  ArrowLeft,
   Copy,
   FileText,
+  Image as ImageIcon,
   LayoutGrid,
   List,
   Loader2,
@@ -65,6 +65,10 @@ interface SavedPost {
   formats_with_media?: string[]
   /** First non-cover media URL found across this post's formats. */
   primary_media_url?: string | null
+  /** Per-format first media URL (format → url). Lets the card tell whether
+   *  the displayed `primary_media_url` came from the (square) carousel format,
+   *  which is shown `contain` instead of cropped. */
+  format_media?: Record<string, string>
   created_at: string
   /** Bumped on every edit (body / hook / format scripts / media / cover /
    *  pill colour). Drives the "recently edited first" sort + grouping. */
@@ -254,7 +258,7 @@ export default function CorePostsPage() {
 
   return (
     <AppShell>
-      <div className="max-w-[1200px] mx-auto" dir="rtl">
+      <div className="max-w-[1440px] mx-auto" dir="rtl">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-2">
@@ -368,7 +372,7 @@ export default function CorePostsPage() {
             {groupedByDate.map(({ dayKey, label, items }) => (
               <section key={dayKey}>
                 <p className="text-small text-text-neutral-default mb-4">{label}</p>
-                <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" : "flex flex-col gap-2"}>
+                <div className={viewMode === "grid" ? "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4" : "flex flex-col gap-2"}>
                   {items.map((post) => (
                     <CorePostCard
                       key={post.id}
@@ -565,6 +569,21 @@ function CorePostCard({
       : lines
   const bodyPreview = previewLines.join("\n")
 
+  // First media the user attached to any of this post's formats (non-cover,
+  // video preferred) — surfaced as the card's banner per the 2026-06-30
+  // design. `null` → the media slot renders a neutral "no media yet"
+  // placeholder instead.
+  const mediaUrl = post.primary_media_url?.trim() || null
+
+  // Is the displayed media the (square) carousel asset? Carousels are shown
+  // FULLY inside the portrait slot (object-contain + padding) so the 1:1
+  // frame isn't cropped — reels/stories/portrait images stay object-cover.
+  const mediaIsCarousel =
+    !!mediaUrl &&
+    Object.entries(post.format_media ?? {}).some(
+      ([fmt, url]) => fmt === "carousel" && url === mediaUrl,
+    )
+
   // Per-format readiness — re-derived on every render. Cheap (synchronous
   // localStorage reads) and ensures the chip matches the Sheet header
   // when the user opens the post. We bump a `tick` on storage events so
@@ -607,41 +626,91 @@ function CorePostCard({
           onClick()
         }
       }}
-      className="group relative h-[200px] gap-3 rounded-[16px] border-border-neutral-default bg-white dark:bg-gray-10 p-4 py-4 text-right transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 shadow-none cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+      className="group relative gap-3 rounded-[12px] border-border-neutral-default bg-white dark:bg-gray-10 p-4 text-right transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 shadow-none cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
     >
-      <CardContent className="flex flex-1 flex-col gap-2 p-0">
-        {/* TOP — per-format status chips. Moved from the bottom (2026-05-13)
-            so the user reads "what's done" before "what it says". Each chip
-            is still its own button (FormatStatusChipLink) — screen readers
-            announce 4 distinct actions per card. Click propagation is
-            stopped inside the chip so it doesn't double-fire with the
-            card's outer onClick. */}
-        <div className="flex flex-wrap gap-1">
+      {/* MEDIA — first asset the user attached to any of this post's formats
+          (video first-frame or image), scaled to fill a PORTRAIT slot
+          (aspect 4:5) so reels / stories / portrait images display naturally
+          and the whole card reads as portrait. Carousel assets (square 1:1)
+          are shown FULLY — object-contain + gray padding — instead of cropped
+          (see `mediaIsCarousel`). No media yet → a neutral gray placeholder
+          with an icon + Hebrew "עדיין לא נוספה מדיה". */}
+      <div className="relative aspect-[4/5] w-full shrink-0 overflow-hidden rounded-lg bg-gray-95">
+        {mediaUrl ? (
+          <CorePostCardMedia url={mediaUrl} contain={mediaIsCarousel} />
+        ) : (
+          <div className="flex size-full flex-col items-center justify-center gap-2 text-text-neutral-default">
+            <ImageIcon className="size-7" aria-hidden />
+            <span className="text-small">עדיין לא נוספה מדיה</span>
+          </div>
+        )}
+      </div>
+
+      <CardContent className="flex flex-1 flex-col gap-1.5 p-0">
+        {/*
+          Title — the hook is the post's most recognisable identity.
+          Duplicate detection: posts created via the "שיכפול" flow carry a DB
+          `title` stamped "עותק של: …" (the server skips AI-title generation
+          for those). We surface that marker as a visible prefix so the
+          duplicate is recognisable in the list (both posts share hook_text).
+        */}
+        {(() => {
+          const baseLabel =
+            post.hook_text?.trim() ||
+            post.title?.trim() ||
+            lines[0] ||
+            "פוסט ללא כותרת"
+          const isDuplicate = post.title?.startsWith("עותק של:")
+          const displayLabel = isDuplicate
+            ? `עותק של: ${baseLabel}`
+            : baseLabel
+          return (
+            <p className="text-sm font-semibold text-text-primary-default line-clamp-1">
+              {displayLabel}
+            </p>
+          )
+        })()}
+
+        {/* Body — preview of the continuation when there's a script. A
+            hook-only draft (empty body) shows a centered "started but not
+            written" placeholder so the card reads as in-progress, not broken. */}
+        {bodyPreview ? (
+          <p className="text-sm text-text-primary-default line-clamp-2 leading-relaxed">
+            {bodyPreview}
+          </p>
+        ) : (
+          <div className="flex flex-col items-center justify-center gap-1.5 py-1">
+            <img
+              src="/images/letter-min.png"
+              alt=""
+              className="w-7 h-7 grayscale opacity-50"
+            />
+            <p className="text-sm text-text-neutral-default text-center leading-relaxed">
+              יש אחלה הוק! אבל עדיין אין סקריפט
+              <br />
+              המשיכו ליצור את הפוסט הזה
+            </p>
+          </div>
+        )}
+
+        {/* FORMAT CHIPS — bottom of the card per the design. `mt-auto` pins
+            them to the baseline so cards stretched to a shared grid-row height
+            keep chips aligned. Each chip is its own button
+            (FormatStatusChipLink): SR announces 4 distinct actions, and it
+            stops click propagation so it doesn't double-fire with the card's
+            onClick. Neutral chips echo the card's yellow hover; "set" chips
+            keep their green identity. */}
+        <div className="mt-auto flex flex-wrap gap-1 pt-1">
           {CARD_CHIP_FORMATS.map((format) => {
             const state = getFormatReadiness(readinessInput, format)
-            // Date source matches the Sheet's logic exactly — same helpers,
-            // same precedence (published > scheduled).
+            // Date source matches the Sheet's logic — same helpers, same
+            // precedence (published > scheduled).
             const dateValue =
               state === "published"
                 ? getPublishedMark(post.id, format)?.publishedAt
                 : state === "scheduled"
                   ? getScheduledByPostAndFormat(post.id, format)?.scheduledDate
                   : undefined
-            // Card-hover tint — per Hani 2026-05-13: only the neutral
-            // (not-started / ready) chips echo the card's yellow on
-            // group-hover. The "set" chips (scheduled/published) keep
-            // their green identity untouched — it's a meaningful color
-            // (this format is on the calendar) that the user-readable
-            // hover signal must NOT erase.
-            //
-            // Colors per Hani's spec:
-            //   bg   → yellow-90 (#FFF3CC)
-            //   text → yellow-30 (#997500)   — lucide icons inherit
-            //          via currentColor, so the format glyph turns
-            //          yellow-30 alongside the label
-            //   border (ready only) → yellow-30 to match the text;
-            //          not-started has no border, so it stays
-            //          unchanged for that state
             const isSetState =
               state === "scheduled" || state === "published"
             const hoverTintClass = isSetState
@@ -664,100 +733,19 @@ function CorePostCard({
             )
           })}
         </div>
-
-        {/*
-          Title — the hook is the most recognisable identity of the post.
-          Duplicate detection: posts created via the "שיכפול" flow have
-          their DB `title` stamped with `"עותק של: …"` (the server skips
-          AI-title generation for those). We surface that marker as a
-          visible prefix here so the duplicate is recognisable on the
-          list — the user-facing card title was previously identical to
-          the original because both posts share the same hook_text.
-        */}
-        {(() => {
-          const baseLabel =
-            post.hook_text?.trim() ||
-            post.title?.trim() ||
-            lines[0] ||
-            "פוסט ללא כותרת"
-          const isDuplicate = post.title?.startsWith("עותק של:")
-          const displayLabel = isDuplicate
-            ? `עותק של: ${baseLabel}`
-            : baseLabel
-          // mt-3 adds extra breathing room between the chips row above
-          // and the title, on top of the parent CardContent's gap-2 —
-          // chip pills are visually busy and the title needs to feel
-          // anchored, not crowded against them.
-          return (
-            <p className="text-sm font-semibold text-text-primary-default line-clamp-1 mt-3">
-              {displayLabel}
-            </p>
-          )
-        })()}
-
-        {/* Body — preview of the continuation when there's a script. When
-            the user only generated a hook (draft with empty body), surface a
-            centered placeholder so the card reads as "started but not yet
-            written" instead of looking incomplete or broken. */}
-        {bodyPreview ? (
-          <p className="text-sm text-text-primary-default line-clamp-2 leading-relaxed">
-            {bodyPreview}
-          </p>
-        ) : (
-          <div className="flex flex-col items-center justify-center gap-1.5 py-1">
-            <img
-              src="/images/letter-min.png"
-              alt=""
-              className="w-7 h-7 grayscale opacity-50"
-            />
-            <p className="text-sm text-text-neutral-default text-center leading-relaxed">
-              יש אחלה הוק! אבל עדיין אין סקריפט
-              <br />
-              המשיכו ליצור את הפוסט הזה
-            </p>
-          </div>
-        )}
       </CardContent>
 
-      {/* BOTTOM-END — always-visible "edit / open" arrow. Mirrors the
-          HookCard navigate button (size-8, rounded-lg, bg-bg-surface)
-          so the two card surfaces share the same primary-action affordance.
-          The whole card is also clickable, but this button gives the
-          action a visual home + a clear focus target for keyboard users. */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              onClick()
-            }}
-            aria-label="עריכה"
-            className="absolute bottom-3 end-3 flex items-center justify-center size-8 rounded-lg bg-bg-surface group-hover:bg-bg-surface-primary-default-80 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-          >
-            <ArrowLeft className="size-4 text-text-primary-default" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>עריכה</TooltipContent>
-      </Tooltip>
+      {/* HOVER ACTIONS — delete + duplicate, top-end corner (left in RTL),
+          revealed on hover/focus and overlaying the media banner's top edge.
+          Solid backgrounds keep them legible over any image. The whole card
+          (and every chip) opens the Sheet on click, so there's no separate
+          always-visible edit arrow — the design omits it.
 
-      {/* BOTTOM-START — action row (delete + duplicate). Absolutely
-          positioned bottom-start (right in RTL) so it overlays the body
-          text on hover — the card has fixed height and the actions need
-          to stay out of the way until the user wants them.
-
-          The action buttons share the chip's hover palette
-          (yellow-90 bg + yellow-30 fg) so the entire card surface
-          reads as one cohesive yellow when hovered. Direct icon hover
-          still flips to its semantic affordance: red for delete,
-          surface-hover for duplicate. Because these icons live inside
-          an opacity-0 container, the yellow base is only ever visible
-          while the card itself is hovered — so we don't need
-          `group-hover:` to gate the color, the base color is enough.
-
-          Tooltips use noun-form labels ("מחיקה", "שיכפול") per the
-          project tone convention. */}
-      <div className="absolute bottom-3 start-3 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+          The buttons carry the chip's hover palette (yellow-90 bg + yellow-30
+          fg); direct icon hover flips to the semantic affordance (red for
+          delete, surface-hover for duplicate). Tooltips use noun-form labels
+          ("מחיקה", "שיכפול") per the project tone convention. */}
+      <div className="absolute top-3 end-3 z-10 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -796,6 +784,59 @@ function CorePostCard({
 }
 
 /**
+ * Card banner media — the first asset attached to any of the post's formats.
+ * Mirrors FormatThumbnail's video/image detection so a talking_head mp4
+ * paints its first frame as a still poster instead of a broken <img>. On a
+ * load error it falls back to the same neutral icon the "no media" placeholder
+ * uses, so the portrait slot never collapses or shows a broken image.
+ *
+ * `contain` switches object-cover → object-contain: used for carousel (square)
+ * assets so the 1:1 frame shows fully inside the portrait slot with gray
+ * padding, instead of being cropped like a reel/story.
+ */
+function CorePostCardMedia({
+  url,
+  contain = false,
+}: {
+  url: string
+  contain?: boolean
+}) {
+  const [errored, setErrored] = useState(false)
+  const isVideo =
+    /\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(url) || /\/video\//i.test(url)
+  // cover = fill + crop overflow (portrait reels/stories/images); contain =
+  // fit whole frame + pad (square carousels). Both keep aspect ratio.
+  const fitClass = contain ? "object-contain" : "object-cover"
+
+  if (errored) {
+    return (
+      <div className="flex size-full items-center justify-center text-text-neutral-default">
+        <ImageIcon className="size-7" aria-hidden />
+      </div>
+    )
+  }
+  return isVideo ? (
+    <video
+      src={`${url}#t=0.1`}
+      muted
+      playsInline
+      preload="metadata"
+      onError={() => setErrored(true)}
+      className={`block h-full w-full ${fitClass} pointer-events-none`}
+    />
+  ) : (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt=""
+      loading="lazy"
+      onError={() => setErrored(true)}
+      className={`block h-full w-full ${fitClass}`}
+    />
+  )
+}
+
+/**
  * "New: calendar scheduling" announcement banner.
  *
  * Implementation: a full-width PNG provides every visual element
@@ -813,29 +854,23 @@ function CalendarFeatureBanner() {
   return (
     <div
       dir="rtl"
-      className="relative mb-6 rounded-xl overflow-hidden"
+      className="relative mb-6 flex min-h-[90px] items-center overflow-hidden rounded-xl border border-border-neutral-default bg-gradient-to-r from-white from-[31%] to-[#fffcf0] to-[85%]"
     >
-      {/* Background artwork — drives the banner height via its native
-          aspect ratio (2400 × 180). The artwork carries the gradient,
-          border, dashed line, sparkles, and calendar illustration; the
-          right side is empty so the live text below sits on a clean
-          surface. */}
+      {/* Calendar illustration — pinned to the visual right edge,
+          vertically centered. Carries the calendar card + sparkles. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/images/banner-calendar-feature.png"
+        src="/images/banner-calendar.png"
         alt=""
         aria-hidden
-        className="block w-full h-auto select-none"
+        className="pointer-events-none absolute inset-y-0 start-[20px] my-auto h-[68px] w-auto select-none"
       />
 
-      {/* Live text overlay — two lines anchored to the start (visual
-          right in RTL), vertically centered. `ps-[83px]` insets from
-          the right; `pe-[180px]` keeps the text clear of the calendar
-          illustration on the left so the title + badge don't overlap
-          the artwork on narrower widths. */}
-      <div className="absolute inset-y-0 start-0 end-0 flex flex-col justify-center gap-1 ps-[83px] pe-[180px]">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="text-small-bold text-text-primary-default">
+      {/* Text — right-aligned (RTL start). `ps-[150px]` insets from the
+          right so the title + badge clear the calendar illustration. */}
+      <div className="flex w-full flex-col gap-1 ps-[150px] pe-[40px]">
+        <div className="flex items-center justify-start gap-2">
+          <p className="text-small-bold text-text-primary-default whitespace-nowrap">
             תזמון פורמטים של תוכן בלוח שנה
           </p>
           <span className="bg-yellow-60 text-text-primary-default px-2 py-0.5 text-small-bold rounded-full leading-none">
@@ -843,7 +878,7 @@ function CalendarFeatureBanner() {
           </span>
         </div>
         <p className="text-xs-body text-text-neutral-default text-right">
-          כדי לתזמן חייבת להיות מדיה משוייכת לפורמט. חפשו את המצבים האלה בכל פוסט ליבה
+          כדי לתזמן חייבת להיות מדיה משוייכת לפורמט.
         </p>
       </div>
     </div>

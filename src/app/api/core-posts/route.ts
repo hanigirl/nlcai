@@ -74,15 +74,37 @@ export async function GET() {
     }
     const variantHasMedia = new Set<string>()
     const firstMediaByPost: Record<string, string> = {}
+    // Per-(post, format) first non-cover media URL, used by the /calendar
+    // grid to render a thumbnail on each per-format card. Video wins over
+    // image when a format has both, mirroring the detail endpoint's
+    // `formatMedia` so the calendar card and the Sheet show the same asset.
+    const formatMediaByPost: Record<string, Record<string, string>> = {}
     {
       const variantToPost: Record<string, string> = {}
-      for (const v of variants) variantToPost[v.id] = v.core_post_id
+      const variantToFormat: Record<string, string> = {}
+      for (const v of variants) {
+        variantToPost[v.id] = v.core_post_id
+        variantToFormat[v.id] = v.format
+      }
+      // Track which (post, format) entries came from a non-video asset so a
+      // later video can upgrade them; once a video is set we never downgrade.
+      const formatMediaIsVideo: Record<string, boolean> = {}
       for (const m of media) {
-        if (m.url && m.asset_type !== "cover") {
-          variantHasMedia.add(m.format_variant_id)
-          const postId = variantToPost[m.format_variant_id]
-          if (postId && !firstMediaByPost[postId]) {
-            firstMediaByPost[postId] = m.url
+        if (!m.url || m.asset_type === "cover") continue
+        variantHasMedia.add(m.format_variant_id)
+        const postId = variantToPost[m.format_variant_id]
+        const format = variantToFormat[m.format_variant_id]
+        if (postId && !firstMediaByPost[postId]) {
+          firstMediaByPost[postId] = m.url
+        }
+        if (postId && format) {
+          const isVideo = m.asset_type === "video"
+          const key = `${postId}:${format}`
+          if (!formatMediaByPost[postId]) formatMediaByPost[postId] = {}
+          // Set if empty, or upgrade an image entry to a video one.
+          if (!formatMediaByPost[postId][format] || (isVideo && !formatMediaIsVideo[key])) {
+            formatMediaByPost[postId][format] = m.url
+            formatMediaIsVideo[key] = isVideo
           }
         }
       }
@@ -114,6 +136,7 @@ export async function GET() {
       formats: formatsByPost[p.id] ?? [],
       formats_with_media: formatsWithMediaByPost[p.id] ?? [],
       primary_media_url: firstMediaByPost[p.id] ?? null,
+      format_media: formatMediaByPost[p.id] ?? {},
     }))
 
     return NextResponse.json({ posts: result })

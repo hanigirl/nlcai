@@ -4,26 +4,30 @@
  * FormatStatusChip — single source of truth for "this (post, format) is in
  * state X" across the timing feature.
  *
- * 3-state visual model (2026-05-13):
+ * BINARY visual model (updated 2026-06-25 — Hani: "רק שוכפל לא שוכפל"):
  *   ChipState = "not-started" | "ready" | "set"
+ *
+ *   The chip now answers exactly one question: was this format DUPLICATED
+ *   (the user created a variant) or not? Media and scheduling status no
+ *   longer affect it — scheduling lives on the calendar grid (as cards),
+ *   not on this chip. So only two visuals are produced in practice:
+ *   gray ("not-started" = not duplicated) and yellow ("ready" = duplicated).
  *
  *   Mapping from the 5-state internal `FormatReadiness` (kept in
  *   `timing-storage.ts` for nuance the model still tracks):
- *     empty       → not-started   (default placeholder, no media)
- *     incomplete  → not-started   (started but missing media)
- *     ready       → ready          (script + media ready, awaiting calendar)
- *     scheduled   → set            (on the board, future)
- *     published   → set            (on the board, past — visualized only on
- *                                   the calendar surface, not on the chip)
+ *     empty       → not-started   (format NOT duplicated on this post)
+ *     incomplete  → ready          (duplicated, no media yet)
+ *     ready       → ready          (duplicated, has media)
+ *     scheduled   → ready          (duplicated, on the calendar)
+ *     published   → ready          (duplicated, aired)
  *
  * Visual rules (per Hani's spec):
- *   not-started → bg-gray-50, gray text/icon, NO border
- *   ready       → bg-gray-50, gray text/icon, DASHED gray border
- *   set         → bg-teal-50, teal-700 text/icon, SOLID teal-700 border
- *                 + for type=full only: a green check badge REPLACES the
- *                   format icon. The label conveys which format it is.
- *                 + for type=icon: just the format icon in teal-700 (no badge,
- *                   the format icon itself conveys format identity).
+ *   not-started → gray bg, gray text/icon, NO border (quieted to 50% opacity)
+ *   ready       → yellow-90 bg, yellow-30 text/icon, NO border ("duplicated",
+ *                 per Figma node 481:4847)
+ *   set         → soft-green + ✓ badge. RETAINED in the palette but no longer
+ *                 produced by `toChipState` (kept for `getFormatChipClasses`
+ *                 callers that pass an explicit ChipState). Dead in practice.
  *
  * No per-format hue (intentional trade-off — see Hani's brief 2026-05-13):
  *   The previous Tailwind blue/purple/orange/teal palette is gone. The
@@ -130,13 +134,17 @@ export type ChipState = "not-started" | "ready" | "set"
 export function toChipState(state: FormatReadiness): ChipState {
   switch (state) {
     case "empty":
-    case "incomplete":
       return "not-started"
+    // Per Hani 2026-06-25: the chip is now BINARY — "שוכפל או לא שוכפל".
+    // Everything past "not duplicated" (incomplete / ready / scheduled /
+    // published) is "duplicated" and shares the yellow visual. Media AND
+    // scheduling no longer change the color — scheduling status lives on the
+    // calendar grid (as cards), not on this chip.
+    case "incomplete":
     case "ready":
-      return "ready"
     case "scheduled":
     case "published":
-      return "set"
+      return "ready"
   }
 }
 
@@ -203,7 +211,10 @@ function iconSizeFor(size: Size): string {
  */
 const chipStateClasses: Record<ChipState, string> = {
   "not-started": "bg-gray-98 text-gray-50 border-transparent",
-  "ready": "bg-gray-98 text-gray-50 border-dashed border-gray-50",
+  // "ready" = DUPLICATED — matches Figma node 481:4847 exactly: yellow-90
+  // fill (#FFF3CC) + yellow-30 text/icon (#997500), transparent border
+  // (no stroke).
+  "ready": "bg-yellow-90 text-yellow-30 border-transparent",
   "set": "bg-green-success-97 text-green-success-50 border-solid border-green-success-50",
 }
 
@@ -214,7 +225,7 @@ const chipStateClasses: Record<ChipState, string> = {
  */
 const chipStateHover: Record<ChipState, string> = {
   "not-started": "hover:bg-gray-95",
-  "ready": "hover:bg-gray-95",
+  "ready": "hover:bg-yellow-80",
   "set": "hover:bg-green-success-97/80",
 }
 
@@ -377,14 +388,11 @@ export function FormatStatusChip({
     ? "bg-green-success-97 text-green-success-50 border-dashed border-green-success-50"
     : chipStateClasses[chipState]
 
-  // Per Hani 2026-05-14: visually distinguish "not duplicated at all"
-  // (`empty`) from "duplicated but missing media" (`incomplete`).
-  // Both project to the same 3-state visual ("not-started"), so users
-  // couldn't tell them apart on a card row. Dimming the entire chip
-  // (icon + label) at 50% opacity for the literal `empty` case keeps
-  // the 3-state palette intact while making "this format isn't even
-  // on the post" read as quieter than "this format is on the post,
-  // just missing media".
+  // "Not duplicated at all" (`empty`) is the only gray state now —
+  // duplicated formats are yellow ("ready") and scheduled ones green
+  // ("set"). Dimming the gray chip to 50% opacity makes "this format
+  // isn't even on the post" read as the quietest state, well below the
+  // duplicated-yellow it sits next to.
   const isUnusedFormat = state === "empty"
   const opacityClass = isUnusedFormat ? "opacity-50" : ""
 

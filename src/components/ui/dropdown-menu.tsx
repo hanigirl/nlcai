@@ -217,7 +217,11 @@ function DropdownMenuSubTrigger({
       {...props}
     >
       {children}
-      <ChevronRightIcon className="ml-auto size-4" />
+      {/* `ms-auto` (logical) pushes the chevron to the inline-end — the LEFT
+          in RTL — so the label stays on the right and the chevron on the left
+          with the free space between. `rtl:rotate-180` flips the glyph to
+          point left, matching the direction the submenu opens in RTL. */}
+      <ChevronRightIcon className="ms-auto size-4 rtl:rotate-180" />
     </DropdownMenuPrimitive.SubTrigger>
   )
 }

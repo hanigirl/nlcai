@@ -33,10 +33,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import confetti from "canvas-confetti"
-import { FileText, Inbox, Search } from "lucide-react"
+import { FileText, Inbox, PanelLeftClose, Search } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   TIMING_KEYS,
   getFormatReadiness,
@@ -44,7 +45,11 @@ import {
   type FormatId,
   type ReadinessPostInput,
 } from "@/lib/timing-storage"
-import { FormatStatusChip } from "@/components/format-status-chip"
+import {
+  FormatStatusChip,
+  getFormatChipLabel,
+} from "@/components/format-status-chip"
+import { FormatThumbnail } from "@/components/format-thumbnail"
 import { HEADER_CHIP_FORMATS } from "@/components/core-post-sheet"
 import { GeneratingStatus } from "@/components/generating-status"
 
@@ -118,6 +123,7 @@ type ApiCorePost = {
   updated_at: string
   formats?: string[]
   formats_with_media?: string[]
+  format_media?: Record<string, string>
 }
 
 /**
@@ -143,6 +149,23 @@ export type PanelItem = {
   formatsWithMedia: string[]
   /** Whether the post body is non-empty — body fallback for "ready". */
   hasBody: boolean
+  /** Per-format first non-cover media URL — drives the card thumbnail. */
+  formatMedia: Record<string, string>
+}
+
+/**
+ * One rail card = one READY format of a core post. The rail is per-format
+ * now: every schedulable format is its own draggable card.
+ */
+type ReadyCard = {
+  /** `${corePostId}:${format}` — unique per card, used as key + drag id. */
+  id: string
+  corePostId: string
+  format: FormatId
+  /** Resolved display text (hook → title → fallback). */
+  hook: string
+  /** Per-format media URL for the thumbnail; undefined → icon fallback. */
+  mediaUrl?: string
 }
 
 export type QueuePanelProps = {
@@ -155,8 +178,20 @@ export type QueuePanelProps = {
    */
   onDragStartItem?: (corePostId: string) => void
   onDragEndItem?: () => void
-  /** Called when an item is clicked — parent opens the Sheet. */
-  onItemClick?: (corePostId: string) => void
+  /**
+   * Called when a card is clicked — parent opens the Sheet. `format` is the
+   * specific format of the clicked card, so the Sheet can land on it.
+   */
+  onItemClick?: (corePostId: string, format: FormatId) => void
+  /**
+   * Collapsed state — owned by the parent (the calendar page) because it
+   * also controls the matching `pe-[480px]` reserved for the rail. When
+   * true the rail slides off the end edge and the parent shows a reopen
+   * button. Defaults to expanded.
+   */
+  collapsed?: boolean
+  /** Toggle handler for the in-header collapse button. */
+  onToggleCollapse?: () => void
 }
 
 export function QueuePanel({
@@ -164,6 +199,8 @@ export function QueuePanel({
   onDragStartItem,
   onDragEndItem,
   onItemClick,
+  collapsed = false,
+  onToggleCollapse,
 }: QueuePanelProps) {
   const [allPosts, setAllPosts] = useState<PanelItem[]>([])
   const [scheduledIds, setScheduledIds] = useState<Set<string>>(new Set())
@@ -231,6 +268,7 @@ export function QueuePanel({
           formats: p.formats ?? [],
           formatsWithMedia: p.formats_with_media ?? [],
           hasBody: !!p.body?.trim(),
+          formatMedia: p.format_media ?? {},
         }))
         setAllPosts(posts)
       })
@@ -350,45 +388,67 @@ export function QueuePanel({
   // states which used to read from it.
   const unscheduledAll = unscheduled
 
+  // Expand each post into one card per READY format. `getFormatReadiness`
+  // returns "ready" only when a format has a script + media (or Drive link)
+  // AND isn't already scheduled/published — so this list is exactly the
+  // formats waiting to be placed on the calendar, each as its own card.
+  // Same deps as `unscheduled` (readiness reads scheduled/published state
+  // from storage; scheduledIds/metaTick changes bust the memo).
+  const readyCards = useMemo<ReadyCard[]>(() => {
+    const cards: ReadyCard[] = []
+    for (const post of allPosts) {
+      const readinessInput: ReadinessPostInput = {
+        id: post.corePostId,
+        formats: post.formats,
+        formatsWithMedia: post.formatsWithMedia,
+        hasBody: post.hasBody,
+      }
+      const hook =
+        post.hookText?.trim() || post.title?.trim() || "פוסט ללא הוק"
+      for (const format of HEADER_CHIP_FORMATS) {
+        if (getFormatReadiness(readinessInput, format) !== "ready") continue
+        cards.push({
+          id: `${post.corePostId}:${format}`,
+          corePostId: post.corePostId,
+          format,
+          hook,
+          mediaUrl: post.formatMedia[format],
+        })
+      }
+    }
+    return cards
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allPosts, scheduledIds, metaTick])
+
   useEffect(() => {
-    onCountChange?.(unscheduled.length)
-  }, [unscheduled.length, onCountChange])
+    onCountChange?.(readyCards.length)
+  }, [readyCards.length, onCountChange])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return unscheduled
-    return unscheduled.filter((it) => {
-      // Search across hook_text first (the actual user-recognizable string)
-      // and fall back to title (AI-generated) so an idea/keyword match still
-      // surfaces a result.
-      const haystack = `${it.hookText ?? ""} ${it.title ?? ""}`.toLowerCase()
-      return haystack.includes(q)
-    })
-  }, [unscheduled, query])
+    if (!q) return readyCards
+    // Search on the card's resolved hook — the user-recognisable string.
+    return readyCards.filter((c) => c.hook.toLowerCase().includes(q))
+  }, [readyCards, query])
 
   const handleDragStart = (
     e: React.DragEvent<HTMLLIElement>,
-    item: PanelItem,
+    card: ReadyCard,
   ) => {
-    e.dataTransfer.setData("text/x-core-post-id", item.corePostId)
-    // Phase 3b: also pass the per-post readiness inputs (formats / media /
-    // body) on the drag payload so the calendar's drop handler can derive
-    // per-format readiness without an extra fetch. This keeps the panel as
-    // the single source of "what does each post have", and lets the picker
-    // open instantly on drop with no network round-trip.
+    // The rail is per-format: a drop schedules exactly this one format, so
+    // the payload is just the (post, format) tuple plus the resolved hook
+    // (so the new calendar card renders it without a refetch). No picker.
     e.dataTransfer.setData(
-      "application/x-core-post-readiness",
+      "application/x-ready-format",
       JSON.stringify({
-        corePostId: item.corePostId,
-        formats: item.formats,
-        formatsWithMedia: item.formatsWithMedia,
-        hasBody: item.hasBody,
-        displayText: item.hookText ?? item.title ?? null,
+        corePostId: card.corePostId,
+        format: card.format,
+        hook: card.hook,
       }),
     )
     e.dataTransfer.effectAllowed = "move"
-    setDraggingId(item.corePostId)
-    onDragStartItem?.(item.corePostId)
+    setDraggingId(card.id)
+    onDragStartItem?.(card.corePostId)
   }
 
   const handleDragEnd = () => {
@@ -425,21 +485,47 @@ export function QueuePanel({
       // px-6 pb-6`; relative positioning keeps the panel inside that
       // padding area, leaving a 72px+ gap above. Fixed pulls the panel
       // out of flow and pins it to viewport edges. The calendar page
-      // adds matching `pe-[420px]` so its grid doesn't render under us.
+      // adds matching `pe-[480px]` so its grid doesn't render under us.
       // z-30 = above content but below the topbar (z-50) so the topbar's
       // shadow + sticky behavior still wins.
-      // Width tuned to be the minimum that fits all four format chips on
-      // one line (the longest label is "דיבור למצלמה"). Larger than the
-      // standard 400 side-panel size; smaller than 520 to avoid eating
-      // into the calendar grid.
-      className="fixed top-14 bottom-0 end-0 z-30 w-[420px] flex flex-col border-s border-border-neutral-default bg-white dark:bg-gray-10 overflow-hidden"
+      // Width sized for a TWO-up card grid (post-2026-06-30): the list
+      // renders two format cards per row. 480 makes each column ≈218px
+      // ((480 − 32 px-4 gutters − 12 gap) / 2) — the same width as a
+      // /core_posts grid card, so the rail card and the core-post card
+      // read at an identical size.
+      // `transition-transform` + `-translate-x-full` slides the rail off the
+      // end edge (left in RTL) when collapsed; the calendar page animates its
+      // matching `pe` in lockstep so the grid widens as the rail leaves.
+      // `pointer-events-none` + `aria-hidden` while collapsed so the hidden
+      // rail can't be tabbed into or clicked through.
+      //
+      className={`fixed top-14 bottom-0 end-0 z-30 w-[480px] flex flex-col border-s border-border-neutral-default bg-white dark:bg-gray-10 overflow-hidden transition-transform duration-300 ease-in-out ${
+        collapsed ? "-translate-x-full pointer-events-none" : "translate-x-0"
+      }`}
       aria-label="פאנל פוסטים לתזמון"
+      aria-hidden={collapsed}
     >
       <div className="px-4 py-3 border-b border-border-neutral-default flex items-center gap-2">
         <h3 className="text-text-primary-default text-p-bold flex-1">פוסטים לתזמון</h3>
         <Badge variant="outline" className="tabular-nums">
           {unscheduled.length}
         </Badge>
+        {onToggleCollapse && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onToggleCollapse}
+                aria-label="כיווץ פאנל הפוסטים"
+                tabIndex={collapsed ? -1 : 0}
+              >
+                <PanelLeftClose className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>כיווץ הפאנל</TooltipContent>
+          </Tooltip>
+        )}
       </div>
 
       {unscheduled.length > 0 && (
@@ -508,97 +594,76 @@ export function QueuePanel({
         ) : (
           <div className="flex flex-col gap-3">
             {helpVisible && <QueueHelpCard onDismiss={dismissHelp} />}
-            <ul className="flex flex-col gap-2">
-              {filtered.map((item, index) => {
-              const isDragging = draggingId === item.corePostId
-              const displayText =
-                item.hookText?.trim() ||
-                item.title?.trim() ||
-                "פוסט ללא הוק"
+            {/* Two cards per row — the rail is wide enough (w-[560px]) to
+                show the new core-post card design two-up. The help card
+                above stays full width as a sibling of this grid. */}
+            <ul className="grid grid-cols-2 gap-3">
+              {filtered.map((card, index) => {
+              const isDragging = draggingId === card.id
               // Stagger the entrance animation top → bottom. 60ms per row
               // gives a light rolling feel; clamped at ~600ms total so
-              // long lists don't get a slow trailing tail. `animation-fill-mode`
-              // default ("forwards" via tailwindcss-animate keyframes) leaves
-              // each item at its final opacity/transform after the play.
+              // long lists don't get a slow trailing tail.
               const animationDelay = `${Math.min(index * 60, 600)}ms`
-              // Queue cards show formats that are still actionable
-              // (state === "ready"), AND formats the user just published
-              // during this session — those keep showing with a green V
-              // so the user gets visual confirmation. Scheduled formats
-              // (still on the calendar but not yet aired) and empty
-              // formats remain hidden.
-              const readinessInput: ReadinessPostInput = {
-                id: item.corePostId,
-                formats: item.formats,
-                formatsWithMedia: item.formatsWithMedia,
-                hasBody: item.hasBody,
-              }
-              // Per Hani 2026-05-13: show ALL four formats with their
-              // status (not just the still-ready ones). The queue card
-              // now mirrors the /core_posts card visual 1:1 — full chips
-              // row up top so the user sees "what's done" and "what's
-              // still to do" at a glance, without opening the post. The
-              // post-level filter above (`unscheduled.some(... ready)`)
-              // still controls whether the post appears in the queue at
-              // all, so the panel keeps its "stuff that needs scheduling"
-              // identity.
-              const formatStates = HEADER_CHIP_FORMATS.map((format) => ({
-                format,
-                state: getFormatReadiness(readinessInput, format),
-              }))
+              const formatLabel = getFormatChipLabel(card.format)
               return (
                 <li
-                  key={item.corePostId}
+                  key={card.id}
                   draggable
-                  onDragStart={(e) => handleDragStart(e, item)}
+                  onDragStart={(e) => handleDragStart(e, card)}
                   onDragEnd={handleDragEnd}
-                  onClick={() => onItemClick?.(item.corePostId)}
+                  onClick={() => onItemClick?.(card.corePostId, card.format)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault()
-                      onItemClick?.(item.corePostId)
+                      onItemClick?.(card.corePostId, card.format)
                     }
                   }}
                   role="button"
                   tabIndex={0}
-                  aria-label={`גררו לתזמון: ${displayText}`}
+                  aria-label={`גררו לתזמון: ${formatLabel} — ${card.hook}`}
                   style={{ animationDelay }}
-                  className={`group animate-in fade-in slide-in-from-top-2 fill-mode-both duration-300 ease-out rounded-[16px] border border-border-neutral-default bg-white dark:bg-gray-10 p-4 text-right cursor-grab active:cursor-grabbing transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+                  className={`group animate-in fade-in slide-in-from-top-2 fill-mode-both duration-300 ease-out flex flex-col gap-3 rounded-[12px] border border-border-neutral-default bg-white dark:bg-gray-10 p-4 text-right cursor-grab active:cursor-grabbing transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
                     isDragging ? "opacity-50 cursor-grabbing" : ""
                   }`}
                 >
-                  <div className="flex flex-col gap-2">
-                    {/* Full format chips row — mirrors /core_posts card.
-                        Per Hani 2026-05-13: "ממש הניראות של פוסט ליבה,
-                        רק בלי תיאור ובלי האקשנס" — same chip palette,
-                        same group-hover yellow tint on neutral chips,
-                        same card hover. Set-state chips (scheduled /
-                        published) keep their green identity untouched
-                        — it's a meaningful "this format is on the
-                        calendar / aired" signal we never erase. */}
-                    <div className="flex flex-wrap gap-1">
-                      {formatStates.map(({ format, state }) => {
-                        const isSetState =
-                          state === "scheduled" || state === "published"
-                        const hoverTintClass = isSetState
-                          ? undefined
-                          : state === "ready"
-                            ? "group-hover:bg-yellow-90 group-hover:text-yellow-30 group-hover:border-yellow-30"
-                            : "group-hover:bg-yellow-90 group-hover:text-yellow-30"
-                        return (
-                          <FormatStatusChip
-                            key={format}
-                            format={format}
-                            state={state}
-                            size="sm"
-                            className={hoverTintClass}
-                          />
-                        )
-                      })}
-                    </div>
-                    <p className="text-sm font-medium text-text-primary-default line-clamp-3 leading-snug mt-3">
-                      {displayText}
+                  {/* MEDIA — this format's own asset (video first-frame or
+                      image), scaled to fill a PORTRAIT slot (aspect 4:5) so the
+                      rail card mirrors the /core_posts portrait card. Carousel
+                      (square 1:1) assets are shown FULLY — object-contain +
+                      gray padding — instead of cropped; everything else covers.
+                      A format ready only via a Drive link (no uploaded asset)
+                      falls back to the format icon on a neutral gray box. */}
+                  <FormatThumbnail
+                    url={card.mediaUrl}
+                    format={card.format}
+                    className="aspect-[4/5] w-full rounded-lg"
+                    iconClassName="size-8"
+                    fallbackClassName="bg-gray-95"
+                    fit={card.format === "carousel" ? "contain" : "cover"}
+                  />
+
+                  {/* Text block — hook + format chip, tightly spaced (gap-1.5)
+                      to mirror the /core_posts portrait card. */}
+                  <div className="flex flex-1 flex-col gap-1.5">
+                    {/* Hook — the recognisable identity of the core post. */}
+                    <p className="text-sm font-semibold text-text-primary-default line-clamp-2 leading-snug">
+                      {card.hook}
                     </p>
+
+                    {/* Format chip — pinned to the bottom (mt-auto), matching
+                        the /core_posts card. A single chip because this card IS
+                        one format; "ready" (yellow) because every rail card has
+                        passed the schedulable bar (script + media/Drive).
+                        `group-hover:border-yellow-30` mirrors the /core_posts
+                        card so the chip stands out on the card's yellow hover. */}
+                    <div className="mt-auto flex">
+                      <FormatStatusChip
+                        format={card.format}
+                        state="ready"
+                        size="sm"
+                        className="group-hover:border-yellow-30"
+                      />
+                    </div>
                   </div>
                 </li>
               )
@@ -657,29 +722,16 @@ function QueueHelpCard({ onDismiss }: { onDismiss: () => void }) {
         className="absolute -top-12 -end-12 size-32 rounded-full bg-yellow-80/40 blur-2xl pointer-events-none"
       />
 
-      {/* Example chip — the literal "ready" state from FormatStatusChip
-          so what we explain in copy is what the user sees in the
-          queue 1:1. shadow-sm matches the Figma drop-shadow on the
-          example chip. */}
-      <div className="relative">
-        <FormatStatusChip
-          format="talking_head"
-          state="ready"
-          size="sm"
-          className="shadow-sm"
-        />
-      </div>
-
       <div className="relative flex flex-col items-center gap-1 text-center w-full">
         <p className="text-small-bold text-text-primary-default">
-          פורמט מקווקו הוא פורמט מוכן לתזמון
+          כל כרטיס הוא פורמט מוכן לתזמון
         </p>
         <p className="text-xs-body text-text-neutral-default leading-snug">
-          פורמטים עם קו מקווקו{" "}
+          כל פורמט{" "}
           <span className="text-text-primary-default font-medium">
-            מכילים מדיה
+            עם מדיה
           </span>{" "}
-          וניתנים לתיזמון בלוח
+          מופיע ככרטיס נפרד. גררו אותו ליום ושעה בלוח כדי לתזמן
           <br />
           תמיד אפשר להוסיף מדיה לפורמט בעמוד העריכה
         </p>
@@ -688,7 +740,7 @@ function QueueHelpCard({ onDismiss }: { onDismiss: () => void }) {
       <Button
         size="sm"
         onClick={handleClick}
-        aria-label="סגירת הסבר על פורמט מקווקו"
+        aria-label="סגירת ההסבר"
         className="relative"
         disabled={dismissing}
       >

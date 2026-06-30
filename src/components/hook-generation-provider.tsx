@@ -30,7 +30,11 @@ interface HookGenContextValue {
   total: number
   sessionHookIds: string[]
   error: string | null
-  startGeneration: () => Promise<void>
+  /**
+   * Kick off a hook-generation batch. Pass a `product` to generate hooks
+   * focused on (and tagged with) that product; omit it for a general batch.
+   */
+  startGeneration: (product?: { id: string; name: string }) => Promise<void>
   /** Subscribe to hooks as they arrive. Returns an unsubscribe. */
   subscribeHook: (fn: HookListener) => () => void
   /** Subscribe to "generation complete" signal. Returns an unsubscribe. */
@@ -73,7 +77,7 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
     return () => { doneListenersRef.current.delete(fn) }
   }, [])
 
-  const startGeneration = useCallback(async () => {
+  const startGeneration = useCallback(async (product?: { id: string; name: string }) => {
     if (isGenerating) return
 
     setIsGenerating(true)
@@ -82,9 +86,13 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
     setSessionHookIds([])
     setError(null)
 
+    // Subject of this batch — a product name when the user picked "לפי מוצר",
+    // otherwise the generic "new hooks". Threaded into the progress toasts.
+    const subject = product ? `הוקים ל${product.name}` : "הוקים חדשים"
+
     // Persistent loading toast — survives page navigation because it lives
     // on the layout's <Toaster />. Updated as progress flows.
-    toast.loading(`מייצר הוקים חדשים... 0 מתוך ${TOTAL_HOOKS}`, { id: TOAST_ID, duration: Infinity })
+    toast.loading(`מייצר ${subject}... 0 מתוך ${TOTAL_HOOKS}`, { id: TOAST_ID, duration: Infinity })
 
     // Per-user storage — without scoping, switching accounts surfaces the
     // previous user's cached ideas/hooks.
@@ -108,7 +116,11 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
       const res = await fetch("/api/homepage-hooks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fieldIdeas }),
+        body: JSON.stringify({
+          fieldIdeas,
+          productId: product?.id ?? null,
+          productName: product?.name ?? null,
+        }),
       })
 
       if (!res.ok) {
@@ -176,7 +188,7 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
               setProgress(count)
               setSessionHookIds((prev) => [...prev, streamed.id])
               // Update toast text in place
-              toast.loading(`מייצר הוקים חדשים... ${count} מתוך ${TOTAL_HOOKS}`, { id: TOAST_ID, duration: Infinity })
+              toast.loading(`מייצר ${subject}... ${count} מתוך ${TOTAL_HOOKS}`, { id: TOAST_ID, duration: Infinity })
               // Fire listeners (page component receives if mounted)
               for (const fn of hookListenersRef.current) {
                 try { fn(streamed) } catch (err) { console.error("[hook-gen-provider][listener-crash]", err) }

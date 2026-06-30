@@ -5,6 +5,15 @@ import { useRouter } from "next/navigation"
 import { Anchor, Loader2, Sparkles, LayoutGrid, List, Star, Search, ChevronDown, Check } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ConfirmModal } from "@/components/confirm-modal"
@@ -134,11 +143,12 @@ export default function HooksPage() {
     }
   }
 
-  const handleGenerateMore = () => {
+  const handleGenerateMore = (product?: { id: string; name: string }) => {
     // Provider owns the fetch + state + toast. Incoming hooks arrive via
     // subscribeHook (above) while this page is mounted; if user navigates,
     // the provider keeps going and the toast persists at the bottom.
-    startGeneration()
+    // `product` (from the "לפי מוצר" submenu) focuses + tags the batch.
+    startGeneration(product)
   }
 
   const handleDelete = async (id: string) => {
@@ -166,10 +176,19 @@ export default function HooksPage() {
     const supabase = createClient()
     const hook = hooks.find((h) => h.id === id)
     const oldText = hook?.hook_text
+    // Optimistic update: reflect the edit in local state immediately, before
+    // the DB round-trip. The "create post" arrow builds its nav URL from
+    // hook_text captured at render time, so deferring this until after the
+    // await (as before) let a quick edit→navigate ship the pre-edit text to
+    // the canvas. Rolled back below if the write fails.
+    setHooks((prev) => prev.map((h) => h.id === id ? { ...h, hook_text: newText } : h))
     const { error: updateError } = await withRetry(() =>
       supabase.from("hooks").update({ hook_text: newText } as never).eq("id", id),
     )
     if (updateError) {
+      if (oldText !== undefined) {
+        setHooks((prev) => prev.map((h) => h.id === id ? { ...h, hook_text: oldText } : h))
+      }
       toast.error(`העריכה לא נשמרה: ${updateError.message ?? "תקלת רשת"}`)
       return
     }
@@ -192,7 +211,7 @@ export default function HooksPage() {
         }
       }
     }
-    setHooks((prev) => prev.map((h) => h.id === id ? { ...h, hook_text: newText } : h))
+    // Local state already reflects newText (optimistic set above).
     toast.success("ההוק עודכן בהצלחה")
   }
 
@@ -260,19 +279,48 @@ export default function HooksPage() {
             <img src="/images/hook-min.png" alt="" className="w-[48px] h-[48px]" />
             <h2 className="text-text-primary-default">מחסן הוקים</h2>
           </div>
-          <Button
-            size="sm"
-            onClick={handleGenerateMore}
-            disabled={generating}
-            className="gap-1.5"
-          >
-            {generating ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <Sparkles className="size-3.5" />
-            )}
-            {generating ? "מייצר הוקים..." : "ייצר לי עוד הוקים"}
-          </Button>
+          {/* Generate button — now a dropdown (chevron variant): pick a
+              general batch, or "לפי מוצר" to focus + tag the batch on a
+              specific product (sub-menu lists the user's products). */}
+          <DropdownMenu dir="rtl">
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" disabled={generating} className="gap-1.5">
+                {generating ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="size-3.5" />
+                )}
+                {generating ? "מייצר הוקים..." : "ייצר לי עוד הוקים"}
+                <ChevronDown className="size-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-[200px]">
+              <DropdownMenuItem onSelect={() => handleGenerateMore()}>
+                כל המוצרים
+              </DropdownMenuItem>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger disabled={products.length === 0}>
+                  לפי מוצר
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="min-w-[180px]">
+                  {products.length === 0 ? (
+                    <DropdownMenuItem disabled>
+                      לא הוספתם עדיין מוצרים
+                    </DropdownMenuItem>
+                  ) : (
+                    products.map((p) => (
+                      <DropdownMenuItem
+                        key={p.id}
+                        onSelect={() => handleGenerateMore({ id: p.id, name: p.name })}
+                      >
+                        {p.name}
+                      </DropdownMenuItem>
+                    ))
+                  )}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         {/* Filter bar + view switcher */}
