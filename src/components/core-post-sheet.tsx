@@ -44,7 +44,10 @@ import {
   Image as ImageIcon,
   Link2,
   Loader2,
+  MessageCircle,
   Pencil,
+  Send,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react"
@@ -399,6 +402,279 @@ function PostTriggerWordField({
   )
 }
 
+/* ------------------------------------------------------------------ */
+/*  AI Iteration Panel — בועת שיחה צפה                                */
+/* ------------------------------------------------------------------ */
+
+/** Quick-action chips that appear at the top of the AI iteration panel. */
+const AI_CHIPS = [
+  { id: "lighter", label: "יותר קליל" },
+  { id: "shorter", label: "קצר יותר" },
+  { id: "specific", label: "יותר ספציפי" },
+  { id: "tone", label: "שנה טון" },
+] as const
+
+type AiPanelState = "default" | "generating" | "error"
+
+/**
+ * The floating AI iteration panel that pops up from the bottom-left of the
+ * Sheet body. It exposes quick-action chips + a free-text field. On submit,
+ * it enters `generating` state and calls back with the prompt so the parent
+ * can drive the actual AI request.
+ *
+ * The parent is responsible for the API call; this component owns only the
+ * input UX + state machine (default → generating → default/error).
+ */
+function AiIterationPanel({
+  onSubmit,
+  onClose,
+}: {
+  /**
+   * Called when the user submits a prompt (chip or free text). The returned
+   * Promise resolves with the new body string on success, or rejects on
+   * failure. The panel handles the generating / error state machine.
+   */
+  onSubmit: (prompt: string) => Promise<string>
+  onClose: () => void
+}) {
+  const [panelState, setPanelState] = useState<AiPanelState>("default")
+  const [inputValue, setInputValue] = useState("")
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Focus the input when the panel mounts.
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  const isLocked = panelState === "generating"
+
+  const submit = async (prompt: string) => {
+    const trimmed = prompt.trim()
+    if (!trimmed || isLocked) return
+    setPanelState("generating")
+    setErrorMsg(null)
+    try {
+      await onSubmit(trimmed)
+      setInputValue("")
+      setPanelState("default")
+    } catch {
+      setErrorMsg("משהו השתבש, נסי שוב")
+      setPanelState("error")
+    }
+  }
+
+  const handleChip = (label: string) => {
+    void submit(label)
+  }
+
+  const handleSend = () => {
+    void submit(inputValue)
+  }
+
+  const handleRetry = () => {
+    setPanelState("default")
+    setErrorMsg(null)
+  }
+
+  return (
+    <div
+      dir="rtl"
+      role="dialog"
+      aria-label="דיוק עם AI"
+      className={[
+        "absolute bottom-0 left-0 right-0 z-20",
+        "bg-white dark:bg-gray-10",
+        "border border-border-neutral-default rounded-t-2xl",
+        "shadow-[0_-4px_24px_rgba(0,0,0,0.10)]",
+        "flex flex-col gap-3 p-4",
+        "transition-transform duration-300 ease-out",
+      ].join(" ")}
+    >
+      {/* Panel header */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <Sparkles className="size-3.5 text-yellow-50" aria-hidden />
+          <span className="text-small font-semibold text-text-primary-default">
+            דייקו עם AI
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="סגירת פאנל AI"
+          className="inline-flex items-center justify-center size-6 rounded-md text-text-neutral-default hover:text-text-primary-default hover:bg-bg-surface transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+        >
+          <X className="size-3.5" aria-hidden />
+        </button>
+      </div>
+
+      {/* Quick-action chips */}
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label="פעולות מהירות">
+        {AI_CHIPS.map((chip) => (
+          <button
+            key={chip.id}
+            type="button"
+            disabled={isLocked}
+            onClick={() => handleChip(chip.label)}
+            className={[
+              "inline-flex items-center px-3 py-1 rounded-full border text-xs-body transition-colors",
+              "border-border-neutral-default bg-bg-surface text-text-primary-default",
+              "hover:border-yellow-50 hover:text-yellow-30 hover:bg-yellow-50/5",
+              "disabled:opacity-40 disabled:cursor-not-allowed",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50",
+            ].join(" ")}
+          >
+            {chip.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Generating indicator */}
+      {panelState === "generating" && (
+        <div className="flex items-center gap-2 text-small text-text-neutral-default">
+          <Loader2 className="size-3.5 animate-spin text-yellow-50 shrink-0" aria-hidden />
+          <span>מדייקת את הפוסט שלך</span>
+          {/* Animated dots */}
+          <span className="inline-flex gap-0.5" aria-hidden>
+            <span className="w-1 h-1 rounded-full bg-text-neutral-default animate-bounce [animation-delay:0ms]" />
+            <span className="w-1 h-1 rounded-full bg-text-neutral-default animate-bounce [animation-delay:150ms]" />
+            <span className="w-1 h-1 rounded-full bg-text-neutral-default animate-bounce [animation-delay:300ms]" />
+          </span>
+        </div>
+      )}
+
+      {/* Free-text input row */}
+      <div className="flex items-center gap-2">
+        <div className="flex-1 relative">
+          <Input
+            ref={inputRef}
+            dir="rtl"
+            inputSize="small"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault()
+                handleSend()
+              }
+            }}
+            placeholder="בקשי שינוי… למשל: קצר יותר, יותר אישי"
+            disabled={isLocked}
+            className="text-right w-full"
+            aria-label="הזיני בקשת שינוי לפוסט"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={handleSend}
+          disabled={isLocked || !inputValue.trim()}
+          aria-label="שליחת בקשה"
+          className={[
+            "inline-flex items-center justify-center size-8 rounded-lg shrink-0",
+            "bg-yellow-50 text-gray-10",
+            "hover:bg-yellow-30 transition-colors",
+            "disabled:opacity-40 disabled:cursor-not-allowed",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50",
+          ].join(" ")}
+        >
+          <Send className="size-3.5" aria-hidden />
+        </button>
+      </div>
+
+      {/* Error state */}
+      {panelState === "error" && errorMsg && (
+        <div className="flex items-center justify-between gap-3 rounded-lg bg-red-50/10 border border-red-200 dark:border-red-800 px-3 py-2">
+          <span className="text-xs-body text-red-600 dark:text-red-400">
+            {errorMsg}
+          </span>
+          <button
+            type="button"
+            onClick={handleRetry}
+            className="text-xs-body text-text-primary-default underline hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 rounded-sm shrink-0"
+          >
+            נסי שוב
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The floating trigger button that opens/closes the AI iteration panel.
+ * When closed: a round primary button with a chat-bubble + sparkle icon.
+ * When open: the same button shows an X (close affordance is also in the
+ * panel itself, but the icon toggles for clarity).
+ */
+function AiFloatingTrigger({
+  isOpen,
+  onClick,
+}: {
+  isOpen: boolean
+  onClick: () => void
+}) {
+  return (
+    <TooltipProvider delayDuration={300} skipDelayDuration={0}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={onClick}
+            aria-label={isOpen ? "סגירת פאנל דיוק AI" : "פתחי פאנל דיוק AI"}
+            aria-expanded={isOpen}
+            className={[
+              "inline-flex items-center justify-center size-10 rounded-full shadow-md",
+              "transition-colors duration-200",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 focus-visible:ring-offset-2",
+              isOpen
+                ? "bg-gray-10 text-white dark:bg-white dark:text-gray-10 border border-border-neutral-default"
+                : "bg-yellow-50 text-white hover:bg-yellow-30",
+            ].join(" ")}
+          >
+            {isOpen ? (
+              <X className="size-4" aria-hidden />
+            ) : (
+              <span className="relative inline-flex items-center justify-center" aria-hidden>
+                <MessageCircle className="size-4" />
+                <Sparkles className="size-2.5 absolute -top-1 -right-1 text-yellow-30" />
+              </span>
+            )}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top">
+          {isOpen ? "סגירה" : "דייקי עם AI"}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
+/**
+ * Skeleton shimmer overlay for the script block while AI is generating.
+ * Displayed as an absolute overlay over the script text so the user sees
+ * the "working" state without losing track of the block's position.
+ */
+function ScriptSkeletonShimmer() {
+  return (
+    <div
+      aria-hidden
+      className="absolute inset-0 rounded-xl overflow-hidden z-10 pointer-events-none"
+    >
+      <div className="h-full w-full bg-gradient-to-l from-bg-surface via-white/80 dark:via-gray-10/80 to-bg-surface animate-pulse" />
+      <div className="absolute inset-0 flex flex-col gap-2.5 px-4 py-3">
+        {[100, 85, 90, 70, 55].map((w, i) => (
+          <div
+            key={i}
+            className="h-3 rounded bg-border-neutral-default/60 animate-pulse"
+            style={{ width: `${w}%`, animationDelay: `${i * 80}ms` }}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function CorePostSheet({
   open,
   onOpenChange,
@@ -458,6 +734,20 @@ export function CorePostSheet({
   // Without this guard, every storage event (publishing a format, etc.) would
   // re-run pickInitialTab and yank the user back to the "default" tab.
   const initialTabPicked = useRef(false)
+
+  // --- AI iteration panel state -------------------------------------------
+  // `aiPanelOpen` drives the floating panel visibility. The panel lives
+  // inside the scrolling body layer; absolute positioning pins it to the
+  // bottom of the overflow container.
+  const [aiPanelOpen, setAiPanelOpen] = useState(false)
+  // Per-body override map — when the AI rewrites a body, we store the
+  // result here keyed by "master" or by format id. The script blocks read
+  // from here before falling back to the post prop.
+  const [aiBodyOverrides, setAiBodyOverrides] = useState<
+    Record<string, string>
+  >({})
+  // Whether the master body is currently being shimmer-loading (AI in flight).
+  const [aiGeneratingKey, setAiGeneratingKey] = useState<string | null>(null)
 
   const postId = post?.id ?? null
 
@@ -733,6 +1023,52 @@ export function CorePostSheet({
       console.error("[core-post-sheet] delete failed", err)
     } finally {
       setDeleting(false)
+    }
+  }
+
+  // --- AI iteration handler -----------------------------------------------
+  /**
+   * Determine the "active body key" — which text block the AI should
+   * operate on. In the master view (selectedFormat === null), it's the
+   * post-level body ("master"). In format detail, it's the format id.
+   */
+  const activeBodyKey = selectedFormat ?? "master"
+
+  /**
+   * The body text currently visible in the active view, respecting AI
+   * overrides. Used both to display text and to feed the AI as context.
+   */
+  const resolveBody = (key: string): string => {
+    if (aiBodyOverrides[key] !== undefined) return aiBodyOverrides[key]
+    if (key === "master") return post?.body ?? ""
+    return post?.formatBodies?.[key as FormatId] ?? post?.body ?? ""
+  }
+
+  const handleAiSubmit = async (prompt: string): Promise<string> => {
+    const currentBody = resolveBody(activeBodyKey)
+    setAiGeneratingKey(activeBodyKey)
+    try {
+      // TODO: replace with real API call to AI iteration endpoint
+      // e.g. POST /api/ai/iterate-post { postId, format: activeBodyKey, prompt, currentBody }
+      const res = await fetch("/api/ai/iterate-post", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          postId,
+          format: activeBodyKey,
+          prompt,
+          currentBody,
+        }),
+      })
+      if (!res.ok) throw new Error(`iterate-post ${res.status}`)
+      const json = (await res.json()) as { body?: string; result?: string }
+      const newBody = json.body ?? json.result ?? currentBody
+      setAiBodyOverrides((prev) => ({ ...prev, [activeBodyKey]: newBody }))
+      setAiGeneratingKey(null)
+      return newBody
+    } catch (err) {
+      setAiGeneratingKey(null)
+      throw err
     }
   }
 
@@ -1020,12 +1356,14 @@ export function CorePostSheet({
                       הסקריפט
                     </h3>
                     <div className="relative bg-bg-surface border border-border-neutral-default rounded-md px-4 py-3 text-right">
+                      {/* Skeleton shimmer when AI is generating for master */}
+                      {aiGeneratingKey === "master" && <ScriptSkeletonShimmer />}
                       <CopyIconButton
-                        text={post.body}
+                        text={aiBodyOverrides["master"] ?? post.body}
                         ariaLabel="העתיקו את הסקריפט המרכזי"
                       />
                       <p className="text-small text-text-primary-default whitespace-pre-wrap leading-relaxed pl-9">
-                        {post.body}
+                        {aiBodyOverrides["master"] ?? post.body}
                       </p>
                     </div>
                   </section>
@@ -1057,7 +1395,8 @@ export function CorePostSheet({
               const publishedAt = publishedMap[format]?.publishedAt
               const perFormatBody = post.formatBodies?.[format]
               const sectionBody =
-                perFormatBody !== undefined ? perFormatBody : post.body
+                aiBodyOverrides[format] ??
+                (perFormatBody !== undefined ? perFormatBody : post.body)
               const formatHasMedia =
                 post.formatsWithMedia?.includes(format) ?? false
               const perFormatMedia = post.formatMedia?.[format]
@@ -1100,6 +1439,7 @@ export function CorePostSheet({
                     scheduledDate={scheduledRow?.date}
                     scheduledTime={scheduledRow?.time ?? null}
                     publishedAt={publishedAt ?? undefined}
+                    isAiGenerating={aiGeneratingKey === format}
                     onSaveDriveUrl={(url) => {
                       if (!postId) return
                       setFormatMeta(postId, format, {
@@ -1119,750 +1459,13 @@ export function CorePostSheet({
               )
             })()}
             </div>
-          </div>
 
-          {/* Master footer — fixed action bar that floats above the
-              scrolling script. Pinned to the panel bottom (`sticky bottom-0`)
-              with a soft top shadow so it reads as elevated over the content.
-              Holds [עריכה | תזמון פוסט]; DOM order [edit, schedule] → RTL puts
-              "תזמון פוסט" on the left and "עריכה" on the right. The schedule
-              slot is suppressed (and "עריכה" goes full width) when the host is
-              already the scheduling board (`hideScheduleButton`). */}
-          {post && selectedFormat === null && (
-            <footer className="sticky bottom-0 z-10 bg-white dark:bg-gray-10 border-t border-border-neutral-default shadow-[0_-2px_10px_rgba(0,0,0,0.05)] px-6 py-4 flex items-center gap-3">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleOpenFull}
-                aria-label="עריכה"
-                className="flex-1 gap-1.5"
-              >
-                <Pencil className="size-3.5" aria-hidden />
-                עריכה
-              </Button>
-              {!hideScheduleButton &&
-                (nextScheduledShort ? (
-                  <span
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 h-9 rounded-md bg-bg-surface text-green-success-50 text-small leading-none"
-                    aria-label={`מתוזמן ל-${nextScheduledShort}`}
-                  >
-                    <Check className="size-3.5 shrink-0" aria-hidden />
-                    מתוזמן ל-{nextScheduledShort}
-                  </span>
-                ) : (
-                  <Button
-                    size="sm"
-                    onClick={handleGoToCalendar}
-                    aria-label="תזמון פוסט"
-                    className="flex-1"
-                  >
-                    תזמון פוסט
-                  </Button>
-                ))}
-            </footer>
-          )}
-
-          {/* Screen 2 footer — schedule CTA. Only visible in format detail
-              AND only to the owner (the /calendar surface is owner-gated).
-              Disabled unless the format is `ready` (script + media-or-drive). */}
-          {post && selectedFormat !== null && (
-            <footer className="sticky bottom-0 bg-white dark:bg-gray-10 border-t border-border-neutral-default px-6 py-4 flex items-center justify-between gap-3">
-              <span className="text-xs-body text-text-neutral-default">
-                אפשר לתזמן פורמט רק במידה ויש לו מדיה או קישור לדרייב וסקריפט
-              </span>
-              <Button
-                onClick={handleGoToCalendar}
-                disabled={readinessByFormat[selectedFormat] !== "ready"}
-                className="gap-1.5"
-              >
-                <CalendarPlus className="size-4" />
-                תזמון בלוח
-              </Button>
-            </footer>
-          )}
-        </SheetContent>
-      </Sheet>
-
-      <ConfirmModal
-        open={confirmDelete}
-        onOpenChange={(o) => {
-          if (!deleting) setConfirmDelete(o)
-        }}
-        title="בטוח למחוק את הפוסט?"
-        description={
-          firstScheduledLabel
-            ? `הפוסט מתוזמן ל-${firstScheduledLabel} — הוא יוסר גם מלוח השנה.`
-            : "הפעולה לא ניתנת לביטול."
-        }
-        confirmLabel="כן, למחוק"
-        cancelLabel="לא, אל תמחקו"
-        confirmVariant="destructive"
-        onConfirm={handleConfirmDelete}
-      />
-    </>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/*  Tabs list                                                           */
-/* ------------------------------------------------------------------ */
-
-/**
- * The four-tab navigation row. We use the `line` variant of TabsList so the
- * triggers don't sit inside a contrasting "pill" container — that would
- * compete visually with the per-format colored chip we render INSIDE each
- * trigger. The active state is communicated by the underline + the chip's
- * own state colors (the FormatStatusChip already changes background per
- * `(format, state)`), so we don't need an additional active-bg treatment.
- */
-function FormatTabsList({
-  activeTab,
-  readinessByFormat,
-  scheduledRows,
-  publishedMap,
-}: {
-  activeTab: FormatId
-  readinessByFormat: Record<FormatId, FormatReadiness>
-  scheduledRows: Array<{ format: FormatId; date: string; time?: string | null }>
-  publishedMap: PublishedMap
-}) {
-  return (
-    <TabsList
-      variant="line"
-      dir="rtl"
-      className="w-full justify-start h-auto flex-wrap gap-2 p-0"
-      aria-label="פורמטים בפוסט"
-    >
-      {HEADER_CHIP_FORMATS.map((format) => {
-        const state = readinessByFormat[format]
-        const label = getFormatChipLabel(format)
-
-        // Date for the inline chip (only relevant for scheduled / published).
-        const dateValue =
-          state === "scheduled"
-            ? scheduledRows.find((r) => r.format === format)?.date
-            : state === "published"
-              ? publishedMap[format]?.publishedAt
-              : undefined
-
-        // Aria label rendered on the trigger itself — Hani's ask: chip only,
-        // no duplicate text label. The chip's icon + color + state-text
-        // already convey the format identity visually; screen readers get
-        // the full state via this label since the chip is aria-hidden.
-        const triggerAria =
-          state === "scheduled" && dateValue
-            ? `${label}, מתוזמן`
-            : state === "published" && dateValue
-              ? `${label}, פורסם`
-              : state === "ready"
-                ? `${label}, מוכן`
-                : `${label}, ריק`
-
-        return (
-          <TabsTrigger
-            key={format}
-            value={format}
-            aria-label={triggerAria}
-            // Override the default trigger styling — the chip itself is the
-            // surface; the active state is the underline (line variant).
-            className="!flex-none px-1.5 py-2 data-[state=active]:bg-transparent dark:data-[state=active]:bg-transparent"
-          >
-            <span aria-hidden="true" className="contents">
-              <FormatStatusChip
-                format={format}
-                state={state}
-                date={dateValue ?? undefined}
-                size="sm"
-                className="pointer-events-none"
-              />
-            </span>
-          </TabsTrigger>
-        )
-      })}
-    </TabsList>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/*  Per-format panel                                                    */
-/* ------------------------------------------------------------------ */
-
-/**
- * Threshold above which the script body collapses to a preview + "see more".
- * Tuned to ~3 lines at the Sheet's body width.
- */
-const SCRIPT_PREVIEW_THRESHOLD = 200
-
-/**
- * One TabsContent body — the full view of a single (post, format) pair.
- *
- * Sub-blocks, top to bottom:
- *   1. Script        — preview + "ערכו" drill-in (or empty CTA)
- *   2. Media         — thumbnail / drive button / "open in /project" CTA
- *   3. Drive link    — per-format input + open button
- *   4. Trigger word  — per-format input
- *   5. Schedule line — date + "סמנו כפורסם" (or "לא מתוזמן עדיין" hint)
- */
-function FormatPanel({
-  format,
-  state,
-  body,
-  mediaUrl,
-  coverUrl,
-  driveUrl,
-  scheduledDate,
-  scheduledTime,
-  publishedAt,
-  onSaveDriveUrl,
-  onCreateScript,
-  onTogglePublished,
-  onEditScript,
-  onGoToCalendar,
-}: {
-  format: FormatId
-  state: FormatReadiness
-  body: string | null
-  mediaUrl: string | null
-  coverUrl: string | null
-  driveUrl: string | undefined
-  scheduledDate?: string
-  scheduledTime?: string | null
-  publishedAt?: string
-  onSaveDriveUrl: (url: string) => void
-  onCreateScript: () => void
-  onTogglePublished: () => void
-  onEditScript: () => void
-  onGoToCalendar: () => void
-}) {
-  const label = getFormatChipLabel(format)
-  const isEmpty = state === "empty"
-
-  return (
-    <div className="flex flex-col gap-5">
-      <ScriptBlock
-        format={format}
-        state={state}
-        body={body}
-        onCreateScript={onCreateScript}
-        onEditScript={onEditScript}
-      />
-
-      <MediaBlock
-        format={format}
-        state={state}
-        mediaUrl={mediaUrl}
-        coverUrl={coverUrl}
-        driveUrl={driveUrl}
-        onEditScript={onEditScript}
-      />
-
-      {/* "או" divider — separates the two ways to attach media:
-          uploaded video/cover (above) OR a Drive link (below). */}
-      <div
-        role="separator"
-        aria-label="או"
-        className="flex items-center gap-3 text-xs-body text-text-neutral-default"
-      >
-        <span className="flex-1 h-px bg-border-neutral-default" aria-hidden />
-        <span>או</span>
-        <span className="flex-1 h-px bg-border-neutral-default" aria-hidden />
-      </div>
-
-      <DriveLinkBlock
-        format={format}
-        disabled={false}
-        value={driveUrl ?? ""}
-        onSave={onSaveDriveUrl}
-      />
-
-      {(state === "scheduled" || state === "published") && (
-        <section className="flex flex-col gap-1.5">
-          <span className="text-xs-body text-text-neutral-default">תזמון</span>
-          <ScheduleStatusBlock
-            format={format}
-            formatLabel={label}
-            state={state}
-            scheduledDate={scheduledDate}
-            scheduledTime={scheduledTime}
-            publishedAt={publishedAt}
-            onTogglePublished={onTogglePublished}
-            onGoToCalendar={onGoToCalendar}
-          />
-        </section>
-      )}
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/*  Panel sub-blocks                                                    */
-/* ------------------------------------------------------------------ */
-
-function ScriptBlock({
-  format,
-  state,
-  body,
-  onCreateScript,
-  onEditScript,
-}: {
-  format: FormatId
-  state: FormatReadiness
-  body: string | null
-  onCreateScript: () => void
-  onEditScript: () => void
-}) {
-  const [expanded, setExpanded] = useState(false)
-  const label = getFormatChipLabel(format)
-  const trimmedBody = body?.trim() ?? ""
-  const hasBody = trimmedBody.length > 0
-  const isLong = trimmedBody.length > SCRIPT_PREVIEW_THRESHOLD
-  const visibleBody =
-    isLong && !expanded
-      ? `${trimmedBody.slice(0, SCRIPT_PREVIEW_THRESHOLD).trimEnd()}…`
-      : trimmedBody
-
-  if (state === "empty") {
-    return (
-      <div className="flex flex-col gap-1.5">
-        <span className="text-xs-body text-text-neutral-default">סקריפט</span>
-        <div className="rounded-xl bg-bg-surface px-4 py-3 flex items-center justify-between gap-3">
-          <p className="text-small text-text-neutral-default">
-            טרם נוצר סקריפט ל{label}
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onCreateScript}
-            className="shrink-0"
-          >
-            צרו {label}
-          </Button>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs-body text-text-neutral-default">סקריפט</span>
-        {hasBody && (
-          <button
-            type="button"
-            onClick={onEditScript}
-            className="inline-flex items-center gap-1 text-xs-body text-text-primary-default hover:bg-bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 rounded-md px-1.5 py-0.5 transition-colors"
-            aria-label={`ערכו את הסקריפט ל${label}`}
-          >
-            <Pencil className="size-3" aria-hidden />
-            עריכה
-          </button>
-        )}
-      </div>
-      {hasBody ? (
-        <div className="relative rounded-xl bg-bg-surface px-4 py-3 text-text-primary-default text-small leading-relaxed whitespace-pre-wrap text-right">
-          <CopyIconButton
-            text={trimmedBody}
-            ariaLabel={`העתיקו את הסקריפט ל${label}`}
-          />
-          <div className="pl-9">
-            {visibleBody}
-            {isLong && (
-              <button
-                type="button"
-                onClick={() => setExpanded(!expanded)}
-                className="block mt-2 text-xs-body text-text-neutral-default hover:text-text-primary-default underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 rounded-md"
-              >
-                {expanded ? "הציגו פחות" : "ראו עוד"}
-              </button>
-            )}
-          </div>
-        </div>
-      ) : (
-        <p className="text-xs-body text-text-neutral-default">
-          עדיין אין סקריפט ל{label}
-        </p>
-      )}
-    </div>
-  )
-}
-
-function MediaBlock({
-  format,
-  state,
-  mediaUrl,
-  coverUrl,
-  driveUrl,
-  onEditScript,
-}: {
-  format: FormatId
-  state: FormatReadiness
-  mediaUrl: string | null
-  coverUrl: string | null
-  driveUrl: string | undefined
-  onEditScript: () => void
-}) {
-  const label = getFormatChipLabel(format)
-  // `mediaUrl` is the uploaded video/image asset; `coverUrl` is the
-  // separate cover image (today only `talking_head` produces one — the
-  // parent FormatPanel passes null for other formats so the cover slot
-  // renders the empty CTA).
-  const videoUrl = mediaUrl
-  void state
-  void driveUrl
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs-body text-text-neutral-default">מדיה</span>
-        <button
-          type="button"
-          onClick={onEditScript}
-          className="inline-flex items-center gap-1 text-xs-body text-text-primary-default hover:bg-bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 rounded-md px-1.5 py-0.5 transition-colors"
-          aria-label={`ערכו את המדיה ל${label}`}
-        >
-          <Pencil className="size-3" aria-hidden />
-          עריכה
-        </button>
-      </div>
-      {/* Half-half grid: video (right in RTL) + cover (left in RTL).
-          Each slot shows a preview when populated, or an empty state with
-          its own action button when not. Per Hani: cover is not critical
-          for scheduling. */}
-      <div className="grid grid-cols-2 gap-2">
-        <MediaSlot
-          kind="video"
-          url={videoUrl}
-          label={label}
-          onAction={onEditScript}
-        />
-        <MediaSlot
-          kind="cover"
-          url={coverUrl}
-          label={label}
-          onAction={onEditScript}
-        />
-      </div>
-    </div>
-  )
-}
-
-/**
- * Single media slot — video or cover. Square aspect, rounded card with
- * either a preview or an empty state. Empty state has a dashed border, a
- * neutral icon, and a small outline button driving the action (upload
- * media for video, edit cover for cover).
- */
-function MediaSlot({
-  kind,
-  url,
-  label,
-  onAction,
-}: {
-  kind: "video" | "cover"
-  url: string | null
-  label: string
-  onAction: () => void
-}) {
-  const buttonLabel = kind === "video" ? "העלאת מדיה" : "עריכת קאבר"
-  const emptyAria =
-    kind === "video"
-      ? `העלאת מדיה ל${label}`
-      : `עריכת קאבר ל${label}`
-
-  if (url) {
-    // Detect by URL extension only. The `kind` prop names the SLOT
-    // (video slot vs. cover slot) — it does NOT promise the content
-    // type, since story / image_post upload images into the video
-    // slot too. Forcing `<video>` on every "video"-kind slot turned
-    // those uploads into broken video elements (per Hani 2026-05-13:
-    // "the image isn't saved" — really, it was saved, but it
-    // rendered through `<video>` which can't decode an image, so the
-    // user saw nothing). Supabase storage URLs carry the original
-    // extension, so the regex is reliable for our upload paths.
-    const isVideoUrl = /\.(mp4|webm|mov|m3u8)(\?|#|$)/i.test(url)
-
-    return (
-      <div className="aspect-[9/16] rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
-        {isVideoUrl ? (
-          <video
-            src={url}
-            className="w-full h-full object-cover"
-            controls
-            playsInline
-            preload="metadata"
-            onError={(e) => {
-              console.error(
-                "[core-post-sheet] video failed to load",
-                { kind, label, url: (e.target as HTMLVideoElement).src },
-              )
-            }}
-          >
-            <track kind="captions" />
-          </video>
-        ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={url}
-            alt={`קאבר של ${label}`}
-            className="w-full h-full object-cover"
-            onError={(e) => {
-              console.error(
-                "[core-post-sheet] cover failed to load",
-                { kind, label, url: (e.target as HTMLImageElement).src },
-              )
-            }}
-          />
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <div className="aspect-[9/16] rounded-xl bg-bg-surface border border-dashed border-border-neutral-default flex flex-col items-center justify-center gap-2 px-3 text-center">
-      <ImageIcon
-        className="size-5 text-text-neutral-default"
-        aria-hidden
-      />
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={onAction}
-        aria-label={emptyAria}
-        className="gap-1.5"
-      >
-        <Pencil className="size-3.5" aria-hidden />
-        {buttonLabel}
-      </Button>
-    </div>
-  )
-}
-
-/**
- * Per-format drive URL input. Auto-saves on blur (so the user can paste +
- * tab away without hunting for a save button) AND on Enter. The "open"
- * affordance is the trailing icon button — disabled when the input is empty.
- *
- * `disabled` cuts in for the empty state: there's no point asking the user
- * to point a drive folder at a format that doesn't exist yet.
- */
-function DriveLinkBlock({
-  format,
-  disabled,
-  value,
-  onSave,
-}: {
-  format: FormatId
-  disabled: boolean
-  value: string
-  onSave: (url: string) => void
-}) {
-  const label = getFormatChipLabel(format)
-  const inputId = `drive-url-${format}`
-  // Local mirror so the user's keystrokes show immediately; we commit to
-  // storage on blur / Enter.
-  const [local, setLocal] = useState(value)
-  // Re-sync when the upstream value changes (e.g. another tab edited it).
-  useEffect(() => {
-    setLocal(value)
-  }, [value])
-
-  const commit = () => {
-    if (local.trim() === (value ?? "").trim()) return
-    onSave(local.trim())
-  }
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label
-        htmlFor={inputId}
-        className="text-xs-body text-text-neutral-default font-normal"
-      >
-        קישור לדרייב
-      </Label>
-      <div className="relative">
-        <Input
-          id={inputId}
-          dir="rtl"
-          inputSize="small"
-          type="url"
-          value={local}
-          onChange={(e) => setLocal(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.currentTarget.blur()
-            }
-          }}
-          placeholder="https://drive.google.com/..."
-          className="pe-18 text-right"
-          disabled={disabled}
-          aria-label={`קישור לדרייב ל${label}`}
-        />
-        <InlineCopyButton
-          value={local.trim()}
-          ariaLabel={`העתיקו את הקישור של ${label}`}
-          disabled={disabled}
-          className="absolute end-10 top-1/2 -translate-y-1/2"
-        />
-        <button
-          type="button"
-          onClick={() => {
-            const url = local.trim()
-            if (url) window.open(url, "_blank", "noopener,noreferrer")
-          }}
-          disabled={disabled || !local.trim()}
-          aria-label={`פתחו את הקישור של ${label} בכרטיסייה חדשה`}
-          className="absolute end-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center size-7 rounded-md text-text-neutral-default hover:text-text-primary-default hover:bg-bg-surface disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          <Link2 className="size-3.5" />
-        </button>
-      </div>
-    </div>
-  )
-}
-
-/**
- * Per-format schedule status. Three branches:
- *   - empty     → not rendered at all (parent decides; we early-return)
- *   - ready     → micro-text "לא מתוזמן עדיין" + a soft CTA to /calendar
- *   - scheduled → date + time + "סמנו כפורסם" checkbox
- *   - published → date + time + checked checkbox
- */
-function ScheduleStatusBlock({
-  format,
-  formatLabel,
-  state,
-  scheduledDate,
-  scheduledTime,
-  publishedAt,
-  onTogglePublished,
-  onGoToCalendar,
-}: {
-  format: FormatId
-  formatLabel: string
-  state: FormatReadiness
-  scheduledDate?: string
-  scheduledTime?: string | null
-  publishedAt?: string
-  onTogglePublished: () => void
-  onGoToCalendar: () => void
-}) {
-  if (state === "empty") return null
-
-  if (state === "ready") {
-    return (
-      <div className="flex items-center justify-between gap-3 rounded-xl bg-bg-surface px-4 py-3">
-        <span className="text-small text-text-neutral-default">
-          לא מתוזמן עדיין
-        </span>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onGoToCalendar}
-          className="gap-1.5"
-        >
-          <CalendarPlus className="size-3.5" aria-hidden />
-          תזמון בלוח
-        </Button>
-      </div>
-    )
-  }
-
-  // scheduled / published
-  const dateLabel = (() => {
-    const source = state === "published" ? publishedAt : scheduledDate
-    if (!source) return null
-    try {
-      const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(source)
-      let date: Date
-      if (ymd) {
-        date = new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]))
-      } else {
-        date = new Date(source)
-      }
-      if (Number.isNaN(date.getTime())) return null
-      const dateStr = date.toLocaleDateString("he-IL", {
-        day: "2-digit",
-        month: "long",
-      })
-      return state === "scheduled" && scheduledTime
-        ? `${dateStr} בשעה ${scheduledTime}`
-        : dateStr
-    } catch {
-      return null
-    }
-  })()
-
-  return (
-    <div className="flex flex-col gap-2 rounded-xl bg-bg-surface px-4 py-3">
-      {dateLabel && (
-        <p className="text-small text-text-primary-default tabular-nums">
-          {state === "published" ? "פורסם ב-" : "מתוזמן ל-"}
-          {dateLabel}
-        </p>
-      )}
-      <div className="flex items-start gap-2.5">
-        <Checkbox
-          id={`published-${format}`}
-          checked={state === "published"}
-          onCheckedChange={onTogglePublished}
-          className="mt-0.5"
-          aria-label={`סמנו את ${formatLabel} כפורסם`}
-        />
-        <Label
-          htmlFor={`published-${format}`}
-          className="text-small text-text-primary-default cursor-pointer"
-        >
-          {state === "published"
-            ? `${formatLabel} סומן כפורסם`
-            : `סמנו את ${formatLabel} כפורסם`}
-        </Label>
-      </div>
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/*  Media preview                                                       */
-/* ------------------------------------------------------------------ */
-
-function MediaPreview({ url, label }: { url: string; label: string }) {
-  const isVideo = /\.(mp4|webm|mov)(\?|#|$)/i.test(url)
-  return (
-    <div className="rounded-xl overflow-hidden border border-border-neutral-default bg-bg-surface aspect-video">
-      {isVideo ? (
-        <video
-          src={url}
-          className="w-full h-full object-cover"
-          controls
-          playsInline
-          preload="metadata"
-        />
-      ) : (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={url}
-          alt={`מדיה ל${label}`}
-          className="w-full h-full object-cover"
-        />
-      )}
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/*  Misc exports                                                        */
-/* ------------------------------------------------------------------ */
-
-/**
- * Tiny convenience export for callers that already have raw API data and
- * want to render a "currently published" pill somewhere outside the Sheet.
- */
-export function PublishedBadge({ at }: { at: string }) {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-bg-surface px-2 py-0.5 text-xs-body text-yellow-30">
-      <CheckCircle2 className="size-3" aria-hidden />
-      פורסם {new Date(at).toLocaleDateString("he-IL", { day: "2-digit", month: "2-digit" })}
-    </span>
-  )
-}
+            {/* AI floating trigger — bottom-left of the body container.
+                Only shown when a post is loaded and we're not in a
+                loading state. Positioned absolute over the scrolling
+                body so it doesn't push content. */}
+            {post && (
+              <div className="absolute bottom-4 left-4 z-30 flex flex-col items-end gap-0">
+                {/* AI iteration panel — expands upward from the trigger */}
+                {aiPanelOpen && (
+                  <div className="mb-2 w-[min(320px,calc(100vw-2rem))]">
