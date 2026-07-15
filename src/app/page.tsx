@@ -20,6 +20,12 @@ import {
   makeStages,
   type OnboardingBannerVariant,
 } from "@/components/onboarding-progress-banner"
+import {
+  IdeaDictation,
+  MicStateToggle,
+  type IdeaDictationVariant,
+} from "@/components/idea-dictation"
+import type { DictationState } from "@/lib/use-dictation"
 
 interface IdeaNote {
   text: string
@@ -69,6 +75,19 @@ function HomeContent() {
   // Review-only state toggle: lets the reviewer jump between setup states
   // without driving the real onboarding flow. Default 2 (the requested 2/3).
   const [bannerDone, setBannerDone] = useState(2)
+
+  // --- Idea-card mic / dictation (Notion bug 38a4d905) -------------------
+  // Gated behind ?mic=a|b — deliberately NOT ?variant=, which the onboarding
+  // banner above already owns on this same route; sharing it would mount both
+  // surfaces at once and muddy either review.
+  // With NO param the card renders exactly as production does today (dead mic
+  // included), so the diff is safe to sit on the branch. Dictation is Web Speech
+  // in-browser: no API call, no DB write, no credits.
+  const micVariant = searchParams.get("mic") as IdeaDictationVariant | null
+  const showDictation = micVariant === "a" || micVariant === "b"
+  // Review-only: pins the card to a state so every state (including permission
+  // denied / unsupported browser) is inspectable without a real mic failure.
+  const [micForcedState, setMicForcedState] = useState<DictationState | null>(null)
 
   const [userName, setUserName] = useState("")
   const [idea, setIdea] = useState("")
@@ -771,26 +790,39 @@ function HomeContent() {
             <span className="text-xs-body text-text-neutral-default">
               התחלה מרעיון
             </span>
-            <div className="rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 p-4 flex flex-col gap-4">
-              <Textarea
-                value={idea}
-                onChange={(e) => setIdea(e.target.value)}
-                placeholder="כאן כותבים או מקליטים אותו"
-                className="min-h-[56px] border-none bg-transparent px-0 py-0 text-p text-text-primary-default shadow-none placeholder:text-text-neutral-default resize-none focus-visible:ring-0"
-              />
-              <div className="flex items-center justify-between">
-                <button
-                  type="button"
-                  className="p-2 text-text-neutral-default hover:text-text-primary-default transition-colors"
-                >
-                  <Mic className="size-4" />
-                </button>
-                <Button onClick={handleSubmit} disabled={!idea.trim()} className="gap-2">
-                  תייצר לי הוקים
-                  <ArrowUp className="size-4" />
-                </Button>
+            {showDictation && micVariant ? (
+              <>
+                <IdeaDictation
+                  variant={micVariant}
+                  value={idea}
+                  onChange={setIdea}
+                  onSubmit={handleSubmit}
+                  forcedState={micForcedState}
+                />
+                <MicStateToggle value={micForcedState} onChange={setMicForcedState} />
+              </>
+            ) : (
+              <div className="rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 p-4 flex flex-col gap-4">
+                <Textarea
+                  value={idea}
+                  onChange={(e) => setIdea(e.target.value)}
+                  placeholder="כאן כותבים או מקליטים אותו"
+                  className="min-h-[56px] border-none bg-transparent px-0 py-0 text-p text-text-primary-default shadow-none placeholder:text-text-neutral-default resize-none focus-visible:ring-0"
+                />
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    className="p-2 text-text-neutral-default hover:text-text-primary-default transition-colors"
+                  >
+                    <Mic className="size-4" />
+                  </button>
+                  <Button onClick={handleSubmit} disabled={!idea.trim()} className="gap-2">
+                    תייצר לי הוקים
+                    <ArrowUp className="size-4" />
+                  </Button>
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Section 3: Ideas */}
