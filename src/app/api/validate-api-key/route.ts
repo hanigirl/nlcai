@@ -83,9 +83,10 @@ export async function POST(req: NextRequest) {
   }
 
   if (keyName === "heygen_api_key") {
-    // v2/user.me checks the token + returns the account. 401 on bad token.
+    // remaining_quota is the cheapest authenticated GET — 200 for a valid
+    // token, 401 otherwise. No credits are spent.
     try {
-      const res = await fetch("https://api.heygen.com/v2/user.me", {
+      const res = await fetch("https://api.heygen.com/v2/user/remaining_quota", {
         headers: { "X-Api-Key": value, Accept: "application/json" },
         signal: AbortSignal.timeout(8000),
       })
