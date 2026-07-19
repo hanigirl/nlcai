@@ -372,7 +372,11 @@ export default function CorePostsPage() {
             {groupedByDate.map(({ dayKey, label, items }) => (
               <section key={dayKey}>
                 <p className="text-small text-text-neutral-default mb-4">{label}</p>
-                <div className={viewMode === "grid" ? "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4" : "flex flex-col gap-2"}>
+                {/* Cards sized to match the calendar queue-rail card (~218px):
+                    auto-fill columns at a ~210px min so each card lands near
+                    the rail width and the row packs as many as fit, instead of
+                    a fixed 5-up that rendered them oversized. */}
+                <div className={viewMode === "grid" ? "grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-4" : "flex flex-col gap-2"}>
                   {items.map((post) => (
                     <CorePostCard
                       key={post.id}

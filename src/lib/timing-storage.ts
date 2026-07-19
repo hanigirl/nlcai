@@ -98,6 +98,8 @@ export type ScheduledPost = {
 export type CorePostFormatMeta = {
   driveUrl?: string
   triggerWord?: string
+  /** Carousel only: the template the current saved carousel was generated with. */
+  templateId?: string
 }
 
 /** Per-post optional metadata captured in the Sheet (task #B). */
@@ -425,6 +427,7 @@ export function getFormatMeta(
   return {
     driveUrl: slice.driveUrl ?? meta.driveUrl,
     triggerWord: slice.triggerWord ?? meta.triggerWord,
+    templateId: slice.templateId,
   }
 }
 

@@ -29,6 +29,7 @@ interface CorePostInput {
   coreIdentity?: CoreIdentity | null
   audienceIdentity?: AudienceIdentity | null
   learningInsights?: string
+  businessSourceInsights?: string
 }
 
 const PRODUCT_TYPE_LABEL: Record<string, string> = {
@@ -47,6 +48,7 @@ export function buildCorePostPrompt({
   coreIdentity,
   audienceIdentity,
   learningInsights,
+  businessSourceInsights,
 }: CorePostInput): string {
   const identitySection = coreIdentity
     ? `
@@ -171,6 +173,7 @@ ${productType === "lead_magnet"
 8. **אסור לכתוב בתבנית "זה לא X, זה Y" / "זה לא X — זה Y".** התבנית הזו שחוקה ונשמעת מלאכותית. במקום זה, אמור ישירות מה זה כן ("בעצם זה Y", "מה שקורה כאן זה Y", "האמת היא Y"), או הצג רק את ה-Y בלי לפסול במפורש את ה-X.
 
 ${learningInsights || ""}
+${businessSourceInsights || ""}
 ## פלט
 החזר את הפוסט בלבד — בלי הסברים, בלי כותרות, בלי "הנה הפוסט:".
 רק הטקסט של הפוסט עצמו, מוכן להעתקה.`

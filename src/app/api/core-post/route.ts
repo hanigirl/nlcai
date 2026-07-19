@@ -5,6 +5,7 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { buildCorePostPrompt } from "@/lib/agents/core-post-generator"
 import { DUMMY_CORE_POST } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
+import { fetchBusinessSourceInsights } from "@/lib/business-source-insights"
 
 const USE_DUMMY = false
 
@@ -30,10 +31,11 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const [{ data: coreIdentity }, { data: audienceIdentity }, learningInsights, productLookup] = await Promise.all([
+    const [{ data: coreIdentity }, { data: audienceIdentity }, learningInsights, businessSourceInsights, productLookup] = await Promise.all([
       supabase.from("core_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("audience_identities").select("*").eq("user_id", user.id).single(),
       fetchLearningInsights(supabase, user.id, "core_post"),
+      fetchBusinessSourceInsights(supabase, user.id),
       productId
         ? supabase
             .from("products")
@@ -72,6 +74,7 @@ export async function POST(req: NextRequest) {
       coreIdentity,
       audienceIdentity,
       learningInsights,
+      businessSourceInsights,
     })
 
     const client = new Anthropic({ apiKey })

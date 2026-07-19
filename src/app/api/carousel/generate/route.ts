@@ -1,74 +1,101 @@
 import { NextRequest, NextResponse } from "next/server"
 import satori from "satori"
 import { Resvg } from "@resvg/resvg-js"
-import { getTemplate } from "@/lib/carousel-templates"
+import { getTemplate, SLIDE_SIZE } from "@/lib/carousel-templates"
 import type { SlideData } from "@/lib/carousel-templates"
 
-const SLIDE_SIZE = 1080
+// Source of truth for families/weights available to satori templates. A
+// fontWeight used in template JSX that is NOT registered here silently
+// snaps to the nearest registered weight — keep this map in sync with the
+// carousel-design skill.
+const FONT_FILES: Record<string, Record<number, string>> = {
+  Rubik: {
+    400: "Rubik-Regular.ttf",
+    500: "Rubik-Medium.ttf",
+    600: "Rubik-SemiBold.ttf",
+    700: "Rubik-Bold.ttf",
+    800: "Rubik-ExtraBold.ttf",
+  },
+  Heebo: {
+    400: "Heebo-Regular.ttf",
+    700: "Heebo-Bold.ttf",
+    900: "Heebo-Black.ttf",
+  },
+}
 
-// Cache font data in module scope
-let fontDataCache: ArrayBuffer | null = null
+// Fonts we fall back to Google Fonts for if the local file is missing.
+// All other entries just get skipped when unavailable.
+const REQUIRED = new Set(["Rubik:400", "Rubik:700"])
 
-async function loadFont(): Promise<ArrayBuffer> {
-  if (fontDataCache) return fontDataCache
+// Cache font data in module scope, keyed by "Family:weight"
+const fontCache = new Map<string, ArrayBuffer>()
 
-  // Try loading local font first
+async function loadFont(
+  family: string,
+  weight: number,
+): Promise<ArrayBuffer | null> {
+  const key = `${family}:${weight}`
+  const cached = fontCache.get(key)
+  if (cached) return cached
+
   const fs = await import("fs/promises")
   const path = await import("path")
-  const localPath = path.join(process.cwd(), "public", "fonts", "Rubik-Regular.ttf")
+  const localPath = path.join(
+    process.cwd(),
+    "public",
+    "fonts",
+    FONT_FILES[family][weight],
+  )
 
   try {
     const buffer = await fs.readFile(localPath)
-    fontDataCache = buffer.buffer.slice(
+    const data = buffer.buffer.slice(
       buffer.byteOffset,
       buffer.byteOffset + buffer.byteLength,
     )
-    return fontDataCache
+    fontCache.set(key, data)
+    return data
   } catch {
+    if (!REQUIRED.has(key)) return null
+
     // Fallback: fetch from Google Fonts
     const res = await fetch(
-      "https://fonts.googleapis.com/css2?family=Rubik:wght@400;600;700&display=swap",
+      `https://fonts.googleapis.com/css2?family=${family}:wght@${weight}&display=swap`,
     )
     const css = await res.text()
     const urlMatch = css.match(/src:\s*url\(([^)]+)\)/)
-    if (!urlMatch) throw new Error("Could not find font URL in Google Fonts CSS")
+    if (!urlMatch)
+      throw new Error(`Could not find font URL for ${family} ${weight}`)
 
     const fontRes = await fetch(urlMatch[1])
-    fontDataCache = await fontRes.arrayBuffer()
-    return fontDataCache
+    const data = await fontRes.arrayBuffer()
+    fontCache.set(key, data)
+    return data
   }
 }
 
-// Cache bold font data
-let boldFontCache: ArrayBuffer | null = null
-
-async function loadBoldFont(): Promise<ArrayBuffer> {
-  if (boldFontCache) return boldFontCache
-
-  const fs = await import("fs/promises")
-  const path = await import("path")
-  const localPath = path.join(process.cwd(), "public", "fonts", "Rubik-Bold.ttf")
-
-  try {
-    const buffer = await fs.readFile(localPath)
-    boldFontCache = buffer.buffer.slice(
-      buffer.byteOffset,
-      buffer.byteOffset + buffer.byteLength,
+async function loadFonts() {
+  const entries = Object.entries(FONT_FILES).flatMap(([family, weights]) =>
+    Object.keys(weights).map((w) => ({ family, weight: Number(w) })),
+  )
+  const loaded = await Promise.all(
+    entries.map(async ({ family, weight }) => ({
+      family,
+      weight,
+      data: await loadFont(family, weight),
+    })),
+  )
+  return loaded
+    .filter(
+      (f): f is { family: string; weight: number; data: ArrayBuffer } =>
+        f.data !== null,
     )
-    return boldFontCache
-  } catch {
-    // Fallback: fetch bold weight from Google Fonts
-    const res = await fetch(
-      "https://fonts.googleapis.com/css2?family=Rubik:wght@700&display=swap",
-    )
-    const css = await res.text()
-    const urlMatch = css.match(/src:\s*url\(([^)]+)\)/)
-    if (!urlMatch) throw new Error("Could not find bold font URL")
-
-    const fontRes = await fetch(urlMatch[1])
-    boldFontCache = await fontRes.arrayBuffer()
-    return boldFontCache
-  }
+    .map((f) => ({
+      name: f.family,
+      data: f.data,
+      weight: f.weight as 400 | 500 | 600 | 700 | 800 | 900,
+      style: "normal" as const,
+    }))
 }
 
 export async function POST(req: NextRequest) {
@@ -92,11 +119,17 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       )
     }
+    if (template.kind === "ai" || !template.render) {
+      return NextResponse.json(
+        { error: `Template "${templateId}" is AI-based — use /api/carousel/generate-ai` },
+        { status: 400 },
+      )
+    }
 
-    const [fontData, boldFontData] = await Promise.all([
-      loadFont(),
-      loadBoldFont(),
-    ])
+    const fonts = await loadFonts()
+
+    const width = template.size?.width ?? SLIDE_SIZE
+    const height = template.size?.height ?? SLIDE_SIZE
 
     const pngBuffers: string[] = []
 
@@ -104,26 +137,13 @@ export async function POST(req: NextRequest) {
       const element = template.render(slides[i], i, slides.length)
 
       const svg = await satori(element as React.ReactElement, {
-        width: SLIDE_SIZE,
-        height: SLIDE_SIZE,
-        fonts: [
-          {
-            name: "Rubik",
-            data: fontData,
-            weight: 400,
-            style: "normal",
-          },
-          {
-            name: "Rubik",
-            data: boldFontData,
-            weight: 700,
-            style: "normal",
-          },
-        ],
+        width,
+        height,
+        fonts,
       })
 
       const resvg = new Resvg(svg, {
-        fitTo: { mode: "width", value: SLIDE_SIZE },
+        fitTo: { mode: "width", value: width },
       })
       const pngData = resvg.render()
       const pngBuffer = pngData.asPng()

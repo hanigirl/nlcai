@@ -16,6 +16,7 @@ interface PlanItem {
 }
 import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
+import { fetchBusinessSourceInsights } from "@/lib/business-source-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
 import { withRetry } from "@/lib/supabase/retry"
 
@@ -63,7 +64,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const [{ data: coreIdentity }, { data: audienceIdentity }, { data: products }, { data: favoritedRows }, { data: existingHooks }, learningInsights] = await Promise.all([
+    const [{ data: coreIdentity }, { data: audienceIdentity }, { data: products }, { data: favoritedRows }, { data: existingHooks }, learningInsights, businessSourceInsights] = await Promise.all([
       supabase.from("core_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("audience_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("products").select("id, name, type, page_summary").eq("user_id", user.id),
@@ -73,6 +74,7 @@ export async function POST(req: NextRequest) {
       // batches without bloating the prompt.
       supabase.from("hooks").select("hook_text").eq("user_id", user.id).order("created_at", { ascending: false }).limit(50),
       fetchLearningInsights(supabase, user.id, "hook"),
+      fetchBusinessSourceInsights(supabase, user.id),
     ])
 
     // Build favorite-text lookup once, use it to flag incoming fieldIdeas.
@@ -293,6 +295,7 @@ ${trendIdeas.length > 0 ? `- **${trendQuota} זוויות יכולות להיו�
 ${identitySection}
 ${audienceSection}
 ${productsSection}
+${businessSourceInsights || ""}
 ${trendContext ? `## מחקר מהשטח:\n${trendContext}\n` : ""}
 ${(existingHooks && existingHooks.length > 0) ? `
 ## 🚫 הוקים שכבר קיימים אצל המשתמש (אסור לחזור על אותם נושאים / זוויות!):

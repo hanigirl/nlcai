@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
+import { scrapeUrlToText, ScrapeError } from "@/lib/scrape-url"
 
 const PRODUCT_PAGE_PROMPT = `את סוכנת שמנתחת דפי מכירה של מוצרים דיגיטליים.
 
@@ -44,57 +45,15 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Fetch page content
+    // Fetch page content (shared scraper — Google-Docs export + HTML strip)
     let pageText: string
     try {
-      // Detect Google Docs links and export as plain text
-      const googleDocMatch = url.match(
-        /docs\.google\.com\/document\/d\/([a-zA-Z0-9_-]+)/
-      )
-      const fetchUrl = googleDocMatch
-        ? `https://docs.google.com/document/d/${googleDocMatch[1]}/export?format=txt`
-        : url
-
-      const res = await fetch(fetchUrl, {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (compatible; Postudio/1.0; +https://postudio.app)",
-        },
-      })
-      if (!res.ok) {
-        return NextResponse.json(
-          { error: `Failed to fetch page: ${res.status}` },
-          { status: 400 }
-        )
-      }
-
-      if (googleDocMatch) {
-        // Google Docs export gives clean text
-        pageText = (await res.text()).trim().slice(0, 15000)
-      } else {
-        const html = await res.text()
-        // Strip HTML tags, scripts, styles — extract visible text
-        pageText = html
-          .replace(/<script[\s\S]*?<\/script>/gi, "")
-          .replace(/<style[\s\S]*?<\/style>/gi, "")
-          .replace(/<[^>]+>/g, " ")
-          .replace(/&[a-z]+;/gi, " ")
-          .replace(/\s+/g, " ")
-          .trim()
-          .slice(0, 15000)
-      }
+      pageText = await scrapeUrlToText(url)
     } catch (err) {
-      return NextResponse.json(
-        { error: `Cannot access URL: ${err instanceof Error ? err.message : err}` },
-        { status: 400 }
-      )
-    }
-
-    if (!pageText || pageText.length < 50) {
-      return NextResponse.json(
-        { error: "Page has too little text content" },
-        { status: 400 }
-      )
+      if (err instanceof ScrapeError) {
+        return NextResponse.json({ error: err.message }, { status: err.status })
+      }
+      throw err
     }
 
     // Get API key

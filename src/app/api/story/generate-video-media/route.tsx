@@ -1,0 +1,348 @@
+import { NextRequest, NextResponse } from "next/server"
+import { spawn } from "child_process"
+import satori from "satori"
+import { Resvg } from "@resvg/resvg-js"
+import ffmpegPath from "ffmpeg-static"
+import { RtlText } from "@/lib/carousel-templates/shared"
+import { createClient } from "@/lib/supabase/server"
+
+// Downloading + re-encoding a user video is heavier than an image render;
+// libx264 on a short clip still runs in seconds, but leave generous headroom.
+export const maxDuration = 300
+
+// Instagram Story — 9:16 vertical (same target as the AI image story).
+const CANVAS_WIDTH = 1080
+const CANVAS_HEIGHT = 1920
+
+// Hard cap on the burned clip length. IG stories are 60s/segment anyway, and
+// this bounds the ffmpeg render time for a runaway-long source video.
+const MAX_CLIP_SECONDS = 60
+
+/**
+ * "Video story" — the bring-your-own counterpart to the AI image story.
+ *
+ * The user supplies their OWN mp4 (already stored under user-media via the
+ * upload / Drive-pull path). This route:
+ *   1. renders the post's HOOK as a transparent 9:16 overlay (satori → Resvg,
+ *      reusing the Heebo Hebrew font + a legibility scrim), then
+ *   2. burns it into the video with ffmpeg (cover-crop to 1080×1920), and
+ *   3. stores the finished mp4 back in user-media and persists it as the
+ *      story's media (media_assets, asset_type=video) — same slot the raw
+ *      bring-your-own video already used, now with the text baked in.
+ *
+ * Unlike the image route (pure, returns base64), this one persists, because
+ * a re-encoded video is too big to round-trip as base64 through the client.
+ */
+
+// ---- Hebrew font ----
+// Rubik, NOT Heebo: the local Heebo-*.ttf files are ~23KB Latin-only subsets
+// with NO Hebrew glyphs (satori renders tofu boxes with them). The full
+// Rubik-*.ttf files (~175KB) carry Hebrew — this is exactly why the live
+// carousel `default` template renders Hebrew via satori using `fontFamily:
+// "Rubik"`. We reuse the same font here.
+let rubikExtraBold: ArrayBuffer | null = null
+let rubikBold: ArrayBuffer | null = null
+
+async function loadRubik() {
+  if (rubikExtraBold && rubikBold)
+    return { extraBold: rubikExtraBold, bold: rubikBold }
+  const fs = await import("fs/promises")
+  const path = await import("path")
+  const read = async (file: string) => {
+    const buf = await fs.readFile(
+      path.join(process.cwd(), "public", "fonts", file),
+    )
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+  }
+  rubikExtraBold = await read("Rubik-ExtraBold.ttf")
+  rubikBold = await read("Rubik-Bold.ttf")
+  return { extraBold: rubikExtraBold, bold: rubikBold }
+}
+
+/**
+ * Font size steps down as the hook gets longer, so a short punchy hook is
+ * big and a longer one still fits without overflowing the safe band.
+ */
+function fontSizeForHook(text: string): number {
+  const len = text.trim().length
+  if (len <= 22) return 96
+  if (len <= 44) return 78
+  if (len <= 80) return 62
+  return 52
+}
+
+/**
+ * Transparent 9:16 overlay: the hook, bold white Heebo, centered in the
+ * story safe zone (above the reply bar), on a soft dark scrim so it stays
+ * legible over ANY video. Background is transparent — only the text box
+ * paints — so ffmpeg overlays just the words, not a full canvas.
+ */
+async function renderOverlayPng(hook: string): Promise<Buffer> {
+  const { extraBold, bold } = await loadRubik()
+  const fontSize = fontSizeForHook(hook)
+
+  const svg = await satori(
+    <div
+      style={{
+        width: CANVAS_WIDTH,
+        height: CANVAS_HEIGHT,
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "flex-end",
+        alignItems: "center",
+        // Keep the text inside the IG safe zone: clear of the reply bar
+        // (bottom ~24%) and the profile header (top ~14%).
+        paddingBottom: 520,
+        paddingLeft: 90,
+        paddingRight: 90,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          // Soft dark scrim for contrast on any footage.
+          backgroundColor: "rgba(0,0,0,0.42)",
+          borderRadius: 32,
+          padding: "36px 48px",
+          maxWidth: CANVAS_WIDTH - 180,
+        }}
+      >
+        {/* RtlText, NOT a raw string: satori has no BiDi, so bare Hebrew
+            renders mirrored. This is the SAME shared helper the carousel
+            templates use. */}
+        <RtlText
+          text={hook}
+          align="center"
+          style={{
+            color: "#ffffff",
+            fontFamily: "Rubik",
+            fontWeight: 800,
+            fontSize,
+            lineHeight: 1.25,
+          }}
+        />
+      </div>
+    </div>,
+    {
+      width: CANVAS_WIDTH,
+      height: CANVAS_HEIGHT,
+      fonts: [
+        { name: "Rubik", data: extraBold, weight: 800, style: "normal" },
+        { name: "Rubik", data: bold, weight: 700, style: "normal" },
+      ],
+    },
+  )
+
+  return Buffer.from(
+    new Resvg(svg, { background: "rgba(0,0,0,0)" }).render().asPng(),
+  )
+}
+
+/**
+ * Burn the overlay into the source video and cover-crop to exactly
+ * 1080×1920 (scale-to-fill then crop — same object-fit:cover behaviour as
+ * the image path), keeping any audio. Runs the bundled ffmpeg-static binary
+ * so it works identically on Vercel and locally.
+ */
+function burnOverlay(
+  inputPath: string,
+  overlayPath: string,
+  outputPath: string,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!ffmpegPath) {
+      reject(new Error("ffmpeg binary not found"))
+      return
+    }
+    const args = [
+      "-y",
+      "-i", inputPath,
+      "-i", overlayPath,
+      "-filter_complex",
+      `[0:v]scale=${CANVAS_WIDTH}:${CANVAS_HEIGHT}:force_original_aspect_ratio=increase,` +
+        `crop=${CANVAS_WIDTH}:${CANVAS_HEIGHT},setsar=1[bg];` +
+        `[bg][1:v]overlay=0:0[v]`,
+      "-map", "[v]",
+      "-map", "0:a?", // keep audio if the source has any
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac",
+      "-movflags", "+faststart",
+      "-t", String(MAX_CLIP_SECONDS),
+      outputPath,
+    ]
+    const proc = spawn(ffmpegPath, args)
+    let stderr = ""
+    proc.stderr.on("data", (d) => {
+      // ffmpeg logs progress to stderr; keep only the tail for error context.
+      stderr = (stderr + d.toString()).slice(-4000)
+    })
+    proc.on("error", reject)
+    proc.on("close", (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`ffmpeg exited ${code}: ${stderr}`))
+    })
+  })
+}
+
+export async function POST(req: NextRequest) {
+  const tmpFiles: string[] = []
+  try {
+    const { postId } = (await req.json().catch(() => ({}))) as {
+      postId?: string
+    }
+    if (!postId) {
+      return NextResponse.json({ error: "postId is required" }, { status: 400 })
+    }
+
+    const supabase = await createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    // Ownership + the hook that goes ON the video (server-authoritative).
+    const { data: postRow, error: postErr } = await supabase
+      .from("core_posts")
+      .select("id, hook_text, title")
+      .eq("id", postId)
+      .eq("user_id", user.id)
+      .single()
+    const post = postRow as {
+      id: string
+      hook_text: string | null
+      title: string | null
+    } | null
+    if (postErr || !post) {
+      return NextResponse.json({ error: "Post not found" }, { status: 404 })
+    }
+
+    // The story format_variant owns the source video (media_assets, video).
+    const { data: variantRow } = await supabase
+      .from("format_variants")
+      .select("id, body")
+      .eq("core_post_id", postId)
+      .eq("format", "story")
+      .single()
+    const variant = variantRow as { id: string; body: string | null } | null
+    if (!variant) {
+      return NextResponse.json(
+        {
+          error: "no_story_variant",
+          message: "צרו קודם את פורמט הסטורי לפוסט הזה.",
+        },
+        { status: 400 },
+      )
+    }
+
+    const { data: assetRow } = await supabase
+      .from("media_assets")
+      .select("url")
+      .eq("format_variant_id", variant.id)
+      .eq("asset_type", "video")
+      .maybeSingle()
+    const videoUrl = (assetRow as { url: string } | null)?.url
+    if (!videoUrl) {
+      return NextResponse.json(
+        {
+          error: "no_source_video",
+          message:
+            "לא נמצא סרטון לסטורי. העלו סרטון או משכו אחד מגוגל דרייב, ואז אפשר להטמיע בו את הכיתוב.",
+        },
+        { status: 400 },
+      )
+    }
+
+    // Overlay text: the hook is the headline (falls back to the title, then
+    // the first line of the story script). Matches the reel-cover principle
+    // — a short, punchy line, not the whole script.
+    const hook =
+      post.hook_text?.trim() ||
+      post.title?.trim() ||
+      variant.body?.split(/\n+/)[0]?.trim() ||
+      ""
+    if (!hook) {
+      return NextResponse.json(
+        {
+          error: "no_hook",
+          message: "אין טקסט כותרת לפוסט. הוסיפו הוק ואז נטמיע אותו בסרטון.",
+        },
+        { status: 400 },
+      )
+    }
+
+    const os = await import("os")
+    const fs = await import("fs/promises")
+    const path = await import("path")
+    const tmp = os.tmpdir()
+    const id = crypto.randomUUID()
+    const inputPath = path.join(tmp, `story-src-${id}.mp4`)
+    const overlayPath = path.join(tmp, `story-ovl-${id}.png`)
+    const outputPath = path.join(tmp, `story-out-${id}.mp4`)
+    tmpFiles.push(inputPath, overlayPath, outputPath)
+
+    // Pull the source video + render the overlay in parallel.
+    const [videoRes, overlayPng] = await Promise.all([
+      fetch(videoUrl),
+      renderOverlayPng(hook),
+    ])
+    if (!videoRes.ok) {
+      return NextResponse.json(
+        { error: `לא הצלחנו לטעון את הסרטון (${videoRes.status})` },
+        { status: 502 },
+      )
+    }
+    await fs.writeFile(inputPath, Buffer.from(await videoRes.arrayBuffer()))
+    await fs.writeFile(overlayPath, overlayPng)
+
+    await burnOverlay(inputPath, overlayPath, outputPath)
+
+    const outBuffer = await fs.readFile(outputPath)
+    // "burned-" prefix marks a text-baked output. The client reads this from
+    // the persisted URL to know the story video already has its caption (so it
+    // shows a "caption embedded" state instead of offering to burn again and
+    // double-stack the text).
+    const storagePath = `${user.id}/video/burned-${crypto.randomUUID()}.mp4`
+    const { error: uploadError } = await supabase.storage
+      .from("user-media")
+      .upload(storagePath, outBuffer, { contentType: "video/mp4" })
+    if (uploadError) {
+      return NextResponse.json({ error: uploadError.message }, { status: 500 })
+    }
+    const publicUrl = supabase.storage
+      .from("user-media")
+      .getPublicUrl(storagePath).data.publicUrl
+
+    // Persist as the story's video media — replaces the raw source in the
+    // same (variant, video) slot, so the finished clip is what the post uses.
+    await supabase
+      .from("media_assets")
+      .delete()
+      .eq("format_variant_id", variant.id)
+      .eq("asset_type", "video")
+    await supabase.from("media_assets").insert({
+      format_variant_id: variant.id,
+      asset_type: "video",
+      url: publicUrl,
+      status: "completed",
+    } as never)
+
+    return NextResponse.json({ url: publicUrl })
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    console.error("[story/generate-video-media]", msg)
+    return NextResponse.json(
+      { error: `הטמעת הכיתוב בסרטון נכשלה: ${msg}` },
+      { status: 500 },
+    )
+  } finally {
+    // Best-effort temp cleanup — never let it mask the real result.
+    const fs = await import("fs/promises")
+    await Promise.all(
+      tmpFiles.map((f) => fs.unlink(f).catch(() => undefined)),
+    )
+  }
+}

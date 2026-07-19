@@ -6,6 +6,107 @@ interface FormatVariantRow {
   body: string
 }
 
+type ServerSupabase = Awaited<ReturnType<typeof createClient>>
+
+/**
+ * Replace the FULL set of image assets for a multi-image format
+ * (carousel, story). Each base64 PNG becomes one `media_assets` image row
+ * under the format's variant. These formats are versioned as a GROUP — we
+ * wipe the existing images and insert the new set, so partial replacement
+ * never leaves stale frames.
+ *
+ *   - `images === null | []` clears the set (the UI's "delete" path).
+ *   - The variant row is auto-created when missing (mirrors the /media
+ *     endpoint), but only when there is actually a set to insert.
+ *
+ * Returns a discriminated result. A failed/So-called-silent wipe (RLS
+ * mismatches match zero rows instead of erroring — this bit us on
+ * 2026-07-09 with ~100 stale carousel slides) is surfaced as an error so
+ * the caller can return a 500 instead of silently duplicating assets.
+ * `changed` is false only when there was no variant and nothing to insert.
+ */
+async function replaceImageAssetSet(
+  supabase: ServerSupabase,
+  userId: string,
+  postId: string,
+  format: string,
+  images: string[] | null | undefined,
+): Promise<{ ok: true; changed: boolean } | { ok: false; error: string }> {
+  let { data: variant } = await supabase
+    .from("format_variants")
+    .select("id")
+    .eq("core_post_id", postId)
+    .eq("format", format)
+    .single()
+
+  if (!variant && Array.isArray(images) && images.length > 0) {
+    const { data: newVariant } = await supabase
+      .from("format_variants")
+      .insert({ core_post_id: postId, format, body: "" } as never)
+      .select("id")
+      .single()
+    variant = newVariant
+  }
+
+  // No variant and nothing to insert — nothing to clear either.
+  if (!variant) return { ok: true, changed: false }
+
+  const variantRow = variant as unknown as { id: string }
+
+  // Drop existing image assets — the set is replaced as a whole.
+  const { error: wipeErr } = await supabase
+    .from("media_assets")
+    .delete()
+    .eq("format_variant_id", variantRow.id)
+    .eq("asset_type", "image")
+  if (wipeErr) {
+    return { ok: false, error: `${format}_wipe_failed: ${wipeErr.message}` }
+  }
+
+  // RLS mismatches don't error — they silently match zero rows. Verify the
+  // wipe actually happened before inserting the new set.
+  const { data: leftover } = await supabase
+    .from("media_assets")
+    .select("id")
+    .eq("format_variant_id", variantRow.id)
+    .eq("asset_type", "image")
+    .limit(1)
+  if (leftover && leftover.length > 0) {
+    console.error(
+      `[core-posts PATCH] ${format} wipe matched zero rows (RLS?)`,
+      { variantId: variantRow.id },
+    )
+    return {
+      ok: false,
+      error: `${format}_wipe_failed: existing images could not be replaced`,
+    }
+  }
+
+  // null/empty → just the deletion above. Otherwise upload + insert in order.
+  if (Array.isArray(images) && images.length > 0) {
+    for (let i = 0; i < images.length; i++) {
+      const base64 = images[i]
+      if (!base64) continue
+      const buffer = Buffer.from(base64, "base64")
+      const storagePath = `${userId}/${format}/${crypto.randomUUID()}.png`
+      await supabase.storage
+        .from("user-media")
+        .upload(storagePath, buffer, { contentType: "image/png" })
+      const publicUrl = supabase.storage
+        .from("user-media")
+        .getPublicUrl(storagePath).data.publicUrl
+      await supabase.from("media_assets").insert({
+        format_variant_id: variantRow.id,
+        asset_type: "image",
+        url: publicUrl,
+        status: "completed",
+      } as never)
+    }
+  }
+
+  return { ok: true, changed: true }
+}
+
 // GET — load a single core post with format variants
 export async function GET(
   _req: NextRequest,
@@ -139,6 +240,42 @@ export async function GET(
       }
     }
 
+    // Load carousel slide image URLs so the editor can rehydrate the
+    // carousel panel. Each slide is its own media_assets row (asset_type
+    // "image") under the `carousel` format_variant. Order ascending by
+    // created_at to preserve the slide order they were uploaded in (the
+    // PATCH handler inserts them sequentially in array order).
+    let carouselImageUrls: string[] = []
+    const carouselVariant = variants.find((v) => v.format === "carousel")
+    if (carouselVariant) {
+      const { data: carRows } = await supabase
+        .from("media_assets")
+        .select("url")
+        .eq("format_variant_id", carouselVariant.id)
+        .eq("asset_type", "image")
+        .order("created_at", { ascending: true })
+      carouselImageUrls = ((carRows ?? []) as unknown as { url: string | null }[])
+        .map((r) => r.url)
+        .filter((u): u is string => !!u)
+    }
+
+    // Story frames rehydrate the same way — each of the 1-3 AI-generated
+    // frames is an `image` row under the `story` variant, ordered by
+    // created_at so the frame sequence is preserved.
+    let storyImageUrls: string[] = []
+    const storyVariant = variants.find((v) => v.format === "story")
+    if (storyVariant) {
+      const { data: storyRows } = await supabase
+        .from("media_assets")
+        .select("url")
+        .eq("format_variant_id", storyVariant.id)
+        .eq("asset_type", "image")
+        .order("created_at", { ascending: true })
+      storyImageUrls = ((storyRows ?? []) as unknown as { url: string | null }[])
+        .map((r) => r.url)
+        .filter((u): u is string => !!u)
+    }
+
     return NextResponse.json({
       post: {
         ...(post as Record<string, unknown>),
@@ -148,6 +285,8 @@ export async function GET(
         videoUrl,
         coverUrl,
         coverPillColor,
+        carouselImageUrls,
+        storyImageUrls,
       },
     })
   } catch (error) {
@@ -169,7 +308,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, videoUrl, deleteVideo, coverBase64, coverPillColor, coverText, deleteCover, carouselImages } = (await req.json()) as {
+    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, videoUrl, deleteVideo, coverBase64, coverPillColor, coverText, deleteCover, carouselImages, storyImages } = (await req.json()) as {
       body?: string
       hookText?: string
       hookId?: string
@@ -192,6 +331,10 @@ export async function PATCH(
       // format_variant. `null` clears the slate (matches the UI's
       // "delete carousel" path that sets carouselImages=null).
       carouselImages?: string[] | null
+      // Same shape/contract for the story format — the 1-3 frame set from
+      // /api/story/generate-media. Saved as image rows under the `story`
+      // variant; `null` clears it.
+      storyImages?: string[] | null
     }
 
     // Track whether the PATCH touched any *child* table (format_variants,
@@ -444,58 +587,35 @@ export async function PATCH(
     // /api/carousel/generate. Each becomes its own `media_assets` row
     // (asset_type "image") under the `carousel` format_variant. We
     // wipe the slate first so re-generation doesn't pile up old slides.
+    // Carousel + story are the multi-image formats — both persist their
+    // frame set the same way (versioned as a group). Route both through the
+    // shared helper so the subtle RLS wipe-verification lives in one place.
     if (carouselImages !== undefined) {
-      let { data: carouselVariant } = await supabase
-        .from("format_variants")
-        .select("id")
-        .eq("core_post_id", id)
-        .eq("format", "carousel")
-        .single()
-
-      if (!carouselVariant && Array.isArray(carouselImages) && carouselImages.length > 0) {
-        const { data: newVariant } = await supabase
-          .from("format_variants")
-          .insert({ core_post_id: id, format: "carousel", body: "" } as never)
-          .select("id")
-          .single()
-        carouselVariant = newVariant
+      const r = await replaceImageAssetSet(
+        supabase,
+        user.id,
+        id,
+        "carousel",
+        carouselImages,
+      )
+      if (!r.ok) {
+        return NextResponse.json({ error: r.error }, { status: 500 })
       }
+      if (r.changed) didIndirectEdit = true
+    }
 
-      if (carouselVariant) {
-        const variantRow = carouselVariant as unknown as { id: string }
-
-        // Drop any existing image assets — carousels are versioned as a
-        // group; partial replacement would leave stale slides.
-        await supabase
-          .from("media_assets")
-          .delete()
-          .eq("format_variant_id", variantRow.id)
-          .eq("asset_type", "image")
-        didIndirectEdit = true
-
-        // null/empty → just the deletion above. Otherwise upload + insert.
-        if (Array.isArray(carouselImages) && carouselImages.length > 0) {
-          for (let i = 0; i < carouselImages.length; i++) {
-            const base64 = carouselImages[i]
-            if (!base64) continue
-            const buffer = Buffer.from(base64, "base64")
-            const storagePath = `${user.id}/carousel/${crypto.randomUUID()}.png`
-            await supabase.storage
-              .from("user-media")
-              .upload(storagePath, buffer, { contentType: "image/png" })
-            const publicUrl = supabase.storage
-              .from("user-media")
-              .getPublicUrl(storagePath).data.publicUrl
-
-            await supabase.from("media_assets").insert({
-              format_variant_id: variantRow.id,
-              asset_type: "image",
-              url: publicUrl,
-              status: "completed",
-            } as never)
-          }
-        }
+    if (storyImages !== undefined) {
+      const r = await replaceImageAssetSet(
+        supabase,
+        user.id,
+        id,
+        "story",
+        storyImages,
+      )
+      if (!r.ok) {
+        return NextResponse.json({ error: r.error }, { status: 500 })
       }
+      if (r.changed) didIndirectEdit = true
     }
 
     // Touch core_posts so updated_at advances on edits that only hit child

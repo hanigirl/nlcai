@@ -76,13 +76,6 @@ ${buildAudienceSection(audienceIdentity)}
 אל תוסיף שום טקסט מקדים או מסכם מחוץ לשקופיות.`
 }
 
-export interface CarouselSlide {
-  slide: number
-  type: "cover" | "content" | "cta"
-  title: string
-  body: string
-}
-
 export function parseCarouselResponse(text: string): string {
   return text.trim()
 }

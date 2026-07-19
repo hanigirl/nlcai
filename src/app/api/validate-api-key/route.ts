@@ -82,6 +82,28 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  if (keyName === "openai_api_key") {
+    // /v1/models is the cheapest authenticated GET — 200 for a valid key,
+    // 401 for a bad one. No tokens are spent.
+    try {
+      const res = await fetch("https://api.openai.com/v1/models", {
+        headers: { Authorization: `Bearer ${value}` },
+        signal: AbortSignal.timeout(8000),
+      })
+      if (res.ok) return NextResponse.json({ ok: true } satisfies Verdict)
+      if (res.status === 401) {
+        return NextResponse.json({ ok: false, code: "invalid", message: "המפתח של OpenAI לא תקף. ודאו שהעתקתם אותו נכון מ-platform.openai.com → API keys." } satisfies Verdict)
+      }
+      if (res.status === 429) {
+        return NextResponse.json({ ok: false, code: "credits", message: "חשבון ה-OpenAI שלכם חרג מהמכסה או שאין בו יתרה. היכנסו ל-platform.openai.com → Billing." } satisfies Verdict)
+      }
+      return NextResponse.json({ ok: false, code: "network", message: `OpenAI החזיר ${res.status}` } satisfies Verdict)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return NextResponse.json({ ok: false, code: "network", message: `לא הצלחנו לאמת את המפתח: ${msg}` } satisfies Verdict)
+    }
+  }
+
   if (keyName === "heygen_api_key") {
     // remaining_quota is the cheapest authenticated GET — 200 for a valid
     // token, 401 otherwise. No credits are spent.

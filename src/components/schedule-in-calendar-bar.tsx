@@ -135,13 +135,14 @@ export function ScheduleInCalendarBar({ corePostId, hasUploadedMedia = false }: 
   const hasMedia = hasUploadedMedia || serverHasMedia || hasLink
   if (!scheduledFor && !hasMedia) return null
 
-  // Common shell — placed bottom-end so it never crosses the sidebar (which
-  // is at the start in RTL). 32px from each edge keeps it readable on
-  // narrow viewports while not encroaching on the canvas content.
+  // Common shell — placed bottom-start (the right in RTL) so it clears the
+  // MediaPanel left rail, which the user reads while the bar is up. Per Hani:
+  // at bottom-end (left) it was covering that side panel. 32px from each edge
+  // keeps it readable on narrow viewports without encroaching on the canvas.
   return (
     <div
       dir="rtl"
-      className="pointer-events-none fixed bottom-8 end-8 z-40 flex items-center gap-3"
+      className="pointer-events-none fixed bottom-8 start-8 z-40 flex items-center gap-3"
     >
       {scheduledFor ? (
         <div className="pointer-events-auto inline-flex items-center gap-3 rounded-lg bg-bg-surface-primary-default border border-yellow-50 ps-4 pe-2 py-1.5 shadow-[0_8px_24px_rgb(0_0_0_/_0.08)]">

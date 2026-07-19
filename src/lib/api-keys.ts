@@ -1,11 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
-export type KeyName = "heygen_api_key" | "anthropic_api_key" | "apify_api_key"
+export type KeyName = "heygen_api_key" | "anthropic_api_key" | "apify_api_key" | "openai_api_key"
 
 const NOT_CONNECTED_CODE: Record<KeyName, string> = {
   heygen_api_key: "heygen_not_connected",
   anthropic_api_key: "anthropic_not_connected",
   apify_api_key: "apify_not_connected",
+  openai_api_key: "openai_not_connected",
 }
 
 // Cheap synchronous gate so we catch obvious paste-into-wrong-field
@@ -24,6 +25,17 @@ export function validateApiKeyFormat(keyName: KeyName, value: string): string | 
     if (!v.startsWith("apify_api_")) {
       return "מפתח Apify תקין מתחיל ב-apify_api_. ודאי שלא הדבקת מפתח של ספק אחר בשדה הזה."
     }
+  } else if (keyName === "openai_api_key") {
+    // OpenAI keys start with "sk-" (incl. "sk-proj-"). The tricky overlap:
+    // Anthropic keys ALSO start with "sk-" (sk-ant-) — catch that paste
+    // mistake explicitly.
+    if (v.startsWith("sk-ant-")) {
+      return "זה מפתח של Anthropic (מתחיל ב-sk-ant-), לא של OpenAI. מפתח OpenAI מתחיל ב-sk- או sk-proj-."
+    }
+    if (!v.startsWith("sk-")) {
+      return "מפתח OpenAI תקין מתחיל ב-sk-. ודאי שלא הדבקת מפתח של ספק אחר בשדה הזה."
+    }
+    if (v.length < 30) return "המפתח קצר מדי. ודאי שהעתקת אותו במלואו."
   }
   // HeyGen has no documented prefix; we leave it to the live check.
   return null

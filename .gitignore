@@ -46,3 +46,10 @@ next-env.d.ts
 # supabase CLI scratch (e.g. `cli-latest` version cache — auto-bumps on
 # every CLI run, would churn the diff endlessly)
 supabase/.temp/
+
+# local scratch / one-off test artifacts (scratch_learning_logs_backup.json
+# contains real user data — must never be committed)
+scratch_*
+scratchpreview.html
+image-post-render-test.png
+*.bak.png

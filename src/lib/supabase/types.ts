@@ -198,6 +198,26 @@ export interface Product {
   updated_at: string;
 }
 
+export type BusinessSourceType = "meeting" | "webinar" | "doc" | "link" | "other";
+export type BusinessSourceStatus = "ready" | "pending" | "failed";
+
+export interface BusinessSource {
+  id: string;
+  user_id: string;
+  source_type: BusinessSourceType;
+  title: string;
+  source_url: string | null;
+  summary: string | null;
+  raw_text: string | null;
+  status: BusinessSourceStatus;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type BusinessSourceInsert = Pick<BusinessSource, "user_id" | "title"> &
+  Partial<Pick<BusinessSource, "source_type" | "source_url" | "summary" | "raw_text" | "status" | "active">>;
+
 export type UserMediaCategory = "font" | "element" | "cover" | "style_file" | "audience_file";
 
 export interface UserMedia {
@@ -325,6 +345,11 @@ export interface Database {
         Row: UserTopCreator;
         Insert: UserTopCreatorInsert;
         Update: never;
+      };
+      business_sources: {
+        Row: BusinessSource;
+        Insert: BusinessSourceInsert;
+        Update: Partial<Pick<BusinessSource, "title" | "summary" | "raw_text" | "status" | "active">>;
       };
     };
     Views: Record<string, never>;

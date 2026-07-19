@@ -13,6 +13,7 @@ import { createClient } from "@/lib/supabase/client"
 import { parseCreatorInput } from "@/lib/creator-url"
 import { CreatorsList } from "@/components/creators-list"
 import { ProductsList, type ProductEntry } from "@/components/products-list"
+import { BusinessSourcesPanel } from "@/components/business-sources-panel"
 import { toast } from "sonner"
 import { validateIdentityFile } from "@/lib/validate-identity-file"
 import {
@@ -39,7 +40,7 @@ const GOOGLE_FONTS = [
   "Plus Jakarta Sans", "Figtree", "Geist", "Satoshi",
 ]
 
-type KeyName = "anthropic_api_key" | "heygen_api_key" | "apify_api_key"
+type KeyName = "anthropic_api_key" | "heygen_api_key" | "apify_api_key" | "openai_api_key"
 type SettingsTab = "connections" | "business" | "products" | "creators" | "media"
 
 interface KeyConfig {
@@ -71,6 +72,13 @@ const KEYS: KeyConfig[] = [
     placeholder: "apify_api_...",
     helpUrl: "https://console.apify.com/settings/integrations",
     helpLabel: "console.apify.com",
+  },
+  {
+    key: "openai_api_key",
+    label: "OpenAI API Key",
+    placeholder: "sk-...",
+    helpUrl: "https://platform.openai.com/api-keys",
+    helpLabel: "platform.openai.com",
   },
 ]
 
@@ -204,11 +212,13 @@ function SettingsPageInner() {
     anthropic_api_key: null,
     heygen_api_key: null,
     apify_api_key: null,
+    openai_api_key: null,
   })
   const [inputValues, setInputValues] = useState<Record<KeyName, string>>({
     anthropic_api_key: "",
     heygen_api_key: "",
     apify_api_key: "",
+    openai_api_key: "",
   })
 
   // Business tab state
@@ -286,7 +296,7 @@ function SettingsPageInner() {
       // Fire all queries in parallel; await each individually to keep their distinct Supabase types intact.
       const userRowPromise = supabase
         .from("users")
-        .select("anthropic_api_key, heygen_api_key, apify_api_key, brand_style")
+        .select("anthropic_api_key, heygen_api_key, apify_api_key, openai_api_key, brand_style")
         .eq("id", user.id)
         .single()
       const coreIdPromise = supabase
@@ -327,6 +337,7 @@ function SettingsPageInner() {
           anthropic_api_key: (row.anthropic_api_key as string) ?? null,
           heygen_api_key: (row.heygen_api_key as string) ?? null,
           apify_api_key: (row.apify_api_key as string) ?? null,
+          openai_api_key: (row.openai_api_key as string) ?? null,
         })
         if (row.brand_style) setStyleAnalyzed(true)
       }
@@ -967,11 +978,13 @@ function SettingsPageInner() {
       { id: "claude", label: "Claude", icon: Link2 },
       { id: "heygen", label: "HeyGen", icon: Link2 },
       { id: "apify", label: "Apify", icon: Link2 },
+      { id: "openai", label: "OpenAI", icon: Link2 },
     ],
     business: [
       { id: "about", label: "על העסק", icon: Type },
       { id: "you", label: "עליך", icon: Type },
       { id: "files", label: "קבצים להעלאה", icon: Upload },
+      { id: "sources", label: "מקורות ידע", icon: Link2 },
     ],
     products: [
       { id: "list", label: "המוצרים שלכם", icon: Type },
@@ -1114,6 +1127,7 @@ function SettingsPageInner() {
                     if (activeSubSection === "claude") return cfg.key === "anthropic_api_key"
                     if (activeSubSection === "heygen") return cfg.key === "heygen_api_key"
                     if (activeSubSection === "apify") return cfg.key === "apify_api_key"
+                    if (activeSubSection === "openai") return cfg.key === "openai_api_key"
                     return false
                   }).map((cfg) => {
                     const stored = storedKeys[cfg.key]
@@ -1339,8 +1353,10 @@ function SettingsPageInner() {
                   </>
                 )}
 
+                {activeSubSection === "sources" && <BusinessSourcesPanel />}
+
                 {/* Save button for about/you sub-sections */}
-                {activeSubSection !== "files" && (
+                {activeSubSection !== "files" && activeSubSection !== "sources" && (
                   <Button size="sm" onClick={handleSaveBusiness} disabled={savingBusiness} className="w-fit gap-2">
                     {savingBusiness ? <Loader2 className="size-4 animate-spin" /> : businessSaved ? <Check className="size-4" /> : null}
                     {savingBusiness ? "שומר..." : businessSaved ? "נשמר!" : "שמור"}

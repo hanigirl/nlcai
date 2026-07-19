@@ -1,16 +1,37 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from "react"
 import Image from "next/image"
-import { X, Smartphone, Video, Layers, Image as ImageIcon, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, Upload, ChevronLeft, ChevronRight, Link2, type LucideIcon } from "lucide-react"
+import { X, Smartphone, Video, Layers, Image as ImageIcon, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, ChevronLeft, ChevronRight, Link2, Plus, Trash2, Type, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { AvatarPicker, type Avatar } from "@/components/avatar-picker"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { ConfirmModal } from "@/components/confirm-modal"
+import {
+  subscribeGeneration,
+  getGenerationSnapshot,
+  startImageGeneration,
+  addGenerationResult,
+  removeGenerationResult,
+  hydrateCandidates,
+} from "@/lib/image-generation-store"
+import {
+  subscribeStoryGeneration,
+  getStoryGenerationSnapshot,
+  startStoryGeneration,
+  removeStoryGenerationSet,
+} from "@/lib/story-generation-store"
 import type { SlideData } from "@/lib/carousel-templates"
 import { CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import {
@@ -62,6 +83,27 @@ interface MediaPanelProps {
   onCarouselImagesChange: (images: string[] | null) => void
   onCarouselSlidesChange: (slides: SlideData[] | null) => void
   carouselText: string
+  /**
+   * Reports the persisted image_post media URL up to the parent so the
+   * approved image can render as its own workflow card next to the
+   * script (same pattern as talking_head's lifted video URL). Fires after
+   * a successful save — AI-generated or manual upload.
+   */
+  onImagePostUrlChange?: (url: string | null) => void
+  /**
+   * Reports the saved story frame set up to the parent so it renders as its
+   * own workflow card next to the story script. Fires on save (the set) and
+   * on delete (null). Same pattern as onImagePostUrlChange.
+   */
+  onStoryImagesChange?: (images: string[] | null) => void
+  /**
+   * Reports the finished story VIDEO (the user's clip with the hook burned
+   * in) up to the parent so it renders as its own workflow card next to the
+   * story script — the video counterpart of onStoryImagesChange. Fires after
+   * the caption is burned in, on hydration of a burned clip, and on delete
+   * (null).
+   */
+  onStoryVideoUrlChange?: (url: string | null) => void
 }
 
 export function MediaPanel({
@@ -89,6 +131,9 @@ export function MediaPanel({
   onCarouselImagesChange,
   onCarouselSlidesChange,
   carouselText,
+  onImagePostUrlChange,
+  onStoryImagesChange,
+  onStoryVideoUrlChange,
 }: MediaPanelProps) {
   const isOpen = formatId !== null
   const meta = formatId ? FORMAT_META[formatId] : null
@@ -180,6 +225,9 @@ export function MediaPanel({
             format={formatId}
             postId={postId ?? null}
             hookText={panelHookText}
+            onImagePostUrlChange={onImagePostUrlChange}
+            onStoryImagesChange={onStoryImagesChange}
+            onStoryVideoUrlChange={onStoryVideoUrlChange}
           />
         )}
       </div>
@@ -226,9 +274,18 @@ function TalkingHeadFlow({
   hookText?: string
   onScrollToVideo?: () => void
 }) {
-  // --- upload video state ---
-  const [uploadedVideoUrl, setUploadedVideoUrl] = useState<string | null>(null)
-  const videoInputRef = useRef<HTMLInputElement>(null)
+  // --- Google Drive link state ---
+  // The talking_head format takes its media from a Google Drive share link
+  // (not a local upload) — we download it server-side and store it, so it
+  // lands as a persistent video card exactly like an avatar-generated video.
+  const [driveLink, setDriveLink] = useState("")
+  const [driveLoading, setDriveLoading] = useState(false)
+  const [driveError, setDriveError] = useState<string | null>(null)
+  // Auto-fetch: once the field holds a complete Drive link we pull it
+  // automatically (no button). Debounced, with a guard so the same link
+  // isn't fetched twice.
+  const driveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastDriveRef = useRef<string>("")
 
   // --- recording state ---
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
@@ -473,16 +530,20 @@ function TalkingHeadFlow({
     onCoverImageChange(null)
     setCoverLoading(false)
     onSourceModeChange("choose")
-    setUploadedVideoUrl(null)
+    setDriveLink("")
+    setDriveError(null)
+    lastDriveRef.current = ""
   }
 
-  // Extract a frame from a video file as data URL
-  const extractFrameFromFile = (file: File): Promise<string | null> => {
+  // Extract a frame from a (stored) video URL as a data URL, for the cover.
+  // crossOrigin is required so the canvas isn't tainted when reading a frame
+  // from the Supabase public URL.
+  const extractFrameFromUrl = (src: string): Promise<string | null> => {
     return new Promise((resolve) => {
-      const url = URL.createObjectURL(file)
       const video = document.createElement("video")
+      video.crossOrigin = "anonymous"
       video.muted = true
-      video.src = url
+      video.src = src
       video.onloadeddata = () => { video.currentTime = 1 }
       video.onseeked = () => {
         try {
@@ -490,168 +551,94 @@ function TalkingHeadFlow({
           canvas.width = video.videoWidth
           canvas.height = video.videoHeight
           canvas.getContext("2d")?.drawImage(video, 0, 0)
-          URL.revokeObjectURL(url)
           resolve(canvas.toDataURL("image/jpeg", 0.8))
         } catch (err) { console.error("[media-panel][video-frame-capture]", err); resolve(null) }
       }
-      video.onerror = () => { URL.revokeObjectURL(url); resolve(null) }
+      video.onerror = () => resolve(null)
       setTimeout(() => resolve(null), 5000)
     })
   }
 
-  const processVideoFile = async (file: File) => {
-    // Hard size cap — match the bucket's 50MB default so the user gets a
-    // clear error instead of an opaque silent failure mid-upload.
-    const MAX_VIDEO_MB = 50
-    const sizeMb = file.size / 1024 / 1024
-    if (sizeMb > MAX_VIDEO_MB) {
-      toast.error(`הקובץ גדול מדי (${sizeMb.toFixed(1)}MB). מקסימום ${MAX_VIDEO_MB}MB.`, { duration: 6000 })
+  // Pull the talking_head media from a Google Drive share link. The heavy
+  // lifting (resolving the link, downloading, storing) happens server-side in
+  // /api/media/from-drive; here we just hand it the link, then treat the
+  // returned storage URL exactly like an avatar-generated video — set it as
+  // the post's video and bake a cover from its first frame.
+  const processDriveLink = async (rawLink: string) => {
+    const link = rawLink.trim()
+    if (!link) return
+    if (!/drive\.google\.com|docs\.google\.com/i.test(link)) {
+      setDriveError("זה לא נראה כמו קישור של גוגל דרייב.")
       return
     }
 
-    const localUrl = URL.createObjectURL(file)
-    setUploadedVideoUrl(localUrl)
-    onVideoUrlChange(localUrl)
-    setVideoPhase("done")
-
-    // Extract frame for cover before uploading
-    const frameDataUrl = await extractFrameFromFile(file)
-    if (frameDataUrl) onVideoFrameChange?.(frameDataUrl)
-
-    // Upload the actual video file to Supabase Storage so it survives a
-    // refresh. Use XHR (not the supabase-js client) because XHR exposes
-    // upload.progress events — supabase-js's storage upload has no progress
-    // callback, so we'd otherwise have a multi-second silent wait where the
-    // user can't tell if the upload is alive.
-    const sizeMbStr = sizeMb.toFixed(1)
-    const renderProgress = (pct: number, loadedMb?: string) => (
-      <div className="flex flex-col gap-1.5 w-full" dir="rtl">
-        <div className="flex items-center justify-between text-xs text-text-primary-default">
-          <span>מעלה וידאו...</span>
-          <span className="text-text-neutral-default">
-            {loadedMb ? `${loadedMb} / ${sizeMbStr}MB · ${pct}%` : `${pct}%`}
-          </span>
-        </div>
-        <div className="w-full h-1.5 bg-gray-95 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-yellow-50 transition-[width] duration-150 ease-out"
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-      </div>
-    )
-    const uploadToast = toast.loading(renderProgress(0), { duration: Infinity })
+    setDriveError(null)
+    setDriveLoading(true)
     try {
-      const { createClient } = await import("@/lib/supabase/client")
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!user || !session) {
-        toast.error("לא מזוהה משתמש. רעננו ונסו שוב.", { id: uploadToast, duration: 6000 })
-        return
-      }
-      const ext = file.name.split(".").pop()?.toLowerCase() || "mp4"
-      const safeExt = /^[a-z0-9]{2,5}$/.test(ext) ? ext : "mp4"
-      const storagePath = `${user.id}/video/${crypto.randomUUID()}.${safeExt}`
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-
-      const { ok, error: uploadErrMsg } = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-        const xhr = new XMLHttpRequest()
-        xhr.open("POST", `${supabaseUrl}/storage/v1/object/user-media/${storagePath}`)
-        xhr.setRequestHeader("Authorization", `Bearer ${session.access_token}`)
-        xhr.setRequestHeader("apikey", anonKey)
-        xhr.setRequestHeader("Content-Type", file.type || "video/mp4")
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            const pct = Math.round((e.loaded / e.total) * 100)
-            const loadedMb = (e.loaded / 1024 / 1024).toFixed(1)
-            toast.loading(renderProgress(pct, loadedMb), { id: uploadToast, duration: Infinity })
-          }
-        }
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve({ ok: true })
-          } else {
-            let msg = `Status ${xhr.status}`
-            try {
-              const r = JSON.parse(xhr.responseText)
-              msg = r.message || r.error || msg
-            } catch { /* response wasn't JSON, keep status-based message */ }
-            resolve({ ok: false, error: msg })
-          }
-        }
-        xhr.onerror = () => resolve({ ok: false, error: "שגיאת רשת" })
-        xhr.send(file)
-      })
-
-      if (ok) {
-        const videoUrl = supabase.storage.from("user-media").getPublicUrl(storagePath).data.publicUrl
-        // Explicit duration — the loading toast was opened with
-        // `duration: Infinity`. Sonner inherits the duration when we
-        // replace via `id`, so without this the success toast would
-        // never auto-dismiss.
-        toast.success("וידאו נשמר", { id: uploadToast, duration: 4000 })
-        // Replace the blob URL with the persistent storage URL — this is
-        // what the parent's auto-save useEffect will PATCH onto the post.
-        onVideoUrlChange(videoUrl)
-      } else {
-        // Upload failed. Fall back to thumbnail-only persistence so the card
-        // at least re-appears after refresh, even if as a static image.
-        console.error("[upload] video upload failed:", uploadErrMsg)
-        toast.error(`העלאת הוידאו נכשלה: ${uploadErrMsg}`, { id: uploadToast, duration: 8000 })
-        if (frameDataUrl) {
-          const base64 = frameDataUrl.split(",")[1]
-          const binaryStr = atob(base64)
-          const bytes = new Uint8Array(binaryStr.length)
-          for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
-          const thumbPath = `${user.id}/video-thumb/${crypto.randomUUID()}.jpg`
-          const { error: thumbErr } = await supabase.storage
-            .from("user-media")
-            .upload(thumbPath, bytes, { contentType: "image/jpeg" })
-          if (!thumbErr) {
-            const thumbUrl = supabase.storage.from("user-media").getPublicUrl(thumbPath).data.publicUrl
-            onVideoUrlChange(thumbUrl)
-          } else {
-            console.error("[upload] thumbnail also failed:", thumbErr)
-          }
-        }
-      }
-    } catch (err) {
-      console.error("[upload] unexpected error:", err)
-      toast.error(`שגיאה בהעלאה: ${err instanceof Error ? err.message : String(err)}`, { id: uploadToast, duration: 8000 })
-    }
-
-    // Generate cover with video frame as thumbnail
-    const coverTitle = hookText || transcript || "ריל חדש"
-    setCoverLoading(true); onCoverLoadingChange?.(true)
-    try {
-      const res = await fetch("/api/reel-cover/generate", {
+      const res = await fetch("/api/media/from-drive", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          thumbnail_url: frameDataUrl || undefined,
-          title: coverTitle,
-          pill_color: pillColor,
-        }),
+        body: JSON.stringify({ url: link }),
       })
       const data = await res.json()
-      if (data.covers?.[0]) onCoverImageChange(data.covers[0])
-    } catch (err) { console.error("[media-panel][cover-from-frame]", err) }
-    finally { setCoverLoading(false); onCoverLoadingChange?.(false) }
+      if (!res.ok || data.error) {
+        const map: Record<string, string> = {
+          invalid_drive_link: "לא זוהה קובץ בקישור. ודאו שזה קישור ישיר לקובץ בדרייב.",
+          drive_not_public: 'הקובץ לא ציבורי. שנו את ההרשאה ל„כל מי שיש לו הקישור” ונסו שוב.',
+          file_too_large: "הקובץ גדול מדי (מקסימום 50MB).",
+        }
+        setDriveError(map[data.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.")
+        return
+      }
+
+      const mediaUrl: string = data.url
+      onVideoUrlChange(mediaUrl)
+      setVideoPhase("done")
+      toast.success("המדיה נטענה מהדרייב")
+
+      // Cover: extract a frame from the stored video and generate the reel
+      // cover, mirroring the avatar/upload flows. Skipped for images.
+      if (data.kind !== "image") {
+        const frameDataUrl = await extractFrameFromUrl(mediaUrl)
+        if (frameDataUrl) onVideoFrameChange?.(frameDataUrl)
+        const coverTitle = hookText || transcript || "ריל חדש"
+        setCoverLoading(true); onCoverLoadingChange?.(true)
+        try {
+          const coverRes = await fetch("/api/reel-cover/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              thumbnail_url: frameDataUrl || undefined,
+              title: coverTitle,
+              pill_color: pillColor,
+            }),
+          })
+          const coverData = await coverRes.json()
+          if (coverData.covers?.[0]) onCoverImageChange(coverData.covers[0])
+        } catch (err) { console.error("[media-panel][cover-from-drive]", err) }
+        finally { setCoverLoading(false); onCoverLoadingChange?.(false) }
+      }
+    } catch (err) {
+      console.error("[media-panel][drive-link]", err)
+      setDriveError("שגיאת רשת בטעינת המדיה. נסו שוב.")
+    } finally {
+      setDriveLoading(false)
+    }
   }
 
-  const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    processVideoFile(file)
-  }
-
-  const handleVideoDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    const file = e.dataTransfer.files[0]
-    if (!file || !file.type.startsWith("video/")) return
-    processVideoFile(file)
+  // Debounced auto-fetch: fires as soon as the field holds a full Drive link
+  // (with an extractable file id), so the user never taps a button.
+  const scheduleDrive = (value: string) => {
+    if (driveDebounceRef.current) clearTimeout(driveDebounceRef.current)
+    const link = value.trim()
+    const looksComplete =
+      /drive\.google\.com|docs\.google\.com/i.test(link) &&
+      /\/d\/[\w-]+|[?&]id=[\w-]+/.test(link)
+    if (!looksComplete || link === lastDriveRef.current) return
+    driveDebounceRef.current = setTimeout(() => {
+      lastDriveRef.current = link
+      processDriveLink(link)
+    }, 500)
   }
 
   // Determine current step for progress bar
@@ -686,23 +673,37 @@ function TalkingHeadFlow({
   if (!avatar && sourceMode === "choose" && !(videoPhase === "done" && liftedVideoUrl)) {
     return (
       <div className="flex flex-col gap-6">
-        {/* Upload video drop zone */}
-        <input
-          ref={videoInputRef}
-          type="file"
-          accept="video/*"
-          onChange={handleVideoUpload}
-          className="hidden"
-        />
-        <div
-          onClick={() => videoInputRef.current?.click()}
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={handleVideoDrop}
-          className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-border-neutral-default p-8 hover:border-yellow-50 hover:bg-bg-surface-primary-default transition-all cursor-pointer"
-        >
-          <Video className="size-8 text-text-neutral-default" />
-          <span className="text-small font-semibold text-text-primary-default">העלה סרטון</span>
-          <span className="text-xs text-text-neutral-default">גרור לכאן או לחץ לבחירה</span>
+        {/* Media from a Google Drive link */}
+        <div className="flex flex-col gap-2">
+          <label className="flex items-center gap-2 text-small font-semibold text-text-primary-default">
+            <Link2 className="size-4 text-text-neutral-default" />
+            קישור מגוגל דרייב
+          </label>
+          <Input
+            dir="ltr"
+            value={driveLink}
+            onChange={(e) => {
+              const v = e.target.value
+              setDriveLink(v)
+              if (driveError) setDriveError(null)
+              scheduleDrive(v) // auto-fetch once the link is complete
+            }}
+            placeholder="https://drive.google.com/file/d/..."
+            disabled={driveLoading}
+            className="text-xs"
+          />
+          {driveLoading ? (
+            <p className="flex items-center gap-2 text-xs text-text-neutral-default">
+              <Loader2 className="size-3.5 animate-spin text-yellow-50" />
+              טוען מהדרייב...
+            </p>
+          ) : driveError ? (
+            <p className="text-xs text-button-destructive-default">{driveError}</p>
+          ) : (
+            <p className="text-xs text-text-neutral-default">
+              הדביקו קישור לסרטון בדרייב עם הרשאת „כל מי שיש לו הקישור”. נטען אוטומטית.
+            </p>
+          )}
         </div>
 
         {/* Divider */}
@@ -787,16 +788,9 @@ function TalkingHeadFlow({
 
         {/* Actions */}
         <div className="flex gap-2">
-          <input
-            ref={videoInputRef}
-            type="file"
-            accept="video/*"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) processVideoFile(f) }}
-            className="hidden"
-          />
-          <Button variant="outline" onClick={() => videoInputRef.current?.click()} size="sm" className="flex-1 gap-1.5">
-            <Upload className="size-3.5" />
-            החלף סרטון
+          <Button variant="outline" onClick={handleStartOver} size="sm" className="flex-1 gap-1.5">
+            <RefreshCw className="size-3.5" />
+            החלף מדיה
           </Button>
           {coverImage && (
             <Button onClick={handleDownloadCover} size="sm" className="flex-1 gap-1.5">
@@ -1037,6 +1031,76 @@ function TalkingHeadFlow({
 /*  Carousel — template selection + PNG generation                     */
 /* ------------------------------------------------------------------ */
 
+// Parse carousel text ("שקופית N" blocks) into slides
+function parseTextToSlides(text: string): SlideData[] {
+  const slideHeaderRegex = /^\s*(?:שקופית\s*\d+|\[.*?\])\s*:?\s*$/
+  const blocks = text
+    .split(/\n\s*\n+/)
+    .map((b) => b.trim())
+    .filter(Boolean)
+
+  const parsed: SlideData[] = []
+  let slideNum = 1
+
+  for (const block of blocks) {
+    const lines = block.split("\n").map((l) => l.trim()).filter(Boolean)
+    if (lines.length === 0) continue
+
+    const hasHeader = slideHeaderRegex.test(lines[0])
+    const contentLines = hasHeader ? lines.slice(1) : lines
+    if (contentLines.length === 0) continue
+
+    const legacyTitleLine = contentLines.find((l) => l.startsWith("כותרת:"))
+    let title: string
+    let body: string
+
+    if (legacyTitleLine) {
+      title = legacyTitleLine.replace("כותרת:", "").trim()
+      body = contentLines.filter((l) => l !== legacyTitleLine).join("\n").trim()
+    } else {
+      title = contentLines[0]
+      body = contentLines.slice(1).join("\n").trim()
+    }
+
+    parsed.push({ slide: slideNum, type: "content", title, body })
+    slideNum++
+  }
+
+  if (parsed.length > 0) {
+    parsed[0].type = "cover"
+    parsed[parsed.length - 1].type = "cta"
+  }
+
+  return parsed
+}
+
+// Sample cover shown in template-tile previews when the post has no
+// carousel text yet.
+const SAMPLE_COVER: SlideData = {
+  slide: 1,
+  type: "cover",
+  title: "ככה תיראה הקרוסלה שלכם",
+  body: "תצוגה מקדימה של הטמפלט",
+}
+
+// Generated carousel sets survive panel switches: the user can start a
+// carousel generation, move to another format (e.g. image post) and come
+// back — the fetch keeps running, writes here on completion (module scope
+// outlives the component), and the completion toast points them back.
+// Keyed by postId → templateId → slides.
+const carouselGenCache = new Map<string, Record<string, string[]>>()
+
+// Result dialogs already shown once ("postId:templateId") — a set that
+// finished while the panel was closed auto-opens on the next mount, but
+// only the first time; after the user closes it, it stays on the tile.
+const carouselResultSeen = new Set<string>()
+
+// Pseudo-"template" key for a carousel imported from per-slide Drive links.
+// It isn't a real template — it only lets a Drive-imported set reuse the
+// shared preview dialog (`generatedByTemplate[DRIVE_IMPORT_KEY]`). The
+// saved-template guard filters it out, so it never masquerades as a tile.
+const DRIVE_IMPORT_KEY = "__drive_import__"
+
 function CarouselFlow({
   postId,
   carouselText,
@@ -1052,103 +1116,302 @@ function CarouselFlow({
   onImagesChange: (imgs: string[] | null) => void
   onSlidesChange: (slides: SlideData[] | null) => void
 }) {
-  const [selectedTemplate, setSelectedTemplate] = useState(CAROUSEL_TEMPLATES[0].id)
+  // No separate "current carousel" tile (Hani 2026-07-09): the template
+  // that made the saved carousel shows its real cover, starts SELECTED,
+  // and tapping it opens the saved slides — one tile, one selection ring.
+  // The template the saved carousel was generated with (written on approve):
+  const [savedTemplateId] = useState<string | undefined>(() => {
+    if (!postId || typeof window === "undefined") return undefined
+    const tid = getFormatMeta(postId, "carousel").templateId
+    return tid && CAROUSEL_TEMPLATES.some((t) => t.id === tid) ? tid : undefined
+  })
+
+  const [selectedTemplate, setSelectedTemplate] = useState(
+    () => savedTemplateId ?? CAROUSEL_TEMPLATES[0].id,
+  )
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [previewIndex, setPreviewIndex] = useState(0)
   const [downloading, setDownloading] = useState(false)
 
-  // Parse carousel text into slides
-  const parseTextToSlides = (text: string): SlideData[] => {
-    const slideHeaderRegex = /^\s*(?:שקופית\s*\d+|\[.*?\])\s*:?\s*$/
-    const blocks = text
-      .split(/\n\s*\n+/)
-      .map((b) => b.trim())
-      .filter(Boolean)
+  // Live slide-1 previews per template (base64 PNG). Every tile shows its
+  // static sample thumbnail immediately; satori templates then swap in a
+  // render of the USER'S actual cover. AI tiles keep the sample — a real
+  // gpt-image-2 render happens only on יצירת קרוסלה (it costs money).
+  const [tilePreviews, setTilePreviews] = useState<Record<string, string>>({})
 
-    const parsed: SlideData[] = []
-    let slideNum = 1
+  // Generated slide sets per template — switching templates keeps each
+  // design's slides so the user can compare. The parent (persisted) copy
+  // always holds the most recent generation and is surfaced through the
+  // "current carousel" tile, not attributed to any template. Seeded from
+  // the module cache so sets generated while this panel was closed (or
+  // another format was open) are still here.
+  const [generatedByTemplate, setGeneratedByTemplate] = useState<
+    Record<string, string[]>
+  >(() => (postId ? { ...(carouselGenCache.get(postId) ?? {}) } : {}))
 
-    for (const block of blocks) {
-      const lines = block.split("\n").map((l) => l.trim()).filter(Boolean)
-      if (lines.length === 0) continue
+  // Attribute the saved carousel to the template that made it, as soon as
+  // the images hydrate (they can arrive async after mount) — so opening
+  // that template's dialog shows the saved slides without an approve
+  // button. Selection stays wherever the user put it.
+  useEffect(() => {
+    if (!savedTemplateId || !images || images.length === 0) return
+    setGeneratedByTemplate((p) =>
+      p[savedTemplateId] ? p : { ...p, [savedTemplateId]: images },
+    )
+  }, [savedTemplateId, images])
 
-      const hasHeader = slideHeaderRegex.test(lines[0])
-      const contentLines = hasHeader ? lines.slice(1) : lines
-      if (contentLines.length === 0) continue
-
-      const legacyTitleLine = contentLines.find((l) => l.startsWith("כותרת:"))
-      let title: string
-      let body: string
-
-      if (legacyTitleLine) {
-        title = legacyTitleLine.replace("כותרת:", "").trim()
-        body = contentLines.filter((l) => l !== legacyTitleLine).join("\n").trim()
-      } else {
-        title = contentLines[0]
-        body = contentLines.slice(1).join("\n").trim()
-      }
-
-      parsed.push({ slide: slideNum, type: "content", title, body })
-      slideNum++
+  // A generation that finished while this panel was closed left its result
+  // only in the module cache — surface it once, in the dialog, on mount.
+  useEffect(() => {
+    if (!postId) return
+    const cached = carouselGenCache.get(postId)
+    if (!cached) return
+    for (const [tid, slides] of Object.entries(cached)) {
+      const key = `${postId}:${tid}`
+      if (carouselResultSeen.has(key)) continue
+      if (images && slides === images) continue
+      carouselResultSeen.add(key)
+      setSelectedTemplate(tid)
+      setDialogFor(tid)
+      setPreviewIndex(0)
+      break
     }
+    // Mount-only: cached results are read once when the panel opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-    if (parsed.length > 0) {
-      parsed[0].type = "cover"
-      parsed[parsed.length - 1].type = "cta"
+  // The user's actual cover slide (or a sample when there's no text yet)
+  const previewCover = useMemo<SlideData>(() => {
+    const parsed = carouselText ? parseTextToSlides(carouselText) : []
+    return parsed[0] ?? SAMPLE_COVER
+  }, [carouselText])
+
+  useEffect(() => {
+    let cancelled = false
+    for (const t of CAROUSEL_TEMPLATES) {
+      if (t.kind === "ai") continue
+      fetch("/api/carousel/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slides: [previewCover], templateId: t.id }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (!cancelled && data.images?.[0]) {
+            setTilePreviews((p) => ({ ...p, [t.id]: data.images[0] }))
+          }
+        })
+        .catch((err) =>
+          console.error("[media-panel][template-preview]", t.id, err),
+        )
     }
+    return () => {
+      cancelled = true
+    }
+  }, [previewCover])
 
-    return parsed
-  }
+  // AI templates (kind: "ai") render via gpt-image-2 on the user's OpenAI
+  // key — different endpoint, much longer, and it costs real money.
+  const selectedConfig = CAROUSEL_TEMPLATES.find((t) => t.id === selectedTemplate)
+  const isAiTemplate = selectedConfig?.kind === "ai"
 
   const handleGenerate = async () => {
     if (!carouselText.trim()) return
     setGenerating(true)
     setError(null)
 
-    try {
-      const parsedSlides = parseTextToSlides(carouselText)
-      if (parsedSlides.length === 0) {
-        setError("לא נמצאו סליידים בטקסט הקרוסלה")
-        setGenerating(false)
-        return
-      }
+    const parsedSlides = parseTextToSlides(carouselText)
+    if (parsedSlides.length === 0) {
+      setError("לא נמצאו סליידים בטקסט הקרוסלה")
+      setGenerating(false)
+      return
+    }
 
+    // Bottom-of-screen toast per generation — parallel generations across
+    // formats (carousel + image post + ...) stack vertically via sonner.
+    // The toast + module cache outlive this component, so the user can
+    // switch panels mid-generation and still get the result.
+    const templateName = selectedConfig?.name ?? ""
+    const genId = selectedTemplate
+    const genToast = toast.loading(
+      isAiTemplate
+        ? `מציירים קרוסלת AI (${templateName})... זה לוקח כמה דקות`
+        : `יוצרים קרוסלה (${templateName})...`,
+      { duration: Infinity },
+    )
+
+    try {
       onSlidesChange(parsedSlides)
 
-      const res = await fetch("/api/carousel/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          slides: parsedSlides,
-          templateId: selectedTemplate,
-        }),
-      })
+      const res = await fetch(
+        isAiTemplate ? "/api/carousel/generate-ai" : "/api/carousel/generate",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            slides: parsedSlides,
+            templateId: genId,
+          }),
+        },
+      )
 
       const data = await res.json()
       if (data.error) {
-        setError(data.error)
+        // AI route returns a Hebrew user-facing `message` alongside the
+        // machine `error` code (e.g. openai_not_connected).
+        setError(data.message || data.error)
+        toast.error(data.message || data.error, { id: genToast, duration: 8000 })
       } else if (data.images) {
-        onImagesChange(data.images)
+        // Cache + preview only — the post's carousel changes when the
+        // user approves inside the dialog, not on generation.
+        if (postId) {
+          carouselGenCache.set(postId, {
+            ...(carouselGenCache.get(postId) ?? {}),
+            [genId]: data.images,
+          })
+        }
+        setGeneratedByTemplate((p) => ({ ...p, [genId]: data.images }))
+        setDialogFor(genId)
         setPreviewIndex(0)
+        toast.success(`הקרוסלה (${templateName}) מוכנה`, {
+          id: genToast,
+          duration: 5000,
+        })
       }
     } catch (err) {
       console.error("[media-panel][generate-carousel]", err)
       setError("שגיאה ביצירת הקרוסלה")
+      toast.error("שגיאה ביצירת הקרוסלה", { id: genToast, duration: 8000 })
     } finally {
       setGenerating(false)
     }
   }
 
+  // Preview dialog (mirrors the image_post lightbox): holds WHOSE slides
+  // are being previewed. The post's carousel changes only when the user
+  // approves in the dialog.
+  const [dialogFor, setDialogFor] = useState<string | null>(null)
+  const dialogSlides = dialogFor
+    ? (generatedByTemplate[dialogFor] ?? null)
+    : null
+  // Approving what's already the post's carousel is meaningless (the saved
+  // set is seeded by reference, so identity comparison is enough).
+  const dialogCanApprove = !!dialogFor && dialogSlides !== images
+
+  // Any template dialog that actually opened counts as "seen" — so the
+  // auto-open-on-mount effect never re-shows a result the user already saw.
+  useEffect(() => {
+    if (!postId || !dialogFor) return
+    carouselResultSeen.add(`${postId}:${dialogFor}`)
+  }, [postId, dialogFor])
+
+  const openDialog = (id: string) => {
+    setDialogFor(id)
+    setPreviewIndex(0)
+  }
+
+  const handleApprove = () => {
+    if (!dialogSlides || !dialogFor) return
+    onImagesChange(dialogSlides)
+    // Remember which template made the post's carousel — its tile is the
+    // selected one next time the panel opens.
+    if (postId) {
+      setFormatMeta(postId, "carousel", { templateId: dialogFor })
+    }
+    setDialogFor(null)
+  }
+
+  // --- Drive slide import (per-slide links → base64 carousel) ---------------
+  // Research (2026-07-12): creators hand off a carousel as INDIVIDUAL per-slide
+  // images, not one bundled file — so we pull one Drive file per slide and
+  // assemble them in list order. `from-drive` with `store:false` returns base64
+  // (the carousel pipeline is base64 in-memory and re-stores on save), so no
+  // orphan Storage file is left behind.
+  const [driveSlideLinks, setDriveSlideLinks] = useState<string[]>(["", ""])
+  const [driveImporting, setDriveImporting] = useState(false)
+  const [driveImportProgress, setDriveImportProgress] = useState("")
+  const [driveImportError, setDriveImportError] = useState<string | null>(null)
+
+  const setDriveSlideLink = (i: number, v: string) =>
+    setDriveSlideLinks((prev) => prev.map((l, idx) => (idx === i ? v : l)))
+  const addDriveSlideRow = () =>
+    setDriveSlideLinks((prev) => (prev.length >= 10 ? prev : [...prev, ""]))
+  const removeDriveSlideRow = (i: number) =>
+    setDriveSlideLinks((prev) => prev.filter((_, idx) => idx !== i))
+
+  const handleDriveImport = async () => {
+    const links = driveSlideLinks.map((l) => l.trim()).filter(Boolean)
+    if (links.length === 0) {
+      setDriveImportError("הדביקו לפחות קישור אחד לשקופית")
+      return
+    }
+    // Every link must be a Drive/Docs file — we PULL the bytes (Canva can't be
+    // downloaded; it belongs in the reference-link block below).
+    if (links.some((l) => !/drive\.google\.com|docs\.google\.com/i.test(l))) {
+      setDriveImportError("כל הקישורים צריכים להיות מגוגל דרייב (קאנבה לא נתמך כאן)")
+      return
+    }
+    setDriveImportError(null)
+    setDriveImporting(true)
+    const errMap: Record<string, string> = {
+      invalid_drive_link: "לא זוהה קובץ באחד הקישורים.",
+      drive_not_public:
+        'אחד הקבצים לא ציבורי — שנו הרשאה ל„כל מי שיש לו הקישור”.',
+      file_too_large: `אחת השקופיות גדולה מדי (מקסימום ${MAX_FILE_MB}MB).`,
+      not_an_image: "אחד הקישורים אינו תמונה — שקופית קרוסלה חייבת להיות תמונה.",
+    }
+    try {
+      const slides: string[] = []
+      for (let i = 0; i < links.length; i++) {
+        setDriveImportProgress(`טוען שקופית ${i + 1} מתוך ${links.length}...`)
+        const res = await fetch("/api/media/from-drive", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: links[i], store: false }),
+        })
+        const data = await res.json()
+        if (!res.ok || data.error || !data.base64) {
+          setDriveImportError(
+            `${errMap[data.error] ?? "טעינת אחת השקופיות נכשלה."} (שקופית ${i + 1})`,
+          )
+          return
+        }
+        slides.push(data.base64 as string)
+      }
+      // Make it the post's carousel (same base64 shape as generation → the
+      // parent's autosave persists it as media_assets rows).
+      onImagesChange(slides)
+      // A Drive import isn't a template — clear any template attribution so
+      // the saved-template tile logic doesn't mis-point at a stale template.
+      if (postId) setFormatMeta(postId, "carousel", { templateId: undefined })
+      // Surface what landed through the shared preview dialog (view-only:
+      // it's already the post's carousel, so no approve button shows).
+      setGeneratedByTemplate((p) => ({ ...p, [DRIVE_IMPORT_KEY]: slides }))
+      setDialogFor(DRIVE_IMPORT_KEY)
+      setPreviewIndex(0)
+      setDriveSlideLinks(["", ""])
+      toast.success(`הקרוסלה נטענה מהדרייב (${slides.length} שקופיות)`, {
+        duration: 5000,
+      })
+    } catch (err) {
+      console.error("[media-panel][carousel-drive-import]", err)
+      setDriveImportError("שגיאת רשת בטעינת השקופיות. נסו שוב.")
+    } finally {
+      setDriveImporting(false)
+      setDriveImportProgress("")
+    }
+  }
+
   const handleDownloadAll = async () => {
-    if (!images) return
+    if (!dialogSlides) return
     setDownloading(true)
 
     try {
       const res = await fetch("/api/carousel/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ images }),
+        body: JSON.stringify({ images: dialogSlides }),
       })
 
       const blob = await res.blob()
@@ -1166,173 +1429,269 @@ function CarouselFlow({
     }
   }
 
-  const handleStartOver = () => {
-    onImagesChange(null)
-    onSlidesChange(null)
-    setPreviewIndex(0)
-    setError(null)
-  }
-
-  // --- Images generated → show success ---
-  if (images && images.length > 0) {
-    return (
-      <div className="flex flex-col gap-5">
-        {/* Preview carousel */}
-        <div className="flex flex-col items-center gap-3">
-          <div className="relative w-full aspect-square rounded-xl overflow-hidden bg-gray-95">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={`data:image/png;base64,${images[previewIndex]}`}
-              alt={`סלייד ${previewIndex + 1}`}
-              className="w-full h-full object-contain"
-            />
-          </div>
-
-          {/* Navigation */}
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setPreviewIndex(Math.max(0, previewIndex - 1))}
-              disabled={previewIndex === 0}
-              className="p-1.5 rounded-lg hover:bg-bg-surface disabled:opacity-30 transition-colors"
-            >
-              <ChevronRight className="size-4 text-text-primary-default" />
-            </button>
-            <span className="text-small text-text-neutral-default">
-              {previewIndex + 1} / {images.length}
-            </span>
-            <button
-              onClick={() => setPreviewIndex(Math.min(images.length - 1, previewIndex + 1))}
-              disabled={previewIndex === images.length - 1}
-              className="p-1.5 rounded-lg hover:bg-bg-surface disabled:opacity-30 transition-colors"
-            >
-              <ChevronLeft className="size-4 text-text-primary-default" />
-            </button>
-          </div>
-        </div>
-
-        {/* Actions */}
-        <Button onClick={handleDownloadAll} disabled={downloading} className="w-full gap-2">
-          <Download className="size-4" />
-          {downloading ? "מוריד..." : "הורד הכל (ZIP)"}
-        </Button>
-
-        <Button variant="outline" onClick={handleStartOver} className="w-full">
-          צור מחדש
-        </Button>
-      </div>
-    )
-  }
-
-  // --- No images yet → script preview (top) + template (coming soon) + link input ---
-  // Per Hani 2026-05-13: PNG generation isn't ready yet, so the template
-  // grid is parked as a "coming soon" placeholder row and the active
-  // entry path is a carousel link (Drive / Canva). Same Input visual as
-  // the per-format DriveLinkBlock so the user reads the two surfaces as
-  // the same affordance.
+  // --- Unified layout: template thumbnails (always visible, switchable)
+  //     → large scrollable view of generated slides → generate/download
+  //     actions → link input. Mirrors the image_post media pattern.
+  //     No script preview here (Hani 2026-07-09) — the carousel text
+  //     still feeds generation via the `carouselText` prop, it's just
+  //     not displayed in the panel.
   return (
     <div className="flex flex-col gap-5">
-      {/* 1. Carousel script preview — moved to TOP so the user reads
-            "what the carousel says" before anything else, mirroring the
-            top-of-card script preview pattern used elsewhere. */}
-      {carouselText && (
-        <div className="rounded-lg border border-border-neutral-default bg-bg-surface p-3">
-          <p className="text-xs text-text-neutral-default mb-1">טקסט הקרוסלה</p>
-          <p className="text-xs text-text-primary-default leading-relaxed whitespace-pre-wrap line-clamp-6 [&::first-line]:font-medium">
-            {carouselText}
-          </p>
-        </div>
-      )}
-
-      {/* 2. Template selection — "coming soon" placeholders. Non-interactive
-            empty squares so the user sees that templates are a planned
-            feature without being able to pick one (the underlying PNG
-            generation isn't shippable yet). */}
+      {/* 1. Template picker — every tile always shows a real sample slide
+            (static PNG shipped with the app). Satori templates then swap
+            in a live render of the USER'S actual cover; AI tiles keep the
+            sample (real gpt-image-2 output is paid, generated only on
+            יצירת קרוסלה). */}
       <div className="flex flex-col gap-2">
-        <p className="text-small-bold text-text-primary-default">
-          בחירת טמפלט{" "}
-          <span className="text-text-neutral-default font-normal">(בקרוב)</span>
-        </p>
-        <div className="grid grid-cols-4 gap-2" aria-hidden="true">
-          {[0, 1, 2, 3].map((i) => (
-            <div
-              key={i}
-              className="aspect-square rounded-xl bg-bg-surface border border-border-neutral-default"
-            />
-          ))}
+        <p className="text-small-bold text-text-primary-default">בחרו טמפלט</p>
+        <div
+          role="radiogroup"
+          aria-label="בחירת טמפלט לקרוסלה"
+          className="grid grid-cols-3 gap-2"
+        >
+          {CAROUSEL_TEMPLATES.map((t) => {
+            const isSelected = selectedTemplate === t.id
+            // A set actually generated for THIS post beats the live cover
+            // render, which beats the static sample.
+            const generatedCover = generatedByTemplate[t.id]?.[0]
+            const livePreview = generatedCover ?? tilePreviews[t.id]
+            const tileAspect = t.size
+              ? `${t.size.width} / ${t.size.height}`
+              : "1 / 1"
+            return (
+              <button
+                key={t.id}
+                type="button"
+                role="radio"
+                aria-checked={isSelected}
+                onClick={() => {
+                  setSelectedTemplate(t.id)
+                  // A design that was already generated opens straight in
+                  // the preview dialog; otherwise just select it.
+                  if (generatedByTemplate[t.id]) openDialog(t.id)
+                }}
+                className={`flex flex-col gap-1 rounded-xl border p-1 pb-1.5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+                  isSelected
+                    ? "border-yellow-50 ring-1 ring-yellow-50"
+                    : "border-border-neutral-default hover:border-yellow-50"
+                }`}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={
+                    livePreview
+                      ? `data:image/png;base64,${livePreview}`
+                      : t.thumbnailUrl
+                  }
+                  alt={`שקופית לדוגמה בטמפלט ${t.name}`}
+                  className="w-full rounded-lg"
+                  style={{ aspectRatio: tileAspect, backgroundColor: t.preview.bg }}
+                />
+                <span className="w-full truncate text-center text-xs text-text-primary-default">
+                  {t.name}
+                </span>
+              </button>
+            )
+          })}
         </div>
+
       </div>
 
-      {/* 3. Carousel link input — Drive/Canva. Same Input visual as the
-            per-format DriveLinkBlock; persists to the per-format meta
-            slice (`carousel.driveUrl`), so the same value drives the
-            scheduler's "has a drive link" readiness check. */}
-      <CarouselLinkBlock postId={postId} />
+      {/* 2. Actions — previews live in the dialog, not in the panel. */}
+      {isAiTemplate && (
+        <p className="text-xs-body text-text-neutral-default">
+          טמפלט AI מצייר כל שקופית עם gpt-image-2 דרך מפתח ה-OpenAI שלכם —
+          זה לוקח כמה דקות.
+        </p>
+      )}
+
+      <Button
+        onClick={handleGenerate}
+        disabled={generating || !carouselText.trim()}
+        className="w-full gap-2"
+      >
+        {generating ? (
+          <>
+            <Loader2 className="size-4 animate-spin" />
+            {isAiTemplate ? "מציירים עם AI... כמה דקות" : "יוצרים קרוסלה..."}
+          </>
+        ) : generatedByTemplate[selectedTemplate] ? (
+          "יצירה מחדש"
+        ) : (
+          "יצירת קרוסלה"
+        )}
+      </Button>
+
+      {/* Preview dialog — scroll through the slides, then approve to make
+          this the post's carousel (mirrors the image_post lightbox). */}
+      <Dialog
+        open={!!dialogFor}
+        onOpenChange={(open) => {
+          if (!open) setDialogFor(null)
+        }}
+      >
+        <DialogContent dir="rtl" className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>
+              {dialogSlides === images && images
+                ? "הקרוסלה שלכם"
+                : `תצוגה מקדימה — ${
+                    CAROUSEL_TEMPLATES.find((t) => t.id === dialogFor)?.name ?? ""
+                  }`}
+            </DialogTitle>
+          </DialogHeader>
+
+          {dialogSlides && dialogSlides.length > 0 && (
+            <div className="flex flex-col items-center gap-3">
+              <div className="relative w-full overflow-hidden rounded-xl border border-border-neutral-default bg-bg-surface">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`data:image/png;base64,${dialogSlides[previewIndex]}`}
+                  alt={`סלייד ${previewIndex + 1}`}
+                  className="w-full h-auto"
+                />
+              </div>
+
+              {dialogSlides.length > 1 && (
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setPreviewIndex(Math.max(0, previewIndex - 1))}
+                    disabled={previewIndex === 0}
+                    aria-label="השקופית הקודמת"
+                    className="p-1.5 rounded-lg hover:bg-bg-surface disabled:opacity-30 transition-colors"
+                  >
+                    <ChevronRight className="size-4 text-text-primary-default" />
+                  </button>
+                  <span className="text-small text-text-neutral-default">
+                    {previewIndex + 1} / {dialogSlides.length}
+                  </span>
+                  <button
+                    onClick={() =>
+                      setPreviewIndex(
+                        Math.min(dialogSlides.length - 1, previewIndex + 1),
+                      )
+                    }
+                    disabled={previewIndex === dialogSlides.length - 1}
+                    aria-label="השקופית הבאה"
+                    className="p-1.5 rounded-lg hover:bg-bg-surface disabled:opacity-30 transition-colors"
+                  >
+                    <ChevronLeft className="size-4 text-text-primary-default" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="flex-col gap-2 sm:flex-col">
+            {dialogCanApprove && (
+              <Button onClick={handleApprove} className="w-full gap-2">
+                <CircleCheck className="size-4" />
+                בחירת הקרוסלה לפוסט
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              onClick={handleDownloadAll}
+              disabled={downloading}
+              className="w-full gap-2"
+            >
+              <Download className="size-4" />
+              {downloading ? "מורידים..." : "הורדת הכל (ZIP)"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Divider between "generate here" and "bring a ready-made carousel" */}
+      <div className="flex items-center gap-3" role="separator">
+        <span className="h-px flex-1 bg-border-neutral-default" />
+        <span className="text-xs text-text-neutral-default">או</span>
+        <span className="h-px flex-1 bg-border-neutral-default" />
+      </div>
+
+      {/* 3. Import from Drive — one direct link per slide, in order. We pull
+            each image (base64) and assemble the carousel. This matches how
+            creators actually hand off a carousel (individual per-slide
+            images), so a single Canva/folder link is intentionally NOT the
+            mechanism here. */}
+      <div className="flex flex-col gap-2">
+        <p className="text-small-bold text-text-primary-default">
+          ייבוא שקופיות מגוגל דרייב
+        </p>
+        <p className="text-xs-body text-text-neutral-default">
+          הדביקו קישור ישיר לכל שקופית (עד 10), לפי הסדר. נמשוך את התמונות ונרכיב
+          מהן קרוסלה. כל קובץ צריך הרשאת „כל מי שיש לו הקישור”.
+        </p>
+        <div className="flex flex-col gap-2">
+          {driveSlideLinks.map((link, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="w-5 shrink-0 text-center text-xs text-text-neutral-default">
+                {i + 1}
+              </span>
+              <Input
+                dir="ltr"
+                inputSize="small"
+                type="url"
+                value={link}
+                onChange={(e) => {
+                  setDriveSlideLink(i, e.target.value)
+                  if (driveImportError) setDriveImportError(null)
+                }}
+                placeholder="https://drive.google.com/file/d/..."
+                disabled={driveImporting}
+                className="flex-1 text-xs"
+                aria-label={`קישור לשקופית ${i + 1}`}
+              />
+              {driveSlideLinks.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => removeDriveSlideRow(i)}
+                  disabled={driveImporting}
+                  aria-label={`הסירו את שקופית ${i + 1}`}
+                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-text-neutral-default transition-colors hover:bg-bg-surface hover:text-button-destructive-default disabled:opacity-40"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+        {driveSlideLinks.length < 10 && (
+          <button
+            type="button"
+            onClick={addDriveSlideRow}
+            disabled={driveImporting}
+            className="inline-flex items-center gap-1 self-start text-xs text-text-neutral-default transition-colors hover:text-text-primary-default disabled:opacity-40"
+          >
+            <Plus className="size-3.5" />
+            הוסיפו שקופית
+          </button>
+        )}
+        <Button
+          onClick={handleDriveImport}
+          disabled={driveImporting || driveSlideLinks.every((l) => !l.trim())}
+          variant="outline"
+          className="w-full gap-2"
+        >
+          {driveImporting ? (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              {driveImportProgress || "טוען..."}
+            </>
+          ) : (
+            "טענו קרוסלה מהדרייב"
+          )}
+        </Button>
+        {driveImportError && (
+          <p className="text-xs text-button-destructive-default">
+            {driveImportError}
+          </p>
+        )}
+      </div>
 
       {error && (
         <p className="text-sm text-button-destructive-default text-center">{error}</p>
       )}
-    </div>
-  )
-}
-
-/**
- * Carousel link block — saves to `byFormat.carousel.driveUrl` via the
- * per-format meta slice, identical to DriveLinkBlock's behavior so the
- * same value drives readiness on /core_posts + the calendar. Auto-saves
- * on blur and Enter (paste + tab-away should "just work"). The label +
- * subtitle pair mirrors Hani's mockup; the Input itself uses the
- * design-system component at `inputSize="small"`.
- */
-function CarouselLinkBlock({ postId }: { postId: string | null }) {
-  const inputId = "carousel-link"
-  // Read once from localStorage at mount — CarouselFlow only mounts when
-  // the carousel media panel actually opens, and a single open session is
-  // for a single post, so we don't need to re-sync on postId changes.
-  // Reading inside the useState initializer keeps this off the render
-  // path on subsequent renders and avoids the "setState in effect"
-  // lint rule.
-  const [local, setLocal] = useState<string>(() => {
-    if (typeof window === "undefined" || !postId) return ""
-    return getFormatMeta(postId, "carousel").driveUrl ?? ""
-  })
-
-  const commit = () => {
-    if (!postId) return
-    const trimmed = local.trim()
-    setFormatMeta(postId, "carousel", {
-      driveUrl: trimmed || undefined,
-    })
-  }
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label
-        htmlFor={inputId}
-        className="text-small-bold text-text-primary-default font-bold"
-      >
-        לינק לקרוסלה
-      </Label>
-      <p className="text-xs-body text-text-neutral-default">
-        אפשר לשים לינק לדרייב או לקאנבה
-      </p>
-      <Input
-        id={inputId}
-        dir="rtl"
-        inputSize="small"
-        type="url"
-        value={local}
-        onChange={(e) => setLocal(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.currentTarget.blur()
-          }
-        }}
-        placeholder="https://drive.google.com/... או https://canva.com/..."
-        className="text-right mt-1"
-        disabled={!postId}
-        aria-label="לינק לקרוסלה"
-      />
     </div>
   )
 }
@@ -1415,16 +1774,30 @@ function MediaUploadFlow({
   format,
   postId,
   hookText: _hookText,
+  onImagePostUrlChange,
+  onStoryImagesChange,
+  onStoryVideoUrlChange,
 }: {
   format: string
   postId: string | null
   hookText?: string
+  onImagePostUrlChange?: (url: string | null) => void
+  onStoryImagesChange?: (images: string[] | null) => void
+  onStoryVideoUrlChange?: (url: string | null) => void
 }) {
-  const fileInputRef = useRef<HTMLInputElement>(null)
   // Local mirror of the saved drive URL — committed to storage on
   // blur/Enter (same pattern as DriveLinkBlock in core-post-sheet.tsx).
   const [driveUrl, setDriveUrl] = useState<string>("")
   const [driveDirty, setDriveDirty] = useState(false)
+  // Drive PULL state — when the pasted link is a Google Drive file (not a
+  // Canva/other link), we don't just park the string for readiness: we pull
+  // the actual file server-side, store it, and show it as the format's media
+  // — exactly like the talking_head flow. Canva/other links keep the old
+  // "save as a reference link" behaviour (they can't be downloaded).
+  const [drivePulling, setDrivePulling] = useState(false)
+  const [driveError, setDriveError] = useState<string | null>(null)
+  const driveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastDriveRef = useRef<string>("")
 
   // Uploaded asset preview (data URL while uploading; persistent URL after).
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -1439,6 +1812,69 @@ function MediaUploadFlow({
   // <img> behind a skeleton until the bytes have actually decoded, so
   // there's no flash of empty box between "src set" and "image painted".
   const [imageLoading, setImageLoading] = useState(false)
+
+  // AI generation (image_post only). State lives in a module store keyed
+  // by postId — NOT in this component — so generations survive the panel
+  // closing (which unmounts this), run in parallel, and their results wait
+  // in the store until the panel is reopened. `results` are the generated
+  // candidates; `inFlight` is how many are running right now.
+  const genKey = postId ?? ""
+  const genSubscribe = useCallback(
+    (cb: () => void) => subscribeGeneration(genKey, cb),
+    [genKey],
+  )
+  const genSnapshot = useCallback(() => getGenerationSnapshot(genKey), [genKey])
+  const genState = useSyncExternalStore(genSubscribe, genSnapshot, genSnapshot)
+  const aiPreviews = genState.results
+  const inFlight = genState.inFlight
+  // `lightboxSrc` is the thumbnail currently opened big in the dialog.
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
+  // Confirm-before-delete for the currently-saved media thumbnail.
+  const [pendingDelete, setPendingDelete] = useState(false)
+
+  // AI story generation (story only). Same module-store pattern as
+  // image_post, but each generation is a SET of 1-3 frames (`sets`), and the
+  // saved set is a separate list of storage URLs (`savedStorySet`) hydrated
+  // from the post's `storyImageUrls`.
+  const storyGenSubscribe = useCallback(
+    (cb: () => void) => subscribeStoryGeneration(genKey, cb),
+    [genKey],
+  )
+  const storyGenSnapshot = useCallback(
+    () => getStoryGenerationSnapshot(genKey),
+    [genKey],
+  )
+  const storyGenState = useSyncExternalStore(
+    storyGenSubscribe,
+    storyGenSnapshot,
+    storyGenSnapshot,
+  )
+  const storySets = storyGenState.sets
+  const storyInFlight = storyGenState.inFlight
+  // The story set currently saved to the post (storage URLs, or a base64 set
+  // optimistically after save until the next reload rehydrates URLs).
+  const [savedStorySet, setSavedStorySet] = useState<string[]>([])
+  // Story lightbox: which set is open and which frame within it.
+  const [storyLightbox, setStoryLightbox] = useState<{
+    set: string[]
+    index: number
+  } | null>(null)
+  const [savingStory, setSavingStory] = useState(false)
+  const [pendingStoryDelete, setPendingStoryDelete] = useState(false)
+  // Story media is either an IMAGE or a VIDEO — the user picks (toggle).
+  //   • image → design one with AI, or paste an image link
+  //   • video → the user's OWN video, with the hook baked in
+  const [storyMode, setStoryMode] = useState<"image" | "video">("image")
+  // True while the burn-the-caption-into-the-video render is running.
+  const [burningText, setBurningText] = useState(false)
+  // A story video whose caption is already baked in — the burn route stores
+  // it under a "burned-" filename, so we can tell a finished clip from a raw
+  // source across reloads and avoid double-stacking the text.
+  const videoTextBurned =
+    format === "story" &&
+    previewKind === "video" &&
+    !!previewUrl &&
+    /\/video\/burned-[^/]+\.mp4/.test(previewUrl)
 
   // Hydrate the drive URL from storage when the panel opens for this
   // (post, format) pair. We use `getFormatMeta` so the post-level legacy
@@ -1459,6 +1895,21 @@ function MediaUploadFlow({
     setPreviewKind(null)
     setHydrating(true)
     setImageLoading(false)
+    // aiPreviews are NOT reset here — they live in the per-postId store and
+    // intentionally persist across panel open/close so in-flight and
+    // finished generations wait for the user. Merge any versions kept from
+    // a previous session (persisted to localStorage) so nothing is lost on
+    // a page reload.
+    if (format === "image_post") hydrateCandidates(postId)
+    setLightboxSrc(null)
+    // Story: reset the saved set + lightbox; the actual saved set is
+    // hydrated from storyImageUrls in the media-hydration effect below. The
+    // in-memory generated `sets` intentionally persist across open/close.
+    setSavedStorySet([])
+    setStoryLightbox(null)
+    // Default to the image mode; the media-hydration effect flips this to
+    // "video" if the post already has a bring-your-own story video.
+    setStoryMode("image")
   }, [postId, format])
 
   // Hydrate the upload preview from media_assets when the panel opens.
@@ -1479,6 +1930,12 @@ function MediaUploadFlow({
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (cancelled || !data?.post) return
+        // Story: hydrate the saved AI frame SET (1-3 image rows). Its frames
+        // render in the story section, not as the single manual preview.
+        if (format === "story") {
+          const urls = data.post.storyImageUrls as string[] | undefined
+          if (Array.isArray(urls) && urls.length > 0) setSavedStorySet(urls)
+        }
         const map = data.post.formatMedia as
           | Record<string, string>
           | undefined
@@ -1487,8 +1944,23 @@ function MediaUploadFlow({
         const looksLikeVideo = /\.(mp4|webm|mov|m3u8)(\?|#|$)/i.test(
           existingUrl,
         )
+        // Story images belong to the AI frame set (above) — the manual
+        // single-preview is reserved for a bring-your-own VIDEO. Skip
+        // setting an image preview for story so a saved set's frame-1
+        // doesn't also masquerade as the lone "current media".
+        if (format === "story" && !looksLikeVideo) return
         setPreviewUrl(existingUrl)
         setPreviewKind(looksLikeVideo ? "video" : "image")
+        // A saved story video means the user chose the video path — open the
+        // panel on that mode so they land on their clip, not the AI option.
+        if (format === "story" && looksLikeVideo) {
+          setStoryMode("video")
+          // A burned clip is a finished story — surface it as the workflow
+          // card too (a raw, not-yet-captioned clip stays panel-only).
+          if (/\/video\/burned-[^/]+\.mp4/.test(existingUrl)) {
+            onStoryVideoUrlChange?.(existingUrl)
+          }
+        }
         // For images, keep the skeleton on until the <img> actually
         // decodes (the URL being set doesn't mean the bytes are painted
         // yet). For videos, the <video> element shows its own poster +
@@ -1677,6 +2149,12 @@ function MediaUploadFlow({
       URL.revokeObjectURL(localBlobUrl)
       setPreviewUrl(publicUrl)
       setUploading(false)
+      // Lift the persisted image URL so the parent can render it as a
+      // workflow card next to the script. image_post only — stories and
+      // other formats have no result card in the tree.
+      if (format === "image_post" && !isVideo) {
+        onImagePostUrlChange?.(publicUrl)
+      }
       toast.success("מדיה נשמרה", { id: uploadToast, duration: 3000 })
     } catch (err) {
       console.error("[media-upload-flow] unexpected error:", err)
@@ -1691,30 +2169,384 @@ function MediaUploadFlow({
     }
   }
 
-  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) handleUpload(file)
-    // Reset so picking the same file again still triggers a change event.
-    e.target.value = ""
+  /**
+   * Fire an AI image generation for this post. Delegates to the module
+   * store, which runs the fetch detached — so it keeps going (and its
+   * result is retained) even if the panel closes, and repeated calls run
+   * in parallel. The server reads the image_post text straight from the DB
+   * (server-authoritative), so no payload is needed beyond postId.
+   */
+  const handleAiGenerate = () => {
+    if (!postId) {
+      toast.error("שמרו קודם את הפוסט כדי לייצר תמונה", { duration: 4000 })
+      return
+    }
+    startImageGeneration(postId)
   }
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    const file = e.dataTransfer.files[0]
-    if (!file) return
-    handleUpload(file)
+  /** Fire an AI story generation (produces a 1-3 frame set). */
+  const handleStoryGenerate = () => {
+    if (!postId) {
+      toast.error("שמרו קודם את הפוסט כדי לייצר סטורי", { duration: 4000 })
+      return
+    }
+    startStoryGeneration(postId)
   }
+
+  /**
+   * Burn the post's hook into the user's story video (server renders the
+   * caption + composites it in, cover-cropped to 9:16), then swap the preview
+   * to the finished clip. The route persists the result in the same video
+   * slot, so nothing else needs to save.
+   */
+  const handleBurnText = async () => {
+    if (!postId) {
+      toast.error("שמרו קודם את הפוסט", { duration: 4000 })
+      return
+    }
+    setBurningText(true)
+    const toastId = "story-burn"
+    toast.loading("מטמיעים את הכיתוב בסרטון...", {
+      id: toastId,
+      duration: Infinity,
+    })
+    try {
+      const res = await fetch("/api/story/generate-video-media", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId }),
+      })
+      const data = (await res.json().catch(() => ({}))) as {
+        url?: string
+        error?: string
+        message?: string
+      }
+      if (!res.ok || !data.url) {
+        toast.error(data.message ?? data.error ?? "הטמעת הכיתוב נכשלה", {
+          id: toastId,
+          duration: 10000,
+        })
+        return
+      }
+      setPreviewUrl(data.url)
+      setPreviewKind("video")
+      // Lift the finished clip so it renders as the story workflow card.
+      onStoryVideoUrlChange?.(data.url)
+      toast.success("הכיתוב הוטמע בסרטון", { id: toastId, duration: 4000 })
+    } catch (err) {
+      toast.error(
+        `הטמעת הכיתוב נכשלה: ${err instanceof Error ? err.message : String(err)}`,
+        { id: toastId, duration: 10000 },
+      )
+    } finally {
+      setBurningText(false)
+    }
+  }
+
+  /**
+   * Persist a generated story SET as the post's story media — the
+   * carousel-style multi-image path (PATCH { storyImages }), which wipes the
+   * existing story frames and inserts the new set as ordered image rows.
+   * Generated frames are base64 (what the PATCH route expects); a set that's
+   * already the saved URLs is a no-op.
+   */
+  const handleStorySave = async (set: string[]) => {
+    if (!postId || set.length === 0) return
+    // Already-saved URLs → nothing to persist.
+    if (set.every((f) => f.startsWith("http"))) {
+      setStoryLightbox(null)
+      return
+    }
+    setSavingStory(true)
+    try {
+      const res = await fetch(`/api/core-posts/${postId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storyImages: set }),
+      })
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string }
+        toast.error(`שמירת הסטורי נכשלה: ${err.error ?? "שגיאה"}`, {
+          duration: 8000,
+        })
+        return
+      }
+      // Optimistic: show this set as the saved one (base64) until the next
+      // open rehydrates it as storage URLs. Drop it from the candidate row.
+      setSavedStorySet(set)
+      removeStoryGenerationSet(postId, set)
+      setStoryLightbox(null)
+      // Lift the set up so the "הסטורי שלכם" workflow card renders next to
+      // the script immediately (no reload needed).
+      onStoryImagesChange?.(set)
+      toast.success("הסטורי נשמר", { duration: 3000 })
+    } catch (e) {
+      toast.error(
+        `שגיאה בשמירת הסטורי: ${e instanceof Error ? e.message : String(e)}`,
+        { duration: 8000 },
+      )
+    } finally {
+      setSavingStory(false)
+    }
+  }
+
+  /** Clear the saved story set (PATCH { storyImages: null }). */
+  const handleStoryDelete = async () => {
+    if (!postId) return
+    try {
+      const res = await fetch(`/api/core-posts/${postId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storyImages: null }),
+      })
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string }
+        toast.error(`מחיקת הסטורי נכשלה: ${err.error ?? "שגיאה"}`, {
+          duration: 8000,
+        })
+        return
+      }
+      setSavedStorySet([])
+      onStoryImagesChange?.(null)
+      toast.success("הסטורי נמחק", { duration: 3000 })
+    } catch (err) {
+      toast.error(
+        `מחיקת הסטורי נכשלה: ${err instanceof Error ? err.message : String(err)}`,
+        { duration: 8000 },
+      )
+    }
+  }
+
+  /** Render a story frame that may be a storage URL or raw base64. */
+  const storyFrameSrc = (f: string) =>
+    f.startsWith("http") ? f : `data:image/png;base64,${f}`
+
+  /**
+   * Persist the generated PNG through the SAME path as a manual upload
+   * (Storage + /api/core-posts/{id}/media) — one persistence route for
+   * all image_post media, whatever its origin.
+   *
+   * Picking a new image must NOT lose the old one: we capture the current
+   * selected image first and re-add it to the kept versions, so every AI
+   * generation stays available in the row and can be re-picked later.
+   */
+  const handleAiSave = async (src: string) => {
+    if (!postId) return
+    setLightboxSrc(null)
+    const previousSelected = previewUrl
+
+    // Storage-backed candidate → record it as the post's media WITHOUT
+    // re-uploading (one canonical file, no duplicate). base64 fallbacks
+    // (upload had failed) still go through the normal upload path.
+    if (src.startsWith("http")) {
+      try {
+        const res = await fetch(`/api/core-posts/${postId}/media`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ format, url: src, assetType: "image" }),
+        })
+        if (!res.ok) {
+          const err = (await res.json().catch(() => ({}))) as { error?: string }
+          toast.error(`לא הצלחנו לשמור את המדיה: ${err.error ?? "שגיאה"}`, {
+            duration: 8000,
+          })
+          return
+        }
+        setPreviewUrl(src)
+        setPreviewKind("image")
+        onImagePostUrlChange?.(src)
+        toast.success("מדיה נשמרה", { duration: 3000 })
+      } catch (e) {
+        toast.error(
+          `שגיאה בשמירה: ${e instanceof Error ? e.message : String(e)}`,
+          { duration: 8000 },
+        )
+        return
+      }
+    } else {
+      const blob = await fetch(src).then((r) => r.blob())
+      const file = new File([blob], "ai-image-post.png", { type: "image/png" })
+      await handleUpload(file)
+    }
+
+    // Keep the previously-selected image in the row so picking never loses
+    // a past version.
+    if (previousSelected && previousSelected !== src) {
+      addGenerationResult(postId, previousSelected)
+    }
+  }
+
+  /**
+   * Delete the currently-saved media for this (post, format). Clears the
+   * media_assets row via the DELETE endpoint, then drops the local preview
+   * and — for image_post — lifts the removal up so the workflow card
+   * ("התמונה שלכם") disappears too. Called from the confirm modal.
+   */
+  const handleDeleteMedia = async () => {
+    if (!postId) return
+    const assetType = previewKind === "video" ? "video" : "image"
+    try {
+      const res = await fetch(
+        `/api/core-posts/${postId}/media?format=${encodeURIComponent(format)}&assetType=${assetType}`,
+        { method: "DELETE" },
+      )
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { error?: string }
+        toast.error(`מחיקת המדיה נכשלה: ${err.error ?? "שגיאה לא ידועה"}`, {
+          duration: 8000,
+        })
+        return
+      }
+      // Fully remove this version — deselect AND drop it from the kept
+      // list so "delete" means gone (whereas "pick" keeps old versions).
+      const deletedUrl = previewUrl
+      setPreviewUrl(null)
+      setPreviewKind(null)
+      if (format === "image_post") {
+        onImagePostUrlChange?.(null)
+        if (deletedUrl) removeGenerationResult(postId, deletedUrl)
+      }
+      // Deleting the story video removes its workflow card too.
+      if (format === "story" && assetType === "video") {
+        onStoryVideoUrlChange?.(null)
+      }
+      toast.success("המדיה נמחקה", { duration: 3000 })
+    } catch (err) {
+      toast.error(
+        `מחיקת המדיה נכשלה: ${err instanceof Error ? err.message : String(err)}`,
+        { duration: 8000 },
+      )
+    }
+  }
+
+  /** True for a Google Drive / Docs share link (what from-drive can pull). */
+  const isDriveLink = (link: string) =>
+    /drive\.google\.com|docs\.google\.com/i.test(link)
 
   const commitDriveUrl = () => {
     if (!postId) return
     if (!driveDirty) return
+    // Drive links are PULLED into real media (see pullDriveMedia), not parked
+    // as a reference string — so don't persist them to the readiness meta.
+    // Only Canva / other links stay as a reference the user opens manually.
+    if (isDriveLink(driveUrl.trim())) return
     setFormatMeta(postId, format as FormatId, {
       driveUrl: driveUrl.trim() || undefined,
     })
     setDriveDirty(false)
     if (driveUrl.trim().length > 0) {
-      toast.success("קישור הדרייב נשמר", { duration: 3000 })
+      toast.success("קישור המדיה נשמר", { duration: 3000 })
     }
+  }
+
+  /**
+   * Pull the actual media that lives behind a Google Drive link and make it
+   * the format's media — the same idea as the talking_head Drive flow, but
+   * routed through the generic per-format persistence:
+   *
+   *   1. `/api/media/from-drive` downloads the file (video OR image),
+   *      stores it in the user-media bucket, and returns a public URL + kind.
+   *   2. We persist that URL via `/api/core-posts/{id}/media` (one asset per
+   *      (format, type) slot) — identical to a manual upload, so it hydrates
+   *      and deletes through the exact same paths.
+   *   3. The panel shows it immediately: image_post → the selected image,
+   *      story image → a 1-frame story set, story/any video → the video slot.
+   *
+   * Canva / non-Drive links never reach here — they can't be downloaded, so
+   * they stay as a reference link the user opens manually (commitDriveUrl).
+   */
+  const pullDriveMedia = async (rawLink: string) => {
+    const link = rawLink.trim()
+    if (!postId || !link) return
+    if (!isDriveLink(link)) return
+    setDriveError(null)
+    setDrivePulling(true)
+    try {
+      const res = await fetch("/api/media/from-drive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: link }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.error) {
+        const map: Record<string, string> = {
+          invalid_drive_link:
+            "לא זוהה קובץ בקישור. ודאו שזה קישור ישיר לקובץ בדרייב.",
+          drive_not_public:
+            'הקובץ לא ציבורי. שנו את ההרשאה ל„כל מי שיש לו הקישור” ונסו שוב.',
+          file_too_large: `הקובץ גדול מדי (מקסימום ${MAX_FILE_MB}MB).`,
+        }
+        setDriveError(map[data.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.")
+        return
+      }
+
+      const mediaUrl: string = data.url
+      const kind: "image" | "video" = data.kind === "video" ? "video" : "image"
+
+      // image_post accepts images only — reject a Drive video with a clear
+      // message instead of silently storing something the format can't use.
+      if (format === "image_post" && kind === "video") {
+        setDriveError("פוסט תמונה תומך רק בתמונות")
+        return
+      }
+
+      const persistRes = await fetch(`/api/core-posts/${postId}/media`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ format, url: mediaUrl, assetType: kind }),
+      })
+      if (!persistRes.ok) {
+        const err = (await persistRes.json().catch(() => ({}))) as {
+          error?: string
+        }
+        setDriveError(`לא הצלחנו לשמור את המדיה: ${err.error ?? "שגיאה"}`)
+        return
+      }
+
+      // Surface it in the panel right away. A story IMAGE belongs to the
+      // frame-set row (like a saved AI set), so it lands in savedStorySet;
+      // everything else is the single current-media slot.
+      if (format === "story" && kind === "image") {
+        setSavedStorySet([mediaUrl])
+        onStoryImagesChange?.([mediaUrl])
+      } else {
+        setPreviewUrl(mediaUrl)
+        setPreviewKind(kind)
+        if (kind === "image") setImageLoading(true)
+        if (format === "image_post") onImagePostUrlChange?.(mediaUrl)
+      }
+
+      // The media is now real — drop the reference link + its readiness meta
+      // so the input doesn't also masquerade as a parked link.
+      setDriveUrl("")
+      setDriveDirty(false)
+      lastDriveRef.current = link
+      setFormatMeta(postId, format as FormatId, { driveUrl: undefined })
+      toast.success("המדיה נטענה מהדרייב", { duration: 3000 })
+    } catch (err) {
+      console.error("[media-upload-flow][drive-pull]", err)
+      setDriveError("שגיאת רשת בטעינת המדיה. נסו שוב.")
+    } finally {
+      setDrivePulling(false)
+    }
+  }
+
+  /**
+   * Debounced auto-pull: fires as soon as the field holds a full Drive link
+   * with an extractable file id (mirrors the talking_head panel), so the user
+   * never taps a button. Non-Drive links are ignored here and handled by
+   * commitDriveUrl on blur.
+   */
+  const scheduleDrivePull = (value: string) => {
+    if (driveDebounceRef.current) clearTimeout(driveDebounceRef.current)
+    const link = value.trim()
+    const looksComplete =
+      isDriveLink(link) && /\/d\/[\w-]+|[?&]id=[\w-]+/.test(link)
+    if (!looksComplete || link === lastDriveRef.current) return
+    driveDebounceRef.current = setTimeout(() => {
+      lastDriveRef.current = link
+      pullDriveMedia(link)
+    }, 500)
   }
 
   // The "saved post required" warning lives at the top of the panel —
@@ -1738,151 +2570,709 @@ function MediaUploadFlow({
         </Alert>
       )}
 
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept={accepted.accept}
-        onChange={handleFileInput}
-        className="hidden"
-        aria-hidden
-      />
+      {/* IMAGE POST — two clear options: (1) generate with AI, (2) bring
+          your own media. The AI section is a camera banner when empty, or
+          a thumbnail row (current saved image + generated candidates) once
+          there are pictures. The manual path is a single row — paste a
+          link OR upload — with no "או" divider. */}
+      {format === "image_post" && (
+        <>
+          {/* CTA. Gated by `hydrating` ONLY so the empty banner doesn't
+              flash before we know whether saved media exists. Everything
+              below (bring-your-own + the photos row/skeletons) is NOT
+              gated — the photos come from the generation store and must
+              appear the instant the panel opens, whether a background
+              generation already finished or is still running. */}
+          {hydrating ? (
+            <Skeleton className="h-11 w-full rounded-xl" />
+          ) : aiPreviews.length === 0 && !previewUrl && inFlight === 0 ? (
+                <button
+                  type="button"
+                  onClick={handleAiGenerate}
+                  disabled={!postId}
+                  className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 p-6 hover:bg-bg-surface transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+                  aria-label="יצירת תמונה בלחיצה"
+                >
+                  {/* Camera illustration — split into two assets so the tile
+                      reads as centered while the sparkle cluster hangs off
+                      to its upper-left. */}
+                  <div className="relative size-10 shrink-0">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src="/images/ai-camera.png"
+                      alt=""
+                      className="size-full object-contain"
+                    />
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src="/images/ai-camera-sparkle.png"
+                      alt=""
+                      className="pointer-events-none absolute -left-3.5 -top-1 w-5"
+                    />
+                  </div>
+                  <span className="text-small font-semibold text-text-primary-default">
+                    יצירת תמונה בלחיצה
+                  </span>
+                  <span className="text-xs text-text-neutral-default text-center leading-relaxed max-w-[286px]">
+                    ניצור תמונה מעוצבת לפי תוכן הפוסט, עם הטקסט של הפורמט
+                    (כותרת, תת-כותרת וטקסט תחתון) משולב בעיצוב.
+                  </span>
+                </button>
+              ) : (
+                // Stays enabled while generations run so more can be queued
+                // in parallel; progress shows as skeletons in the row below.
+                <Button
+                  onClick={handleAiGenerate}
+                  disabled={!postId}
+                  className="w-full gap-1.5"
+                >
+                  <ImagePlus className="size-4" />
+                  יצירת תמונה עם AI
+                  {inFlight > 0 && (
+                    <span className="inline-flex items-center gap-1 text-xs opacity-80">
+                      <Loader2 className="size-3.5 animate-spin" />
+                      {inFlight}
+                    </span>
+                  )}
+                </Button>
+              )}
 
-      {hydrating ? (
-        // Skeleton phase — we haven't checked yet whether this (post,
-        // format) has saved media. Showing the empty upload CTA here
-        // would briefly read as "nothing got saved" before the URL
-        // arrives and the image renders. Skeleton bridges that gap.
-        <Skeleton className="aspect-square w-full rounded-xl" />
-      ) : previewUrl ? (
-        <div className="flex flex-col gap-3">
-          <div className="relative aspect-square rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
-            {previewKind === "video" ? (
-              <video
-                src={
-                  previewUrl.startsWith("blob:")
-                    ? previewUrl
-                    : `${previewUrl}#t=0.001`
-                }
-                controls
-                playsInline
-                muted
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <>
-                {imageLoading && (
-                  // Overlay skeleton — covers the <img> until the bytes
-                  // decode. We keep the <img> mounted underneath so the
-                  // browser actually starts the request; the onLoad
-                  // handler tears the skeleton down.
-                  <Skeleton
-                    className="absolute inset-0 rounded-xl"
-                    aria-hidden
+              {/* Bring your own — paste a Drive/Canva link. Drive links are
+                  pulled + shown automatically; Canva/other stay as a
+                  reference link. Upload-from-computer was removed per Hani. */}
+              <div className="flex flex-col gap-2">
+                <p className="text-small-bold text-text-primary-default">
+                  מדיה משלכם
+                </p>
+                <div className="relative">
+                  <Input
+                    dir="rtl"
+                    inputSize="small"
+                    type="url"
+                    value={driveUrl}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setDriveUrl(v)
+                      setDriveDirty(true)
+                      if (driveError) setDriveError(null)
+                      scheduleDrivePull(v) // Drive link → auto-pull the file
+                    }}
+                    onBlur={commitDriveUrl}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur()
+                    }}
+                    placeholder="הדביקו קישור מגוגל דרייב או קנבה"
+                    className="pe-9 text-right"
+                    disabled={!postId || drivePulling}
+                    aria-label="קישור למדיה"
                   />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const u = driveUrl.trim()
+                      if (u) window.open(u, "_blank", "noopener,noreferrer")
+                    }}
+                    disabled={!driveUrl.trim()}
+                    aria-label="פתחו את הקישור בכרטיסייה חדשה"
+                    className="absolute end-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center size-7 rounded-md text-text-neutral-default hover:text-text-primary-default hover:bg-bg-surface disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    <Link2 className="size-3.5" />
+                  </button>
+                </div>
+                {(drivePulling || driveError) && (
+                  <p
+                    className={`flex items-center gap-1.5 text-xs ${
+                      driveError
+                        ? "text-button-destructive-default"
+                        : "text-text-neutral-default"
+                    }`}
+                  >
+                    {drivePulling && (
+                      <Loader2 className="size-3.5 animate-spin text-yellow-50" />
+                    )}
+                    {driveError ?? "טוען מהדרייב..."}
+                  </p>
                 )}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={previewUrl}
-                  alt="המדיה שהועלתה"
-                  onLoad={() => setImageLoading(false)}
-                  onError={() => setImageLoading(false)}
-                  className={`w-full h-full object-cover transition-opacity duration-200 ${
-                    imageLoading ? "opacity-0" : "opacity-100"
-                  }`}
-                />
-              </>
-            )}
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading || !postId}
-            className="gap-1.5"
-          >
-            <Upload className="size-3.5" />
-            החליפו מדיה
-          </Button>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={handleDrop}
-          disabled={uploading || !postId}
-          className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-border-neutral-default p-8 hover:border-yellow-50 hover:bg-bg-surface-primary-default transition-all disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-          aria-label="העלאת מדיה"
-        >
-          {uploading ? (
-            <Loader2 className="size-8 text-text-neutral-default animate-spin" />
-          ) : (
-            <ImagePlus className="size-8 text-text-neutral-default" />
-          )}
-          <span className="text-small font-semibold text-text-primary-default">
-            {uploading ? "מעלים..." : "גררו מדיה לכאן או לחצו לבחירה"}
-          </span>
-          <span className="text-xs text-text-neutral-default">
-            {accepted.helperText}
-          </span>
-        </button>
+              </div>
+
+              {/* Your photos — at the BOTTOM. The saved/current image is
+                  highlighted (yellow ring + border + check badge) so it's
+                  obvious which one is attached to the post; generated
+                  candidates are tappable to view big and pick. */}
+              {(aiPreviews.length > 0 || previewUrl || inFlight > 0) && (
+                <div className="flex flex-col gap-2">
+                  <p className="text-small-bold text-text-primary-default">
+                    התמונות שלכם
+                  </p>
+                  <div className="flex gap-2 overflow-x-auto px-1 py-2">
+                    {previewUrl && (
+                      <div className="group relative aspect-[4/5] w-[72px] shrink-0 overflow-hidden rounded-lg border-2 border-yellow-50 bg-bg-surface ring-2 ring-yellow-50 ring-offset-2 ring-offset-white dark:ring-offset-gray-10">
+                        {imageLoading && (
+                          <Skeleton
+                            className="absolute inset-0 rounded-lg"
+                            aria-hidden
+                          />
+                        )}
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={previewUrl}
+                          alt="המדיה הנבחרת"
+                          onLoad={() => setImageLoading(false)}
+                          onError={() => setImageLoading(false)}
+                          className={`w-full h-full object-cover transition-opacity duration-200 ${
+                            imageLoading ? "opacity-0" : "opacity-100"
+                          }`}
+                        />
+                        {/* Selected badge — white circle backdrop keeps the
+                            check legible over any image. */}
+                        <CircleCheck className="absolute start-1 top-1 size-4 rounded-full bg-white text-yellow-30 shadow-sm" />
+                        <button
+                          type="button"
+                          onClick={() => setPendingDelete(true)}
+                          disabled={uploading || !postId}
+                          aria-label="מחיקת המדיה"
+                          className="absolute end-1 top-1 flex size-6 items-center justify-center rounded-md bg-white/90 text-button-destructive-default opacity-0 shadow-sm transition-opacity hover:bg-white focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      </div>
+                    )}
+                    {aiPreviews
+                      .filter((src) => src !== previewUrl)
+                      .map((src, i) => (
+                        <button
+                          key={src}
+                          type="button"
+                          onClick={() => setLightboxSrc(src)}
+                          className="relative aspect-[4/5] w-[72px] shrink-0 overflow-hidden rounded-lg border border-border-neutral-default transition-colors hover:border-yellow-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+                          aria-label={`תמונה ${i + 1} — להגדלה ושמירה`}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={src} alt="" className="size-full object-cover" />
+                        </button>
+                      ))}
+                    {/* In-progress placeholders — one skeleton per running
+                        generation, so parallel generations each show a
+                        thumbnail-on-the-way. Appended last to match the
+                        order the results land in. */}
+                    {Array.from({ length: inFlight }).map((_, i) => (
+                      <div
+                        key={`gen-${i}`}
+                        className="relative aspect-[4/5] w-[72px] shrink-0 overflow-hidden rounded-lg border border-border-neutral-default"
+                        aria-label="מייצרים תמונה חדשה"
+                      >
+                        <Skeleton className="absolute inset-0 rounded-lg" aria-hidden />
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <Loader2 className="size-5 text-text-neutral-default animate-spin" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+        </>
       )}
 
-      {/* "או" divider — same pattern as the Sheet's MediaBlock →
-          DriveLinkBlock pair. Two ways to attach media; one visual flow. */}
-      <div
-        role="separator"
-        aria-label="או"
-        className="flex items-center gap-3 text-xs-body text-text-neutral-default"
-      >
-        <span className="flex-1 h-px bg-border-neutral-default" aria-hidden />
-        <span>או</span>
-        <span className="flex-1 h-px bg-border-neutral-default" aria-hidden />
-      </div>
+      {/* STORY — AI "media-to-story": generate a designed 9:16 frame set
+          (1 frame, or up to 3 when the script is long), with the Hebrew
+          text baked in. Mirrors the image_post AI section; the manual
+          bring-your-own path stays below. */}
+      {format === "story" && (
+        <>
+          {/* Story media is an image or a video — the user picks. */}
+          <div className="flex gap-1 rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 p-1">
+            <button
+              type="button"
+              onClick={() => setStoryMode("image")}
+              aria-pressed={storyMode === "image"}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-small font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+                storyMode === "image"
+                  ? "bg-bg-surface-primary-default text-text-primary-default"
+                  : "text-text-neutral-default hover:bg-bg-surface"
+              }`}
+            >
+              <ImageIcon className="size-4" />
+              תמונה
+            </button>
+            <button
+              type="button"
+              onClick={() => setStoryMode("video")}
+              aria-pressed={storyMode === "video"}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-small font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+                storyMode === "video"
+                  ? "bg-bg-surface-primary-default text-text-primary-default"
+                  : "text-text-neutral-default hover:bg-bg-surface"
+              }`}
+            >
+              <Video className="size-4" />
+              וידאו
+            </button>
+          </div>
 
-      <div className="flex flex-col gap-1.5">
-        <Label
-          htmlFor={`drive-url-${format}`}
-          className="text-xs-body text-text-neutral-default font-normal"
-        >
-          קישור לתיקיית Drive
-        </Label>
-        <div className="relative">
-          <Input
-            id={`drive-url-${format}`}
-            dir="rtl"
-            inputSize="small"
-            type="url"
-            value={driveUrl}
-            onChange={(e) => {
-              setDriveUrl(e.target.value)
-              setDriveDirty(true)
-            }}
-            onBlur={commitDriveUrl}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.currentTarget.blur()
-              }
-            }}
-            placeholder="https://drive.google.com/..."
-            className="pe-10 text-right"
-            disabled={!postId}
-            aria-label="קישור לתיקיית Drive"
-          />
-          <button
-            type="button"
-            onClick={() => {
-              const url = driveUrl.trim()
-              if (url) window.open(url, "_blank", "noopener,noreferrer")
-            }}
-            disabled={!driveUrl.trim()}
-            aria-label="פתחו את הקישור בכרטיסייה חדשה"
-            className="absolute end-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center size-7 rounded-md text-text-neutral-default hover:text-text-primary-default hover:bg-bg-surface disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            <Link2 className="size-3.5" />
-          </button>
-        </div>
-      </div>
+          {storyMode === "image" && (
+          <>
+          {hydrating ? (
+            <Skeleton className="h-11 w-full rounded-xl" />
+          ) : savedStorySet.length === 0 &&
+            storySets.length === 0 &&
+            storyInFlight === 0 ? (
+            <button
+              type="button"
+              onClick={handleStoryGenerate}
+              disabled={!postId}
+              className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 p-6 hover:bg-bg-surface transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+              aria-label="יצירת סטורי בלחיצה"
+            >
+              <div className="relative size-10 shrink-0">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/images/ai-camera.png"
+                  alt=""
+                  className="size-full object-contain"
+                />
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/images/ai-camera-sparkle.png"
+                  alt=""
+                  className="pointer-events-none absolute -left-3.5 -top-1 w-5"
+                />
+              </div>
+              <span className="text-small font-semibold text-text-primary-default">
+                יצירת סטורי בלחיצה
+              </span>
+              <span className="text-xs text-text-neutral-default text-center leading-relaxed max-w-[286px]">
+                ניצור סטורי מעוצב לפי טקסט הפורמט, עם הכיתוב משולב בתמונה. טקסט
+                ארוך יתחלק אוטומטית לעד 3 פריימים כדי לשמור על קריאוּת.
+              </span>
+            </button>
+          ) : (
+            <Button
+              onClick={handleStoryGenerate}
+              disabled={!postId}
+              className="w-full gap-1.5"
+            >
+              <ImagePlus className="size-4" />
+              יצירת סטורי עם AI
+              {storyInFlight > 0 && (
+                <span className="inline-flex items-center gap-1 text-xs opacity-80">
+                  <Loader2 className="size-3.5 animate-spin" />
+                  {storyInFlight}
+                </span>
+              )}
+            </Button>
+          )}
+
+          {(savedStorySet.length > 0 ||
+            storySets.length > 0 ||
+            storyInFlight > 0) && (
+            <div className="flex flex-col gap-2">
+              <p className="text-small-bold text-text-primary-default">
+                הסטורי שלכם
+              </p>
+              <div className="flex gap-2 overflow-x-auto px-1 py-2">
+                {/* Saved set — highlighted, tappable, deletable. */}
+                {savedStorySet.length > 0 && (
+                  <div className="group relative aspect-[9/16] w-[72px] shrink-0 overflow-hidden rounded-lg border-2 border-yellow-50 bg-bg-surface ring-2 ring-yellow-50 ring-offset-2 ring-offset-white dark:ring-offset-gray-10">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setStoryLightbox({ set: savedStorySet, index: 0 })
+                      }
+                      className="block size-full"
+                      aria-label="הסטורי הנבחר — להגדלה"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={storyFrameSrc(savedStorySet[0])}
+                        alt="הסטורי הנבחר"
+                        className="size-full object-cover"
+                      />
+                    </button>
+                    {savedStorySet.length > 1 && (
+                      <span className="absolute bottom-1 start-1 rounded bg-black/60 px-1 py-0.5 text-[10px] font-medium text-white">
+                        1/{savedStorySet.length}
+                      </span>
+                    )}
+                    <CircleCheck className="absolute start-1 top-1 size-4 rounded-full bg-white text-yellow-30 shadow-sm" />
+                    <button
+                      type="button"
+                      onClick={() => setPendingStoryDelete(true)}
+                      disabled={!postId}
+                      aria-label="מחיקת הסטורי"
+                      className="absolute end-1 top-1 flex size-6 items-center justify-center rounded-md bg-white/90 text-button-destructive-default opacity-0 shadow-sm transition-opacity hover:bg-white focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </div>
+                )}
+                {/* Generated candidate sets. */}
+                {storySets.map((set, i) => (
+                  <button
+                    key={`story-set-${i}`}
+                    type="button"
+                    onClick={() => setStoryLightbox({ set, index: 0 })}
+                    className="relative aspect-[9/16] w-[72px] shrink-0 overflow-hidden rounded-lg border border-border-neutral-default transition-colors hover:border-yellow-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+                    aria-label={`סטורי ${i + 1} — להגדלה ושמירה`}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={storyFrameSrc(set[0])}
+                      alt=""
+                      className="size-full object-cover"
+                    />
+                    {set.length > 1 && (
+                      <span className="absolute bottom-1 start-1 rounded bg-black/60 px-1 py-0.5 text-[10px] font-medium text-white">
+                        1/{set.length}
+                      </span>
+                    )}
+                  </button>
+                ))}
+                {/* In-progress placeholders — one per running generation. */}
+                {Array.from({ length: storyInFlight }).map((_, i) => (
+                  <div
+                    key={`story-gen-${i}`}
+                    className="relative aspect-[9/16] w-[72px] shrink-0 overflow-hidden rounded-lg border border-border-neutral-default"
+                    aria-label="מייצרים סטורי חדש"
+                  >
+                    <Skeleton className="absolute inset-0 rounded-lg" aria-hidden />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Loader2 className="size-5 text-text-neutral-default animate-spin" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          </>
+          )}
+        </>
+      )}
+
+      {/* Bring-your-own media — the video preview + Drive/Canva link input.
+          Story shows it in BOTH modes: in "image" mode it's the "paste an
+          image link" option next to Create-with-AI; in "video" mode it's how
+          the user brings their clip (then burns the caption in).
+          Upload-from-computer was removed per Hani; Drive/Canva link only. */}
+      {format !== "image_post" && (
+        <>
+          {!hydrating && previewUrl && (
+            <div className="flex flex-col gap-2">
+              <p className="text-small-bold text-text-primary-default">
+                המדיה הנוכחית
+              </p>
+              {/* `group` drives the hover-reveal delete icon; video keeps its
+                  own bigger playable frame since a 72px poster isn't useful
+                  for a clip. */}
+              <div className="flex">
+                <div
+                  className={`group relative shrink-0 overflow-hidden rounded-lg border border-border-neutral-default bg-bg-surface ${
+                    previewKind === "video"
+                      ? format === "story"
+                        ? "aspect-[9/16] w-[200px]" // story = 9:16 portrait
+                        : "aspect-square w-full"
+                      : "aspect-[4/5] w-[72px]"
+                  }`}
+                >
+                  {previewKind === "video" ? (
+                    <video
+                      src={
+                        previewUrl.startsWith("blob:")
+                          ? previewUrl
+                          : `${previewUrl}#t=0.001`
+                      }
+                      controls
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <>
+                      {imageLoading && (
+                        <Skeleton
+                          className="absolute inset-0 rounded-lg"
+                          aria-hidden
+                        />
+                      )}
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={previewUrl}
+                        alt="המדיה שהועלתה"
+                        onLoad={() => setImageLoading(false)}
+                        onError={() => setImageLoading(false)}
+                        className={`w-full h-full object-cover transition-opacity duration-200 ${
+                          imageLoading ? "opacity-0" : "opacity-100"
+                        }`}
+                      />
+                    </>
+                  )}
+
+                  {/* Hover-reveal delete icon → confirm modal. */}
+                  <button
+                    type="button"
+                    onClick={() => setPendingDelete(true)}
+                    disabled={uploading || !postId}
+                    aria-label="מחיקת המדיה"
+                    className="absolute end-1 top-1 flex size-6 items-center justify-center rounded-md bg-white/90 text-button-destructive-default opacity-0 shadow-sm transition-opacity hover:bg-white focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Burn the hook into the story video (story mode only). Shown once
+              a video is present; once burned, we swap to a "done" state so the
+              caption isn't stacked twice. */}
+          {format === "story" &&
+            storyMode === "video" &&
+            !hydrating &&
+            previewKind === "video" &&
+            previewUrl &&
+            (videoTextBurned ? (
+              <div className="flex items-center gap-1.5 rounded-lg bg-bg-surface px-3 py-2.5 text-small text-text-primary-default">
+                <CircleCheck className="size-4 shrink-0 text-yellow-30" />
+                הכיתוב הוטמע בסרטון — הסטורי מוכן
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                <Button
+                  onClick={handleBurnText}
+                  disabled={burningText || !postId}
+                  className="w-full gap-1.5"
+                >
+                  {burningText ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Type className="size-4" />
+                  )}
+                  {burningText
+                    ? "מטמיעים את הכיתוב..."
+                    : "הטמעת הכיתוב בסרטון"}
+                </Button>
+                <span className="text-xs text-text-neutral-default text-center">
+                  נטמיע את ההוק של הפוסט על גבי הסרטון, בפורמט 9:16
+                </span>
+              </div>
+            ))}
+
+          {/* Bring your own — paste a Drive/Canva link. Drive links are
+              pulled + shown automatically; Canva/other stay as a reference
+              link. Upload-from-computer was removed per Hani. */}
+          <div className="flex flex-col gap-2">
+            <p className="text-small-bold text-text-primary-default">
+              {format === "story"
+                ? storyMode === "video"
+                  ? "הסרטון שלכם"
+                  : "או הדביקו קישור לתמונה"
+                : "מדיה משלכם"}
+            </p>
+            <div className="relative">
+              <Input
+                dir="rtl"
+                inputSize="small"
+                type="url"
+                value={driveUrl}
+                onChange={(e) => {
+                  const v = e.target.value
+                  setDriveUrl(v)
+                  setDriveDirty(true)
+                  if (driveError) setDriveError(null)
+                  scheduleDrivePull(v) // Drive link → auto-pull the file
+                }}
+                onBlur={commitDriveUrl}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur()
+                }}
+                placeholder={
+                  format === "story" && storyMode === "video"
+                    ? "הדביקו קישור לסרטון מגוגל דרייב"
+                    : "הדביקו קישור מגוגל דרייב או קנבה"
+                }
+                className="pe-9 text-right"
+                disabled={!postId || drivePulling}
+                aria-label="קישור למדיה"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const u = driveUrl.trim()
+                  if (u) window.open(u, "_blank", "noopener,noreferrer")
+                }}
+                disabled={!driveUrl.trim()}
+                aria-label="פתחו את הקישור בכרטיסייה חדשה"
+                className="absolute end-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center size-7 rounded-md text-text-neutral-default hover:text-text-primary-default hover:bg-bg-surface disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <Link2 className="size-3.5" />
+              </button>
+            </div>
+            {(drivePulling || driveError) && (
+              <p
+                className={`flex items-center gap-1.5 text-xs ${
+                  driveError
+                    ? "text-button-destructive-default"
+                    : "text-text-neutral-default"
+                }`}
+              >
+                {drivePulling && (
+                  <Loader2 className="size-3.5 animate-spin text-yellow-50" />
+                )}
+                {driveError ?? "טוען מהדרייב..."}
+              </p>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Lightbox — big view of a clicked thumbnail, with the save action.
+          Keeping save here (not on the thumbnail) means the user always
+          confirms against the full-size image before persisting. */}
+      <Dialog
+        open={!!lightboxSrc}
+        onOpenChange={(open) => {
+          if (!open) setLightboxSrc(null)
+        }}
+      >
+        <DialogContent dir="rtl" className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>תצוגה מקדימה</DialogTitle>
+          </DialogHeader>
+          {lightboxSrc && (
+            <div className="relative aspect-[4/5] w-full overflow-hidden rounded-xl border border-border-neutral-default bg-bg-surface">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={lightboxSrc}
+                alt="תצוגה מוגדלת של התמונה שנוצרה"
+                className="size-full object-contain"
+              />
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              onClick={() => lightboxSrc && handleAiSave(lightboxSrc)}
+              disabled={uploading}
+              className="w-full gap-1.5"
+            >
+              <CircleCheck className="size-4" />
+              שמירה כתמונת הפוסט
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirm-before-delete for the saved media thumbnail. */}
+      <ConfirmModal
+        open={pendingDelete}
+        onOpenChange={setPendingDelete}
+        title="למחוק את המדיה?"
+        description="הפעולה תסיר את המדיה מהפוסט. אפשר יהיה לייצר או להעלות מדיה חדשה במקומה."
+        confirmLabel="כן, למחוק"
+        cancelLabel="ביטול"
+        confirmVariant="destructive"
+        onConfirm={handleDeleteMedia}
+      />
+
+      {/* Story lightbox — scroll through the set's frames, then save the
+          whole set. A set already saved opens in view-only (no save). */}
+      <Dialog
+        open={!!storyLightbox}
+        onOpenChange={(open) => {
+          if (!open) setStoryLightbox(null)
+        }}
+      >
+        <DialogContent dir="rtl" className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>
+              תצוגה מקדימה
+              {storyLightbox && storyLightbox.set.length > 1
+                ? ` — פריים ${storyLightbox.index + 1}/${storyLightbox.set.length}`
+                : ""}
+            </DialogTitle>
+          </DialogHeader>
+          {storyLightbox && (
+            <div className="flex items-center gap-2">
+              {/* Prev (RTL: the frame before this one sits to the right). */}
+              {storyLightbox.set.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setStoryLightbox((s) =>
+                      s ? { ...s, index: Math.max(0, s.index - 1) } : s,
+                    )
+                  }
+                  disabled={storyLightbox.index === 0}
+                  aria-label="הפריים הקודם"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-full border border-border-neutral-default text-text-neutral-default hover:text-text-primary-default hover:bg-bg-surface disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <ChevronRight className="size-4" />
+                </button>
+              )}
+              <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-border-neutral-default bg-bg-surface">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={storyFrameSrc(storyLightbox.set[storyLightbox.index])}
+                  alt="תצוגה מוגדלת של פריים הסטורי"
+                  className="size-full object-contain"
+                />
+              </div>
+              {/* Next (RTL: to the left). */}
+              {storyLightbox.set.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setStoryLightbox((s) =>
+                      s
+                        ? {
+                            ...s,
+                            index: Math.min(s.set.length - 1, s.index + 1),
+                          }
+                        : s,
+                    )
+                  }
+                  disabled={storyLightbox.index === storyLightbox.set.length - 1}
+                  aria-label="הפריים הבא"
+                  className="flex size-8 shrink-0 items-center justify-center rounded-full border border-border-neutral-default text-text-neutral-default hover:text-text-primary-default hover:bg-bg-surface disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <ChevronLeft className="size-4" />
+                </button>
+              )}
+            </div>
+          )}
+          {/* Save only for a candidate set (the saved set is already the
+              post's story). Identity compare — the saved set is a distinct
+              array reference from any candidate. */}
+          {storyLightbox && storyLightbox.set !== savedStorySet && (
+            <DialogFooter>
+              <Button
+                onClick={() => handleStorySave(storyLightbox.set)}
+                disabled={savingStory}
+                className="w-full gap-1.5"
+              >
+                {savingStory ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <CircleCheck className="size-4" />
+                )}
+                {storyLightbox.set.length > 1
+                  ? `שמירה כסטורי (${storyLightbox.set.length} פריימים)`
+                  : "שמירה כסטורי"}
+              </Button>
+            </DialogFooter>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirm-before-delete for the saved story set. */}
+      <ConfirmModal
+        open={pendingStoryDelete}
+        onOpenChange={setPendingStoryDelete}
+        title="למחוק את הסטורי?"
+        description="הפעולה תסיר את פריימי הסטורי מהפוסט. אפשר יהיה לייצר סטורי חדש במקומו."
+        confirmLabel="כן, למחוק"
+        cancelLabel="ביטול"
+        confirmVariant="destructive"
+        onConfirm={handleStoryDelete}
+      />
     </div>
   )
 }
