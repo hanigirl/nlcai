@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
-import { Loader2, Smartphone, Video, Layers, Image, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
+import { Loader2, Smartphone, Video, Layers, Image, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, MessageCircle, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { AppShell } from "@/components/app-shell"
 import { InfiniteCanvas } from "@/components/infinite-canvas"
@@ -18,11 +18,13 @@ import { MediaPanel } from "@/components/media-panel"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { CorePostCelebration } from "@/components/core-post-celebration"
 import { ScheduleInCalendarBar } from "@/components/schedule-in-calendar-bar"
+import { CorePostChat } from "@/components/core-post-chat"
 import { ColorSwatchPicker } from "@/components/color-swatch-picker"
 import type { Avatar } from "@/components/avatar-picker"
 import type { SlideData } from "@/lib/carousel-templates"
 import { createClient } from "@/lib/supabase/client"
 import { userKey } from "@/lib/user-scoped-storage"
+import { logLearningEdit } from "@/lib/learning-capture"
 
 type Flow = "idea" | "hook" | "saved"
 
@@ -96,6 +98,14 @@ function ProjectPageInner() {
   const [showFormats, setShowFormats] = useState(false)
   const [selectedFormats, setSelectedFormats] = useState<string[]>([])
   const [duplicatedFormats, setDuplicatedFormats] = useState<string[]>([])
+  // "Keep chatting with the AI about the post" floating panel. Only usable
+  // BEFORE the post is duplicated to formats — once format variants exist the
+  // core post is frozen (editing it wouldn't propagate to the duplicates), so
+  // the trigger is disabled and the panel force-closed.
+  const [chatOpen, setChatOpen] = useState(false)
+  // True while the chat's AI is generating a revision — drives the shimmer
+  // animation on the core post card so the user sees it's working.
+  const [chatBusy, setChatBusy] = useState(false)
   const [formatPosts, setFormatPosts] = useState<Record<string, string>>({})
   const [activeCard, setActiveCard] = useState<string>(flow === "hook" ? "response" : "hooks")
   const [editableHook, setEditableHook] = useState<string>(hookParam || "")
@@ -158,9 +168,39 @@ function ProjectPageInner() {
   const [carouselSlides, setCarouselSlides] = useState<SlideData[] | null>(null)
   const carouselCardRef = useRef<HTMLDivElement>(null)
 
+  // Image-post state (lifted so the approved image renders as its own
+  // workflow card below the image_post format card — same pattern as the
+  // talking_head video/cover cards). Holds the persisted storage URL; set
+  // on DB hydration and again when the panel reports a fresh save.
+  const [imagePostUrl, setImagePostUrl] = useState<string | null>(null)
+  const imagePostCardRef = useRef<HTMLDivElement>(null)
+
+  // Story state — the saved AI frame set (1-3 frames) lifted so it renders
+  // as its own workflow card below the story format card, same pattern as
+  // image_post/carousel. Frames are storage URLs on hydration, or base64
+  // right after a panel save (both handled by the card's src helper).
+  const [storyImages, setStoryImages] = useState<string[] | null>(null)
+  const storyCardRef = useRef<HTMLDivElement>(null)
+  // Story VIDEO counterpart — the user's clip with the hook burned in, lifted
+  // from the panel so it renders as its own workflow card like the frame set.
+  const [storyVideoUrl, setStoryVideoUrl] = useState<string | null>(null)
+  const storyVideoCardRef = useRef<HTMLDivElement>(null)
+
   // Learning log — store originals to detect edits
   const [originalHooks, setOriginalHooks] = useState<string[]>([])
   const [originalCorePost, setOriginalCorePost] = useState("")
+  /**
+   * The last AI-authored version of the post — the baseline a manual edit is
+   * measured against.
+   *
+   * Deliberately NOT `originalCorePost`: the body autosave rewrites that to the
+   * current text every 800ms, so by the time the user reached the formats step
+   * the two were equal and the edit was almost never logged. This ref is only
+   * written when the AI produces text (generate, load, chat revision).
+   */
+  const aiCorePostRef = useRef("")
+  /** Baseline already logged, so one AI version yields at most one insight. */
+  const loggedBaselineRef = useRef("")
 
   // Saved post tracking
   const [savedPostId, setSavedPostId] = useState<string | null>(postId || null)
@@ -346,6 +386,10 @@ function ProjectPageInner() {
       if (typeof saved.savedHookText === "string") setSavedHookText(saved.savedHookText)
       if (Array.isArray(saved.originalHooks)) setOriginalHooks(saved.originalHooks)
       if (typeof saved.originalCorePost === "string") setOriginalCorePost(saved.originalCorePost)
+      // Refs don't survive a reload, so without this the AI baseline is lost
+      // and an edit made after refreshing the page teaches us nothing.
+      if (typeof saved.aiCorePost === "string") aiCorePostRef.current = saved.aiCorePost
+      if (typeof saved.loggedBaseline === "string") loggedBaselineRef.current = saved.loggedBaseline
       if (typeof saved.selectedProductId === "string" || saved.selectedProductId === null) {
         setSelectedProductId(saved.selectedProductId ?? null)
         // A restored product counts as a manual choice — don't overwrite it
@@ -369,6 +413,10 @@ function ProjectPageInner() {
           editableHook, coverText, thTranscript, thSourceMode,
           savedHookText, originalHooks, originalCorePost,
           selectedProductId, triggerWord,
+          // Learning-capture baselines (see aiCorePostRef) — read from refs so
+          // they're whatever the latest AI output was at save time.
+          aiCorePost: aiCorePostRef.current,
+          loggedBaseline: loggedBaselineRef.current,
           // Persist the auto-saved post id so a refresh on a tab whose URL
           // hasn't been synced yet (e.g. opened before the URL-sync was wired
           // up) can still recover the saved post via the restore effect above.
@@ -489,6 +537,7 @@ function ProjectPageInner() {
         if (data.post) {
           setCorePost(data.post.body)
           setOriginalCorePost(data.post.body)
+          aiCorePostRef.current = data.post.body ?? ""
           setResponse(data.post.user_response ?? "")
           // Restore the originating idea so the breadcrumb / shell title and
           // any future regenerate flows have it. We only set when the URL
@@ -554,6 +603,65 @@ function ProjectPageInner() {
                 reader.readAsDataURL(blob)
               })
               .catch(() => setThCoverLoading(false))
+          }
+
+          // Restore saved image_post media so its workflow card shows on
+          // load. formatMedia is the per-format URL map the detail
+          // endpoint already returns; image_post's entry is the persisted
+          // image (AI-generated or manually uploaded).
+          const fm = data.post.formatMedia as Record<string, string> | undefined
+          if (fm?.image_post) setImagePostUrl(fm.image_post)
+
+          // Restore the saved story frame set so its workflow card shows on
+          // load. Unlike carousel, we keep them as storage URLs (the card +
+          // panel handle both URL and base64), so no fetch/decode is needed.
+          if (
+            Array.isArray(data.post.storyImageUrls) &&
+            data.post.storyImageUrls.length > 0
+          ) {
+            setStoryImages(data.post.storyImageUrls as string[])
+          }
+          // A finished story VIDEO (hook burned in) is stored under a
+          // "burned-" filename — surface it as the story workflow card too.
+          if (fm?.story && /\/video\/burned-[^/]+\.mp4/.test(fm.story)) {
+            setStoryVideoUrl(fm.story)
+          }
+
+          // Restore saved carousel slides. They're stored as public URLs,
+          // but MediaPanel renders base64 (`data:image/png;base64,...`), so
+          // fetch + decode each one — mirrors the cover restore above. We
+          // match prevCarouselSigRef to the restored set first so the
+          // carousel autosave effect treats these as already-persisted and
+          // doesn't re-upload them on hydration.
+          if (
+            Array.isArray(data.post.carouselImageUrls) &&
+            data.post.carouselImageUrls.length > 0
+          ) {
+            const urls = data.post.carouselImageUrls as string[]
+            Promise.all(
+              urls.map((u) =>
+                fetch(u)
+                  .then((r) => r.blob())
+                  .then(
+                    (blob) =>
+                      new Promise<string>((resolve, reject) => {
+                        const reader = new FileReader()
+                        reader.onload = () => {
+                          const b64 = (reader.result as string).split(",")[1]
+                          if (b64) resolve(b64)
+                          else reject(new Error("empty carousel slide"))
+                        }
+                        reader.onerror = () => reject(new Error("carousel read failed"))
+                        reader.readAsDataURL(blob)
+                      }),
+                  ),
+              ),
+            )
+              .then((b64s) => {
+                prevCarouselSigRef.current = `${b64s.length}|${b64s[0]?.slice(0, 32) ?? ""}`
+                setCarouselImages(b64s)
+              })
+              .catch(() => {})
           }
 
           // Load video thumbnail as data URL for cover regeneration
@@ -937,6 +1045,30 @@ function ProjectPageInner() {
     return () => clearTimeout(timer)
   }, [savedPostId, corePost, originalCorePost])
 
+  // Learning log: capture a manual edit to the AI's post once the user stops
+  // typing. Used to fire only on the "שיכפול לפורמטים" click, which meant an
+  // edit was learned from only if the user happened to continue to the formats
+  // step — anyone who edited and navigated away taught the system nothing.
+  // Capped at one insight per AI version so a long editing session doesn't
+  // flood learning_logs with near-identical rows.
+  useEffect(() => {
+    const baseline = aiCorePostRef.current
+    if (!baseline || !corePost) return
+    if (corePost.trim() === baseline.trim()) return
+    if (loggedBaselineRef.current === baseline) return
+
+    const timer = setTimeout(() => {
+      const logged = logLearningEdit({
+        originalText: baseline,
+        editedText: corePost,
+        contentType: "core_post",
+        source: "manual_edit",
+      })
+      if (logged) loggedBaselineRef.current = baseline
+    }, 4000)
+    return () => clearTimeout(timer)
+  }, [corePost])
+
   // Auto-save carousel images. Snapshot identity (length + first chars)
   // is enough to detect "the user just regenerated" without doing a
   // deep compare on full base64 strings. Skips when null/empty so a
@@ -1097,16 +1229,13 @@ function ProjectPageInner() {
     setSavedHookText(activeHook)
 
     // Learning log: detect hook edit (fire and forget)
-    if (selectedHook !== null && originalHooks[selectedHook] && hooks[selectedHook] !== originalHooks[selectedHook]) {
-      fetch("/api/learning-log", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          originalText: originalHooks[selectedHook],
-          editedText: hooks[selectedHook],
-          contentType: "hook",
-        }),
-      }).catch(() => {})
+    if (selectedHook !== null && originalHooks[selectedHook]) {
+      logLearningEdit({
+        originalText: originalHooks[selectedHook],
+        editedText: hooks[selectedHook],
+        contentType: "hook",
+        source: "manual_edit",
+      })
     }
 
     setPostLoading(true)
@@ -1138,6 +1267,7 @@ function ProjectPageInner() {
       } else if (data.post) {
         setCorePost(data.post)
         setOriginalCorePost(data.post)
+        aiCorePostRef.current = data.post
         setActiveCard("post")
         setCelebrationKey((k) => k + 1)
 
@@ -1184,6 +1314,14 @@ function ProjectPageInner() {
     setSelectedFormatCard(selectedFormatCard === fid ? null : fid)
   }
 
+  // Once the post has been duplicated to formats the core post is frozen —
+  // further chat edits would silently diverge from the format variants. Lock
+  // the "chat about the post" affordance and force the panel shut.
+  const formatsLocked = duplicatedFormats.length > 0
+  useEffect(() => {
+    if (formatsLocked && chatOpen) setChatOpen(false)
+  }, [formatsLocked, chatOpen])
+
   return (
     <AppShell idea={shortenTitle(idea || hookParam || (postId ? "עריכת פוסט" : ""))}>
       {/* Media Panel — sibling to InfiniteCanvas, slides from left */}
@@ -1212,6 +1350,31 @@ function ProjectPageInner() {
         onCarouselImagesChange={setCarouselImages}
         onCarouselSlidesChange={setCarouselSlides}
         carouselText={formatPosts["carousel"] ?? ""}
+        onImagePostUrlChange={setImagePostUrl}
+        onStoryImagesChange={setStoryImages}
+        onStoryVideoUrlChange={setStoryVideoUrl}
+      />
+
+      {/* "Keep chatting about the post" floating panel — sibling to the
+          canvas (fixed positioning) so the pan/zoom transform doesn't drag
+          it. Force-closed once the post is duplicated to formats. */}
+      <CorePostChat
+        open={chatOpen && !formatsLocked}
+        onOpenChange={setChatOpen}
+        corePost={corePost}
+        hookText={activeHook}
+        onPreview={(text) => {
+          // Live-preview the AI's revision straight into the core post card;
+          // the chat's Apply/Cancel then keep or revert it.
+          //
+          // Re-baseline: this text is AI-authored, so the manual-edit capture
+          // must not attribute it to the user. The chat records its own
+          // accept/reject signal for it separately.
+          aiCorePostRef.current = text
+          setCorePost(text)
+          setActiveCard("post")
+        }}
+        onBusyChange={setChatBusy}
       />
 
       <InfiniteCanvas>
@@ -1547,11 +1710,19 @@ function ProjectPageInner() {
                   {/* Core post card */}
                   <div
                     dir="rtl"
-                    className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[567px] shrink-0"
+                    className={`flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[567px] shrink-0 ${chatBusy ? "ai-card-working" : ""}`}
                   >
                     <div className={`flex items-center px-6 py-3 rounded-t-[20px] ${activeCard === "post" ? "bg-bg-surface-primary-default-80" : "bg-bg-surface"}`}>
                       <span className="text-p-bold text-text-primary-default">פוסט ליבה</span>
-                      {savedPostId && (
+                      {/* While the chat AI is generating a revision, show a
+                          "מעדכן..." indicator (takes over the save-status slot). */}
+                      {chatBusy && (
+                        <span className="ms-auto flex items-center gap-1 text-xs text-yellow-40">
+                          <Sparkles className="size-3 animate-pulse" />
+                          <span>מעדכן...</span>
+                        </span>
+                      )}
+                      {!chatBusy && savedPostId && (
                         <span className="ms-auto flex items-center gap-1 text-xs text-text-neutral-default">
                           {bodySaveStatus === "saving" ? (
                             <>
@@ -1575,33 +1746,61 @@ function ProjectPageInner() {
                         onChange={setCorePost}
                         onFocus={() => setActiveCard("post")}
                         onMouseDown={(e) => e.stopPropagation()}
-                        className="w-full min-h-[250px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text"
+                        className={`w-full min-h-[250px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text ${chatBusy ? "ai-text-shimmer pointer-events-none" : ""}`}
                       />
                       <p className="flex w-full items-center gap-1.5 text-xs-body text-text-neutral-default">
                         <Info className="size-4 shrink-0" aria-hidden="true" />
                         <span>כל עריכה שלכם תשפיע על הלמידה של ה-AI להבין את סגנון הכתיבה שלכם ולהשתפר</span>
                       </p>
-                      <Button
-                        disabled={activeCard !== "post"}
-                        onClick={() => {
-                          // Learning log: detect core post edit (fire and forget)
-                          if (originalCorePost && corePost.trim() !== originalCorePost.trim()) {
-                            fetch("/api/learning-log", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({
-                                originalText: originalCorePost,
+                      <div className="flex items-center gap-2">
+                        {/* Chat about the post — usable only until the post is
+                            duplicated to formats (then the core post is frozen
+                            and this is disabled). Wrapped in a span so the
+                            tooltip still fires while the button is disabled. */}
+                        <TooltipLabel
+                          label={
+                            formatsLocked
+                              ? "אי אפשר לערוך בשיחה אחרי שיכפול לפורמטים"
+                              : "עריכת פוסט ליבה"
+                          }
+                        >
+                          <span className="inline-flex">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              disabled={formatsLocked}
+                              aria-label="עריכת פוסט ליבה"
+                              onClick={() => setChatOpen(true)}
+                              className="size-[44px] rounded-[12px]"
+                            >
+                              <MessageCircle className="size-4" />
+                            </Button>
+                          </span>
+                        </TooltipLabel>
+                        <Button
+                          disabled={activeCard !== "post"}
+                          onClick={() => {
+                            // Learning log: flush any pending core post edit
+                            // before moving on, in case the user continued to
+                            // formats faster than the idle capture fires.
+                            const baseline = aiCorePostRef.current
+                            if (baseline && loggedBaselineRef.current !== baseline) {
+                              const logged = logLearningEdit({
+                                originalText: baseline,
                                 editedText: corePost,
                                 contentType: "core_post",
-                              }),
-                            }).catch(() => {})
-                          }
-                          setShowFormats(true)
-                          setActiveCard("formats")
-                        }}
-                      >
-                        שיכפול לפורמטים
-                      </Button>
+                                source: "manual_edit",
+                              })
+                              if (logged) loggedBaselineRef.current = baseline
+                            }
+                            setShowFormats(true)
+                            setActiveCard("formats")
+                          }}
+                        >
+                          שיכפול לפורמטים
+                        </Button>
+                      </div>
                     </div>
                   </div>
 
@@ -1735,6 +1934,15 @@ function ProjectPageInner() {
                             setCarouselSlides(null)
                             setSelectedFormatCard("carousel")
                           }}
+                          imagePostUrl={imagePostUrl}
+                          imagePostCardRef={imagePostCardRef}
+                          onImagePostEdit={() => setSelectedFormatCard("image_post")}
+                          storyImages={storyImages}
+                          storyCardRef={storyCardRef}
+                          onStoryEdit={() => setSelectedFormatCard("story")}
+                          storyVideoUrl={storyVideoUrl}
+                          storyVideoCardRef={storyVideoCardRef}
+                          onStoryVideoEdit={() => setSelectedFormatCard("story")}
                         />
                       </div>
                     </div>
@@ -1759,7 +1967,9 @@ function ProjectPageInner() {
           // carousel images. (Old posts ship a cover but no real media, and
           // were wrongly showing the schedule toast.)
           !!thVideoUrl ||
-          (carouselImages?.length ?? 0) > 0
+          (carouselImages?.length ?? 0) > 0 ||
+          (storyImages?.length ?? 0) > 0 ||
+          !!storyVideoUrl
         }
       />
 
@@ -1876,6 +2086,15 @@ function FormatTree({
   carouselImages,
   carouselCardRef,
   onCarouselRegenerate,
+  imagePostUrl,
+  imagePostCardRef,
+  onImagePostEdit,
+  storyImages,
+  storyCardRef,
+  onStoryEdit,
+  storyVideoUrl,
+  storyVideoCardRef,
+  onStoryVideoEdit,
 }: {
   formats: string[]
   formatPosts: Record<string, string>
@@ -1904,6 +2123,15 @@ function FormatTree({
   carouselImages: string[] | null
   carouselCardRef: React.RefObject<HTMLDivElement | null>
   onCarouselRegenerate: () => void
+  imagePostUrl: string | null
+  imagePostCardRef: React.RefObject<HTMLDivElement | null>
+  onImagePostEdit: () => void
+  storyImages: string[] | null
+  storyCardRef: React.RefObject<HTMLDivElement | null>
+  onStoryEdit: () => void
+  storyVideoUrl: string | null
+  storyVideoCardRef: React.RefObject<HTMLDivElement | null>
+  onStoryVideoEdit: () => void
 }) {
   const count = formats.length
   const totalWidth = count * CARD_WIDTH + (count - 1) * CARD_GAP
@@ -2249,6 +2477,93 @@ function FormatTree({
                   onRegenerate={onCarouselRegenerate}
                 />
               )}
+
+              {/* Story result below the story card — the saved AI frame set
+                  (1-3 frames). Same connected-card pattern as image_post. */}
+              {fid === "story" && storyImages && storyImages.length > 0 && (
+                <StoryResultCard
+                  frames={storyImages}
+                  cardRef={storyCardRef}
+                  onEdit={onStoryEdit}
+                />
+              )}
+
+              {/* Story video result — the user's clip with the hook burned in,
+                  the video counterpart of the frame-set card above. */}
+              {fid === "story" && storyVideoUrl && (
+                <StoryVideoResultCard
+                  url={storyVideoUrl}
+                  cardRef={storyVideoCardRef}
+                  onEdit={onStoryVideoEdit}
+                />
+              )}
+
+              {/* Image result below image_post card — appears once the user
+                  has generated + approved (or uploaded) an image. Same
+                  connected-card pattern as the talking_head video/cover
+                  cards above. */}
+              {fid === "image_post" && imagePostUrl && (
+                <>
+                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <div
+                    ref={imagePostCardRef}
+                    dir="rtl"
+                    className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
+                  >
+                    <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface-primary-default-80">
+                      <span className="text-p-bold text-text-primary-default">התמונה שלכם</span>
+                      <Image className="size-4 text-text-neutral-default" />
+                    </div>
+                    <div className="px-6 flex flex-col gap-4">
+                      <div className="flex justify-center">
+                        <div className="relative w-[200px] aspect-[4/5] rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={imagePostUrl}
+                            alt="התמונה שנוצרה לפוסט"
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex gap-3 w-full items-center">
+                        <Button variant="outline" className="flex-1" onClick={onImagePostEdit}>
+                          עריכת תמונה
+                        </Button>
+                        <TooltipLabel label="הורד תמונה">
+                          <Button
+                            variant="outline"
+                            type="button"
+                            aria-label="הורד תמונה"
+                            className="w-11 px-0"
+                            onClick={async () => {
+                              try {
+                                const res = await fetch(imagePostUrl)
+                                if (!res.ok) throw new Error("fetch_failed")
+                                const blob = await res.blob()
+                                const objectUrl = URL.createObjectURL(blob)
+                                const a = document.createElement("a")
+                                a.href = objectUrl
+                                a.download = `image-post-${Date.now()}.png`
+                                document.body.appendChild(a)
+                                a.click()
+                                a.remove()
+                                URL.revokeObjectURL(objectUrl)
+                              } catch (err) {
+                                console.error("[project][image-post-download]", err)
+                                // CORS-blocked or network failure — fall back to a
+                                // new tab so the user can save manually.
+                                window.open(imagePostUrl, "_blank")
+                              }
+                            }}
+                          >
+                            <Download className="size-4" />
+                          </Button>
+                        </TooltipLabel>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           )
         })}
@@ -2308,13 +2623,14 @@ function CarouselResultCard({
           <Layers className="size-4 text-text-neutral-default" />
         </div>
         <div className="px-6 flex flex-col items-center gap-4">
-          {/* Slide preview */}
-          <div className="relative w-full aspect-square rounded-xl overflow-hidden bg-gray-95">
+          {/* Slide preview — no fixed aspect: templates are square (1080²)
+              or IG-portrait (1080×1350); the img sets its natural ratio. */}
+          <div className="relative w-full rounded-xl overflow-hidden bg-gray-95">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={`data:image/png;base64,${images[currentSlide]}`}
               alt={`סלייד ${currentSlide + 1}`}
-              className="w-full h-full object-contain"
+              className="w-full h-auto"
               onMouseDown={(e) => e.stopPropagation()}
             />
           </div>
@@ -2351,6 +2667,223 @@ function CarouselResultCard({
             <Button variant="outline" className="flex-1" onClick={onRegenerate}>
               צור מחדש
             </Button>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Story Result Card — shows the saved AI frame set below story card  */
+/* ------------------------------------------------------------------ */
+
+function StoryResultCard({
+  frames,
+  cardRef,
+  onEdit,
+}: {
+  frames: string[]
+  cardRef: React.RefObject<HTMLDivElement | null>
+  onEdit: () => void
+}) {
+  const [current, setCurrent] = useState(0)
+  const [downloading, setDownloading] = useState(false)
+
+  // Frames may be storage URLs (hydrated) or raw base64 (just saved).
+  const frameSrc = (f: string) =>
+    f.startsWith("http") ? f : `data:image/png;base64,${f}`
+
+  // Guard against a stale index if the set shrinks (e.g. after regenerate).
+  const index = Math.min(current, frames.length - 1)
+
+  const downloadOne = async (src: string, i: number) => {
+    try {
+      const res = await fetch(src)
+      if (!res.ok) throw new Error("fetch_failed")
+      const blob = await res.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = objectUrl
+      a.download = `story-${i + 1}.png`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(objectUrl)
+    } catch (err) {
+      console.error("[project][story-download]", err)
+      window.open(src, "_blank")
+    }
+  }
+
+  const handleDownload = async () => {
+    setDownloading(true)
+    try {
+      // One frame → download it; multiple → download each in order.
+      for (let i = 0; i < frames.length; i++) {
+        await downloadOne(frameSrc(frames[i]), i)
+      }
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="w-[2px] h-7 bg-gray-80" />
+      <div
+        ref={cardRef}
+        dir="rtl"
+        className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
+      >
+        <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface-primary-default-80">
+          <span className="text-p-bold text-text-primary-default">הסטורי שלכם</span>
+          <Smartphone className="size-4 text-text-neutral-default" />
+        </div>
+        <div className="px-6 flex flex-col items-center gap-4">
+          <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={frameSrc(frames[index])}
+              alt={`פריים ${index + 1} של הסטורי`}
+              className="w-full h-full object-cover"
+              onMouseDown={(e) => e.stopPropagation()}
+            />
+          </div>
+
+          {/* Navigation — only when the story has more than one frame. */}
+          {frames.length > 1 && (
+            <div className="flex items-center gap-3">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setCurrent(Math.max(0, index - 1))
+                }}
+                disabled={index === 0}
+                className="p-1.5 rounded-lg hover:bg-bg-surface disabled:opacity-30 transition-colors"
+                onMouseDown={(e) => e.stopPropagation()}
+                aria-label="הפריים הקודם"
+              >
+                <ChevronRight className="size-4 text-text-primary-default" />
+              </button>
+              <span className="text-small text-text-neutral-default">
+                {index + 1} / {frames.length}
+              </span>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setCurrent(Math.min(frames.length - 1, index + 1))
+                }}
+                disabled={index === frames.length - 1}
+                className="p-1.5 rounded-lg hover:bg-bg-surface disabled:opacity-30 transition-colors"
+                onMouseDown={(e) => e.stopPropagation()}
+                aria-label="הפריים הבא"
+              >
+                <ChevronLeft className="size-4 text-text-primary-default" />
+              </button>
+            </div>
+          )}
+
+          <div className="flex gap-3 w-full items-center">
+            <Button variant="outline" className="flex-1" onClick={onEdit}>
+              עריכת סטורי
+            </Button>
+            <TooltipLabel label={frames.length > 1 ? "הורד הכל" : "הורד סטורי"}>
+              <Button
+                variant="outline"
+                type="button"
+                aria-label={frames.length > 1 ? "הורד הכל" : "הורד סטורי"}
+                className="w-11 px-0"
+                disabled={downloading}
+                onClick={handleDownload}
+              >
+                {downloading ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Download className="size-4" />
+                )}
+              </Button>
+            </TooltipLabel>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Story Video Result Card — the user's clip with the hook burned in  */
+/* ------------------------------------------------------------------ */
+
+function StoryVideoResultCard({
+  url,
+  cardRef,
+  onEdit,
+}: {
+  url: string
+  cardRef: React.RefObject<HTMLDivElement | null>
+  onEdit: () => void
+}) {
+  const [downloading, setDownloading] = useState(false)
+
+  const handleDownload = async () => {
+    setDownloading(true)
+    try {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error("fetch_failed")
+      const blob = await res.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = objectUrl
+      a.download = "story.mp4"
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(objectUrl)
+    } catch (err) {
+      console.error("[project][story-video-download]", err)
+      window.open(url, "_blank")
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="w-[2px] h-7 bg-gray-80" />
+      <div
+        ref={cardRef}
+        dir="rtl"
+        className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
+      >
+        <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface-primary-default-80">
+          <span className="text-p-bold text-text-primary-default">
+            הסטורי שלכם
+          </span>
+          <Smartphone className="size-4 text-text-neutral-default" />
+        </div>
+        <div className="px-6 flex flex-col items-center gap-4">
+          <VideoPlayer url={url} />
+          <div className="flex gap-3 w-full items-center">
+            <Button variant="outline" className="flex-1" onClick={onEdit}>
+              עריכת סטורי
+            </Button>
+            <TooltipLabel label="הורד סטורי">
+              <Button
+                variant="outline"
+                type="button"
+                aria-label="הורד סטורי"
+                className="w-11 px-0"
+                disabled={downloading}
+                onClick={handleDownload}
+              >
+                {downloading ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Download className="size-4" />
+                )}
+              </Button>
+            </TooltipLabel>
           </div>
         </div>
       </div>
