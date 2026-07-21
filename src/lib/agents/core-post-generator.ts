@@ -30,12 +30,25 @@ interface CorePostInput {
   audienceIdentity?: AudienceIdentity | null
   learningInsights?: string
   businessSourceInsights?: string
+  /**
+   * How the user's draft addresses the reader, detected in code (see
+   * detect-addressing.ts). When set, the prompt states it as a hard
+   * requirement; when null/undefined, the prompt derives gender from the
+   * audience (singular), with plural only as a last resort.
+   */
+  addressGender?: "masculine" | "feminine" | "plural" | null
 }
 
 const PRODUCT_TYPE_LABEL: Record<string, string> = {
   front: "מוצר חזית (כניסה)",
   premium: "מוצר פרימיום",
   lead_magnet: "ליד מגנט (חינמי)",
+}
+
+const ADDRESS_GENDER_LABEL: Record<string, string> = {
+  masculine: "זכר יחיד",
+  feminine: "נקבה יחידה",
+  plural: "לשון רבים",
 }
 
 export function buildCorePostPrompt({
@@ -49,6 +62,7 @@ export function buildCorePostPrompt({
   audienceIdentity,
   learningInsights,
   businessSourceInsights,
+  addressGender,
 }: CorePostInput): string {
   const identitySection = coreIdentity
     ? `
@@ -113,6 +127,18 @@ ${audienceSection}
 
 ${productSection}
 
+${addressGender
+  ? `## גוף הפנייה (דרישה מחייבת)
+המשתמש כתב את הטיוטה שלו בפנייה ב${ADDRESS_GENDER_LABEL[addressGender]}. **כל הפוסט ייכתב בפנייה ב${ADDRESS_GENDER_LABEL[addressGender]}** — גם אם קהל היעד או ההוק מרמזים על מגדר אחר. המשתמש בחר במודע איך לפנות לקהל שלו, ואתה לא מתקן אותו.
+זה חל על הפוסט כולו: שורת האוטוריטה, גוף הפוסט, וההנעה לפעולה — כולל הטיות הפעלים (${addressGender === "feminine" ? '"הגיבי", "אשלח לך", "תקבלי"' : addressGender === "masculine" ? '"הגב", "אשלח לך", "תקבל"' : '"הגיבו", "אשלח לכם", "תקבלו"'}).`
+  : `## גוף הפנייה (קריטי — קבע אותו לפני שאתה מתחיל לכתוב)
+הטיוטה של המשתמש לא פונה לקורא בגוף מסוים, אז גזור את גוף הפנייה מקהל היעד (סעיף "קהל היעד" למעלה):
+- קהל נשים → פנייה בלשון **נקבה יחידה** ("את", "תרגישי", "הגיבי").
+- קהל גברים → פנייה בלשון **זכר יחיד** ("אתה", "תרגיש", "הגב").
+- **רק אם** אי אפשר לגזור מהקהל מגדר ברור — כתוב בלשון רבים.
+
+הגוף שקבעת חל על הפוסט כולו: שורת האוטוריטה, גוף הפוסט, וההנעה לפעולה — כולל הטיות הפעלים ("הגיבי / הגב / הגיבו", "אשלח לך / לכם").`}
+
 ## מבנה הפוסט (חובה לעקוב אחרי הסדר הזה בדיוק):
 
 ### 1. שורת הוק (שורה ראשונה)
@@ -148,16 +174,16 @@ ${productType === "lead_magnet"
     : productType === "premium"
       ? `המוצר הוא פרימיום — אל תמכור אותו בשורה הזו; הצע משהו חינמי וערכי שמתחבר לעולם של ${product} (פרק, מדריך, שיחת ייעוץ קצרה).`
       : ""}
-דוגמאות לסגנון (התאם את התוכן שאחרי "${triggerWord}" למוצר):
+דוגמאות לסגנון (התאם את התוכן שאחרי "${triggerWord}" למוצר; הדוגמאות ברבים — הטה אותן לגוף הפנייה שקבעת):
 - הגיבו "${triggerWord}" ואשלח לכם הדרכה מוקלטת על <נושא ספציפי מתוך המוצר>.
 - כתבו "${triggerWord}" בתגובות ואצרף אתכם לרשימת ה<שם הרשימה מהמוצר>.
 - מי שרוצה את <הדבר הספציפי>, שיכתוב "${triggerWord}" בתגובות.`
   : `בחר משהו ערכי שמתאים לנושא הפוסט (הדרכה מוקלטת, מדריך, פרטים נוספים, שיעור).
-דוגמאות לסגנון:
+דוגמאות לסגנון (ברבים — הטה אותן לגוף הפנייה שקבעת):
 - הגיבו "${triggerWord}" ואשלח לכם הדרכה מוקלטת.
 - כתבו "${triggerWord}" בתגובות ואשלח לכם את כל הפרטים.
 - מי שרוצה את המדריך, שיכתוב "${triggerWord}" בתגובות.`}
-המבנה הקבוע: \`הגיבו "${triggerWord}" ו<פועל בעתיד, ברבים> לכם <מה שתשלחו>\`.
+המבנה הקבוע: \`<הגב/הגיבי/הגיבו לפי גוף הפנייה> "${triggerWord}" ו<פועל בעתיד> <לך/לכם לפי גוף הפנייה> <מה שתשלחו>\`.
 חובה לשמור על המילה המדויקת "${triggerWord}" בגרשיים, ולשמור על הטון של המשתמש.`
   : `שורה אחת שמעודדת את הקורא לפעול — לשמור, לשתף, להגיב, או לפנות למשתמש.
 צריכה להיות טבעית ולא מכירתית מדי.`}

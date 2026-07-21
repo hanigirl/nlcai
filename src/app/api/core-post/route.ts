@@ -6,6 +6,7 @@ import { buildCorePostPrompt } from "@/lib/agents/core-post-generator"
 import { DUMMY_CORE_POST } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import { fetchBusinessSourceInsights } from "@/lib/business-source-insights"
+import { detectAddressGender } from "@/lib/detect-addressing"
 
 const USE_DUMMY = false
 
@@ -64,6 +65,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: msg }, { status: 500 })
     }
 
+    // Detect the draft's addressing gender in code — as a prompt priority the
+    // model ignores it and "corrects" the draft toward the audience's gender.
+    const addressGender = await detectAddressGender(apiKey, userResponse)
+
     const prompt = buildCorePostPrompt({
       hook,
       userResponse,
@@ -75,6 +80,7 @@ export async function POST(req: NextRequest) {
       audienceIdentity,
       learningInsights,
       businessSourceInsights,
+      addressGender,
     })
 
     const client = new Anthropic({ apiKey })
