@@ -41,6 +41,18 @@ interface HookGeneratorInput {
   learningInsights?: string
   trendContext?: string
   hasFavorites?: boolean
+  /**
+   * How the user's idea/description addresses the reader, detected in code
+   * (see detect-addressing.ts). When set — hard requirement. When null —
+   * derive from the audience (singular), plural only as a last resort.
+   */
+  addressGender?: "masculine" | "feminine" | "plural" | null
+}
+
+const ADDRESS_GENDER_LABEL: Record<string, string> = {
+  masculine: "זכר יחיד",
+  feminine: "נקבה יחידה",
+  plural: "לשון רבים",
 }
 
 export function buildHookGeneratorPrompt({
@@ -53,6 +65,7 @@ export function buildHookGeneratorPrompt({
   learningInsights,
   trendContext,
   hasFavorites,
+  addressGender,
 }: HookGeneratorInput): string {
   const identitySection = coreIdentity
     ? `
@@ -168,7 +181,9 @@ ${trendContext}
 5. קצרים ופאנצ'יים — משפט אחד עד שניים.
 6. אל תשתמש בדפוסים שהמשתמש ציין ב"מה אני אף פעם לא עושה".
 7. **אסור להחליף נושא** — אם הרעיון על X, כל ההוקים על X.
-8. **פניה לקהל תמיד ברבים** (אתם/לכם/שלכם/תעשו/תצפו/אתם עושים). אסור להשתמש בלשון נקבה יחיד (את/לך/שלך/תעשי/מתה על זה) או זכר יחיד (אתה/תעשה). גם אם התבנית במאגר או דוגמה בנקבה יחיד — המר/י אותה לרבים בהוק הסופי.
+${addressGender
+  ? `8. **פניה לקהל ב${ADDRESS_GENDER_LABEL[addressGender]} בלבד** — כך המשתמש כתב ברעיון/בתיאור שלו, ואתה לא מתקן אותו, גם אם קהל היעד מרמז על מגדר אחר. גם אם תבנית במאגר או דוגמה כתובה בגוף אחר — המר/י אותה ל${ADDRESS_GENDER_LABEL[addressGender]} בהוק הסופי. אסור לערבב גופים באותו הוק.`
+  : `8. **גוף הפנייה לקהל** — גזור מקהל היעד (בסעיף למעלה): קהל נשים → פנייה בלשון **נקבה יחידה** (את/לך/תעשי). קהל גברים → פנייה בלשון **זכר יחיד** (אתה/לך/תעשה). **רק אם** אי אפשר לגזור מהקהל מגדר ברור — כתוב ברבים (אתם/לכם). התבניות והדוגמאות במאגר כתובות ברבים — המר/י אותן לגוף שקבעת. אסור לערבב גופים באותו הוק.`}
 
 ## מאגר תבניות לעזר (לא חובה!)
 התבניות למטה הן השראה ומסגרות שעובדות — מותר לבחור מהן, ומותר *לא* לבחור. אם יש לך זווית או ניסוח חזק יותר שמתאים יותר לסיטואציה הזו — כתוב אותו ישירות. **המבחן היחיד הוא שלוש העמודות (כאב + סקרנות + פאנץ׳ נסגר)**. תבנית שלא מצליחה לעמוד בשלוש העמודות לזווית הזו — אל תכופף אליה את ההוק.

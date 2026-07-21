@@ -23,6 +23,17 @@ export interface JudgeContext {
   targetPainOrDesire: string
   /** Any issues the programmatic pre-check already flagged — we surface them to the judge. */
   programmaticIssues: string[]
+  /**
+   * Required addressing gender for the hook (from the user's draft or the
+   * audience). null/undefined = no requirement beyond internal consistency.
+   */
+  addressGender?: "masculine" | "feminine" | "plural" | null
+}
+
+const ADDRESS_GENDER_LABEL: Record<string, string> = {
+  masculine: "זכר יחיד (אתה/לך/תעשה)",
+  feminine: "נקבה יחידה (את/לך/תעשי)",
+  plural: "לשון רבים (אתם/לכם/תעשו)",
 }
 
 export interface JudgeResult {
@@ -31,7 +42,9 @@ export interface JudgeResult {
   rewritten: string
 }
 
-const JUDGE_INSTRUCTIONS = `אתה עורך/ת ראשי/ת של הוקים לסרטונים קצרים בעברית. **גישת ברירת המחדל: פסול → שכתב.** רק הוק שעובר בבירור את כל 5 שאלות הבדיקה — אתה רשאי לאשר.
+const judgeInstructions = (
+  addressGender?: "masculine" | "feminine" | "plural" | null,
+) => `אתה עורך/ת ראשי/ת של הוקים לסרטונים קצרים בעברית. **גישת ברירת המחדל: פסול → שכתב.** רק הוק שעובר בבירור את כל 5 שאלות הבדיקה — אתה רשאי לאשר.
 
 ## 5 שאלות בדיקה — ענה על כל אחת בלב פתוח
 
@@ -48,8 +61,10 @@ const JUDGE_INSTRUCTIONS = `אתה עורך/ת ראשי/ת של הוקים לס�
 
 **מבחן**: נסה/י לתרגם את ההוק למשפט באנגלית. אם התרגום נשמע מעורפל או לא הגיוני — פסול.
 
-### שאלה 3: האם פניה לקהל עקבית? (רבים בלבד, ללא ערבוב)
-- פניה לקהל = רק רבים (אתם/לכם/שלכם).
+### שאלה 3: האם פניה לקהל עקבית ובגוף הנכון?
+${addressGender
+  ? `- פניה לקהל = אך ורק ב${ADDRESS_GENDER_LABEL[addressGender]}. הוק שפונה בגוף אחר — פסול, וה-rewritten חייב להיות באותו גוף נדרש.`
+  : `- פניה לקהל בגוף אחד עקבי — אסור לערבב יחיד ורבים (או זכר ונקבה) באותו הוק. אל תמיר יחיד לרבים אם ההוק עקבי — הגוף נקבע בשלב הכתיבה.`}
 - פניה של היוצר לעצמו = רק "אני".
 - נושא יחיד → פועל יחיד. נושא רבים → פועל רבים.
 - "AI" = זכר בעברית ("הוא", "שיודע", לא "היא"/"שיודעת").
@@ -90,7 +105,7 @@ export async function judgeHook(
   ctx: JudgeContext,
   model: string = JUDGE_MODEL,
 ): Promise<JudgeResult> {
-  const userPrompt = `${JUDGE_INSTRUCTIONS}
+  const userPrompt = `${judgeInstructions(ctx.addressGender)}
 
 ## הקלט הנוכחי
 

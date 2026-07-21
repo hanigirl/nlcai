@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
+import { detectAudienceGender } from "@/lib/detect-addressing"
 import { TEMPLATE_LIBRARY, getTemplatesByCategorySorted, templateText, templatePriority, type TemplateCategory, type HookTemplate } from "@/lib/agents/hook-templates"
 import { polishHookForHebrew } from "@/lib/agents/hook-hebrew-polish"
 import { judgeHook, validateHookLocally } from "@/lib/agents/hook-judge"
@@ -341,6 +342,33 @@ ${categoriesCatalog}
     const client = new Anthropic({ apiKey, timeout: 90000, maxRetries: 1 })
     const userId = user.id
 
+    // Homepage hooks have no user draft to detect an addressing gender from,
+    // so the audience decides: women → feminine singular, men → masculine
+    // singular, mixed/unclear → plural (the old always-plural behavior).
+    // Resolved once per request, injected into writer + judge + polish.
+    const audienceGenderSource = (audienceIdentity ?? {}) as Partial<
+      Record<"identity_statements" | "cross_audience_quotes" | "employment" | "behavioral", string>
+    >
+    const audienceAddress =
+      (await detectAudienceGender(
+        apiKey,
+        [
+          audienceGenderSource.identity_statements,
+          audienceGenderSource.cross_audience_quotes,
+          audienceGenderSource.employment,
+          audienceGenderSource.behavioral,
+          (coreIdentity as { who_i_serve?: string } | null)?.who_i_serve,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      )) ?? "plural"
+    const audienceAddressLabel =
+      audienceAddress === "feminine"
+        ? "נקבה יחידה (את/לך/שלך/תעשי)"
+        : audienceAddress === "masculine"
+          ? "זכר יחיד (אתה/לך/שלך/תעשה)"
+          : "לשון רבים (אתם/לכם/שלכם)"
+
     // Helper — call with Sonnet → Haiku fallback
     const planWithFallback = async (): Promise<{ plans: PlanItem[]; fallback: boolean }> => {
       const tryModel = async (model: string) => {
@@ -539,7 +567,7 @@ ${formatTemplatesForPrompt()}
 
 ## כללים נוספים
 1. **אורך**: עד 15 מילים, משפט אחד.
-2. **פניה לקהל ברבים בלבד** (אתם/לכם/שלכם). אסור לערבב יחיד ורבים באותו הוק.
+2. **פניה לקהל ב${audienceAddressLabel} בלבד** — זה גוף הפנייה של הקהל של המשתמש. התבניות כתובות ברבים — המר אותן לגוף הזה. אסור לערבב גופים באותו הוק.
 3. **נושא + פועל תואמים** במין ובמספר.
 4. **המילה הספציפית מהנושא חייבת להופיע בהוק** — קח לפחות מילה אחת משמעותית (3+ אותיות, לא מילת קישור) מתוך \`${plan.specific_topic}\` ושים אותה בהוק עצמו, מילה במילה. זה תקף **גם** ב-free-form. בלי זה ההוק נדחה אוטומטית כ-off_topic.
 5. **עברית ישראלית טבעית** — לא תרגום מאנגלית, לא מטאפורות מתורגמות.
@@ -607,6 +635,7 @@ ${formatTemplatesForPrompt()}
               specificTopic: plan.specific_topic,
               targetPainOrDesire: plan.target_pain_or_desire,
               programmaticIssues: issues,
+              addressGender: audienceAddress,
             })
 
             const judgeRewrote = !judgeResult.valid
@@ -628,7 +657,7 @@ ${formatTemplatesForPrompt()}
             // Sonnet polish on top is redundant and occasionally re-edits
             // something Opus got right.
             if (!judgeRewrote) {
-              hookText = await polishHookForHebrew(client, hookText, PRIMARY_MODEL)
+              hookText = await polishHookForHebrew(client, hookText, PRIMARY_MODEL, audienceAddress)
               if (hookText.length <= 10) { skipped++; return }
             }
 

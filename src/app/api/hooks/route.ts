@@ -8,6 +8,7 @@ import { judgeHook } from "@/lib/agents/hook-judge"
 import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
+import { detectAddressGender } from "@/lib/detect-addressing"
 
 // Pipeline is generate → judge×N → polish×N — 3 sequential LLM rounds.
 // At count=10 this lands around 20-40s; Vercel's 10s default would always
@@ -169,6 +170,15 @@ export async function POST(req: NextRequest) {
     }
     console.log(`Hooks API: ${fieldIdeas.length} field ideas received — ${favoriteIdeas.length} favorited, ${creatorIdeas.length} from creators, ${trendIdeas.length} trends`)
 
+    // Detect the addressing gender from the user's own words (idea +
+    // description) in code — see detect-addressing.ts for why this isn't a
+    // prompt priority. Applied to the writer, the judge, and the polish so
+    // no stage converts the hook back to plural.
+    const addressGender = await detectAddressGender(
+      apiKey,
+      [userResponse, idea].filter(Boolean).join("\n"),
+    )
+
     const prompt = buildHookGeneratorPrompt({
       idea,
       userResponse,
@@ -179,6 +189,7 @@ export async function POST(req: NextRequest) {
       learningInsights,
       trendContext,
       hasFavorites: favoriteIdeas.length > 0,
+      addressGender,
     })
 
     const client = new Anthropic({ apiKey })
@@ -210,6 +221,7 @@ export async function POST(req: NextRequest) {
           specificTopic: idea,
           targetPainOrDesire: userResponse || idea,
           programmaticIssues: [],
+          addressGender,
         })
         return { text: result.valid ? h : result.rewritten, rewrote: !result.valid }
       }),
@@ -220,7 +232,7 @@ export async function POST(req: NextRequest) {
     // on those saves 3-6s per hook with no quality loss.
     const hookTexts = await Promise.all(
       judged.map(({ text, rewrote }) =>
-        rewrote ? Promise.resolve(text) : polishHookForHebrew(client, text, PRIMARY_MODEL),
+        rewrote ? Promise.resolve(text) : polishHookForHebrew(client, text, PRIMARY_MODEL, addressGender),
       ),
     )
 

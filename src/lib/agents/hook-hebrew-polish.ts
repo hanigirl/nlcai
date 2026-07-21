@@ -4,7 +4,16 @@ import type Anthropic from "@anthropic-ai/sdk"
 // so it sounds like a real Israeli speaking — not a translation from English.
 // Called AFTER the main hook-writing agent, before the hook is saved/streamed.
 // Keeps the angle/message identical — only rewrites the language.
-export function buildHebrewPolishPrompt(hook: string): string {
+const ADDRESS_GENDER_LABEL: Record<string, string> = {
+  masculine: "זכר יחיד (אתה/לך/תעשה)",
+  feminine: "נקבה יחידה (את/לך/תעשי)",
+  plural: "לשון רבים (אתם/לכם/תעשו)",
+}
+
+export function buildHebrewPolishPrompt(
+  hook: string,
+  addressGender?: "masculine" | "feminine" | "plural" | null,
+): string {
   return `קיבלת הוק שעבר כבר judge — רוב הבעיות המבניות כבר תוקנו. תפקידך כעורך/ת אחרון/ה: להחליק את השפה לעברית ישראלית טבעית ולנקות שאריות טעויות כתיב.
 
 ## ההוק
@@ -16,7 +25,9 @@ ${hook}
    - hack→"טריק/שיטה", content→"תוכן", mindset→"הלך מחשבה", game changer→"משנה הכל", level up→"להתקדם".
 3. **צירופים קטועים** — "השחור" לבד → "עבודה שחורה". "על הקו" לבד → הוסף הקשר.
 4. **AI = זכר** (הוא/שיודע/שעושה). אם זיהית "היא"/"שיודעת" על AI — תקן/י.
-5. **לשון רבים לקהל תמיד** (אתם/לכם). אם יש יחיד (את/אתה/לך/שלך) על הקהל — המר/י לרבים.
+${addressGender
+  ? `5. **גוף הפנייה לקהל: ${ADDRESS_GENDER_LABEL[addressGender]}** — אם ההוק פונה בגוף אחר, המר/י אותו לגוף הזה. אסור לערבב גופים.`
+  : `5. **שמור/שמרי על גוף הפנייה הקיים של ההוק** — אל תמיר/י יחיד לרבים או להפך; רק ודא/י שאין ערבוב גופים באותו הוק.`}
 
 **אל תשנה/י את המסר או הזווית** — רק את השפה.
 
@@ -41,12 +52,13 @@ export async function polishHookForHebrew(
   client: Anthropic,
   hook: string,
   model: string,
+  addressGender?: "masculine" | "feminine" | "plural" | null,
 ): Promise<string> {
   try {
     const res = await client.messages.create({
       model,
       max_tokens: 250,
-      messages: [{ role: "user", content: buildHebrewPolishPrompt(hook) }],
+      messages: [{ role: "user", content: buildHebrewPolishPrompt(hook, addressGender) }],
     })
     const raw = res.content.find((b) => b.type === "text")?.text ?? ""
     const cleaned = cleanHookText(raw)

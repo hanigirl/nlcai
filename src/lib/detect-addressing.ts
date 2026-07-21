@@ -29,6 +29,48 @@ export function detectAddressGenderFromText(text: string): AddressGender | null 
 }
 
 /**
+ * Determines the audience's gender from the audience-identity text, for flows
+ * that have no user draft to detect from (e.g. homepage hooks, whose write
+ * prompt doesn't embed the audience section). Returns null for mixed/unclear —
+ * the caller then falls back to plural.
+ *
+ * Never throws; a failed call returns null (→ plural), the old behavior.
+ */
+export async function detectAudienceGender(
+  apiKey: string,
+  audienceText: string,
+): Promise<AddressGender | null> {
+  if (!audienceText.trim()) return null
+  try {
+    const client = new Anthropic({ apiKey })
+    const message = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 10,
+      messages: [
+        {
+          role: "user",
+          content: `לפי תיאור קהל היעד הבא, האם הקהל הוא נשים, גברים, או מעורב?
+
+"""
+${audienceText.slice(0, 1500)}
+"""
+
+שים לב לצורות דקדוקיות (בעלות עסקים / עצמאיות / "אני מרגישה" = נשים; שכירים / "אני מרגיש" = גברים) ולתיאור מפורש של הקהל.
+
+ענה במילה אחת בלבד: נשים / גברים / מעורב`,
+        },
+      ],
+    })
+    const answer = message.content.find((b) => b.type === "text")?.text?.trim() ?? ""
+    if (answer.includes("נשים")) return "feminine"
+    if (answer.includes("גברים")) return "masculine"
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Full detection: code pass, then a short Haiku call for drafts whose
  * addressing the regex can't classify. Returns null when the draft simply
  * doesn't address the reader (third-person / impersonal writing) — the
