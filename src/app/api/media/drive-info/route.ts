@@ -3,6 +3,10 @@ import { createClient } from "@/lib/supabase/server"
 import { extractDriveFileId, driveEmbedUrl, driveThumbnailUrl } from "@/lib/drive-media"
 import { probeDriveFile } from "@/lib/drive-fetch"
 
+// Headroom over the 12s Drive header timeout in lib/drive-fetch, so OUR
+// error wins the race against the platform killing the function.
+export const maxDuration = 30
+
 /**
  * POST /api/media/drive-info
  *

@@ -14,15 +14,36 @@
 
 import { driveDownloadUrl } from "@/lib/drive-media"
 
-export type DriveFailure = "invalid_drive_link" | "drive_not_public"
+export type DriveFailure =
+  | "invalid_drive_link"
+  | "drive_not_public"
+  | "drive_timeout"
+
+/**
+ * How long we'll wait for Drive to send RESPONSE HEADERS. This is not a
+ * download budget — fetch resolves as soon as headers land, so a 2GB file
+ * clears this in the same time as a 2MB one. Drive normally answers in
+ * well under a second.
+ *
+ * Deliberately kept UNDER the serverless function limit: if the platform
+ * kills the function first, the client gets an HTML 504 it can't parse and
+ * the user sees a generic network error. Failing here instead means we
+ * return real JSON (`drive_timeout`) and the UI can say something useful.
+ */
+const DRIVE_HEADER_TIMEOUT_MS = 12_000
 
 /**
  * Fetch a public Drive file, transparently clearing the "can't scan for
  * viruses" interstitial that Drive shows for larger files (it returns an
  * HTML form whose hidden inputs we resubmit).
+ *
+ * Throws a TimeoutError (from AbortSignal.timeout) if Drive doesn't answer
+ * within DRIVE_HEADER_TIMEOUT_MS — callers map that to `drive_timeout`.
  */
 export async function fetchDriveFile(id: string): Promise<Response> {
-  const first = await fetch(driveDownloadUrl(id))
+  const first = await fetch(driveDownloadUrl(id), {
+    signal: AbortSignal.timeout(DRIVE_HEADER_TIMEOUT_MS),
+  })
   const ct = first.headers.get("content-type") || ""
   if (!ct.includes("text/html")) return first
 
@@ -38,7 +59,10 @@ export async function fetchDriveFile(id: string): Promise<Response> {
   if (!params.has("id")) params.set("id", id)
   if (!params.has("export")) params.set("export", "download")
   if (!params.has("confirm")) params.set("confirm", "t")
-  return fetch(`https://drive.usercontent.google.com/download?${params.toString()}`)
+  return fetch(
+    `https://drive.usercontent.google.com/download?${params.toString()}`,
+    { signal: AbortSignal.timeout(DRIVE_HEADER_TIMEOUT_MS) },
+  )
 }
 
 export interface DriveProbe {
@@ -63,7 +87,16 @@ export interface DriveProbe {
 export async function probeDriveFile(
   id: string,
 ): Promise<DriveProbe | DriveFailure> {
-  const res = await fetchDriveFile(id)
+  let res: Response
+  try {
+    res = await fetchDriveFile(id)
+  } catch (err) {
+    // AbortSignal.timeout rejects with a TimeoutError DOMException. Anything
+    // else here is a network fault reaching Drive — both are "we couldn't
+    // get an answer", and both must surface rather than hang.
+    console.error("[drive-fetch][probe]", err)
+    return "drive_timeout"
+  }
   const contentType = (res.headers.get("content-type") || "")
     .split(";")[0]
     .trim()

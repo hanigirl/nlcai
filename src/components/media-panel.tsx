@@ -571,17 +571,25 @@ function TalkingHeadFlow({
     const driveErrorMessages: Record<string, string> = {
       invalid_drive_link: "לא זוהה קובץ בקישור. ודאו שזה קישור ישיר לקובץ בדרייב.",
       drive_not_public: 'הקובץ לא ציבורי. שנו את ההרשאה ל„כל מי שיש לו הקישור” ונסו שוב.',
+      drive_timeout: "גוגל דרייב לא מגיב. בדקו שהקובץ משותף ונסו שוב.",
       file_too_large: "הקובץ גדול מדי (מקסימום 50MB).",
     }
 
     setDriveError(null)
     setDriveLoading(true)
+    // Flipped once the media is actually attached — drives the retry reset
+    // in `finally` below.
+    let attached = false
     try {
       // Probe first — one round trip, no transfer. Tells us video vs image.
+      // The client-side timeout is the last line of defence: whatever
+      // happens upstream, this spinner must resolve into a result or an
+      // error, never sit there indefinitely.
       const infoRes = await fetch("/api/media/drive-info", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: link }),
+        signal: AbortSignal.timeout(30_000),
       })
       const info = await infoRes.json()
       if (!infoRes.ok || info.error) {
@@ -607,6 +615,7 @@ function TalkingHeadFlow({
         }
         onVideoUrlChange(data.url)
         setVideoPhase("done")
+        attached = true
         toast.success("המדיה נטענה מהדרייב")
         return
       }
@@ -614,7 +623,13 @@ function TalkingHeadFlow({
       // Video → keep the link itself as the media.
       onVideoUrlChange(link)
       setVideoPhase("done")
+      attached = true
       toast.success("הסרטון מהדרייב חובר לפוסט")
+
+      // The link work is DONE here. Clear the Drive spinner before the cover
+      // step so a slow (or failing) cover generation can never read as "still
+      // loading from Drive" — the cover has its own `coverLoading` indicator.
+      setDriveLoading(false)
 
       // Cover: we can't read a frame off a Drive-hosted video (canvas would
       // taint — Drive sends no CORS headers), so use Drive's server-rendered
@@ -645,9 +660,17 @@ function TalkingHeadFlow({
       }
     } catch (err) {
       console.error("[media-panel][drive-link]", err)
-      setDriveError("שגיאת רשת בטעינת המדיה. נסו שוב.")
+      const timedOut = err instanceof DOMException && err.name === "TimeoutError"
+      setDriveError(
+        timedOut
+          ? "הבדיקה מול גוגל דרייב לקחה יותר מדי זמן. ודאו שהקובץ משותף ונסו שוב."
+          : "שגיאת רשת בטעינת המדיה. נסו שוב.",
+      )
     } finally {
       setDriveLoading(false)
+      // A FAILED attempt must not be remembered as "already handled", or
+      // re-pasting the same link would be silently ignored by the debounce.
+      if (!attached) lastDriveRef.current = ""
     }
   }
 
@@ -2492,19 +2515,26 @@ function MediaUploadFlow({
     if (!isDriveUrl(link)) return
     setDriveError(null)
     setDrivePulling(true)
+    // Flipped once the asset is actually persisted — drives the retry reset
+    // in `finally` below.
+    let attached = false
 
     const errorMessages: Record<string, string> = {
       invalid_drive_link: "לא זוהה קובץ בקישור. ודאו שזה קישור ישיר לקובץ בדרייב.",
       drive_not_public:
         'הקובץ לא ציבורי. שנו את ההרשאה ל„כל מי שיש לו הקישור” ונסו שוב.',
+      drive_timeout: "גוגל דרייב לא מגיב. בדקו שהקובץ משותף ונסו שוב.",
       file_too_large: `הקובץ גדול מדי (מקסימום ${MAX_FILE_MB}MB).`,
     }
 
     try {
+      // Timeout bound so the spinner always resolves — see the matching
+      // note in processDriveLink.
       const infoRes = await fetch("/api/media/drive-info", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: link }),
+        signal: AbortSignal.timeout(30_000),
       })
       const info = await infoRes.json()
       if (!infoRes.ok || info.error) {
@@ -2575,6 +2605,7 @@ function MediaUploadFlow({
       setDriveUrl("")
       setDriveDirty(false)
       lastDriveRef.current = link
+      attached = true
       setFormatMeta(postId, format as FormatId, { driveUrl: undefined })
       toast.success(
         kind === "video" ? "הסרטון מהדרייב חובר לפוסט" : "המדיה נטענה מהדרייב",
@@ -2582,9 +2613,19 @@ function MediaUploadFlow({
       )
     } catch (err) {
       console.error("[media-upload-flow][drive-attach]", err)
-      setDriveError("שגיאת רשת בטעינת המדיה. נסו שוב.")
+      const timedOut = err instanceof DOMException && err.name === "TimeoutError"
+      setDriveError(
+        timedOut
+          ? "הבדיקה מול גוגל דרייב לקחה יותר מדי זמן. ודאו שהקובץ משותף ונסו שוב."
+          : "שגיאת רשת בטעינת המדיה. נסו שוב.",
+      )
     } finally {
       setDrivePulling(false)
+      // Forget a FAILED attempt so re-pasting the same link retries instead
+      // of being swallowed by the debounce's duplicate check. On success the
+      // ref is left pointing at the handled link, which is what suppresses a
+      // redundant second pull.
+      if (!attached) lastDriveRef.current = ""
     }
   }
 
