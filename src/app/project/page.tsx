@@ -23,6 +23,12 @@ import { ColorSwatchPicker } from "@/components/color-swatch-picker"
 import type { Avatar } from "@/components/avatar-picker"
 import type { SlideData } from "@/lib/carousel-templates"
 import { createClient } from "@/lib/supabase/client"
+import {
+  isDriveUrl,
+  extractDriveFileId,
+  driveThumbnailUrl,
+  driveEmbedUrl,
+} from "@/lib/drive-media"
 import { userKey } from "@/lib/user-scoped-storage"
 import { logLearningEdit } from "@/lib/learning-capture"
 
@@ -467,6 +473,14 @@ function ProjectPageInner() {
     // Reuse saved frame data URL if available
     if (thVideoFrameDataUrl) {
       thumbnailUrl = thVideoFrameDataUrl
+    } else if (isDriveUrl(videoSrc)) {
+      // Link-mode video: the clip lives in Drive, so a canvas frame-grab
+      // would taint (no CORS) and `extractVideoFrame` would just burn its
+      // 5s timeout and return null. Drive renders its own poster
+      // server-side, and the cover route fetches remote URLs, so hand it
+      // that instead of a data URL.
+      const fileId = extractDriveFileId(videoSrc!)
+      if (fileId) thumbnailUrl = driveThumbnailUrl(fileId)
     } else if (videoSrc && !videoSrc.includes("heygen.com")) {
       const isImageUrl = videoSrc.includes("/video-thumb/") || videoSrc.match(/\.(jpg|jpeg|png|webp)(\?|$)/i)
       if (isImageUrl) {
@@ -2910,7 +2924,13 @@ function VideoPlayer({ url }: { url: string }) {
     else { v.pause(); setPlaying(false) }
   }
 
-  const isEmbed = url.includes("heygen.com/embeds")
+  // A Drive link is a link-mode video: it plays through Drive's own embed
+  // player, exactly like a HeyGen embed, because Drive won't serve bytes
+  // to a <video src> (no CORS). Routing it through the existing embed
+  // branch below also means it inherits the skeleton/loaded handling.
+  const driveFileId = extractDriveFileId(url)
+  const isEmbed = url.includes("heygen.com/embeds") || (isDriveUrl(url) && !!driveFileId)
+  const embedSrc = driveFileId ? driveEmbedUrl(driveFileId) : url
   const isThumbnail = url.includes("/video-thumb/") || url.match(/\.(jpg|jpeg|png|webp)(\?|$)/i)
   const isBlob = url.startsWith("blob:")
 
@@ -2943,7 +2963,7 @@ function VideoPlayer({ url }: { url: string }) {
       <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden bg-gray-95">
         {skeleton}
         <iframe
-          src={url}
+          src={embedSrc}
           className="w-full h-full"
           allow="encrypted-media; fullscreen;"
           allowFullScreen

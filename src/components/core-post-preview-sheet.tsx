@@ -30,6 +30,8 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
+import { DriveVideoPreview } from "@/components/drive-video-preview"
+import { isDriveUrl, isVideoUrl } from "@/lib/drive-media"
 import {
   Tooltip,
   TooltipContent,
@@ -477,12 +479,15 @@ function PreviewMediaSlot({
     kind === "video"
       ? "פתיחה בעמוד הפוסט לעריכת מדיה"
       : "פתיחה בעמוד הפוסט לעריכת קאבר"
-  const isVideo = url ? /\.(mp4|mov|webm)(\?|$)/i.test(url) : false
+  const isVideo = isVideoUrl(url)
 
   if (url) {
     return (
       <div className="aspect-square rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
-        {isVideo ? (
+        {isDriveUrl(url) ? (
+          // Link-mode video — plays from Drive, never copied to our bucket.
+          <DriveVideoPreview url={url} label="מדיה של הפוסט" />
+        ) : isVideo ? (
           <video
             src={url}
             className="w-full h-full object-cover"

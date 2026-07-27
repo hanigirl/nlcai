@@ -18,6 +18,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { ConfirmModal } from "@/components/confirm-modal"
+import { DriveVideoPreview } from "@/components/drive-video-preview"
+import {
+  isDriveUrl,
+  isCompleteDriveUrl,
+  isVideoUrl,
+  extractDriveFileId,
+  driveThumbnailUrl,
+} from "@/lib/drive-media"
 import {
   subscribeGeneration,
   getGenerationSnapshot,
@@ -535,88 +543,105 @@ function TalkingHeadFlow({
     lastDriveRef.current = ""
   }
 
-  // Extract a frame from a (stored) video URL as a data URL, for the cover.
-  // crossOrigin is required so the canvas isn't tainted when reading a frame
-  // from the Supabase public URL.
-  const extractFrameFromUrl = (src: string): Promise<string | null> => {
-    return new Promise((resolve) => {
-      const video = document.createElement("video")
-      video.crossOrigin = "anonymous"
-      video.muted = true
-      video.src = src
-      video.onloadeddata = () => { video.currentTime = 1 }
-      video.onseeked = () => {
-        try {
-          const canvas = document.createElement("canvas")
-          canvas.width = video.videoWidth
-          canvas.height = video.videoHeight
-          canvas.getContext("2d")?.drawImage(video, 0, 0)
-          resolve(canvas.toDataURL("image/jpeg", 0.8))
-        } catch (err) { console.error("[media-panel][video-frame-capture]", err); resolve(null) }
-      }
-      video.onerror = () => resolve(null)
-      setTimeout(() => resolve(null), 5000)
-    })
-  }
+  // NOTE (2026-07-27): the canvas frame-grab helper that used to live here
+  // was removed with the Drive link-mode switch. It only ever fed the
+  // cover generator, and a Drive-hosted video taints the canvas (no CORS),
+  // so the cover now comes from Drive's own poster endpoint instead.
 
-  // Pull the talking_head media from a Google Drive share link. The heavy
-  // lifting (resolving the link, downloading, storing) happens server-side in
-  // /api/media/from-drive; here we just hand it the link, then treat the
-  // returned storage URL exactly like an avatar-generated video — set it as
-  // the post's video and bake a cover from its first frame.
+  /**
+   * Attach the talking_head media sitting behind a Google Drive share link.
+   *
+   * VIDEO (the common case) is link-mode: we probe the link to confirm it
+   * resolves and to learn its kind, then keep the LINK as the media. No
+   * bytes are copied, so there is no size ceiling and no upload wait — the
+   * file is only ever downloaded at render time (story caption burn-in).
+   *
+   * IMAGE still goes through the old download-and-store path: images are
+   * small, and the canvas/compositing steps downstream need same-origin
+   * bytes. See the invariant note in `lib/drive-media.ts`.
+   */
   const processDriveLink = async (rawLink: string) => {
     const link = rawLink.trim()
     if (!link) return
-    if (!/drive\.google\.com|docs\.google\.com/i.test(link)) {
+    if (!isDriveUrl(link)) {
       setDriveError("זה לא נראה כמו קישור של גוגל דרייב.")
       return
+    }
+
+    const driveErrorMessages: Record<string, string> = {
+      invalid_drive_link: "לא זוהה קובץ בקישור. ודאו שזה קישור ישיר לקובץ בדרייב.",
+      drive_not_public: 'הקובץ לא ציבורי. שנו את ההרשאה ל„כל מי שיש לו הקישור” ונסו שוב.',
+      file_too_large: "הקובץ גדול מדי (מקסימום 50MB).",
     }
 
     setDriveError(null)
     setDriveLoading(true)
     try {
-      const res = await fetch("/api/media/from-drive", {
+      // Probe first — one round trip, no transfer. Tells us video vs image.
+      const infoRes = await fetch("/api/media/drive-info", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: link }),
       })
-      const data = await res.json()
-      if (!res.ok || data.error) {
-        const map: Record<string, string> = {
-          invalid_drive_link: "לא זוהה קובץ בקישור. ודאו שזה קישור ישיר לקובץ בדרייב.",
-          drive_not_public: 'הקובץ לא ציבורי. שנו את ההרשאה ל„כל מי שיש לו הקישור” ונסו שוב.',
-          file_too_large: "הקובץ גדול מדי (מקסימום 50MB).",
-        }
-        setDriveError(map[data.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.")
+      const info = await infoRes.json()
+      if (!infoRes.ok || info.error) {
+        setDriveError(
+          driveErrorMessages[info.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.",
+        )
         return
       }
 
-      const mediaUrl: string = data.url
-      onVideoUrlChange(mediaUrl)
-      setVideoPhase("done")
-      toast.success("המדיה נטענה מהדרייב")
+      if (info.kind === "image") {
+        // Images keep the copy-to-storage path.
+        const res = await fetch("/api/media/from-drive", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: link }),
+        })
+        const data = await res.json()
+        if (!res.ok || data.error) {
+          setDriveError(
+            driveErrorMessages[data.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.",
+          )
+          return
+        }
+        onVideoUrlChange(data.url)
+        setVideoPhase("done")
+        toast.success("המדיה נטענה מהדרייב")
+        return
+      }
 
-      // Cover: extract a frame from the stored video and generate the reel
-      // cover, mirroring the avatar/upload flows. Skipped for images.
-      if (data.kind !== "image") {
-        const frameDataUrl = await extractFrameFromUrl(mediaUrl)
-        if (frameDataUrl) onVideoFrameChange?.(frameDataUrl)
-        const coverTitle = hookText || transcript || "ריל חדש"
-        setCoverLoading(true); onCoverLoadingChange?.(true)
-        try {
-          const coverRes = await fetch("/api/reel-cover/generate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              thumbnail_url: frameDataUrl || undefined,
-              title: coverTitle,
-              pill_color: pillColor,
-            }),
-          })
-          const coverData = await coverRes.json()
-          if (coverData.covers?.[0]) onCoverImageChange(coverData.covers[0])
-        } catch (err) { console.error("[media-panel][cover-from-drive]", err) }
-        finally { setCoverLoading(false); onCoverLoadingChange?.(false) }
+      // Video → keep the link itself as the media.
+      onVideoUrlChange(link)
+      setVideoPhase("done")
+      toast.success("הסרטון מהדרייב חובר לפוסט")
+
+      // Cover: we can't read a frame off a Drive-hosted video (canvas would
+      // taint — Drive sends no CORS headers), so use Drive's server-rendered
+      // poster instead. The cover route fetches remote URLs server-side, so
+      // handing it the thumbnail URL works exactly like a data URL frame.
+      const fileId = extractDriveFileId(link)
+      const posterUrl = fileId ? driveThumbnailUrl(fileId) : undefined
+      const coverTitle = hookText || transcript || "ריל חדש"
+      setCoverLoading(true)
+      onCoverLoadingChange?.(true)
+      try {
+        const coverRes = await fetch("/api/reel-cover/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            thumbnail_url: posterUrl,
+            title: coverTitle,
+            pill_color: pillColor,
+          }),
+        })
+        const coverData = await coverRes.json()
+        if (coverData.covers?.[0]) onCoverImageChange(coverData.covers[0])
+      } catch (err) {
+        console.error("[media-panel][cover-from-drive]", err)
+      } finally {
+        setCoverLoading(false)
+        onCoverLoadingChange?.(false)
       }
     } catch (err) {
       console.error("[media-panel][drive-link]", err)
@@ -631,10 +656,7 @@ function TalkingHeadFlow({
   const scheduleDrive = (value: string) => {
     if (driveDebounceRef.current) clearTimeout(driveDebounceRef.current)
     const link = value.trim()
-    const looksComplete =
-      /drive\.google\.com|docs\.google\.com/i.test(link) &&
-      /\/d\/[\w-]+|[?&]id=[\w-]+/.test(link)
-    if (!looksComplete || link === lastDriveRef.current) return
+    if (!isCompleteDriveUrl(link) || link === lastDriveRef.current) return
     driveDebounceRef.current = setTimeout(() => {
       lastDriveRef.current = link
       processDriveLink(link)
@@ -701,7 +723,8 @@ function TalkingHeadFlow({
             <p className="text-xs text-button-destructive-default">{driveError}</p>
           ) : (
             <p className="text-xs text-text-neutral-default">
-              הדביקו קישור לסרטון בדרייב עם הרשאת „כל מי שיש לו הקישור”. נטען אוטומטית.
+              הדביקו קישור לסרטון בדרייב עם הרשאת „כל מי שיש לו הקישור”. הסרטון
+              יתנגן ישירות מהדרייב — בלי הגבלת גודל.
             </p>
           )}
         </div>
@@ -745,20 +768,23 @@ function TalkingHeadFlow({
           <div className="flex flex-col items-center gap-2 flex-1 min-w-0">
             <p className="text-xs text-text-neutral-default">סרטון</p>
             <div className="w-full aspect-[9/16] rounded-lg overflow-hidden bg-gray-95 relative">
-              {/* Same <video> element for blob and remote URLs. The previous
-                  `<img>` fallback for non-blob URLs left the preview blank,
-                  because an mp4 URL can't render as an image. The `#t=0.001`
-                  fragment forces the browser to seek to the first frame so
-                  it's shown as a static preview while paused. */}
-              <video
-                src={liftedVideoUrl.startsWith("blob:") ? liftedVideoUrl : `${liftedVideoUrl}#t=0.001`}
-                controls={false}
-                playsInline
-                muted
-                preload="metadata"
-                className="w-full h-full object-cover cursor-pointer"
-                onClick={(e) => { const v = e.target as HTMLVideoElement; if (v.paused) v.play(); else v.pause() }}
-              />
+              {/* A Drive-hosted video plays through Drive's embed player —
+                  it can't back a <video src> (no CORS, virus-scan gate).
+                  Everything else is a blob or a storage URL, where the
+                  `#t=0.001` fragment forces a first-frame poster. */}
+              {isDriveUrl(liftedVideoUrl) ? (
+                <DriveVideoPreview url={liftedVideoUrl} label="הסרטון שלכם" />
+              ) : (
+                <video
+                  src={liftedVideoUrl.startsWith("blob:") ? liftedVideoUrl : `${liftedVideoUrl}#t=0.001`}
+                  controls={false}
+                  playsInline
+                  muted
+                  preload="metadata"
+                  className="w-full h-full object-cover cursor-pointer"
+                  onClick={(e) => { const v = e.target as HTMLVideoElement; if (v.paused) v.play(); else v.pause() }}
+                />
+              )}
             </div>
           </div>
 
@@ -1941,9 +1967,10 @@ function MediaUploadFlow({
           | undefined
         const existingUrl = map?.[format]
         if (!existingUrl) return
-        const looksLikeVideo = /\.(mp4|webm|mov|m3u8)(\?|#|$)/i.test(
-          existingUrl,
-        )
+        // Drive links carry no extension — but a Drive URL in media_assets
+        // is always a link-mode video (see lib/drive-media.ts), so
+        // `isVideoUrl` covers both that and extension-bearing storage URLs.
+        const looksLikeVideo = isVideoUrl(existingUrl)
         // Story images belong to the AI frame set (above) — the manual
         // single-preview is reserved for a bring-your-own VIDEO. Skip
         // setting an image preview for story so a saved set's frame-1
@@ -2419,17 +2446,15 @@ function MediaUploadFlow({
     }
   }
 
-  /** True for a Google Drive / Docs share link (what from-drive can pull). */
-  const isDriveLink = (link: string) =>
-    /drive\.google\.com|docs\.google\.com/i.test(link)
-
   const commitDriveUrl = () => {
     if (!postId) return
     if (!driveDirty) return
-    // Drive links are PULLED into real media (see pullDriveMedia), not parked
-    // as a reference string — so don't persist them to the readiness meta.
-    // Only Canva / other links stay as a reference the user opens manually.
-    if (isDriveLink(driveUrl.trim())) return
+    // Drive links become real media assets in the DATABASE (see
+    // attachDriveMedia) — that's what makes them survive a different
+    // browser or machine. The localStorage readiness meta is only for
+    // Canva / other links we can't resolve, which stay as a reference the
+    // user opens manually.
+    if (isDriveUrl(driveUrl.trim())) return
     setFormatMeta(postId, format as FormatId, {
       driveUrl: driveUrl.trim() || undefined,
     })
@@ -2440,54 +2465,80 @@ function MediaUploadFlow({
   }
 
   /**
-   * Pull the actual media that lives behind a Google Drive link and make it
-   * the format's media — the same idea as the talking_head Drive flow, but
-   * routed through the generic per-format persistence:
+   * Attach the media behind a Google Drive link to this (post, format).
    *
-   *   1. `/api/media/from-drive` downloads the file (video OR image),
-   *      stores it in the user-media bucket, and returns a public URL + kind.
-   *   2. We persist that URL via `/api/core-posts/{id}/media` (one asset per
-   *      (format, type) slot) — identical to a manual upload, so it hydrates
-   *      and deletes through the exact same paths.
-   *   3. The panel shows it immediately: image_post → the selected image,
-   *      story image → a 1-frame story set, story/any video → the video slot.
+   * Two paths, chosen by what the link actually points at:
    *
-   * Canva / non-Drive links never reach here — they can't be downloaded, so
+   *   VIDEO → link mode. We probe the link via `/api/media/drive-info` (one
+   *     round trip, no transfer) and then persist the LINK ITSELF as the
+   *     format's video asset. Nothing is copied, so there is no size cap
+   *     and no upload wait; the file is downloaded exactly once, later, if
+   *     the user burns a caption into it. Because the link lands in
+   *     `media_assets` — the database, not localStorage — it comes back on
+   *     any browser and any machine.
+   *
+   *   IMAGE → the original download-and-store path. Images are small, and
+   *     the AI/canvas/download paths downstream need same-origin bytes.
+   *
+   * Either way it persists through `/api/core-posts/{id}/media`, so the
+   * asset hydrates and deletes exactly like a manual upload.
+   *
+   * Canva / non-Drive links never reach here — they can't be resolved, so
    * they stay as a reference link the user opens manually (commitDriveUrl).
    */
-  const pullDriveMedia = async (rawLink: string) => {
+  const attachDriveMedia = async (rawLink: string) => {
     const link = rawLink.trim()
     if (!postId || !link) return
-    if (!isDriveLink(link)) return
+    if (!isDriveUrl(link)) return
     setDriveError(null)
     setDrivePulling(true)
+
+    const errorMessages: Record<string, string> = {
+      invalid_drive_link: "לא זוהה קובץ בקישור. ודאו שזה קישור ישיר לקובץ בדרייב.",
+      drive_not_public:
+        'הקובץ לא ציבורי. שנו את ההרשאה ל„כל מי שיש לו הקישור” ונסו שוב.',
+      file_too_large: `הקובץ גדול מדי (מקסימום ${MAX_FILE_MB}MB).`,
+    }
+
     try {
-      const res = await fetch("/api/media/from-drive", {
+      const infoRes = await fetch("/api/media/drive-info", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: link }),
       })
-      const data = await res.json()
-      if (!res.ok || data.error) {
-        const map: Record<string, string> = {
-          invalid_drive_link:
-            "לא זוהה קובץ בקישור. ודאו שזה קישור ישיר לקובץ בדרייב.",
-          drive_not_public:
-            'הקובץ לא ציבורי. שנו את ההרשאה ל„כל מי שיש לו הקישור” ונסו שוב.',
-          file_too_large: `הקובץ גדול מדי (מקסימום ${MAX_FILE_MB}MB).`,
-        }
-        setDriveError(map[data.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.")
+      const info = await infoRes.json()
+      if (!infoRes.ok || info.error) {
+        setDriveError(
+          errorMessages[info.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.",
+        )
         return
       }
 
-      const mediaUrl: string = data.url
-      const kind: "image" | "video" = data.kind === "video" ? "video" : "image"
+      const kind: "image" | "video" = info.kind === "video" ? "video" : "image"
 
       // image_post accepts images only — reject a Drive video with a clear
       // message instead of silently storing something the format can't use.
       if (format === "image_post" && kind === "video") {
         setDriveError("פוסט תמונה תומך רק בתמונות")
         return
+      }
+
+      // Video keeps the link; an image is copied into our bucket first.
+      let mediaUrl = link
+      if (kind === "image") {
+        const res = await fetch("/api/media/from-drive", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: link }),
+        })
+        const data = await res.json()
+        if (!res.ok || data.error) {
+          setDriveError(
+            errorMessages[data.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.",
+          )
+          return
+        }
+        mediaUrl = data.url
       }
 
       const persistRes = await fetch(`/api/core-posts/${postId}/media`, {
@@ -2515,16 +2566,22 @@ function MediaUploadFlow({
         if (kind === "image") setImageLoading(true)
         if (format === "image_post") onImagePostUrlChange?.(mediaUrl)
       }
+      // A story video means the user is on the bring-your-own path — land
+      // them on that mode so the burn-caption CTA is reachable.
+      if (format === "story" && kind === "video") setStoryMode("video")
 
-      // The media is now real — drop the reference link + its readiness meta
-      // so the input doesn't also masquerade as a parked link.
+      // The media is attached — clear the input and its localStorage
+      // readiness meta, which only ever backed non-Drive reference links.
       setDriveUrl("")
       setDriveDirty(false)
       lastDriveRef.current = link
       setFormatMeta(postId, format as FormatId, { driveUrl: undefined })
-      toast.success("המדיה נטענה מהדרייב", { duration: 3000 })
+      toast.success(
+        kind === "video" ? "הסרטון מהדרייב חובר לפוסט" : "המדיה נטענה מהדרייב",
+        { duration: 3000 },
+      )
     } catch (err) {
-      console.error("[media-upload-flow][drive-pull]", err)
+      console.error("[media-upload-flow][drive-attach]", err)
       setDriveError("שגיאת רשת בטעינת המדיה. נסו שוב.")
     } finally {
       setDrivePulling(false)
@@ -2532,20 +2589,18 @@ function MediaUploadFlow({
   }
 
   /**
-   * Debounced auto-pull: fires as soon as the field holds a full Drive link
-   * with an extractable file id (mirrors the talking_head panel), so the user
-   * never taps a button. Non-Drive links are ignored here and handled by
-   * commitDriveUrl on blur.
+   * Debounced auto-attach: fires as soon as the field holds a full Drive
+   * link with an extractable file id (mirrors the talking_head panel), so
+   * the user never taps a button. Non-Drive links are ignored here and
+   * handled by commitDriveUrl on blur.
    */
   const scheduleDrivePull = (value: string) => {
     if (driveDebounceRef.current) clearTimeout(driveDebounceRef.current)
     const link = value.trim()
-    const looksComplete =
-      isDriveLink(link) && /\/d\/[\w-]+|[?&]id=[\w-]+/.test(link)
-    if (!looksComplete || link === lastDriveRef.current) return
+    if (!isCompleteDriveUrl(link) || link === lastDriveRef.current) return
     driveDebounceRef.current = setTimeout(() => {
       lastDriveRef.current = link
-      pullDriveMedia(link)
+      attachDriveMedia(link)
     }, 500)
   }
 
@@ -2638,7 +2693,8 @@ function MediaUploadFlow({
               )}
 
               {/* Bring your own — paste a Drive/Canva link. Drive links are
-                  pulled + shown automatically; Canva/other stay as a
+                  attached automatically — a video stays in Drive and plays
+                  from there, an image is copied over. Canva/other stay as a
                   reference link. Upload-from-computer was removed per Hani. */}
               <div className="flex flex-col gap-2">
                 <p className="text-small-bold text-text-primary-default">
@@ -2690,7 +2746,7 @@ function MediaUploadFlow({
                     {drivePulling && (
                       <Loader2 className="size-3.5 animate-spin text-yellow-50" />
                     )}
-                    {driveError ?? "טוען מהדרייב..."}
+                    {driveError ?? "מחברים את המדיה מהדרייב..."}
                   </p>
                 )}
               </div>
@@ -2973,7 +3029,10 @@ function MediaUploadFlow({
                       : "aspect-[4/5] w-[72px]"
                   }`}
                 >
-                  {previewKind === "video" ? (
+                  {isDriveUrl(previewUrl) ? (
+                    // Link-mode video — streams from Drive, no copy of ours.
+                    <DriveVideoPreview url={previewUrl} label="המדיה שלכם" />
+                  ) : previewKind === "video" ? (
                     <video
                       src={
                         previewUrl.startsWith("blob:")
@@ -3057,7 +3116,8 @@ function MediaUploadFlow({
             ))}
 
           {/* Bring your own — paste a Drive/Canva link. Drive links are
-              pulled + shown automatically; Canva/other stay as a reference
+              attached automatically — a video stays in Drive and plays from
+              there, an image is copied over. Canva/other stay as a reference
               link. Upload-from-computer was removed per Hani. */}
           <div className="flex flex-col gap-2">
             <p className="text-small-bold text-text-primary-default">
@@ -3117,7 +3177,7 @@ function MediaUploadFlow({
                 {drivePulling && (
                   <Loader2 className="size-3.5 animate-spin text-yellow-50" />
                 )}
-                {driveError ?? "טוען מהדרייב..."}
+                {driveError ?? "מחברים את המדיה מהדרייב..."}
               </p>
             )}
           </div>

@@ -62,6 +62,8 @@ import { Select } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ConfirmModal } from "@/components/confirm-modal"
+import { DriveVideoPreview } from "@/components/drive-video-preview"
+import { isDriveUrl, isVideoUrl } from "@/lib/drive-media"
 import {
   Tooltip,
   TooltipContent,
@@ -1579,11 +1581,15 @@ function MediaSlot({
     // rendered through `<video>` which can't decode an image, so the
     // user saw nothing). Supabase storage URLs carry the original
     // extension, so the regex is reliable for our upload paths.
-    const isVideoUrl = /\.(mp4|webm|mov|m3u8)(\?|#|$)/i.test(url)
+    // A Drive link is always a link-mode VIDEO (see lib/drive-media.ts) and
+    // renders through Drive's embed player — it can't back a <video src>.
+    const isVideoSlot = isVideoUrl(url)
 
     return (
       <div className="aspect-[9/16] rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
-        {isVideoUrl ? (
+        {isDriveUrl(url) ? (
+          <DriveVideoPreview url={url} label={label} />
+        ) : isVideoSlot ? (
           <video
             src={url}
             className="w-full h-full object-cover"
@@ -1827,10 +1833,12 @@ function ScheduleStatusBlock({
 /* ------------------------------------------------------------------ */
 
 function MediaPreview({ url, label }: { url: string; label: string }) {
-  const isVideo = /\.(mp4|webm|mov)(\?|#|$)/i.test(url)
+  const isVideo = isVideoUrl(url)
   return (
     <div className="rounded-xl overflow-hidden border border-border-neutral-default bg-bg-surface aspect-video">
-      {isVideo ? (
+      {isDriveUrl(url) ? (
+        <DriveVideoPreview url={url} label={label} />
+      ) : isVideo ? (
         <video
           src={url}
           className="w-full h-full object-cover"

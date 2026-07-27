@@ -2,6 +2,7 @@
 
 import { createElement, useState } from "react"
 import { getFormatChipIcon } from "@/components/format-status-chip"
+import { extractDriveFileId, driveThumbnailUrl } from "@/lib/drive-media"
 import type { FormatId } from "@/lib/timing-storage"
 
 /**
@@ -49,8 +50,15 @@ export function FormatThumbnail({
   fit?: "cover" | "contain"
 }) {
   const [errored, setErrored] = useState(false)
+  // A link-mode Drive video can't stream into a <video> (no CORS), and an
+  // <iframe> is far too heavy for a list thumbnail. Drive renders a poster
+  // for us server-side — swap the URL for that and fall through to <img>.
+  const driveFileId = extractDriveFileId(url)
+  const resolvedUrl = driveFileId ? driveThumbnailUrl(driveFileId, 400) : url
   const isVideo =
-    !!url && (/\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(url) || /\/video\//i.test(url))
+    !!url &&
+    !driveFileId &&
+    (/\.(mp4|mov|webm|m4v)(\?|#|$)/i.test(url) || /\/video\//i.test(url))
   const fitClass = fit === "contain" ? "object-contain" : "object-cover"
 
   if (!url || errored) {
@@ -78,7 +86,7 @@ export function FormatThumbnail({
   ) : (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={url}
+      src={resolvedUrl}
       alt=""
       loading="lazy"
       onError={() => setErrored(true)}

@@ -5,6 +5,8 @@ import { Resvg } from "@resvg/resvg-js"
 import ffmpegPath from "ffmpeg-static"
 import { RtlText } from "@/lib/carousel-templates/shared"
 import { createClient } from "@/lib/supabase/server"
+import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
+import { fetchDriveFile } from "@/lib/drive-fetch"
 
 // Downloading + re-encoding a user video is heavier than an image render;
 // libx264 on a short clip still runs in seconds, but leave generous headroom.
@@ -21,8 +23,13 @@ const MAX_CLIP_SECONDS = 60
 /**
  * "Video story" — the bring-your-own counterpart to the AI image story.
  *
- * The user supplies their OWN mp4 (already stored under user-media via the
- * upload / Drive-pull path). This route:
+ * The user supplies their OWN mp4 — either uploaded to user-media, or left
+ * sitting in Google Drive as a share link (the default for video since
+ * 2026-07-27; see `lib/drive-media.ts`). This route:
+ *   0. resolves that source to a local temp file — streaming it straight
+ *      from Drive when the stored asset is a link, which is the ONE moment
+ *      the real bytes are needed and therefore the only place a size limit
+ *      could ever bite,
  *   1. renders the post's HOOK as a transparent 9:16 overlay (satori → Resvg,
  *      reusing the Heebo Hebrew font + a legibility scrim), then
  *   2. burns it into the video with ffmpeg (cover-crop to 1080×1920), and
@@ -285,17 +292,49 @@ export async function POST(req: NextRequest) {
     tmpFiles.push(inputPath, overlayPath, outputPath)
 
     // Pull the source video + render the overlay in parallel.
+    //
+    // The source is either a Supabase storage URL (uploaded file) or a
+    // Google Drive share link (the default for bring-your-own video). Drive
+    // needs the interstitial-clearing fetch, and neither case should be
+    // buffered whole in memory — a link-mode source has no 50MB ceiling, so
+    // `arrayBuffer()` here would be an OOM waiting to happen. Stream both
+    // straight to the temp file instead.
     const [videoRes, overlayPng] = await Promise.all([
-      fetch(videoUrl),
+      isDriveUrl(videoUrl)
+        ? fetchDriveFile(extractDriveFileId(videoUrl)!)
+        : fetch(videoUrl),
       renderOverlayPng(hook),
     ])
-    if (!videoRes.ok) {
+    const srcContentType = (videoRes.headers.get("content-type") || "")
+      .split(";")[0]
+      .trim()
+    if (!videoRes.ok || !videoRes.body) {
       return NextResponse.json(
         { error: `לא הצלחנו לטעון את הסרטון (${videoRes.status})` },
         { status: 502 },
       )
     }
-    await fs.writeFile(inputPath, Buffer.from(await videoRes.arrayBuffer()))
+    // Drive answers a revoked/restricted file with a 200 HTML page, not an
+    // error status — so a status check alone would hand ffmpeg a web page.
+    if (isDriveUrl(videoUrl) && srcContentType.includes("text/html")) {
+      await videoRes.body.cancel().catch(() => {})
+      return NextResponse.json(
+        {
+          error: "drive_not_public",
+          message:
+            'הסרטון בדרייב כבר לא משותף. שנו את ההרשאה ל„כל מי שיש לו הקישור” ונסו שוב.',
+        },
+        { status: 400 },
+      )
+    }
+
+    const { createWriteStream } = await import("fs")
+    const { Readable } = await import("stream")
+    const { pipeline } = await import("stream/promises")
+    await pipeline(
+      Readable.fromWeb(videoRes.body as Parameters<typeof Readable.fromWeb>[0]),
+      createWriteStream(inputPath),
+    )
     await fs.writeFile(overlayPath, overlayPng)
 
     await burnOverlay(inputPath, overlayPath, outputPath)
