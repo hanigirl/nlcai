@@ -676,6 +676,11 @@ function TalkingHeadFlow({
 
   // Debounced auto-fetch: fires as soon as the field holds a full Drive link
   // (with an extractable file id), so the user never taps a button.
+  //
+  // `lastDriveRef` suppresses a duplicate auto-fire for a link we already
+  // handled. That guard must NEVER be the last word, though: it used to be
+  // the only trigger, so once the ref held a link, re-pasting it did
+  // nothing at all and the user had no way to retry — see `commitDrive`.
   const scheduleDrive = (value: string) => {
     if (driveDebounceRef.current) clearTimeout(driveDebounceRef.current)
     const link = value.trim()
@@ -684,6 +689,17 @@ function TalkingHeadFlow({
       lastDriveRef.current = link
       processDriveLink(link)
     }, 500)
+  }
+
+  // Explicit user intent — blur or Enter. Always runs, bypassing the
+  // duplicate guard, so "paste it again" is a real escape hatch when the
+  // auto-fire didn't happen or the previous attempt failed.
+  const commitDrive = (value: string) => {
+    if (driveDebounceRef.current) clearTimeout(driveDebounceRef.current)
+    const link = value.trim()
+    if (!isCompleteDriveUrl(link) || driveLoading) return
+    lastDriveRef.current = link
+    processDriveLink(link)
   }
 
   // Determine current step for progress bar
@@ -732,6 +748,10 @@ function TalkingHeadFlow({
               setDriveLink(v)
               if (driveError) setDriveError(null)
               scheduleDrive(v) // auto-fetch once the link is complete
+            }}
+            onBlur={(e) => commitDrive(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur()
             }}
             placeholder="https://drive.google.com/file/d/..."
             disabled={driveLoading}
@@ -2471,15 +2491,29 @@ function MediaUploadFlow({
 
   const commitDriveUrl = () => {
     if (!postId) return
-    if (!driveDirty) return
     // Drive links become real media assets in the DATABASE (see
     // attachDriveMedia) — that's what makes them survive a different
     // browser or machine. The localStorage readiness meta is only for
     // Canva / other links we can't resolve, which stay as a reference the
     // user opens manually.
-    if (isDriveUrl(driveUrl.trim())) return
+    //
+    // A Drive link on blur/Enter is explicit user intent — attach it now,
+    // bypassing BOTH the dirty check and the debounce's duplicate guard.
+    // Without this the guard was the ONLY path, so a link that had already
+    // been attempted could never be retried: re-pasting it did nothing.
+    const trimmed = driveUrl.trim()
+    if (isDriveUrl(trimmed)) {
+      if (isCompleteDriveUrl(trimmed) && !drivePulling) {
+        if (driveDebounceRef.current) clearTimeout(driveDebounceRef.current)
+        lastDriveRef.current = trimmed
+        attachDriveMedia(trimmed)
+      }
+      return
+    }
+    // Non-Drive reference links only get written when actually edited.
+    if (!driveDirty) return
     setFormatMeta(postId, format as FormatId, {
-      driveUrl: driveUrl.trim() || undefined,
+      driveUrl: trimmed || undefined,
     })
     setDriveDirty(false)
     if (driveUrl.trim().length > 0) {
