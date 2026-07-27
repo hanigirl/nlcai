@@ -23,11 +23,11 @@ import { ColorSwatchPicker } from "@/components/color-swatch-picker"
 import type { Avatar } from "@/components/avatar-picker"
 import type { SlideData } from "@/lib/carousel-templates"
 import { createClient } from "@/lib/supabase/client"
+import { DriveVideoPreview } from "@/components/drive-video-preview"
 import {
   isDriveUrl,
   extractDriveFileId,
   driveThumbnailUrl,
-  driveEmbedUrl,
 } from "@/lib/drive-media"
 import { userKey } from "@/lib/user-scoped-storage"
 import { logLearningEdit } from "@/lib/learning-capture"
@@ -2924,13 +2924,7 @@ function VideoPlayer({ url }: { url: string }) {
     else { v.pause(); setPlaying(false) }
   }
 
-  // A Drive link is a link-mode video: it plays through Drive's own embed
-  // player, exactly like a HeyGen embed, because Drive won't serve bytes
-  // to a <video src> (no CORS). Routing it through the existing embed
-  // branch below also means it inherits the skeleton/loaded handling.
-  const driveFileId = extractDriveFileId(url)
-  const isEmbed = url.includes("heygen.com/embeds") || (isDriveUrl(url) && !!driveFileId)
-  const embedSrc = driveFileId ? driveEmbedUrl(driveFileId) : url
+  const isEmbed = url.includes("heygen.com/embeds")
   const isThumbnail = url.includes("/video-thumb/") || url.match(/\.(jpg|jpeg|png|webp)(\?|$)/i)
   const isBlob = url.startsWith("blob:")
 
@@ -2958,12 +2952,24 @@ function VideoPlayer({ url }: { url: string }) {
     <div className="absolute inset-0 z-10 animate-pulse bg-accent" />
   )
 
+  // Link-mode Drive video. NOT the iframe branch below: Drive's player has
+  // a minimum width and gets clipped at card size, and the canvas eats the
+  // pointer events before they reach it. DriveVideoPreview shows a poster
+  // with our own play control and opens the real player in a dialog.
+  if (isDriveUrl(url)) {
+    return (
+      <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden bg-gray-95">
+        <DriveVideoPreview url={url} label="הוידאו שלכם" />
+      </div>
+    )
+  }
+
   if (isEmbed) {
     return (
       <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden bg-gray-95">
         {skeleton}
         <iframe
-          src={embedSrc}
+          src={url}
           className="w-full h-full"
           allow="encrypted-media; fullscreen;"
           allowFullScreen
