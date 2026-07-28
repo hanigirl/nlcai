@@ -3,6 +3,7 @@
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
 import { AppHeader } from "@/components/app-header"
+import { TimingSync } from "@/components/timing-sync"
 
 interface AppShellProps {
   children: React.ReactNode
@@ -13,6 +14,7 @@ interface AppShellProps {
 export function AppShell({ children, idea, isHome }: AppShellProps) {
   return (
     <SidebarProvider defaultOpen={false} open={false}>
+      <TimingSync />
       <AppSidebar />
       <SidebarInset>
         <AppHeader idea={idea} />

@@ -233,6 +233,145 @@ function removeKey(key: string): void {
   }
 }
 
+// --- Server mirror --------------------------------------------------------
+
+/**
+ * The calendar graduated to a real table (migration 026) but kept its
+ * synchronous API.
+ *
+ * Rewriting all twelve consumers to async would have been a large, risky
+ * refactor of a live board for no user-visible gain, so the model is
+ * write-through instead: localStorage stays the read cache every component
+ * already reads synchronously, and each write additionally fires a
+ * background request at `/api/schedule`. On page load `syncScheduledFromServer`
+ * replaces the cache with the server's copy.
+ *
+ * That makes the table the source of truth. Two things depend on it:
+ *   - The board follows Hani across browsers and devices.
+ *   - Chandler (the newsletter agent) reads the week's calendar from the
+ *     cloud on Saturday night, when no tab is open.
+ *
+ * Mirror failures are deliberately non-fatal: a failed request logs and the
+ * local write stands, so a dropped connection can never block scheduling.
+ * The next successful sync reconciles.
+ */
+
+const SCHEDULE_API = "/api/schedule"
+
+/**
+ * Set once the first successful server sync has happened in this browser.
+ * Gates the one-time backfill so we only ever lift a pre-026 localStorage
+ * board upward once — without it, clearing the board on another device would
+ * be silently undone by this browser's stale cache on next load.
+ */
+const BACKFILL_FLAG = "nlcai.timing.backfilled"
+
+function mirrorFailed(action: string, detail: unknown): void {
+  console.warn(`[timing-storage] server mirror failed (${action})`, detail)
+}
+
+/** Upsert one row or a batch on the server. Fire-and-forget. */
+function mirrorUpsert(rows: ScheduledPost[]): void {
+  if (typeof window === "undefined" || rows.length === 0) return
+  void fetch(SCHEDULE_API, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(rows.length === 1 ? rows[0] : { rows }),
+  })
+    .then((res) => {
+      if (!res.ok) mirrorFailed("upsert", res.status)
+    })
+    .catch((err) => mirrorFailed("upsert", err))
+}
+
+/** Delete a slot (or every slot of a post when `format` is omitted). */
+function mirrorDelete(corePostId: string, format?: FormatId): void {
+  if (typeof window === "undefined") return
+  const qs = new URLSearchParams({ corePostId })
+  if (format) qs.set("format", format)
+  void fetch(`${SCHEDULE_API}?${qs.toString()}`, { method: "DELETE" })
+    .then((res) => {
+      if (!res.ok) mirrorFailed("delete", res.status)
+    })
+    .catch((err) => mirrorFailed("delete", err))
+}
+
+/**
+ * Rebuild the per-format published marks from the server's scheduled rows.
+ *
+ * `publishedAt` lives in two places by design — on the scheduled row (so a
+ * calendar read is one lookup) and in the PUBLISHED_KEY map (which
+ * `getFormatReadiness` consults). Only the scheduled row round-trips to the
+ * server, so after a hydrate we re-derive the map for every post that has a
+ * slot. Posts with no slot keep whatever mark they had locally: they aren't
+ * on the board, so nothing on the calendar depends on them.
+ */
+function rebuildPublishedFromScheduled(rows: ScheduledPost[]): void {
+  if (typeof window === "undefined") return
+  const byPost = new Map<string, ScheduledPost[]>()
+  for (const row of rows) {
+    const list = byPost.get(row.corePostId) ?? []
+    list.push(row)
+    byPost.set(row.corePostId, list)
+  }
+
+  for (const [corePostId, postRows] of byPost) {
+    const current = readPublishedMap(corePostId)
+    const next: PublishedMap = { ...current }
+    for (const row of postRows) {
+      if (row.publishedAt) {
+        next[row.format] = { publishedAt: row.publishedAt }
+      } else {
+        delete next[row.format]
+      }
+    }
+    const key = PUBLISHED_KEY_PREFIX + corePostId
+    if (Object.keys(next).length === 0) {
+      if (Object.keys(current).length > 0) removeKey(key)
+    } else {
+      writeObject(key, next)
+    }
+  }
+}
+
+/**
+ * Pull the board from the server and make it the local cache.
+ *
+ * Call this once per page load (see `<TimingSync/>` in the app shell). It is
+ * intentionally forgiving: a signed-out user, an offline laptop or a 500 all
+ * leave the existing cache untouched rather than blanking the calendar.
+ *
+ * First run in a browser that predates 026 finds an empty server board and a
+ * populated local one — that is the backfill case, and the local rows are
+ * pushed up instead of being overwritten.
+ */
+export async function syncScheduledFromServer(): Promise<void> {
+  if (typeof window === "undefined") return
+  try {
+    const res = await fetch(SCHEDULE_API, { cache: "no-store" })
+    if (!res.ok) return
+    const data = (await res.json()) as { scheduled?: unknown }
+    const server = Array.isArray(data.scheduled)
+      ? (data.scheduled as ScheduledPost[])
+      : []
+
+    const alreadyBackfilled = window.localStorage.getItem(BACKFILL_FLAG) === "1"
+    const local = readScheduledRaw()
+
+    if (!alreadyBackfilled && server.length === 0 && local.length > 0) {
+      mirrorUpsert(local)
+      window.localStorage.setItem(BACKFILL_FLAG, "1")
+      return
+    }
+
+    window.localStorage.setItem(BACKFILL_FLAG, "1")
+    writeArray(SCHEDULED_KEY, server)
+    rebuildPublishedFromScheduled(server)
+  } catch (err) {
+    mirrorFailed("sync", err)
+  }
+}
+
 // --- Scheduled posts ------------------------------------------------------
 
 /**
@@ -353,6 +492,7 @@ export function schedulePost(
     (p) => !(p.corePostId === corePostId && p.format === format),
   )
   writeArray(SCHEDULED_KEY, [...others, next])
+  mirrorUpsert([next])
 }
 
 /**
@@ -371,6 +511,7 @@ export function unschedulePost(corePostId: string, format: FormatId): void {
   )
   if (filtered.length === scheduled.length) return
   writeArray(SCHEDULED_KEY, filtered)
+  mirrorDelete(corePostId, format)
 }
 
 /**
@@ -384,6 +525,9 @@ export function removeFromTiming(corePostId: string): void {
   if (filtered.length !== scheduled.length) {
     writeArray(SCHEDULED_KEY, filtered)
   }
+  // Unconditional: the post is gone, so clear the server side even when this
+  // browser's cache never had a row for it.
+  mirrorDelete(corePostId)
   // Also clear meta and published.
   removeKey(META_KEY_PREFIX + corePostId)
   removeKey(PUBLISHED_KEY_PREFIX + corePostId)
@@ -567,6 +711,7 @@ export function markPublished(corePostId: string, format: FormatId): void {
     const updated = [...scheduled]
     updated[idx] = { ...updated[idx], publishedAt: now }
     writeArray(SCHEDULED_KEY, updated)
+    mirrorUpsert([updated[idx]])
   }
 }
 
@@ -594,6 +739,7 @@ export function unmarkPublished(corePostId: string, format: FormatId): void {
     const updated = [...scheduled]
     updated[idx] = { ...updated[idx], publishedAt: null }
     writeArray(SCHEDULED_KEY, updated)
+    mirrorUpsert([updated[idx]])
   }
 }
 

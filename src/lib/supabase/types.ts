@@ -276,6 +276,39 @@ export type MediaAssetUpdate = Partial<Pick<MediaAsset, "asset_type" | "url" | "
 export type CoreIdentityUpdate = Partial<Pick<CoreIdentity, "who_i_am" | "who_i_serve" | "how_i_sound" | "slang_examples" | "what_i_never_do" | "product_name" | "niche">>;
 export type AudienceIdentityUpdate = Partial<Omit<AudienceIdentity, "id" | "user_id" | "created_at" | "updated_at">>;
 
+// ---- scheduled_posts (026) ----
+
+/**
+ * One calendar slot. Identity is (core_post_id, format) — a core post can sit
+ * on the board once per format. `format` is text rather than the `format_type`
+ * enum because the client's FormatId is open-ended.
+ */
+export interface ScheduledPostRow {
+  id: string;
+  user_id: string;
+  core_post_id: string;
+  format: string;
+  /** YYYY-MM-DD, local-day resolution. */
+  scheduled_date: string;
+  /** "HH:00". */
+  scheduled_time: string;
+  published_at: string | null;
+  /** Denormalised hook so day-cell chips render without a join. */
+  hook: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ScheduledPostInsert = Pick<
+  ScheduledPostRow,
+  "user_id" | "core_post_id" | "format" | "scheduled_date"
+> &
+  Partial<Pick<ScheduledPostRow, "scheduled_time" | "published_at" | "hook">>;
+
+export type ScheduledPostUpdate = Partial<
+  Pick<ScheduledPostRow, "scheduled_date" | "scheduled_time" | "published_at" | "hook">
+>;
+
 // ---- Supabase Database type (for client generics) ----
 
 export interface Database {
@@ -350,6 +383,11 @@ export interface Database {
         Row: BusinessSource;
         Insert: BusinessSourceInsert;
         Update: Partial<Pick<BusinessSource, "title" | "summary" | "raw_text" | "status" | "active">>;
+      };
+      scheduled_posts: {
+        Row: ScheduledPostRow;
+        Insert: ScheduledPostInsert;
+        Update: ScheduledPostUpdate;
       };
     };
     Views: Record<string, never>;
