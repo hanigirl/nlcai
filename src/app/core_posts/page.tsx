@@ -276,6 +276,7 @@ export default function CorePostsPage() {
               { id: "carousel", label: "קרוסלה" },
               { id: "story", label: "סטורי" },
               { id: "image_post", label: "תמונה" },
+              { id: "b_roll", label: "בי-רול" },
             ].map((tab) => (
               <span
                 key={tab.id}

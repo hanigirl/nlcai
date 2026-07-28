@@ -182,17 +182,21 @@ export type CorePostSheetProps = {
 }
 
 /**
- * The four formats whose tabs we always render — in this canonical order.
+ * The formats whose tabs we always render — in this canonical order.
  * Showing a tab per format (even when the post hasn't been duplicated into
  * that format) is intentional: the empty-state panel surfaces the gap, which
  * is the user's "what's left to do" cue. Same logic that drives /core_posts
  * cards.
+ *
+ * בי-רול sits last on purpose: it's the only format with no generated script,
+ * so it's the one the user reaches for after the written formats are settled.
  */
 export const HEADER_CHIP_FORMATS: FormatId[] = [
   "story",
   "talking_head",
   "carousel",
   "image_post",
+  "b_roll",
 ]
 
 /* ------------------------------------------------------------------ */

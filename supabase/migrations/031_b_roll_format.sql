@@ -1,0 +1,25 @@
+-- Teach the format enum about בי-רול (b_roll).
+--
+-- `format_variants.format` is the hard `format_type` enum from 001, which has
+-- known exactly four values since the beginning: story / talking_head /
+-- carousel / image_post. B-roll is the fifth, so the enum has to learn it
+-- before any variant row can be written — an unknown value is a hard insert
+-- error, not a silent skip.
+--
+-- Note the asymmetry with `scheduled_posts.format` (026), which is free text
+-- on purpose and therefore needs no change here: scheduling already accepts
+-- any FormatId the UI invents. Only `format_variants` is enum-constrained.
+--
+-- Why b_roll needs no companion columns:
+--   Unlike the other four formats, b_roll has no generated body. It reuses the
+--   core post's hook as its overlay text and waits for the user to paste a
+--   Google Drive link for the footage. The hook lives in `body` like every
+--   other variant, and the Drive link lands in `media_assets` as a `video`
+--   row — the same slot talking_head already uses. So: no new table, no new
+--   column, just the enum value.
+--
+-- ADD VALUE IF NOT EXISTS is idempotent, which matters because this file may
+-- be replayed against an environment where a previous partial run already
+-- landed it.
+
+alter type format_type add value if not exists 'b_roll';

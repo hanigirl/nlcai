@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from "react"
 import Image from "next/image"
-import { X, Smartphone, Video, Layers, Image as ImageIcon, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, ChevronLeft, ChevronRight, GripVertical, Link2, Plus, Trash2, Type, type LucideIcon } from "lucide-react"
+import { X, Smartphone, Video, Layers, Image as ImageIcon, Film, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, ChevronLeft, ChevronRight, GripVertical, Link2, Plus, Trash2, Type, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { AvatarPicker, type Avatar } from "@/components/avatar-picker"
@@ -48,11 +48,15 @@ import {
   type FormatId,
 } from "@/lib/timing-storage"
 
+// Every format the panel can open MUST have an entry here: the header block
+// (title + close button) is gated on `meta`, so a missing key renders a panel
+// with no way to shut it.
 const FORMAT_META: Record<string, { label: string; icon: LucideIcon }> = {
   story: { label: "סטורי", icon: Smartphone },
   talking_head: { label: "דיבור למצלמה", icon: Video },
   carousel: { label: "קרוסלה", icon: Layers },
   image_post: { label: "פוסט תמונה", icon: ImageIcon },
+  b_roll: { label: "בי-רול", icon: Film },
 }
 
 interface MediaPanelProps {

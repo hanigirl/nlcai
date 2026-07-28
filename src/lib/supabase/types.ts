@@ -3,7 +3,14 @@
 // ============================================================
 
 export type PlanTier = "front" | "premium";
-export type FormatType = "story" | "talking_head" | "carousel" | "image_post";
+export type FormatType =
+  | "story"
+  | "talking_head"
+  | "carousel"
+  | "image_post"
+  // בי-רול (migration 031). Unlike the other four it has no generated body —
+  // it reuses the core post's hook as overlay text over user-supplied footage.
+  | "b_roll";
 export type GenerationStatus = "pending" | "processing" | "completed" | "failed";
 export type ProductType = "front" | "premium" | "lead_magnet";
 

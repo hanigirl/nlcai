@@ -84,16 +84,21 @@ import {
 } from "@/lib/timing-storage"
 
 /**
- * Same canonical four-format list the Sheet header and /core_posts cards
- * use. We intentionally don't intersect with `post.formats` here — showing
- * the full slate (including not-yet-duplicated formats as disabled) is what
- * gives the user "what's left to create" context.
+ * Same canonical format list the Sheet header and /core_posts cards use — kept
+ * in sync with `HEADER_CHIP_FORMATS` by hand rather than imported, because
+ * core-post-sheet already imports this file and pulling the constant back the
+ * other way would close a module cycle.
+ *
+ * We intentionally don't intersect with `post.formats` here — showing the full
+ * slate (including not-yet-duplicated formats as disabled) is what gives the
+ * user "what's left to create" context.
  */
 const PICKER_FORMATS: FormatId[] = [
   "story",
   "talking_head",
   "carousel",
   "image_post",
+  "b_roll",
 ]
 
 export type ScheduleFormatPickerProps = {

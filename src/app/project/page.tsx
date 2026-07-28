@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
-import { Loader2, Smartphone, Video, Layers, Image, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, MessageCircle, type LucideIcon } from "lucide-react"
+import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, MessageCircle, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { AppShell } from "@/components/app-shell"
 import { InfiniteCanvas } from "@/components/infinite-canvas"
@@ -40,7 +40,21 @@ const FORMATS: { id: string; label: string; icon: LucideIcon }[] = [
   { id: "talking_head", label: "דיבור למצלמה", icon: Video },
   { id: "carousel", label: "קרוסלה", icon: Layers },
   { id: "image_post", label: "פוסט תמונה", icon: Image },
+  { id: "b_roll", label: "בי-רול", icon: Film },
 ]
+
+/**
+ * Formats that duplicate without calling a generation agent.
+ *
+ * The other four each have an `/api/format/<id>` route that rewrites the core
+ * post into that format's voice. בי-רול has nothing to rewrite: the footage is
+ * the user's own, and the only text on screen is the hook the core post already
+ * carries. Sending it through an LLM would spend a model call to paraphrase a
+ * line we already have — and worse, drift it away from the hook the rest of the
+ * post is built on. So `שכפל!` creates the variant locally with the hook as its
+ * body, and the panel then waits for a Drive link.
+ */
+const FORMATS_WITHOUT_GENERATION = new Set(["b_roll"])
 
 const FORMAT_MAP = Object.fromEntries(FORMATS.map((f) => [f.id, f]))
 
@@ -1507,6 +1521,16 @@ function ProjectPageInner() {
     const results: Record<string, string> = {}
     await Promise.all(
       formats.map(async (fid) => {
+        // בי-רול has no generation agent — see FORMATS_WITHOUT_GENERATION.
+        // Its body is the hook, verbatim, so it resolves without a round trip.
+        // Falling through to the fetch below would 404 on /api/format/b_roll
+        // and land the whole core post in the variant via the catch.
+        if (FORMATS_WITHOUT_GENERATION.has(fid)) {
+          const text = activeHook || corePost
+          results[fid] = text
+          setFormatPosts((prev) => ({ ...prev, [fid]: text }))
+          return
+        }
         try {
           const endpoint = `/api/format/${fid === "talking_head" ? "talking-head" : fid === "image_post" ? "image-post" : fid}`
           const res = await fetch(endpoint, {

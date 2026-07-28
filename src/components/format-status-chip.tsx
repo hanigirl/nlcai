@@ -46,6 +46,7 @@
 
 import {
   Check,
+  Film,
   Image as ImageIcon,
   Images,
   Layers,
@@ -70,6 +71,7 @@ const FORMAT_LABELS: Record<string, string> = {
   carousel: "קרוסלה",
   image_post: "תמונה",
   static: "תמונה",
+  b_roll: "בי-רול",
 }
 
 /**
@@ -82,6 +84,7 @@ const FORMAT_ICONS: Record<string, LucideIcon> = {
   carousel: Images,
   image_post: ImageIcon,
   static: ImageIcon,
+  b_roll: Film,
 }
 
 function getFormatIcon(format: string): LucideIcon {
