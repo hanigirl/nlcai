@@ -3,14 +3,23 @@
 // ============================================================
 
 export type PlanTier = "front" | "premium";
-export type FormatType =
-  | "story"
-  | "talking_head"
-  | "carousel"
-  | "image_post"
+
+// The formats, in one place. This is a runtime list rather than a bare union
+// because the places that need to VALIDATE a format can't iterate a type — and
+// left to themselves they each hand-copied their own array. Adding b_roll to
+// the union didn't reach the copy inside the media API, so the UI offered the
+// format and the server rejected it. Import this instead of retyping it.
+export const FORMAT_TYPES = [
+  "story",
+  "talking_head",
+  "carousel",
+  "image_post",
   // בי-רול (migration 031). Unlike the other four it has no generated body —
   // it reuses the core post's hook as overlay text over user-supplied footage.
-  | "b_roll";
+  "b_roll",
+] as const;
+
+export type FormatType = (typeof FORMAT_TYPES)[number];
 export type GenerationStatus = "pending" | "processing" | "completed" | "failed";
 export type ProductType = "front" | "premium" | "lead_magnet";
 

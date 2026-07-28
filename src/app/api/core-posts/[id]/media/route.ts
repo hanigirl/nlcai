@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { FORMAT_TYPES, type FormatType } from "@/lib/supabase/types"
 
 /**
- * The `format_type` enum, mirrored. Kept here rather than imported from a client
- * component so the route has no React dependency. Must stay in sync with
- * `create type format_type as enum (...)` in 001_initial_schema.sql.
+ * The `format_type` enum. Imported, not mirrored — the local copy that used to
+ * live here fell a format behind: b_roll was added to the type, the migration
+ * and five UI files, and this array kept rejecting it, so pasting a Drive link
+ * for a b-roll failed with "format must be one of story|talking_head|carousel|
+ * image_post". types.ts has no React dependency, so there's nothing to keep the
+ * route away from it.
  */
-const FORMAT_IDS = ["story", "talking_head", "carousel", "image_post"] as const
-type FormatId = (typeof FORMAT_IDS)[number]
+
+const FORMAT_IDS = FORMAT_TYPES
+type FormatId = FormatType
 
 /**
  * POST /api/core-posts/{id}/media
@@ -26,8 +31,9 @@ type FormatId = (typeof FORMAT_IDS)[number]
  *   migrate to this endpoint later when we collapse the two.
  *
  * Body shape:
- *   - `format`: required. One of "story" | "talking_head" | "carousel" |
- *               "image_post" — the four values of the `format_type` enum.
+ *   - `format`: required. Any member of the `format_type` enum — see
+ *               FORMAT_TYPES in lib/supabase/types.ts, which this validates
+ *               against rather than restating.
  *               Identifies which `format_variants` row owns the asset. We
  *               auto-create the row when missing (matches the PATCH behaviour
  *               for talking_head video). NOTE: "static" is a client-side alias
@@ -64,13 +70,14 @@ export async function POST(
     // attacker with a known post id could write to anyone's media_assets.
     const { data: postRow, error: postErr } = await supabase
       .from("core_posts")
-      .select("id")
+      .select("id, hook_text")
       .eq("id", id)
       .eq("user_id", user.id)
       .single()
     if (postErr || !postRow) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 })
     }
+    const post = postRow as unknown as { id: string; hook_text: string | null }
 
     const { format, url, assetType } = (await req.json()) as {
       format?: string
@@ -83,8 +90,8 @@ export async function POST(
     if (!format || typeof format !== "string") {
       return NextResponse.json({ error: "format is required" }, { status: 400 })
     }
-    // `format_variants.format` is the `format_type` ENUM (four values, declared
-    // in 001_initial_schema.sql and never altered since). An unknown value is
+    // `format_variants.format` is the `format_type` ENUM (declared in
+    // 001_initial_schema.sql, extended by 031 for b_roll). An unknown value is
     // not a soft failure — Postgres rejects the insert with 22P02 and the user
     // gets an opaque 500. Reject it here with something readable instead.
     if (!FORMAT_IDS.includes(format as FormatId)) {
@@ -114,9 +121,17 @@ export async function POST(
       .single()
 
     if (!variant) {
+      // b_roll is the one format with no generation step — its script IS the
+      // post's hook, which is also the text burned over the footage. Creating
+      // it with an empty body (as every other format is created here, since
+      // theirs arrives later from the generator) left the card reading "empty"
+      // with media already attached, and the hook missing from the format
+      // entirely. Seed it here, where the row is born.
+      const seedBody =
+        format === "b_roll" ? (post.hook_text ?? "").trim() : ""
       const { data: newVariant, error: insertErr } = await supabase
         .from("format_variants")
-        .insert({ core_post_id: id, format, body: "" } as never)
+        .insert({ core_post_id: id, format, body: seedBody } as never)
         .select("id")
         .single()
       if (insertErr || !newVariant) {
@@ -234,13 +249,14 @@ export async function DELETE(
     // Same ownership check as POST.
     const { data: postRow, error: postErr } = await supabase
       .from("core_posts")
-      .select("id")
+      .select("id, hook_text")
       .eq("id", id)
       .eq("user_id", user.id)
       .single()
     if (postErr || !postRow) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 })
     }
+    const post = postRow as unknown as { id: string; hook_text: string | null }
 
     const { data: variant } = await supabase
       .from("format_variants")

@@ -87,6 +87,23 @@ async function replaceImageAssetSet(
     for (let i = 0; i < images.length; i++) {
       const base64 = images[i]
       if (!base64) continue
+
+      // An entry that is ALREADY a stored URL is re-pointed, not re-uploaded.
+      // Reordering a saved set sends back the same frames in a new order; the
+      // wipe above only removed the rows, never the storage objects, so the
+      // files are still there. Without this branch `Buffer.from(url,"base64")`
+      // would decode the URL text as base64 and write a corrupt image over a
+      // set the user only meant to rearrange.
+      if (/^https?:\/\//i.test(base64)) {
+        await supabase.from("media_assets").insert({
+          format_variant_id: variantRow.id,
+          asset_type: "image",
+          url: base64,
+          status: "completed",
+        } as never)
+        continue
+      }
+
       const buffer = Buffer.from(base64, "base64")
       const storagePath = `${userId}/${format}/${crypto.randomUUID()}.png`
       await supabase.storage
@@ -207,6 +224,12 @@ export async function GET(
     const carouselLinksVariant = variants.find((v) => v.format === "carousel")
     const carouselDriveLinks = Array.isArray(carouselLinksVariant?.drive_slide_links)
       ? carouselLinksVariant.drive_slide_links
+      : null
+    // Story imports frames the same way the carousel imports slides, so it
+    // stores its links in the same per-format column on its own variant row.
+    const storyLinksVariant = variants.find((v) => v.format === "story")
+    const storyDriveLinks = Array.isArray(storyLinksVariant?.drive_slide_links)
+      ? storyLinksVariant.drive_slide_links
       : null
 
     // Per-format readiness needs to know which formats have media. We do a
@@ -358,6 +381,7 @@ export async function GET(
         coverPillColor,
         carouselImageUrls,
         carouselDriveLinks,
+        storyDriveLinks,
         storyImageUrls,
       },
     })
@@ -380,7 +404,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, videoUrl, deleteVideo, coverBase64, coverPillColor, coverText, deleteCover, carouselImages, carouselDriveLinks, storyImages } = (await req.json()) as {
+    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, videoUrl, deleteVideo, coverBase64, coverPillColor, coverText, deleteCover, carouselImages, carouselDriveLinks, storyImages, storyDriveLinks } = (await req.json()) as {
       body?: string
       hookText?: string
       hookId?: string
@@ -412,6 +436,8 @@ export async function PATCH(
       // /api/story/generate-media. Saved as image rows under the `story`
       // variant; `null` clears it.
       storyImages?: string[] | null
+      /** Same contract as `carouselDriveLinks`, for the story frame set. */
+      storyDriveLinks?: string[] | null
     }
 
     // Track whether the PATCH touched any *child* table (format_variants,
@@ -692,17 +718,21 @@ export async function PATCH(
       if (r.changed) didIndirectEdit = true
     }
 
-    // Drive links for the carousel. Upsert rather than update: the user can
-    // paste links before any carousel exists, and that shouldn't silently
-    // vanish just because the `carousel` variant row hasn't been created yet.
-    if (carouselDriveLinks !== undefined) {
+    // Drive links, per format. Upsert rather than update: the user can paste
+    // links before any media exists, and that shouldn't silently vanish just
+    // because the variant row hasn't been created yet.
+    for (const [format, links] of [
+      ["carousel", carouselDriveLinks],
+      ["story", storyDriveLinks],
+    ] as const) {
+      if (links === undefined) continue
       const { error: linksErr } = await supabase
         .from("format_variants")
         .upsert(
           {
             core_post_id: id,
-            format: "carousel",
-            drive_slide_links: carouselDriveLinks,
+            format,
+            drive_slide_links: links,
           } as never,
           { onConflict: "core_post_id,format" },
         )

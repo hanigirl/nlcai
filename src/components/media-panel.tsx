@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from "react"
 import Image from "next/image"
-import { X, Smartphone, Video, Layers, Image as ImageIcon, Film, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, ChevronLeft, ChevronRight, GripVertical, Link2, Plus, Trash2, Type, type LucideIcon } from "lucide-react"
+import { X, Smartphone, Video, Layers, Image as ImageIcon, Film, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, ChevronLeft, ChevronRight, Link2, Trash2, Type, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { AvatarPicker, type Avatar } from "@/components/avatar-picker"
@@ -19,6 +19,8 @@ import {
 } from "@/components/ui/dialog"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { DriveVideoPreview } from "@/components/drive-video-preview"
+import { StoryPlayer } from "@/components/story-player"
+import { DriveMediaLinks } from "@/components/drive-media-links"
 import {
   isDriveUrl,
   isCompleteDriveUrl,
@@ -103,6 +105,9 @@ interface MediaPanelProps {
    */
   carouselDriveLinks: string[] | null
   onCarouselDriveLinksChange: (links: string[] | null) => void
+  /** The story's per-frame Drive links — same contract as the carousel's. */
+  storyDriveLinks: string[] | null
+  onStoryDriveLinksChange: (links: string[] | null) => void
   /**
    * Reports the persisted image_post media URL up to the parent so the
    * approved image can render as its own workflow card next to the
@@ -153,6 +158,8 @@ export function MediaPanel({
   carouselText,
   carouselDriveLinks,
   onCarouselDriveLinksChange,
+  storyDriveLinks,
+  onStoryDriveLinksChange,
   onImagePostUrlChange,
   onStoryImagesChange,
   onStoryVideoUrlChange,
@@ -270,6 +277,8 @@ export function MediaPanel({
             onImagePostUrlChange={onImagePostUrlChange}
             onStoryImagesChange={onStoryImagesChange}
             onStoryVideoUrlChange={onStoryVideoUrlChange}
+            storyDriveLinks={storyDriveLinks}
+            onStoryDriveLinksChange={onStoryDriveLinksChange}
           />
         )}
       </div>
@@ -1639,128 +1648,19 @@ function CarouselFlow({
   // travelled with the post but the links they came from didn't. Now the
   // parent owns them, so the list is the same on any machine she opens.
   //
-  // Local mirror of the persisted list, because the form needs blank rows to
-  // type into and those are scaffolding, not data. `driveLinks` is the truth
-  // for what's saved; this is the truth for what's on screen.
-  const [driveSlideLinks, setDriveSlideLinks] = useState<string[]>(() =>
-    driveLinks && driveLinks.length > 0
-      ? // Always keep at least two rows so the form doesn't collapse to one.
-        [...driveLinks, ...(driveLinks.length === 1 ? [""] : [])]
-      : ["", ""],
-  )
   const [driveImporting, setDriveImporting] = useState(false)
   const [driveImportProgress, setDriveImportProgress] = useState("")
   const [driveImportError, setDriveImportError] = useState<string | null>(null)
 
-  // The post can finish loading after this panel mounts (the GET is async), so
-  // the initializer above often runs against a null `driveLinks`. Re-seed once
-  // the real list arrives — but never over rows the user has already started
-  // typing into, or we'd yank text out from under them.
-  const driveLinksHydratedRef = useRef(false)
-  useEffect(() => {
-    if (driveLinksHydratedRef.current) return
-    if (!driveLinks || driveLinks.length === 0) return
-    driveLinksHydratedRef.current = true
-    setDriveSlideLinks((prev) =>
-      prev.some((l) => l.trim())
-        ? prev
-        : [...driveLinks, ...(driveLinks.length === 1 ? [""] : [])],
-    )
-  }, [driveLinks])
+  // Row order controls slide order only when the slides came from these
+  // links. A carousel generated from a template is attributed to that
+  // template (`savedTemplateId`), and dragging rows must not reshuffle it.
+  const slidesFollowRowOrder = !savedTemplateId
 
-  // One write path for the links, so every mutation persists. Blank rows are
-  // stripped on save — they're form scaffolding, not data worth restoring.
-  const commitDriveSlideLinks = (next: string[]) => {
-    setDriveSlideLinks(next)
-    // A user who has touched the form owns it from here on; don't let a late
-    // hydration overwrite what they typed.
-    driveLinksHydratedRef.current = true
-    // Trailing blanks are form scaffolding and get dropped, but an INTERIOR
-    // blank is kept: row position is slide position, so collapsing a gap in
-    // the middle would silently re-point every link below it at a different
-    // slide.
-    const trimmed = next.map((l) => l.trim())
-    while (trimmed.length && !trimmed[trimmed.length - 1]) trimmed.pop()
-    onDriveLinksChange(trimmed.length > 0 ? trimmed : null)
-  }
-
-  const setDriveSlideLink = (i: number, v: string) =>
-    commitDriveSlideLinks(
-      driveSlideLinks.map((l, idx) => (idx === i ? v : l)),
-    )
-  const addDriveSlideRow = () =>
-    setDriveSlideLinks((prev) => (prev.length >= 10 ? prev : [...prev, ""]))
-  const removeDriveSlideRow = (i: number) =>
-    commitDriveSlideLinks(driveSlideLinks.filter((_, idx) => idx !== i))
-
-  // --- Reordering slides by dragging a link row ----------------------------
-  // The link rows ARE the slide order (Hani, 2026-07-28): row 1 is slide 1.
-  // So dragging a row has to move the actual slide too, not just the text
-  // field — otherwise the panel would show one order and the post another.
-  //
-  // We reorder the imported images with the same permutation, but only when
-  // the two lists still line up 1:1 (same count, and the carousel came from
-  // an import rather than a template). When they don't, the rows still
-  // reorder and the slides follow on the next import — flagged in the UI
-  // rather than silently guessing at a mapping.
-  const [dragIndex, setDragIndex] = useState<number | null>(null)
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
-
-  // Give an imported carousel one row per slide. Without this a 5-slide
-  // carousel imported before the links were saved showed the default two
-  // blank rows — so there was nothing to grab for slides 3-5, and reordering
-  // was impossible for exactly the carousels that already exist. The rows
-  // start empty; they're handles for the slides, and become links if she
-  // pastes into them.
-  useEffect(() => {
-    if (savedTemplateId || !images || images.length === 0) return
-    setDriveSlideLinks((prev) =>
-      prev.length >= images.length
-        ? prev
-        : [...prev, ...Array(images.length - prev.length).fill("")],
-    )
-  }, [savedTemplateId, images])
-
-  // Row i owns slide i — positional, blank or not. Pairing on "non-empty rows
-  // only" was wrong: a carousel imported before the links were persisted (or
-  // any carousel predating migration 027) has slides and NO links, so nothing
-  // paired and dragging moved the text fields while the slides sat still.
-  const slidesFollowRowOrder =
-    !savedTemplateId &&
-    !!images &&
-    images.length > 0 &&
-    driveSlideLinks.length >= images.length
-
-  const moveRow = (from: number, to: number) => {
-    if (from === to) return
-    const imgs = images
-
-    // Pair every row with the slide at the same position, move the pair, then
-    // read the slides back off in the new row order. One splice, no index
-    // arithmetic to get wrong. Rows past the last slide own nothing, so
-    // dragging one of those leaves the carousel untouched.
-    const rows = driveSlideLinks.map((link, idx) => ({
-      link,
-      slide: slidesFollowRowOrder && imgs ? (imgs[idx] ?? null) : null,
-    }))
-    const [moved] = rows.splice(from, 1)
-    rows.splice(to, 0, moved)
-
-    commitDriveSlideLinks(rows.map((r) => r.link))
-
-    if (!slidesFollowRowOrder || !imgs) return
-    const nextImages = rows
-      .map((r) => r.slide)
-      .filter((slide): slide is string => !!slide)
-    if (nextImages.length !== imgs.length) return
-    // Handing the new order up is enough to persist it — the parent's carousel
-    // autosave keys off a per-slide signature, so a reorder registers as a
-    // change even when the slide count and slide 1 are untouched.
-    onImagesChange(nextImages)
-  }
-
-  const handleDriveImport = async () => {
-    const links = driveSlideLinks.map((l) => l.trim()).filter(Boolean)
+  const handleDriveImport = async (rows: string[]) => {
+    // Every carousel slide comes from a link, so blank rows are just empty
+    // form scaffolding here.
+    const links = rows.filter(Boolean)
     if (links.length === 0) {
       setDriveImportError("הדביקו לפחות קישור אחד לשקופית")
       return
@@ -1814,7 +1714,7 @@ function CarouselFlow({
       setPreviewIndex(0)
       // The links stay put on purpose — they're the recipe for this carousel,
       // and re-importing after fixing one of them is the main repeat action.
-      commitDriveSlideLinks(links)
+      onDriveLinksChange(links)
       toast.success(`הקרוסלה נטענה מהדרייב (${slides.length} שקופיות)`, {
         duration: 5000,
       })
@@ -2083,14 +1983,25 @@ function CarouselFlow({
             images), so a single Canva/folder link is intentionally NOT the
             mechanism here. */}
       <div className="flex flex-col gap-2">
-        <p className="text-small-bold text-text-primary-default">
-          ייבוא שקופיות מגוגל דרייב
-        </p>
-        <p className="text-xs-body text-text-neutral-default">
-          הדביקו קישור ישיר לכל שקופית (עד 10), לפי הסדר. נמשוך את התמונות ונרכיב
-          מהן קרוסלה. כל קובץ צריך הרשאת „כל מי שיש לו הקישור”.
-        </p>
-
+        <DriveMediaLinks
+          savedLinks={driveLinks}
+          onSaveLinks={onDriveLinksChange}
+          items={images}
+          pairItems={slidesFollowRowOrder}
+          onItemsReorder={onImagesChange}
+          onImport={handleDriveImport}
+          importing={driveImporting}
+          importProgress={driveImportProgress}
+          importError={driveImportError}
+          onImportErrorClear={() => setDriveImportError(null)}
+          heading="ייבוא שקופיות מגוגל דרייב"
+          helpText="הדביקו קישור ישיר לכל שקופית (עד 10), לפי הסדר. נמשוך את התמונות ונרכיב מהן קרוסלה. כל קובץ צריך הרשאת „כל מי שיש לו הקישור”."
+          unitLabel="שקופית"
+          addRowLabel="הוסיפו שקופית"
+          importLabel="טענו קרוסלה מהדרייב"
+          reorderHint="גררו שורה כדי לשנות את סדר השקופיות בקרוסלה."
+          beforeRows={
+            <>
         {/* The post's carousel, when it was imported rather than generated.
             It sits HERE and not under the template grid because this is where
             it came from (Hani, 2026-07-28) — and it uses the template tile's
@@ -2121,142 +2032,9 @@ function CarouselFlow({
             </button>
           </div>
         )}
-
-        {slidesFollowRowOrder && (
-          <p className="text-xs-body text-text-neutral-default">
-            גררו שורה כדי לשנות את סדר השקופיות בקרוסלה.
-          </p>
-        )}
-
-        <div className="flex flex-col gap-2">
-          {driveSlideLinks.map((link, i) => (
-            <div
-              key={i}
-              // Row-level drop target. The row is not itself draggable — only
-              // the grip is — so dragging inside the URL field still selects
-              // text instead of picking the row up.
-              onDragOver={(e) => {
-                if (dragIndex === null) return
-                e.preventDefault()
-                e.dataTransfer.dropEffect = "move"
-                setDragOverIndex(i)
-              }}
-              onDragLeave={() => {
-                setDragOverIndex((cur) => (cur === i ? null : cur))
-              }}
-              onDrop={(e) => {
-                if (dragIndex === null) return
-                e.preventDefault()
-                moveRow(dragIndex, i)
-                setDragIndex(null)
-                setDragOverIndex(null)
-              }}
-              className={`flex items-center gap-2 rounded-lg transition-colors ${
-                dragOverIndex === i && dragIndex !== i ? "bg-gray-90" : ""
-              } ${dragIndex === i ? "opacity-50" : ""}`}
-            >
-              {/* Drag handle. Doubles as the slide number so the row doesn't
-                  grow a column — the number IS what you grab, which matches
-                  "row 3 is slide 3".
-                  A <span>, not a <button>: Chrome gives a button's own
-                  mousedown behaviour priority over `draggable`, so the drag
-                  never started. role/tabIndex keep it operable and focusable,
-                  and the arrow keys do the same job without a mouse. */}
-              <span
-                role="button"
-                tabIndex={0}
-                draggable={!driveImporting && driveSlideLinks.length > 1}
-                onDragStart={(e) => {
-                  // Firefox refuses to begin a drag unless dataTransfer
-                  // carries a payload, even one nothing reads.
-                  e.dataTransfer.setData("text/plain", String(i))
-                  e.dataTransfer.effectAllowed = "move"
-                  setDragIndex(i)
-                }}
-                onDragEnd={() => {
-                  setDragIndex(null)
-                  setDragOverIndex(null)
-                }}
-                onKeyDown={(e) => {
-                  if (driveImporting) return
-                  if (e.key === "ArrowUp" && i > 0) {
-                    e.preventDefault()
-                    moveRow(i, i - 1)
-                  } else if (e.key === "ArrowDown" && i < driveSlideLinks.length - 1) {
-                    e.preventDefault()
-                    moveRow(i, i + 1)
-                  }
-                }}
-                aria-label={`שקופית ${i + 1} — גררו או השתמשו בחצים למעלה/למטה כדי לשנות את הסדר`}
-                title="גררו כדי לשנות את הסדר"
-                className={`inline-flex w-6 shrink-0 select-none items-center justify-center gap-0.5 rounded-md py-1 text-xs text-text-neutral-default transition-colors hover:bg-bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
-                  driveImporting || driveSlideLinks.length < 2
-                    ? "cursor-default opacity-40"
-                    : "cursor-grab active:cursor-grabbing"
-                }`}
-              >
-                <GripVertical className="size-3" aria-hidden />
-                {i + 1}
-              </span>
-              <Input
-                dir="ltr"
-                inputSize="small"
-                type="url"
-                value={link}
-                onChange={(e) => {
-                  setDriveSlideLink(i, e.target.value)
-                  if (driveImportError) setDriveImportError(null)
-                }}
-                placeholder="https://drive.google.com/file/d/..."
-                disabled={driveImporting}
-                className="flex-1 text-xs"
-                aria-label={`קישור לשקופית ${i + 1}`}
-              />
-              {driveSlideLinks.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeDriveSlideRow(i)}
-                  disabled={driveImporting}
-                  aria-label={`הסירו את שקופית ${i + 1}`}
-                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-text-neutral-default transition-colors hover:bg-bg-surface hover:text-button-destructive-default disabled:opacity-40"
-                >
-                  <Trash2 className="size-3.5" />
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-        {driveSlideLinks.length < 10 && (
-          <button
-            type="button"
-            onClick={addDriveSlideRow}
-            disabled={driveImporting}
-            className="inline-flex items-center gap-1 self-start text-xs text-text-neutral-default transition-colors hover:text-text-primary-default disabled:opacity-40"
-          >
-            <Plus className="size-3.5" />
-            הוסיפו שקופית
-          </button>
-        )}
-        <Button
-          onClick={handleDriveImport}
-          disabled={driveImporting || driveSlideLinks.every((l) => !l.trim())}
-          variant="outline"
-          className="w-full gap-2"
-        >
-          {driveImporting ? (
-            <>
-              <Loader2 className="size-4 animate-spin" />
-              {driveImportProgress || "טוען..."}
             </>
-          ) : (
-            "טענו קרוסלה מהדרייב"
-          )}
-        </Button>
-        {driveImportError && (
-          <p className="text-xs text-button-destructive-default">
-            {driveImportError}
-          </p>
-        )}
+          }
+        />
       </div>
 
       {error && (
@@ -2347,6 +2125,8 @@ function MediaUploadFlow({
   onImagePostUrlChange,
   onStoryImagesChange,
   onStoryVideoUrlChange,
+  storyDriveLinks,
+  onStoryDriveLinksChange,
 }: {
   format: string
   postId: string | null
@@ -2354,7 +2134,17 @@ function MediaUploadFlow({
   onImagePostUrlChange?: (url: string | null) => void
   onStoryImagesChange?: (images: string[] | null) => void
   onStoryVideoUrlChange?: (url: string | null) => void
+  storyDriveLinks?: string[] | null
+  onStoryDriveLinksChange?: (links: string[] | null) => void
 }) {
+  // Read once, before any narrowing. Inside the burn-button condition TS has
+  // already pinned `format` to "story", so a literal check for b-roll there
+  // reads as unreachable code.
+  const isBRoll = format === "b_roll"
+  // The paste-a-link field hides itself once media is attached; this is the
+  // user asking for it back to swap the clip.
+  const [replacingMedia, setReplacingMedia] = useState(false)
+
   // Local mirror of the saved drive URL — committed to storage on
   // blur/Enter (same pattern as DriveLinkBlock in core-post-sheet.tsx).
   const [driveUrl, setDriveUrl] = useState<string>("")
@@ -2371,6 +2161,11 @@ function MediaUploadFlow({
 
   // Uploaded asset preview (data URL while uploading; persistent URL after).
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  // Once the replacement actually lands, put the field away again — otherwise
+  // swapping a clip leaves the panel permanently back in "paste a link" mode.
+  useEffect(() => {
+    if (previewUrl) setReplacingMedia(false)
+  }, [previewUrl])
   const [previewKind, setPreviewKind] = useState<"image" | "video" | null>(null)
   const [uploading, setUploading] = useState(false)
   // Hydration phase = "we still don't know if there's existing media". True
@@ -2431,10 +2226,6 @@ function MediaUploadFlow({
   } | null>(null)
   const [savingStory, setSavingStory] = useState(false)
   const [pendingStoryDelete, setPendingStoryDelete] = useState(false)
-  // Story media is either an IMAGE or a VIDEO — the user picks (toggle).
-  //   • image → design one with AI, or paste an image link
-  //   • video → the user's OWN video, with the hook baked in
-  const [storyMode, setStoryMode] = useState<"image" | "video">("image")
   // True while the burn-the-caption-into-the-video render is running.
   const [burningText, setBurningText] = useState(false)
   // A story video whose caption is already baked in — the burn route stores
@@ -2477,9 +2268,6 @@ function MediaUploadFlow({
     // in-memory generated `sets` intentionally persist across open/close.
     setSavedStorySet([])
     setStoryLightbox(null)
-    // Default to the image mode; the media-hydration effect flips this to
-    // "video" if the post already has a bring-your-own story video.
-    setStoryMode("image")
 
     // In-flight / transient flags. These were previously left alone, so with
     // one shared instance across story and image_post they carried over: a
@@ -2547,10 +2335,7 @@ function MediaUploadFlow({
         if (format === "story" && !looksLikeVideo) return
         setPreviewUrl(existingUrl)
         setPreviewKind(looksLikeVideo ? "video" : "image")
-        // A saved story video means the user chose the video path — open the
-        // panel on that mode so they land on their clip, not the AI option.
         if (format === "story" && looksLikeVideo) {
-          setStoryMode("video")
           // A burned clip is a finished story — surface it as the workflow
           // card too (a raw, not-yet-captioned clip stays panel-only).
           if (/\/video\/burned-[^/]+\.mp4/.test(existingUrl)) {
@@ -2816,7 +2601,9 @@ function MediaUploadFlow({
       const res = await fetch("/api/story/generate-video-media", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId }),
+        // b-roll burns the same way story does — same route, same overlay,
+        // different variant.
+        body: JSON.stringify({ postId, format }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         url?: string
@@ -2892,6 +2679,120 @@ function MediaUploadFlow({
     }
   }
 
+  /**
+   * Persist a story set EXACTLY as given — used by the reorder path, where the
+   * frames are already-saved storage URLs. `handleStorySave` deliberately
+   * short-circuits on an all-URL set (nothing new to store); a reorder is the
+   * one case where an all-URL set genuinely must be written, because the ORDER
+   * is the change. The PATCH route re-points existing URLs instead of
+   * re-uploading them.
+   */
+  const persistStorySet = async (set: string[]) => {
+    setSavedStorySet(set)
+    onStoryImagesChange?.(set)
+    if (!postId) return
+    try {
+      const res = await fetch(`/api/core-posts/${postId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storyImages: set }),
+      })
+      if (!res.ok) throw new Error("save_failed")
+    } catch (err) {
+      console.error("[media-panel][story-reorder]", err)
+      toast.error("שמירת סדר הפריימים נכשלה, נסו שוב")
+    }
+  }
+
+  // --- Story frames from Drive ---------------------------------------------
+  // The same per-frame link mechanic the carousel uses (Hani, 2026-07-28) —
+  // but NOT the carousel's images-only rule. A story frame is whatever
+  // Instagram accepts as a story: a photo or a clip. The first cut of this
+  // reused the carousel's `store:false` base64 path, which rejects anything
+  // that isn't an image, so pasting a video link failed with "פריים של סטורי
+  // חייב להיות תמונה" — a rule that never existed outside that copied code.
+  //
+  // `store:true` handles both: the file lands in Storage and we get a URL
+  // back. The story PATCH re-points existing URLs rather than re-uploading
+  // them, so the frame set holds URLs from here on.
+  const [storyDriveImporting, setStoryDriveImporting] = useState(false)
+  const [storyDriveProgress, setStoryDriveProgress] = useState("")
+  const [storyDriveError, setStoryDriveError] = useState<string | null>(null)
+
+  const handleStoryDriveImport = async (rows: string[]) => {
+    if (!postId) {
+      setStoryDriveError("שמרו את הפוסט לפני ייבוא הסטורי")
+      return
+    }
+    const links = rows.filter(Boolean)
+    if (links.length === 0) {
+      setStoryDriveError("הדביקו לפחות קישור אחד")
+      return
+    }
+    if (links.some((l) => !/drive\.google\.com|docs\.google\.com/i.test(l))) {
+      setStoryDriveError("כל הקישורים צריכים להיות מגוגל דרייב (קאנבה לא נתמך כאן)")
+      return
+    }
+    setStoryDriveError(null)
+    setStoryDriveImporting(true)
+    const errMap: Record<string, string> = {
+      invalid_drive_link: "לא זוהה קובץ באחד הקישורים.",
+      drive_not_public:
+        'אחד הקבצים לא ציבורי — שנו הרשאה ל„כל מי שיש לו הקישור”.',
+      file_too_large: `אחד הקבצים גדול מדי (מקסימום ${MAX_FILE_MB}MB).`,
+    }
+    try {
+      // Merge, don't replace (Hani, 2026-07-28: "אם הוספתי זה יהיה רק תוספת").
+      // Row i IS frame i, so a row that already has a frame and no new link
+      // keeps exactly what it had — importing a second frame must not
+      // re-create the first one, and must not drop a frame that came from
+      // the AI generator or the single-link field.
+      const frames: string[] = []
+      let pulled = 0
+      const toPull = links.length
+      for (let i = 0; i < rows.length; i++) {
+        const link = rows[i]
+        if (!link) {
+          const existing = savedStorySet[i]
+          if (existing) frames.push(existing)
+          continue
+        }
+        pulled++
+        setStoryDriveProgress(`טוען פריים ${pulled} מתוך ${toPull}...`)
+        const res = await fetch("/api/media/from-drive", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: link, store: true }),
+        })
+        const data = await res.json()
+        if (!res.ok || data.error || !data.url) {
+          setStoryDriveError(
+            `${errMap[data.error] ?? "טעינת אחד הפריימים נכשלה."} (פריים ${i + 1})`,
+          )
+          return
+        }
+        frames.push(data.url as string)
+      }
+      // Any frames beyond the rows on screen are still part of the story —
+      // keep them rather than truncating the set to the form's length.
+      if (savedStorySet.length > rows.length) {
+        frames.push(...savedStorySet.slice(rows.length))
+      }
+      // Stored URLs, so this goes through the reorder-safe writer rather than
+      // handleStorySave (which short-circuits on an all-URL set).
+      await persistStorySet(frames)
+      toast.success(`הסטורי נטען מהדרייב (${frames.length} פריימים)`, {
+        duration: 5000,
+      })
+    } catch (err) {
+      console.error("[media-panel][story-drive-import]", err)
+      setStoryDriveError("שגיאת רשת בטעינת הפריימים. נסו שוב.")
+    } finally {
+      setStoryDriveImporting(false)
+      setStoryDriveProgress("")
+    }
+  }
+
   /** Clear the saved story set (PATCH { storyImages: null }). */
   const handleStoryDelete = async () => {
     if (!postId) return
@@ -2920,7 +2821,7 @@ function MediaUploadFlow({
   }
 
   /** Render a story frame that may be a storage URL or raw base64. */
-  const storyFrameSrc = (f: string) =>
+  const localStoryFrameSrc = (f: string) =>
     f.startsWith("http") ? f : `data:image/png;base64,${f}`
 
   /**
@@ -3181,6 +3082,15 @@ function MediaUploadFlow({
 
       // Lift the result to the parent regardless of which format is on screen —
       // the canvas card for `targetFormat` must update either way.
+      if (targetFormat === "story") {
+        // The single-link field and the per-frame list are the SAME story
+        // (Hani, 2026-07-28): a link pasted up there is frame 1 down here, and
+        // has to be remembered as such. Only seeded when the list is empty —
+        // it must never overwrite frames she has already lined up.
+        if (!storyDriveLinks || storyDriveLinks.length === 0) {
+          onStoryDriveLinksChange?.([link])
+        }
+      }
       if (targetFormat === "story" && kind === "image") {
         onStoryImagesChange?.([mediaUrl])
       } else if (targetFormat === "image_post") {
@@ -3201,10 +3111,6 @@ function MediaUploadFlow({
           setPreviewKind(kind)
           if (kind === "image") setImageLoading(true)
         }
-        // A story video means the user is on the bring-your-own path — land
-        // them on that mode so the burn-caption CTA is reachable.
-        if (targetFormat === "story" && kind === "video") setStoryMode("video")
-
         // The media is attached — clear the input and its localStorage
         // readiness meta, which only ever backed non-Drive reference links.
         setDriveUrl("")
@@ -3255,6 +3161,24 @@ function MediaUploadFlow({
       attachDriveMedia(link, targetFormat)
     }, 500)
   }
+
+  /**
+   * The story's already-attached Drive link, shaped as a one-frame list.
+   *
+   * A Drive VIDEO is stored as the link itself (see attachDriveMedia), so
+   * `previewUrl` IS the link and can be shown back verbatim. A Drive IMAGE is
+   * downloaded and re-hosted, so the original link only survives if it was
+   * recorded at attach time — which is why attachDriveMedia now writes it.
+   * Falling back to the field's own value covers a link typed but not yet
+   * committed.
+   */
+  const existingStoryLinkAsFrames = (() => {
+    if (format !== "story") return null
+    const candidate = [previewUrl, driveUrl].find(
+      (v) => !!v && isDriveUrl(v.trim()),
+    )
+    return candidate ? [candidate.trim()] : null
+  })()
 
   // The "saved post required" warning lives at the top of the panel —
   // both tabs need it because both write paths touch postId. We surface
@@ -3487,38 +3411,11 @@ function MediaUploadFlow({
           bring-your-own path stays below. */}
       {format === "story" && (
         <>
-          {/* Story media is an image or a video — the user picks. */}
-          <div className="flex gap-1 rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 p-1">
-            <button
-              type="button"
-              onClick={() => setStoryMode("image")}
-              aria-pressed={storyMode === "image"}
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-small font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
-                storyMode === "image"
-                  ? "bg-bg-surface-primary-default text-text-primary-default"
-                  : "text-text-neutral-default hover:bg-bg-surface"
-              }`}
-            >
-              <ImageIcon className="size-4" />
-              תמונה
-            </button>
-            <button
-              type="button"
-              onClick={() => setStoryMode("video")}
-              aria-pressed={storyMode === "video"}
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-small font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
-                storyMode === "video"
-                  ? "bg-bg-surface-primary-default text-text-primary-default"
-                  : "text-text-neutral-default hover:bg-bg-surface"
-              }`}
-            >
-              <Video className="size-4" />
-              וידאו
-            </button>
-          </div>
-
-          {storyMode === "image" && (
-          <>
+          {/* No image/video switch (Hani, 2026-07-28). A story is a story —
+              she brings a photo or a clip and both are valid. Asking her to
+              declare the type up front made her pick a lane before she had
+              the file, and hid half the panel behind the wrong choice. The
+              media itself now decides what renders. */}
           {hydrating ? (
             <Skeleton className="h-11 w-full rounded-xl" />
           ) : savedStorySet.length === 0 &&
@@ -3591,7 +3488,7 @@ function MediaUploadFlow({
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={storyFrameSrc(savedStorySet[0])}
+                        src={localStoryFrameSrc(savedStorySet[0])}
                         alt="הסטורי הנבחר"
                         className="size-full object-cover"
                       />
@@ -3624,7 +3521,7 @@ function MediaUploadFlow({
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={storyFrameSrc(set[0])}
+                      src={localStoryFrameSrc(set[0])}
                       alt=""
                       className="size-full object-cover"
                     />
@@ -3651,8 +3548,41 @@ function MediaUploadFlow({
               </div>
             </div>
           )}
-          </>
-          )}
+
+          {/* Divider between "make it here" and "bring frames you already
+              designed" — same shape as the carousel panel. */}
+          <div className="flex items-center gap-3" role="separator">
+            <span className="h-px flex-1 bg-border-neutral-default" />
+            <span className="text-xs text-text-neutral-default">או</span>
+            <span className="h-px flex-1 bg-border-neutral-default" />
+          </div>
+
+          {/* One Drive link per story frame, in order — the same component the
+              carousel uses, so "add a frame" and reordering by dragging a row
+              behave identically across the two multi-frame formats
+              (Hani, 2026-07-28). Row i is frame i, so a drag rearranges the
+              saved story itself, not just the form. */}
+          <DriveMediaLinks
+            // Falls back to whatever link the story already has attached, so
+            // media added through the single-link field above shows up as
+            // frame 1 instead of leaving the list looking empty.
+            savedLinks={storyDriveLinks ?? existingStoryLinkAsFrames}
+            onSaveLinks={(links) => onStoryDriveLinksChange?.(links)}
+            items={savedStorySet.length > 0 ? savedStorySet : null}
+            pairItems
+            onItemsReorder={persistStorySet}
+            onImport={handleStoryDriveImport}
+            importing={storyDriveImporting}
+            importProgress={storyDriveProgress}
+            importError={storyDriveError}
+            onImportErrorClear={() => setStoryDriveError(null)}
+            heading="ייבוא פריימים מגוגל דרייב"
+            helpText="הדביקו קישור ישיר לכל פריים (עד 10), לפי הסדר שבו הם יעלו לסטורי. כל קובץ צריך הרשאת „כל מי שיש לו הקישור”."
+            unitLabel="פריים"
+            addRowLabel="הוסיפו פריים"
+            importLabel="טענו סטורי מהדרייב"
+            reorderHint="גררו שורה כדי לשנות את סדר הפריימים בסטורי."
+          />
         </>
       )}
 
@@ -3675,8 +3605,10 @@ function MediaUploadFlow({
                 <div
                   className={`group relative shrink-0 overflow-hidden rounded-lg border border-border-neutral-default bg-bg-surface ${
                     previewKind === "video"
-                      ? format === "story"
-                        ? "aspect-[9/16] w-[200px]" // story = 9:16 portrait
+                      ? format === "story" || isBRoll
+                        // Both are vertical video with the hook laid over it —
+                        // a square frame misrepresents what gets published.
+                        ? "aspect-[9/16] w-[200px]"
                         : "aspect-square w-full"
                       : "aspect-[4/5] w-[72px]"
                   }`}
@@ -3735,15 +3667,16 @@ function MediaUploadFlow({
           {/* Burn the hook into the story video (story mode only). Shown once
               a video is present; once burned, we swap to a "done" state so the
               caption isn't stacked twice. */}
-          {format === "story" &&
-            storyMode === "video" &&
+          {(format === "story" || format === "b_roll") &&
             !hydrating &&
             previewKind === "video" &&
             previewUrl &&
             (videoTextBurned ? (
               <div className="flex items-center gap-1.5 rounded-lg bg-bg-surface px-3 py-2.5 text-small text-text-primary-default">
                 <CircleCheck className="size-4 shrink-0 text-yellow-30" />
-                הכיתוב הוטמע בסרטון — הסטורי מוכן
+                {isBRoll
+                  ? "הכיתוב הוטמע בסרטון — הבי-רול מוכן"
+                  : "הכיתוב הוטמע בסרטון — הסטורי מוכן"}
               </div>
             ) : (
               <div className="flex flex-col gap-1.5">
@@ -3770,14 +3703,28 @@ function MediaUploadFlow({
           {/* Bring your own — paste a Drive/Canva link. Drive links are
               attached automatically — a video stays in Drive and plays from
               there, an image is copied over. Canva/other stay as a reference
-              link. Upload-from-computer was removed per Hani. */}
+              link. Upload-from-computer was removed per Hani.
+
+              Once media is attached the field has done its job, and leaving it
+              open reads as "you still need to paste something" under a video
+              that's already there. Collapse it behind a replace button and only
+              bring it back when the user asks to swap the clip. */}
+          {isBRoll && previewUrl && !hydrating && !replacingMedia ? (
+            <Button
+              variant="outline"
+              onClick={() => {
+                setReplacingMedia(true)
+                setDriveUrl("")
+              }}
+              className="w-full gap-1.5"
+            >
+              <Link2 className="size-4" />
+              החלפת מדיה
+            </Button>
+          ) : (
           <div className="flex flex-col gap-2">
             <p className="text-small-bold text-text-primary-default">
-              {format === "story"
-                ? storyMode === "video"
-                  ? "הסרטון שלכם"
-                  : "או הדביקו קישור לתמונה"
-                : "מדיה משלכם"}
+              {format === "story" ? "או הדביקו קישור למדיה" : "מדיה משלכם"}
             </p>
             <div className="relative">
               <Input
@@ -3796,11 +3743,7 @@ function MediaUploadFlow({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") e.currentTarget.blur()
                 }}
-                placeholder={
-                  format === "story" && storyMode === "video"
-                    ? "הדביקו קישור לסרטון מגוגל דרייב"
-                    : "הדביקו קישור מגוגל דרייב או קנבה"
-                }
+                placeholder="הדביקו קישור מגוגל דרייב או קנבה"
                 className="pe-9 text-right"
                 disabled={!postId || drivePulling}
                 aria-label="קישור למדיה"
@@ -3833,6 +3776,7 @@ function MediaUploadFlow({
               </p>
             )}
           </div>
+          )}
         </>
       )}
 
@@ -3902,53 +3846,13 @@ function MediaUploadFlow({
             </DialogTitle>
           </DialogHeader>
           {storyLightbox && (
-            <div className="flex items-center gap-2">
-              {/* Prev (RTL: the frame before this one sits to the right). */}
-              {storyLightbox.set.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setStoryLightbox((s) =>
-                      s ? { ...s, index: Math.max(0, s.index - 1) } : s,
-                    )
-                  }
-                  disabled={storyLightbox.index === 0}
-                  aria-label="הפריים הקודם"
-                  className="flex size-8 shrink-0 items-center justify-center rounded-full border border-border-neutral-default text-text-neutral-default hover:text-text-primary-default hover:bg-bg-surface disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  <ChevronRight className="size-4" />
-                </button>
-              )}
-              <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-border-neutral-default bg-bg-surface">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={storyFrameSrc(storyLightbox.set[storyLightbox.index])}
-                  alt="תצוגה מוגדלת של פריים הסטורי"
-                  className="size-full object-contain"
-                />
-              </div>
-              {/* Next (RTL: to the left). */}
-              {storyLightbox.set.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setStoryLightbox((s) =>
-                      s
-                        ? {
-                            ...s,
-                            index: Math.min(s.set.length - 1, s.index + 1),
-                          }
-                        : s,
-                    )
-                  }
-                  disabled={storyLightbox.index === storyLightbox.set.length - 1}
-                  aria-label="הפריים הבא"
-                  className="flex size-8 shrink-0 items-center justify-center rounded-full border border-border-neutral-default text-text-neutral-default hover:text-text-primary-default hover:bg-bg-surface disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  <ChevronLeft className="size-4" />
-                </button>
-              )}
-            </div>
+            // Same player as the canvas card — the panel is where she decides
+            // whether to keep a set, so it has to show the real pacing too,
+            // not a still she has to click through.
+            <StoryPlayer
+              frames={storyLightbox.set}
+              className="w-full aspect-[9/16] border border-border-neutral-default"
+            />
           )}
           {/* Save only for a candidate set (the saved set is already the
               post's story). Identity compare — the saved set is a distinct

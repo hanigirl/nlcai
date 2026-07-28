@@ -19,6 +19,7 @@ import { ConfirmModal } from "@/components/confirm-modal"
 import { CorePostCelebration } from "@/components/core-post-celebration"
 import { ScheduleInCalendarBar } from "@/components/schedule-in-calendar-bar"
 import { CorePostChat } from "@/components/core-post-chat"
+import { StoryPlayer, storyFrameSrc } from "@/components/story-player"
 import { ColorSwatchPicker } from "@/components/color-swatch-picker"
 import type { Avatar } from "@/components/avatar-picker"
 import type { SlideData } from "@/lib/carousel-templates"
@@ -270,6 +271,9 @@ function ProjectPageInner() {
   // on the post (migration 027), not in this browser — so the list follows the
   // post to any device, the way the slides themselves already did.
   const [carouselDriveLinks, setCarouselDriveLinks] = useState<string[] | null>(null)
+  // Same idea for the story frame set — it imports from Drive with the exact
+  // same per-frame link mechanic the carousel uses.
+  const [storyDriveLinks, setStoryDriveLinks] = useState<string[] | null>(null)
   const carouselCardRef = useRef<HTMLDivElement>(null)
 
   // Image-post state (lifted so the approved image renders as its own
@@ -834,6 +838,9 @@ function ProjectPageInner() {
           // from the post — no decoding needed, unlike the slides above.
           if (Array.isArray(data.post.carouselDriveLinks)) {
             setCarouselDriveLinks(data.post.carouselDriveLinks as string[])
+          }
+          if (Array.isArray(data.post.storyDriveLinks)) {
+            setStoryDriveLinks(data.post.storyDriveLinks as string[])
           }
 
           // Load video thumbnail as data URL for cover regeneration
@@ -1612,6 +1619,19 @@ function ProjectPageInner() {
             )
           }
         }}
+        storyDriveLinks={storyDriveLinks}
+        onStoryDriveLinksChange={(links) => {
+          setStoryDriveLinks(links)
+          if (savedPostId) {
+            fetch(`/api/core-posts/${savedPostId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ storyDriveLinks: links }),
+            }).catch((err) =>
+              console.error("[project][save-story-drive-links]", err),
+            )
+          }
+        }}
         onImagePostUrlChange={setImagePostUrl}
         onStoryImagesChange={setStoryImages}
         onStoryVideoUrlChange={setStoryVideoUrl}
@@ -2215,8 +2235,6 @@ function ProjectPageInner() {
                           storyCardRef={storyCardRef}
                           onStoryEdit={() => setSelectedFormatCard("story")}
                           storyVideoUrl={storyVideoUrl}
-                          storyVideoCardRef={storyVideoCardRef}
-                          onStoryVideoEdit={() => setSelectedFormatCard("story")}
                         />
                       </div>
                     </div>
@@ -2390,8 +2408,6 @@ function FormatTree({
   storyCardRef,
   onStoryEdit,
   storyVideoUrl,
-  storyVideoCardRef,
-  onStoryVideoEdit,
 }: {
   formats: string[]
   formatPosts: Record<string, string>
@@ -2429,8 +2445,6 @@ function FormatTree({
   storyCardRef: React.RefObject<HTMLDivElement | null>
   onStoryEdit: () => void
   storyVideoUrl: string | null
-  storyVideoCardRef: React.RefObject<HTMLDivElement | null>
-  onStoryVideoEdit: () => void
 }) {
   const count = formats.length
   const totalWidth = count * CARD_WIDTH + (count - 1) * CARD_GAP
@@ -2801,23 +2815,30 @@ function FormatTree({
 
               {/* Story result below the story card — the saved AI frame set
                   (1-3 frames). Same connected-card pattern as image_post. */}
-              {fid === "story" && storyImages && storyImages.length > 0 && (
-                <StoryResultCard
-                  frames={storyImages}
-                  cardRef={storyCardRef}
-                  onEdit={onStoryEdit}
-                />
-              )}
-
-              {/* Story video result — the user's clip with the hook burned in,
-                  the video counterpart of the frame-set card above. */}
-              {fid === "story" && storyVideoUrl && (
-                <StoryVideoResultCard
-                  url={storyVideoUrl}
-                  cardRef={storyVideoCardRef}
-                  onEdit={onStoryVideoEdit}
-                />
-              )}
+              {/* ONE story card, one ordered frame list (Hani, 2026-07-28).
+                  Frames and a story video used to render as two separate
+                  "הסטורי שלכם" cards, so a story with both looked like two
+                  stories. A story is a single sequence: whatever is already
+                  there keeps its position, and anything added lands after it.
+                  The clip is appended only when it isn't already a frame —
+                  the burn flow writes it as a standalone video asset, and
+                  dropping the card outright would have lost it. */}
+              {fid === "story" && (() => {
+                const frames = [
+                  ...(storyImages ?? []),
+                  ...(storyVideoUrl && !(storyImages ?? []).includes(storyVideoUrl)
+                    ? [storyVideoUrl]
+                    : []),
+                ]
+                if (frames.length === 0) return null
+                return (
+                  <StoryResultCard
+                    frames={frames}
+                    cardRef={storyCardRef}
+                    onEdit={onStoryEdit}
+                  />
+                )
+              })()}
 
               {/* Image result below image_post card — appears once the user
                   has generated + approved (or uploaded) an image. Same
@@ -3012,15 +3033,7 @@ function StoryResultCard({
   cardRef: React.RefObject<HTMLDivElement | null>
   onEdit: () => void
 }) {
-  const [current, setCurrent] = useState(0)
   const [downloading, setDownloading] = useState(false)
-
-  // Frames may be storage URLs (hydrated) or raw base64 (just saved).
-  const frameSrc = (f: string) =>
-    f.startsWith("http") ? f : `data:image/png;base64,${f}`
-
-  // Guard against a stale index if the set shrinks (e.g. after regenerate).
-  const index = Math.min(current, frames.length - 1)
 
   const downloadOne = async (src: string, i: number) => {
     try {
@@ -3046,7 +3059,7 @@ function StoryResultCard({
     try {
       // One frame → download it; multiple → download each in order.
       for (let i = 0; i < frames.length; i++) {
-        await downloadOne(frameSrc(frames[i]), i)
+        await downloadOne(storyFrameSrc(frames[i]), i)
       }
     } finally {
       setDownloading(false)
@@ -3066,48 +3079,12 @@ function StoryResultCard({
           <Smartphone className="size-4 text-text-neutral-default" />
         </div>
         <div className="px-6 flex flex-col items-center gap-4">
-          <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={frameSrc(frames[index])}
-              alt={`פריים ${index + 1} של הסטורי`}
-              className="w-full h-full object-cover"
-              onMouseDown={(e) => e.stopPropagation()}
-            />
-          </div>
-
-          {/* Navigation — only when the story has more than one frame. */}
-          {frames.length > 1 && (
-            <div className="flex items-center gap-3">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setCurrent(Math.max(0, index - 1))
-                }}
-                disabled={index === 0}
-                className="p-1.5 rounded-lg hover:bg-bg-surface disabled:opacity-30 transition-colors"
-                onMouseDown={(e) => e.stopPropagation()}
-                aria-label="הפריים הקודם"
-              >
-                <ChevronRight className="size-4 text-text-primary-default" />
-              </button>
-              <span className="text-small text-text-neutral-default">
-                {index + 1} / {frames.length}
-              </span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setCurrent(Math.min(frames.length - 1, index + 1))
-                }}
-                disabled={index === frames.length - 1}
-                className="p-1.5 rounded-lg hover:bg-bg-surface disabled:opacity-30 transition-colors"
-                onMouseDown={(e) => e.stopPropagation()}
-                aria-label="הפריים הבא"
-              >
-                <ChevronLeft className="size-4 text-text-primary-default" />
-              </button>
-            </div>
-          )}
+          {/* Plays on Instagram's clock rather than sitting on frame 1 — the
+              point of the preview is to show the pacing the audience gets. */}
+          <StoryPlayer
+            frames={frames}
+            className="w-[200px] aspect-[9/16] border border-border-neutral-default"
+          />
 
           <div className="flex gap-3 w-full items-center">
             <Button variant="outline" className="flex-1" onClick={onEdit}>
@@ -3118,86 +3095,6 @@ function StoryResultCard({
                 variant="outline"
                 type="button"
                 aria-label={frames.length > 1 ? "הורד הכל" : "הורד סטורי"}
-                className="w-11 px-0"
-                disabled={downloading}
-                onClick={handleDownload}
-              >
-                {downloading ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <Download className="size-4" />
-                )}
-              </Button>
-            </TooltipLabel>
-          </div>
-        </div>
-      </div>
-    </>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/*  Story Video Result Card — the user's clip with the hook burned in  */
-/* ------------------------------------------------------------------ */
-
-function StoryVideoResultCard({
-  url,
-  cardRef,
-  onEdit,
-}: {
-  url: string
-  cardRef: React.RefObject<HTMLDivElement | null>
-  onEdit: () => void
-}) {
-  const [downloading, setDownloading] = useState(false)
-
-  const handleDownload = async () => {
-    setDownloading(true)
-    try {
-      const res = await fetch(url)
-      if (!res.ok) throw new Error("fetch_failed")
-      const blob = await res.blob()
-      const objectUrl = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = objectUrl
-      a.download = "story.mp4"
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(objectUrl)
-    } catch (err) {
-      console.error("[project][story-video-download]", err)
-      window.open(url, "_blank")
-    } finally {
-      setDownloading(false)
-    }
-  }
-
-  return (
-    <>
-      <div className="w-[2px] h-7 bg-gray-80" />
-      <div
-        ref={cardRef}
-        dir="rtl"
-        className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
-      >
-        <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface-primary-default-80">
-          <span className="text-p-bold text-text-primary-default">
-            הסטורי שלכם
-          </span>
-          <Smartphone className="size-4 text-text-neutral-default" />
-        </div>
-        <div className="px-6 flex flex-col items-center gap-4">
-          <VideoPlayer url={url} />
-          <div className="flex gap-3 w-full items-center">
-            <Button variant="outline" className="flex-1" onClick={onEdit}>
-              עריכת סטורי
-            </Button>
-            <TooltipLabel label="הורד סטורי">
-              <Button
-                variant="outline"
-                type="button"
-                aria-label="הורד סטורי"
                 className="w-11 px-0"
                 disabled={downloading}
                 onClick={handleDownload}

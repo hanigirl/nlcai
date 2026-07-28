@@ -79,14 +79,65 @@ function fontSizeForHook(text: string): number {
 }
 
 /**
- * Transparent 9:16 overlay: the hook, bold white Heebo, centered in the
- * story safe zone (above the reply bar), on a soft dark scrim so it stays
- * legible over ANY video. Background is transparent — only the text box
- * paints — so ffmpeg overlays just the words, not a full canvas.
+ * The body sits UNDER the hook and must read as secondary, so it steps down
+ * from the hook's size rather than tracking its own length independently —
+ * the ratio is what makes the hierarchy legible at a glance.
  */
-async function renderOverlayPng(hook: string): Promise<Buffer> {
+function fontSizeForBody(hookSize: number, body: string): number {
+  const base = Math.round(hookSize * 0.46)
+  const len = body.trim().length
+  if (len <= 90) return base
+  if (len <= 180) return Math.round(base * 0.86)
+  return Math.round(base * 0.74)
+}
+
+/**
+ * How much body text can sit on a story frame before it stops being a story.
+ * Past this we trim on a word boundary and add an ellipsis — silently
+ * dropping the tail would let a long script render as a wall of type that
+ * overflows the safe zone.
+ */
+const MAX_BODY_CHARS = 240
+
+export function trimBodyForOverlay(body: string): string {
+  const clean = body.trim().replace(/\s+/g, " ")
+  if (clean.length <= MAX_BODY_CHARS) return clean
+  const cut = clean.slice(0, MAX_BODY_CHARS)
+  const lastSpace = cut.lastIndexOf(" ")
+  return `${(lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trim()}…`
+}
+
+/**
+ * Transparent 9:16 overlay burned onto the user's OWN media.
+ *
+ * Visual language is deliberately the reel cover's (Hani, 2026-07-28: "בדומה
+ * למה שעשינו בקאבר"): white Rubik ExtraBold on a SOLID black pill, 24px
+ * radius, centred. The previous version used a translucent 42%-black scrim
+ * with a 32px radius — close enough to look like a mistake next to a cover,
+ * far enough to read as a different product.
+ *
+ * Two tiers, not one: the hook is the headline and the body is support, so
+ * they get separate pills with a gap between them. One merged block made the
+ * hook stop reading as a hook.
+ *
+ * Nothing here runs for an AI-generated story — those frames arrive from the
+ * model with their text already designed in, and laying a second caption over
+ * them would double it up.
+ */
+async function renderOverlayPng(hook: string, body?: string): Promise<Buffer> {
   const { extraBold, bold } = await loadRubik()
-  const fontSize = fontSizeForHook(hook)
+  const hookSize = fontSizeForHook(hook)
+  const bodyText = body ? trimBodyForOverlay(body) : ""
+  const bodySize = bodyText ? fontSizeForBody(hookSize, bodyText) : 0
+
+  // Same solid pill the cover uses — it carries contrast on any footage, so
+  // no scrim and no text-shadow are needed on top of it.
+  const pill = {
+    display: "flex" as const,
+    backgroundColor: "#000000",
+    borderRadius: 24,
+    maxWidth: CANVAS_WIDTH - 180,
+  }
 
   const svg = await satori(
     <div
@@ -102,18 +153,11 @@ async function renderOverlayPng(hook: string): Promise<Buffer> {
         paddingBottom: 520,
         paddingLeft: 90,
         paddingRight: 90,
+        // The gap IS the separation between hook and body.
+        gap: 20,
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          // Soft dark scrim for contrast on any footage.
-          backgroundColor: "rgba(0,0,0,0.42)",
-          borderRadius: 32,
-          padding: "36px 48px",
-          maxWidth: CANVAS_WIDTH - 180,
-        }}
-      >
+      <div style={{ ...pill, padding: "36px 48px" }}>
         {/* RtlText, NOT a raw string: satori has no BiDi, so bare Hebrew
             renders mirrored. This is the SAME shared helper the carousel
             templates use. */}
@@ -124,11 +168,29 @@ async function renderOverlayPng(hook: string): Promise<Buffer> {
             color: "#ffffff",
             fontFamily: "Rubik",
             fontWeight: 800,
-            fontSize,
+            fontSize: hookSize,
             lineHeight: 1.25,
           }}
         />
       </div>
+
+      {bodyText && (
+        <div style={{ ...pill, padding: "24px 40px" }}>
+          <RtlText
+            text={bodyText}
+            align="center"
+            style={{
+              color: "#ffffff",
+              fontFamily: "Rubik",
+              // Bold, not ExtraBold — the weight drop reinforces the size
+              // drop so the hierarchy survives even at a glance.
+              fontWeight: 700,
+              fontSize: bodySize,
+              lineHeight: 1.35,
+            }}
+          />
+        </div>
+      )}
     </div>,
     {
       width: CANVAS_WIDTH,
@@ -196,11 +258,24 @@ function burnOverlay(
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
   try {
-    const { postId } = (await req.json().catch(() => ({}))) as {
+    const { postId, format: rawFormat } = (await req.json().catch(() => ({}))) as {
       postId?: string
+      format?: string
     }
     if (!postId) {
       return NextResponse.json({ error: "postId is required" }, { status: 400 })
+    }
+    // Which format's video gets the hook burned in. Story was the only one when
+    // this was written, so it was hardcoded; b-roll is the same operation on a
+    // different variant — footage from the user with the post's hook laid over
+    // it. Restricted to the formats that actually own a video, so a typo can't
+    // send us looking for a variant that has no media.
+    const format = rawFormat ?? "story"
+    if (format !== "story" && format !== "b_roll") {
+      return NextResponse.json(
+        { error: 'format must be "story" or "b_roll"' },
+        { status: 400 },
+      )
     }
 
     const supabase = await createClient()
@@ -227,12 +302,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 })
     }
 
-    // The story format_variant owns the source video (media_assets, video).
+    // The format_variant owns the source video (media_assets, video).
     const { data: variantRow } = await supabase
       .from("format_variants")
       .select("id, body")
       .eq("core_post_id", postId)
-      .eq("format", "story")
+      .eq("format", format)
       .single()
     const variant = variantRow as { id: string; body: string | null } | null
     if (!variant) {
@@ -281,6 +356,23 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // The story body, minus whatever line the hook already came from — the
+    // script usually opens WITH the hook, and burning it twice (once big,
+    // once small, one under the other) is the obvious failure mode here.
+    const overlayBody = (() => {
+      const raw = variant.body?.trim()
+      if (!raw) return undefined
+      const rest = raw
+        .split(/\n+/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        // Compare loosely: the script's opening line is often the hook with
+        // different punctuation or spacing.
+        .filter((line) => line.replace(/\s+/g, "") !== hook.replace(/\s+/g, ""))
+        .join(" ")
+      return rest || undefined
+    })()
+
     const os = await import("os")
     const fs = await import("fs/promises")
     const path = await import("path")
@@ -303,7 +395,7 @@ export async function POST(req: NextRequest) {
       isDriveUrl(videoUrl)
         ? fetchDriveFile(extractDriveFileId(videoUrl)!)
         : fetch(videoUrl),
-      renderOverlayPng(hook),
+      renderOverlayPng(hook, overlayBody),
     ])
     const srcContentType = (videoRes.headers.get("content-type") || "")
       .split(";")[0]
