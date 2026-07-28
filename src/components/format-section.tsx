@@ -55,13 +55,21 @@
  *     lives in /project alongside the avatar/recording flow.
  *   - Storage I/O. Callbacks (`onTogglePublished`, `onCreateScript`) are
  *     fired up to the Sheet which holds the storage write.
+ *
+ * בי-רול (b-roll):
+ *   פורמט וידיאו עם שכבת טקסט (ההוק) מעל. הווידיאו/תמונה מגיע מקישור Drive.
+ *   הכרטיס מופיע בשורה השלישית בגריד, עמודה ימנית — מתחת לפוסט תמונה.
+ *   תצוגת ה-FormatSection עבור בי-רול כוללת:
+ *     - תצוגת קישור Drive לווידיאו/תמונה
+ *     - שכבת טקסט (ההוק מהסקריפט) מעל המדיה — בסגנון הכיסויים הקיים
  */
 
 import { useState } from "react"
-import { ExternalLink, Pencil } from "lucide-react"
+import { ExternalLink, Film, Pencil } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 import {
   formatChipDate,
   getFormatChipIcon,
@@ -84,6 +92,20 @@ export function formatSectionId(format: FormatId): string {
  * shorter than that and the preview/expand is more friction than value.
  */
 const SCRIPT_PREVIEW_THRESHOLD = 200
+
+/**
+ * Extract the first non-empty line from a script body to use as the hook
+ * overlay text for b-roll format.
+ */
+function extractHook(body: string | null): string {
+  if (!body) return ""
+  const lines = body.trim().split("\n")
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (trimmed.length > 0) return trimmed
+  }
+  return ""
+}
 
 export type FormatSectionProps = {
   /** Format this section represents — drives label, icon, anchor id. */
@@ -126,6 +148,16 @@ export type FormatSectionProps = {
    * optional because some host pages may not want to leave their flow.
    */
   onEditScript?: () => void
+  /**
+   * קישור Drive לווידיאו/תמונה עבור פורמט בי-רול.
+   * רלוונטי רק כש-format === "b_roll".
+   */
+  bRollDriveUrl?: string
+  /**
+   * קולבק לשמירת קישור Drive עבור בי-רול.
+   * רלוונטי רק כש-format === "b_roll".
+   */
+  onSaveBRollDriveUrl?: (url: string) => void
 }
 
 export function FormatSection({
@@ -140,9 +172,11 @@ export function FormatSection({
   onCreateScript,
   onTogglePublished,
   onEditScript,
+  bRollDriveUrl,
+  onSaveBRollDriveUrl,
 }: FormatSectionProps) {
-  const Icon = getFormatChipIcon(format)
-  const label = getFormatChipLabel(format)
+  const Icon = format === "b_roll" ? Film : getFormatChipIcon(format)
+  const label = format === "b_roll" ? "בי-רול" : getFormatChipLabel(format)
   const sectionId = formatSectionId(format)
 
   // Local expand toggle for long scripts. We deliberately don't lift this to
@@ -191,7 +225,18 @@ export function FormatSection({
 
       {/* Body — branches on state. Empty is a tiny prompt; everything else
           shares the script + media layout. */}
-      {state === "empty" ? (
+      {format === "b_roll" ? (
+        <BRollSectionBody
+          state={state}
+          body={body}
+          bRollDriveUrl={bRollDriveUrl}
+          onSaveBRollDriveUrl={onSaveBRollDriveUrl}
+          onCreateScript={onCreateScript}
+          onEditScript={onEditScript}
+          expanded={expanded}
+          setExpanded={setExpanded}
+        />
+      ) : state === "empty" ? (
         <EmptySectionBody label={label} onCreateScript={onCreateScript} />
       ) : (
         <PopulatedSectionBody
@@ -246,6 +291,246 @@ function EmptySectionBody({
       >
         צרו {label}
       </Button>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  בי-רול branch                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * BRollSectionBody — גוף הסקשן עבור פורמט בי-רול.
+ *
+ * מבנה:
+ *   1. סקריפט (קריאה בלבד + expand/collapse לטקסטים ארוכים)
+ *   2. הזנת קישור Drive לווידיאו/תמונה
+ *   3. אם קיים קישור + ההוק — תצוגת שכבת הטקסט מעל המדיה (mock overlay)
+ *
+ * שכבת הטקסט (hook overlay): השורה הראשונה של הסקריפט מוצגת מעל פריים
+ * המדיה בסגנון הכיסויים הקיים — טקסט לבן מרכזי על רקע כהה שקוף.
+ */
+function BRollSectionBody({
+  state,
+  body,
+  bRollDriveUrl,
+  onSaveBRollDriveUrl,
+  onCreateScript,
+  onEditScript,
+  expanded,
+  setExpanded,
+}: {
+  state: FormatReadiness
+  body: string | null
+  bRollDriveUrl?: string
+  onSaveBRollDriveUrl?: (url: string) => void
+  onCreateScript: () => void
+  onEditScript?: () => void
+  expanded: boolean
+  setExpanded: (v: boolean) => void
+}) {
+  const trimmedBody = body?.trim() ?? ""
+  const hasBody = trimmedBody.length > 0
+  const isLong = trimmedBody.length > SCRIPT_PREVIEW_THRESHOLD
+  const visibleBody =
+    isLong && !expanded
+      ? `${trimmedBody.slice(0, SCRIPT_PREVIEW_THRESHOLD).trimEnd()}…`
+      : trimmedBody
+
+  const hook = extractHook(body)
+
+  // קישור Drive — state מקומי לשדה הקלט
+  const [draftUrl, setDraftUrl] = useState(bRollDriveUrl ?? "")
+  const [editingUrl, setEditingUrl] = useState(!bRollDriveUrl)
+
+  const handleSaveUrl = () => {
+    if (onSaveBRollDriveUrl) onSaveBRollDriveUrl(draftUrl.trim())
+    setEditingUrl(false)
+  }
+
+  const resolvedDriveUrl = bRollDriveUrl ?? ""
+  const hasDriveLink = resolvedDriveUrl.length > 0
+
+  // מצב ריק — אין סקריפט ואין קישור
+  if (state === "empty" && !hasBody && !hasDriveLink) {
+    return (
+      <div className="rounded-xl bg-bg-surface px-4 py-3 flex items-center justify-between gap-3">
+        <p className="text-small text-text-neutral-default">
+          טרם נוצר בי-רול
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onCreateScript}
+          className="shrink-0"
+        >
+          צרו בי-רול
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Script block ------------------------------------------------- */}
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs-body text-text-neutral-default">סקריפט</span>
+          {hasBody && onEditScript && (
+            <button
+              type="button"
+              onClick={onEditScript}
+              className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default hover:text-text-primary-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 rounded-md px-1 py-0.5 transition-colors"
+              aria-label="ערכו את הסקריפט לבי-רול"
+            >
+              <Pencil className="size-3" aria-hidden />
+              ערכו
+            </button>
+          )}
+        </div>
+        {hasBody ? (
+          <div className="rounded-xl bg-bg-surface px-4 py-3 text-text-primary-default text-small leading-relaxed whitespace-pre-wrap">
+            {visibleBody}
+            {isLong && (
+              <button
+                type="button"
+                onClick={() => setExpanded(!expanded)}
+                className="block mt-2 text-xs-body text-text-neutral-default hover:text-text-primary-default underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 rounded-md"
+              >
+                {expanded ? "הציגו פחות" : "ראו עוד"}
+              </button>
+            )}
+          </div>
+        ) : (
+          <p className="text-xs-body text-text-neutral-default">
+            עדיין אין סקריפט לבי-רול
+          </p>
+        )}
+      </div>
+
+      {/* Drive link block --------------------------------------------- */}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-xs-body text-text-neutral-default">
+          קישור Drive לווידיאו / תמונה
+        </span>
+        {editingUrl ? (
+          <div className="flex items-center gap-2">
+            <Input
+              type="url"
+              dir="ltr"
+              placeholder="הדביקו קישור Google Drive..."
+              value={draftUrl}
+              onChange={(e) => setDraftUrl(e.target.value)}
+              className="flex-1 text-small"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleSaveUrl}
+              disabled={draftUrl.trim().length === 0}
+            >
+              שמרו
+            </Button>
+            {hasDriveLink && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setDraftUrl(resolvedDriveUrl)
+                  setEditingUrl(false)
+                }}
+              >
+                בטלו
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="self-start gap-1.5"
+            >
+              <a
+                href={resolvedDriveUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="פתחו את המדיה של בי-רול ב-Google Drive"
+              >
+                <ExternalLink className="size-3.5" aria-hidden />
+                פתחו ב-Google Drive
+              </a>
+            </Button>
+            <button
+              type="button"
+              onClick={() => setEditingUrl(true)}
+              className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default hover:text-text-primary-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 rounded-md px-1 py-0.5 transition-colors"
+              aria-label="ערכו את קישור Drive לבי-רול"
+            >
+              <Pencil className="size-3" aria-hidden />
+              ערכו
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Hook overlay preview ----------------------------------------- */}
+      {/* מציג את ההוק מעל פריים המדיה כשיש גם קישור וגם טקסט.
+          הרקע הכהה מדמה את שכבת הטקסט שתוטבע בסרטון האמיתי.
+          TODO: BRollHookOverlay — קומפוננטה ייעודית לרינדור overlay אמיתי
+          עם ffmpeg/canvas בצד השרת לייצוא. */}
+      {hasDriveLink && hook.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs-body text-text-neutral-default">
+            תצוגה מקדימה — שכבת ההוק
+          </span>
+          <div className="relative rounded-xl overflow-hidden border border-border-neutral-default bg-bg-surface aspect-video">
+            {/* רקע — אייקון Film כ-placeholder לווידיאו מה-Drive */}
+            <div className="w-full h-full flex items-center justify-center bg-neutral-900">
+              <Film
+                className="size-10 text-neutral-600"
+                aria-hidden
+              />
+            </div>
+            {/* שכבת טקסט — ההוק מוטבע מעל, סגנון זהה לכיסויים */}
+            <div className="absolute inset-0 flex items-center justify-center px-6">
+              <div className="bg-black/50 rounded-lg px-4 py-2 text-center">
+                <p className="text-white font-bold text-base leading-snug drop-shadow-md">
+                  {hook}
+                </p>
+              </div>
+            </div>
+            {/* תווית Drive בפינה */}
+            <div className="absolute bottom-2 left-2">
+              <a
+                href={resolvedDriveUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 bg-black/60 text-white text-xs rounded-md px-2 py-1 hover:bg-black/80 transition-colors"
+                aria-label="פתחו מדיה ב-Google Drive"
+              >
+                <ExternalLink className="size-3" aria-hidden />
+                Drive
+              </a>
+            </div>
+          </div>
+          <p className="text-xs-body text-text-neutral-default">
+            ההוק יוטבע כטקסט מעל הווידיאו בייצוא הסופי
+          </p>
+        </div>
+      )}
+
+      {/* SR-only state announcement */}
+      <span className="sr-only">
+        {state === "ready"
+          ? "בי-רול מוכן"
+          : state === "scheduled"
+            ? "בי-רול מתוזמן"
+            : state === "published"
+              ? "בי-רול פורסם"
+              : "בי-רול ריק"}
+      </span>
     </div>
   )
 }
