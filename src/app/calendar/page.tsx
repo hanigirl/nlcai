@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   ChevronRight,
   ChevronLeft,
@@ -496,27 +496,41 @@ export default function CalendarPage() {
   // doesn't accidentally inherit the previous chip's format.
   const [sheetInitialFormat, setSheetInitialFormat] = useState<FormatId | undefined>(undefined)
 
-  useEffect(() => {
-    const reload = () => {
-      const rows = getScheduledPosts()
-      setScheduled(rows)
-      // Rebuild the published set keyed by `${corePostId}:${format}`. The
-      // per-format era means a single core post can be published on one
-      // format and still pending on another — we can't collapse to a single
-      // post-level boolean any more.
-      const set = new Set<string>()
-      for (const p of rows) {
-        const key = `${p.corePostId}:${p.format}`
-        if (p.publishedAt) {
-          set.add(key)
-        } else {
-          const map = getPublishedMap(p.corePostId)
-          if (map[p.format]) set.add(key)
-        }
+  /**
+   * Re-read the board from the local cache into component state.
+   *
+   * Hoisted out of the mount effect (and into a useCallback) so the mutation
+   * handlers on this page can call it DIRECTLY after they schedule / unschedule.
+   * They used to rely solely on the synthetic `storage` event that
+   * `timing-storage` dispatches — which meant that if that event didn't land,
+   * the write succeeded, the success toast fired, and the card never moved. The
+   * button looked broken even though the action had worked; only a refresh
+   * showed the truth. The event listener stays for cross-surface updates
+   * (Sheet checkbox, queue panel, another tab), it's just no longer the only
+   * path for this page's own actions.
+   */
+  const reloadBoard = useCallback(() => {
+    const rows = getScheduledPosts()
+    setScheduled(rows)
+    // Rebuild the published set keyed by `${corePostId}:${format}`. The
+    // per-format era means a single core post can be published on one
+    // format and still pending on another — we can't collapse to a single
+    // post-level boolean any more.
+    const set = new Set<string>()
+    for (const p of rows) {
+      const key = `${p.corePostId}:${p.format}`
+      if (p.publishedAt) {
+        set.add(key)
+      } else {
+        const map = getPublishedMap(p.corePostId)
+        if (map[p.format]) set.add(key)
       }
-      setPublishedSet(set)
     }
-    reload()
+    setPublishedSet(set)
+  }, [])
+
+  useEffect(() => {
+    reloadBoard()
 
     // Stay in sync with any source that may write to scheduled / published.
     // The published key is per-post, so we match by prefix.
@@ -526,12 +540,12 @@ export default function CalendarPage() {
         e.key === TIMING_KEYS.scheduled ||
         e.key.startsWith(TIMING_KEYS.publishedPrefix)
       ) {
-        reload()
+        reloadBoard()
       }
     }
     window.addEventListener("storage", onStorage)
     return () => window.removeEventListener("storage", onStorage)
-  }, [])
+  }, [reloadBoard])
 
   // Live hook lookup: scheduled rows persist a `hook` snapshot at schedule
   // time, but old rows (and any reschedule that lost the cache) won't have
@@ -655,6 +669,7 @@ export default function CalendarPage() {
         )
         const time = existing?.scheduledTime ?? DEFAULT_SCHEDULED_TIME
         schedulePost(corePostId, format, dayKey, time)
+        reloadBoard()
       } catch (err) {
         console.error("[calendar] failed to parse reschedule payload", err)
       }
@@ -681,6 +696,7 @@ export default function CalendarPage() {
           DEFAULT_SCHEDULED_TIME,
           trimmed ? { hook: trimmed } : undefined,
         )
+        reloadBoard()
       } catch (err) {
         console.error("[calendar] failed to parse ready-format payload", err)
       }
@@ -944,6 +960,7 @@ export default function CalendarPage() {
                               // means "it isn't done yet").
                               unschedulePost(post.corePostId, post.format)
                               unmarkPublished(post.corePostId, post.format)
+                              reloadBoard()
                               toast.success("הפורמט הוחזר לתור")
                             }}
                             onReschedule={(newDate) => {
@@ -958,6 +975,7 @@ export default function CalendarPage() {
                                 time,
                                 { hook },
                               )
+                              reloadBoard()
                               toast.success("התזמון עודכן")
                             }}
                           />

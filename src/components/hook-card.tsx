@@ -9,6 +9,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { toast } from "sonner"
+import { copyToClipboard } from "@/lib/copy-to-clipboard"
 
 interface HookCardProps {
   hookText: string
@@ -34,8 +35,14 @@ export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onTog
     }
   }, [editing])
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(hookText)
+  const handleCopy = async () => {
+    // Was fire-and-forget: the rejection became an unhandled promise rejection
+    // and "הועתק ללוח" showed even when nothing reached the clipboard.
+    const ok = await copyToClipboard(hookText)
+    if (!ok) {
+      toast.error("ההעתקה נכשלה — נסו שוב")
+      return
+    }
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
     toast("הועתק ללוח")

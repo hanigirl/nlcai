@@ -94,25 +94,35 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
     // on the layout's <Toaster />. Updated as progress flows.
     toast.loading(`מייצר ${subject}... 0 מתוך ${TOTAL_HOOKS}`, { id: TOAST_ID, duration: Infinity })
 
-    // Per-user storage — without scoping, switching accounts surfaces the
-    // previous user's cached ideas/hooks.
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    const uid = user?.id ?? null
-
-    // Collect field ideas from localStorage (structured, for server-side favorite matching).
-    type FieldIdea = { text: string; source?: string; category?: string; url?: string }
-    let fieldIdeas: FieldIdea[] = []
+    // Everything from here down runs inside one try/finally.
+    //
+    // It used to start OUTSIDE the try, and `supabase.auth.getUser()` is a
+    // network call — an expired session or a momentary connection drop threw
+    // right there, past every `setIsGenerating(false)`. The flag stayed `true`
+    // forever, which both greys out the "ייצר לי עוד הוקים" button AND makes
+    // the `if (isGenerating) return` guard above swallow every later click.
+    // From the user's side the button was simply dead until a page refresh,
+    // with the "מייצר..." toast (duration: Infinity) stuck on screen. The
+    // `finally` now guarantees the flag is released no matter how we exit.
     try {
-      const saved = uid ? localStorage.getItem(userKey("generatedIdeas_v23", uid)) : null
-      if (saved) {
-        fieldIdeas = JSON.parse(saved).map((i: FieldIdea) => ({
-          text: i.text, source: i.source, category: i.category, url: i.url,
-        }))
-      }
-    } catch (err) { console.error("[hook-gen-provider][fetch-ideas]", err) }
+      // Per-user storage — without scoping, switching accounts surfaces the
+      // previous user's cached ideas/hooks.
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      const uid = user?.id ?? null
 
-    try {
+      // Collect field ideas from localStorage (structured, for server-side favorite matching).
+      type FieldIdea = { text: string; source?: string; category?: string; url?: string }
+      let fieldIdeas: FieldIdea[] = []
+      try {
+        const saved = uid ? localStorage.getItem(userKey("generatedIdeas_v23", uid)) : null
+        if (saved) {
+          fieldIdeas = JSON.parse(saved).map((i: FieldIdea) => ({
+            text: i.text, source: i.source, category: i.category, url: i.url,
+          }))
+        }
+      } catch (err) { console.error("[hook-gen-provider][fetch-ideas]", err) }
+
       const res = await fetch("/api/homepage-hooks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -222,10 +232,17 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
         }
       }
     } catch (err) {
-      setIsGenerating(false)
       const msg = err instanceof Error ? err.message : String(err)
       setError(msg)
       toast.error(`שגיאה ביצירת הוקים: ${msg}`, { id: TOAST_ID, duration: 6000 })
+    } finally {
+      // The single guaranteed release point. Without it, any throw on a path
+      // that isn't explicitly handled leaves the generate button disabled for
+      // the rest of the session. Every exit path above already replaces the
+      // `duration: Infinity` loading toast with a terminal success/error one
+      // under the same id, and the catch covers the rest — so the toast can no
+      // longer outlive the run either.
+      setIsGenerating(false)
     }
   }, [isGenerating])
 

@@ -70,6 +70,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { toast } from "sonner"
+import { copyToClipboard } from "@/lib/copy-to-clipboard"
 import { createClient } from "@/lib/supabase/client"
 import {
   TIMING_KEYS,
@@ -260,13 +262,16 @@ function CopyIconButton({
 
   const handleCopy = async () => {
     if (!text.trim()) return
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1500)
-    } catch (err) {
-      console.error("clipboard write failed", err)
+    // Never fail silently: a copy button that does nothing on click is
+    // indistinguishable from a broken app. `copyToClipboard` already retries
+    // via execCommand, so reaching the toast means it genuinely didn't copy.
+    const ok = await copyToClipboard(text)
+    if (!ok) {
+      toast.error("ההעתקה נכשלה — נסו שוב")
+      return
     }
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
   }
 
   return (
@@ -319,13 +324,13 @@ function InlineCopyButton({
 
   const handleCopy = async () => {
     if (isEmpty || disabled) return
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1500)
-    } catch (err) {
-      console.error("clipboard write failed", err)
+    const ok = await copyToClipboard(value)
+    if (!ok) {
+      toast.error("ההעתקה נכשלה — נסו שוב")
+      return
     }
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
   }
 
   return (
@@ -725,14 +730,17 @@ export function CorePostSheet({
     setDeleting(true)
     try {
       const res = await fetch(`/api/core-posts/${postId}`, { method: "DELETE" })
-      if (!res.ok) {
-        console.warn("[core-post-sheet] DELETE returned", res.status)
-      }
+      // A rejected DELETE (expired session → 401, server error → 500) used to
+      // fall through to the same "it worked" path: the post vanished from the
+      // list, the Sheet closed, and it was back on the next refresh. Treat a
+      // failed response as a failure and say so.
+      if (!res.ok) throw new Error(`status ${res.status}`)
       removeFromTiming(postId)
       onDeleted?.(postId)
       onOpenChange(false)
     } catch (err) {
       console.error("[core-post-sheet] delete failed", err)
+      toast.error("המחיקה נכשלה, נסו שוב")
     } finally {
       setDeleting(false)
     }
