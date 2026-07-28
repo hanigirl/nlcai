@@ -2,6 +2,14 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 
 /**
+ * The `format_type` enum, mirrored. Kept here rather than imported from a client
+ * component so the route has no React dependency. Must stay in sync with
+ * `create type format_type as enum (...)` in 001_initial_schema.sql.
+ */
+const FORMAT_IDS = ["story", "talking_head", "carousel", "image_post"] as const
+type FormatId = (typeof FORMAT_IDS)[number]
+
+/**
  * POST /api/core-posts/{id}/media
  *
  * Generic per-format media writer. Accepts an already-uploaded URL (the
@@ -19,9 +27,12 @@ import { createClient } from "@/lib/supabase/server"
  *
  * Body shape:
  *   - `format`: required. One of "story" | "talking_head" | "carousel" |
- *               "image_post" | "static". Identifies which `format_variants`
- *               row owns the asset. We auto-create the row when missing
- *               (matches the PATCH behaviour for talking_head video).
+ *               "image_post" — the four values of the `format_type` enum.
+ *               Identifies which `format_variants` row owns the asset. We
+ *               auto-create the row when missing (matches the PATCH behaviour
+ *               for talking_head video). NOTE: "static" is a client-side alias
+ *               for "image_post" and is NOT accepted here; it is not an enum
+ *               member and reaches Postgres as a 22P02.
  *   - `url`:    required. The public URL of the asset (already uploaded
  *               via the storage client). The endpoint does NOT touch
  *               Supabase Storage — that's the client's job, so the user
@@ -72,6 +83,16 @@ export async function POST(
     if (!format || typeof format !== "string") {
       return NextResponse.json({ error: "format is required" }, { status: 400 })
     }
+    // `format_variants.format` is the `format_type` ENUM (four values, declared
+    // in 001_initial_schema.sql and never altered since). An unknown value is
+    // not a soft failure — Postgres rejects the insert with 22P02 and the user
+    // gets an opaque 500. Reject it here with something readable instead.
+    if (!FORMAT_IDS.includes(format as FormatId)) {
+      return NextResponse.json(
+        { error: `format must be one of ${FORMAT_IDS.join("|")}` },
+        { status: 400 },
+      )
+    }
     if (!url || typeof url !== "string") {
       return NextResponse.json({ error: "url is required" }, { status: 400 })
     }
@@ -82,9 +103,9 @@ export async function POST(
       )
     }
 
-    // Find or create the format_variant row. We don't enforce the format
-    // against the global FORMATS list here — the column is a string and
-    // future formats will land without a deploy gate.
+    // Find or create the format_variant row. `format` is already validated
+    // against the enum above — a new format needs a migration on `format_type`
+    // before it can land here, so this is a deploy gate by design.
     let { data: variant } = await supabase
       .from("format_variants")
       .select("id")
@@ -111,11 +132,38 @@ export async function POST(
 
     // Replace any existing asset of the same type. Each (variant, asset_type)
     // is a single slot — uploading a new image replaces the old one.
-    await supabase
+    //
+    // The delete's result used to be discarded. RLS mismatches don't raise, they
+    // match zero rows — so a silently-failed wipe let the insert below stack a
+    // second row in the same slot, and the reader then picked between them
+    // arbitrarily. Verify the slot is actually empty before inserting.
+    const { error: wipeErr } = await supabase
       .from("media_assets")
       .delete()
       .eq("format_variant_id", variantRow.id)
       .eq("asset_type", assetType)
+    if (wipeErr) {
+      return NextResponse.json(
+        { error: `slot_replace_failed: ${wipeErr.message}` },
+        { status: 500 },
+      )
+    }
+    const { data: leftover } = await supabase
+      .from("media_assets")
+      .select("id")
+      .eq("format_variant_id", variantRow.id)
+      .eq("asset_type", assetType)
+      .limit(1)
+    if (leftover && leftover.length > 0) {
+      console.error(
+        `[core-posts media POST] ${assetType} wipe matched zero rows (RLS?)`,
+        { variantId: variantRow.id, format },
+      )
+      return NextResponse.json(
+        { error: "slot_replace_failed: existing asset could not be replaced" },
+        { status: 500 },
+      )
+    }
 
     const { error: insertAssetErr } = await supabase
       .from("media_assets")

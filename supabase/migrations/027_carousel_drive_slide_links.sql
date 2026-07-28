@@ -1,0 +1,21 @@
+-- Persist the per-slide Google Drive links behind an imported carousel.
+--
+-- Until now the link list lived only in localStorage (the same per-format meta
+-- blob that holds the carousel's templateId). That made it per-device: the
+-- slides themselves are in media_assets and travel with the post, but the
+-- links they were pulled from did not — so opening the post on another machine
+-- showed the carousel with two blank link rows underneath it, and fixing one
+-- bad link out of ten meant re-pasting all ten.
+--
+-- Shape: a jsonb array of link strings, in slide order. Order is the payload,
+-- not just the contents — dragging a row in the panel reorders both the links
+-- and the slides, so array position IS slide position.
+--
+-- Nullable with no default: null = "never imported from Drive", which is
+-- distinct from [] = "imported, then all links cleared". Only the carousel
+-- format ever writes it; the column lives on format_variants rather than
+-- core_posts so it's scoped to (post, format) like every other variant field.
+--
+-- No RLS work needed: format_variants already carries own-row select/insert/
+-- update/delete policies via core_posts.user_id (migration 009).
+alter table format_variants add column drive_slide_links jsonb;

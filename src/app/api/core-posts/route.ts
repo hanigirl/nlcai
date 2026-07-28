@@ -70,6 +70,12 @@ export async function GET() {
         .from("media_assets")
         .select("format_variant_id, url, asset_type")
         .in("format_variant_id", variantIds)
+        // Without an explicit order Postgres returns rows in whatever order it
+        // likes, so both `primary_media_url` and the per-format winner among
+        // several images were nondeterministic — a carousel's card thumbnail
+        // could change between two identical requests. Ascending matches the
+        // detail endpoint, so a card and its Sheet agree on the same asset.
+        .order("created_at", { ascending: true })
       media = (mData ?? []) as unknown as MediaAssetRow[]
     }
     const variantHasMedia = new Set<string>()

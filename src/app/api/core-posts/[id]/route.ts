@@ -107,6 +107,59 @@ async function replaceImageAssetSet(
   return { ok: true, changed: true }
 }
 
+/**
+ * Clear a SINGLE-slot asset (`video` or `cover`) for one format variant.
+ *
+ * `video` and `cover` are one-per-variant by contract — unlike `image`, which
+ * carousel and story legitimately hold N of. Every writer below replaces such a
+ * slot by deleting and re-inserting, and every one of them used to discard the
+ * delete's error.
+ *
+ * That is not a theoretical gap. RLS mismatches don't raise — they match zero
+ * rows — so once the media_assets policies stopped covering standalone posts, the
+ * delete became a no-op and the insert ran anyway. By 2026-07-28 that had left 238
+ * cover rows across 13 variants and 125 video rows across 16, including one
+ * variant holding 138 cover rows that each pointed at a separate uploaded PNG.
+ * Migration 028 cleaned those up; this helper is what stops them coming back,
+ * and migration 029's partial unique index is the backstop under it.
+ *
+ * Same wipe-then-verify shape as `replaceImageAssetSet`, which learned this
+ * lesson first (see its comment above).
+ */
+async function clearAssetSlot(
+  supabase: ServerSupabase,
+  variantId: string,
+  assetType: "video" | "cover",
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { error: wipeErr } = await supabase
+    .from("media_assets")
+    .delete()
+    .eq("format_variant_id", variantId)
+    .eq("asset_type", assetType)
+  if (wipeErr) {
+    return { ok: false, error: `${assetType}_wipe_failed: ${wipeErr.message}` }
+  }
+
+  const { data: leftover } = await supabase
+    .from("media_assets")
+    .select("id")
+    .eq("format_variant_id", variantId)
+    .eq("asset_type", assetType)
+    .limit(1)
+  if (leftover && leftover.length > 0) {
+    console.error(
+      `[core-posts PATCH] ${assetType} wipe matched zero rows (RLS?)`,
+      { variantId },
+    )
+    return {
+      ok: false,
+      error: `${assetType}_wipe_failed: existing ${assetType} could not be replaced`,
+    }
+  }
+
+  return { ok: true }
+}
+
 // GET — load a single core post with format variants
 export async function GET(
   _req: NextRequest,
@@ -133,15 +186,28 @@ export async function GET(
 
     const { data: vData } = await supabase
       .from("format_variants")
-      .select("id, format, body")
+      .select("id, format, body, drive_slide_links")
       .eq("core_post_id", id)
 
-    const variants = (vData ?? []) as unknown as { id: string; format: string; body: string }[]
+    const variants = (vData ?? []) as unknown as {
+      id: string
+      format: string
+      body: string
+      drive_slide_links: string[] | null
+    }[]
 
     const formatPosts: Record<string, string> = {}
     for (const v of variants) {
       formatPosts[v.format] = v.body
     }
+
+    // Carousel only (027): the Drive links the slides were imported from.
+    // They ride along with the post so the media panel can restore the exact
+    // list on any device, instead of the per-browser copy it used to keep.
+    const carouselLinksVariant = variants.find((v) => v.format === "carousel")
+    const carouselDriveLinks = Array.isArray(carouselLinksVariant?.drive_slide_links)
+      ? carouselLinksVariant.drive_slide_links
+      : null
 
     // Per-format readiness needs to know which formats have media. We do a
     // single batched lookup against media_assets and project to a set of
@@ -166,7 +232,12 @@ export async function GET(
         .from("media_assets")
         .select("format_variant_id, url, asset_type, created_at")
         .in("format_variant_id", variantIds)
-        .order("created_at", { ascending: false })
+        // ASCENDING, deliberately. Carousel and story insert their frames in
+        // array order, so oldest-first is slide 1. This used to sort descending,
+        // which made `formatMedia.carousel` the LAST slide (usually the CTA) —
+        // contradicting the comment below and every thumbnail that reads it.
+        // Matches the ordering `carouselImageUrls` / `storyImageUrls` use later.
+        .order("created_at", { ascending: true })
       const variantToFormat: Record<string, string> = {}
       for (const v of variants) variantToFormat[v.id] = v.format
       const seen = new Set<string>()
@@ -286,6 +357,7 @@ export async function GET(
         coverUrl,
         coverPillColor,
         carouselImageUrls,
+        carouselDriveLinks,
         storyImageUrls,
       },
     })
@@ -308,7 +380,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, videoUrl, deleteVideo, coverBase64, coverPillColor, coverText, deleteCover, carouselImages, storyImages } = (await req.json()) as {
+    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, videoUrl, deleteVideo, coverBase64, coverPillColor, coverText, deleteCover, carouselImages, carouselDriveLinks, storyImages } = (await req.json()) as {
       body?: string
       hookText?: string
       hookId?: string
@@ -331,6 +403,11 @@ export async function PATCH(
       // format_variant. `null` clears the slate (matches the UI's
       // "delete carousel" path that sets carouselImages=null).
       carouselImages?: string[] | null
+      // The per-slide Drive links the carousel was imported from, in slide
+      // order (migration 027). Order matters: dragging a link row in the
+      // media panel reorders the slides too, so position IS slide position.
+      // `null` clears them back to "this carousel didn't come from Drive".
+      carouselDriveLinks?: string[] | null
       // Same shape/contract for the story format — the 1-3 frame set from
       // /api/story/generate-media. Saved as image rows under the `story`
       // variant; `null` clears it.
@@ -469,11 +546,10 @@ export async function PATCH(
 
       if (thVariant) {
         const variantRow = thVariant as unknown as { id: string }
-        await supabase
-          .from("media_assets")
-          .delete()
-          .eq("format_variant_id", variantRow.id)
-          .eq("asset_type", "video")
+        const cleared = await clearAssetSlot(supabase, variantRow.id, "video")
+        if (!cleared.ok) {
+          return NextResponse.json({ error: cleared.error }, { status: 500 })
+        }
         didIndirectEdit = true
       }
     }
@@ -489,11 +565,10 @@ export async function PATCH(
 
       if (thVariant) {
         const variantRow = thVariant as unknown as { id: string }
-        await supabase
-          .from("media_assets")
-          .delete()
-          .eq("format_variant_id", variantRow.id)
-          .eq("asset_type", "cover")
+        const cleared = await clearAssetSlot(supabase, variantRow.id, "cover")
+        if (!cleared.ok) {
+          return NextResponse.json({ error: cleared.error }, { status: 500 })
+        }
         didIndirectEdit = true
       }
     }
@@ -519,12 +594,13 @@ export async function PATCH(
 
       if (thVariant) {
         const variantRow = thVariant as unknown as { id: string }
-        // Delete existing video asset and insert new one
-        await supabase
-          .from("media_assets")
-          .delete()
-          .eq("format_variant_id", variantRow.id)
-          .eq("asset_type", "video")
+        // Replace the existing video asset. The clear MUST be verified before
+        // the insert — an unverified delete here is what let the video slot
+        // accumulate 40 rows for a single post.
+        const cleared = await clearAssetSlot(supabase, variantRow.id, "video")
+        if (!cleared.ok) {
+          return NextResponse.json({ error: cleared.error }, { status: 500 })
+        }
 
         await supabase.from("media_assets").insert({
           format_variant_id: variantRow.id,
@@ -557,18 +633,30 @@ export async function PATCH(
 
       if (thVariant) {
         const variantRow = thVariant as unknown as { id: string }
+
+        // Clear the existing cover BEFORE uploading the replacement. The old
+        // order uploaded first, so a clear that silently matched zero rows left
+        // both a duplicate row AND a fresh orphaned PNG in the bucket — that is
+        // how one variant reached 138 cover rows with 138 distinct URLs.
+        // Bailing here costs nothing; bailing after the upload would not.
+        const cleared = await clearAssetSlot(supabase, variantRow.id, "cover")
+        if (!cleared.ok) {
+          return NextResponse.json({ error: cleared.error }, { status: 500 })
+        }
+
         // Upload cover to storage
         const coverBuffer = Buffer.from(coverBase64, "base64")
         const storagePath = `${user.id}/cover/${crypto.randomUUID()}.png`
-        await supabase.storage.from("user-media").upload(storagePath, coverBuffer, { contentType: "image/png" })
+        const { error: coverUploadErr } = await supabase.storage
+          .from("user-media")
+          .upload(storagePath, coverBuffer, { contentType: "image/png" })
+        if (coverUploadErr) {
+          return NextResponse.json(
+            { error: `cover_upload_failed: ${coverUploadErr.message}` },
+            { status: 500 },
+          )
+        }
         const coverUrl = supabase.storage.from("user-media").getPublicUrl(storagePath).data.publicUrl
-
-        // Replace existing cover asset
-        await supabase
-          .from("media_assets")
-          .delete()
-          .eq("format_variant_id", variantRow.id)
-          .eq("asset_type", "cover")
 
         await supabase.from("media_assets").insert({
           format_variant_id: variantRow.id,
@@ -602,6 +690,26 @@ export async function PATCH(
         return NextResponse.json({ error: r.error }, { status: 500 })
       }
       if (r.changed) didIndirectEdit = true
+    }
+
+    // Drive links for the carousel. Upsert rather than update: the user can
+    // paste links before any carousel exists, and that shouldn't silently
+    // vanish just because the `carousel` variant row hasn't been created yet.
+    if (carouselDriveLinks !== undefined) {
+      const { error: linksErr } = await supabase
+        .from("format_variants")
+        .upsert(
+          {
+            core_post_id: id,
+            format: "carousel",
+            drive_slide_links: carouselDriveLinks,
+          } as never,
+          { onConflict: "core_post_id,format" },
+        )
+      if (linksErr) {
+        return NextResponse.json({ error: linksErr.message }, { status: 500 })
+      }
+      didIndirectEdit = true
     }
 
     if (storyImages !== undefined) {

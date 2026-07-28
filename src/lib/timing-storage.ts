@@ -98,7 +98,11 @@ export type ScheduledPost = {
 export type CorePostFormatMeta = {
   driveUrl?: string
   triggerWord?: string
-  /** Carousel only: the template the current saved carousel was generated with. */
+  /**
+   * Carousel only: the template the current saved carousel was generated
+   * with. Absent when the carousel came from a Drive import — that's how the
+   * panel tells "made here" from "brought in" and decides where to show it.
+   */
   templateId?: string
 }
 

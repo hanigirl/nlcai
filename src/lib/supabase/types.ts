@@ -130,6 +130,12 @@ export interface FormatVariant {
   format: FormatType;
   body: string;
   is_edited: boolean;
+  /**
+   * Carousel only (migration 027): the per-slide Google Drive links the
+   * carousel was imported from, in slide order. Null when the carousel was
+   * generated from a template rather than imported.
+   */
+  drive_slide_links: string[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -248,7 +254,7 @@ export type CorePostInsert = Pick<CorePost, "body"> &
   Partial<Pick<CorePost, "hook_id" | "project_id" | "title" | "user_id" | "hook_text" | "user_response" | "status">>;
 
 export type FormatVariantInsert = Pick<FormatVariant, "core_post_id" | "format"> &
-  Partial<Pick<FormatVariant, "body" | "is_edited">>;
+  Partial<Pick<FormatVariant, "body" | "is_edited" | "drive_slide_links">>;
 
 export type MediaAssetInsert = Pick<MediaAsset, "format_variant_id" | "asset_type" | "url"> &
   Partial<Pick<MediaAsset, "provider" | "provider_ref_id" | "status" | "metadata">>;
@@ -271,7 +277,7 @@ export type ProjectUpdate = Partial<Pick<Project, "title">>;
 export type IdeaUpdate = Partial<Pick<Idea, "brief" | "expansion">>;
 export type HookUpdate = Partial<Pick<Hook, "hook_text" | "is_selected" | "is_used" | "is_favorite" | "display_order" | "status">>;
 export type CorePostUpdate = Partial<Pick<CorePost, "body" | "title" | "hook_text" | "user_response" | "status">>;
-export type FormatVariantUpdate = Partial<Pick<FormatVariant, "body" | "is_edited">>;
+export type FormatVariantUpdate = Partial<Pick<FormatVariant, "body" | "is_edited" | "drive_slide_links">>;
 export type MediaAssetUpdate = Partial<Pick<MediaAsset, "asset_type" | "url" | "provider" | "provider_ref_id" | "status" | "metadata">>;
 export type CoreIdentityUpdate = Partial<Pick<CoreIdentity, "who_i_am" | "who_i_serve" | "how_i_sound" | "slang_examples" | "what_i_never_do" | "product_name" | "niche">>;
 export type AudienceIdentityUpdate = Partial<Omit<AudienceIdentity, "id" | "user_id" | "created_at" | "updated_at">>;

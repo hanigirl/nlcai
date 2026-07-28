@@ -29,6 +29,7 @@ import {
   extractDriveFileId,
   driveThumbnailUrl,
 } from "@/lib/drive-media"
+import { copyToClipboard } from "@/lib/copy-to-clipboard"
 import { userKey } from "@/lib/user-scoped-storage"
 import { logLearningEdit } from "@/lib/learning-capture"
 
@@ -42,6 +43,81 @@ const FORMATS: { id: string; label: string; icon: LucideIcon }[] = [
 ]
 
 const FORMAT_MAP = Object.fromEntries(FORMATS.map((f) => [f.id, f]))
+
+/**
+ * Sentinel parked in `formatPosts[fid]` while that format's agent is in
+ * flight. Two things depend on the exact string:
+ *   - PATCH /api/core-posts/{id} skips it, so a placeholder is never
+ *     persisted as a real variant body.
+ *   - `hasFormatText` treats it as "no text yet", so a format still
+ *     generating counts as missing and won't block a re-run.
+ */
+const FORMAT_GENERATING = "מייצר..."
+
+/**
+ * Does this format already hold a real (non-placeholder) script? This is the
+ * predicate the duplication flow is built on: "שכפל!" only generates formats
+ * for which this is false, so ticking a fifth format never rewrites the four
+ * the user has already edited.
+ */
+function hasFormatText(
+  formatPosts: Record<string, string>,
+  fid: string,
+): boolean {
+  const text = formatPosts[fid]
+  return !!text && text !== FORMAT_GENERATING && text.trim().length > 0
+}
+
+/**
+ * Change-detection snapshot for a carousel slide set, so the autosave can tell
+ * "this is the same carousel I already persisted" from "this changed" without
+ * deep-comparing full base64 payloads.
+ *
+ * Every slide contributes, not just the first. It used to be `length|first 32
+ * chars of slide 1`, which is blind to a reorder: dragging slides 2 and 3 past
+ * each other left both the count and slide 1 untouched, so the new order was
+ * never saved and came back wrong on reload.
+ */
+function carouselSignature(images: string[] | null): string {
+  if (!images || images.length === 0) return ""
+  return `${images.length}|${images.map((img) => img.slice(0, 16)).join("|")}`
+}
+
+/**
+ * PATCH a core post and TELL THE USER when it fails.
+ *
+ * Every autosave on this page used to end in `.catch(() => {})`. A rejected
+ * save — expired session, offline laptop, a 500 from the media writer — looked
+ * exactly like a successful one: the media sat on the canvas, nothing was
+ * persisted, and the loss only surfaced on the next reload. Media saves are the
+ * expensive ones to lose (a generated cover, a burned story clip, ten carousel
+ * slides), so they now surface a toast.
+ *
+ * `id` on the toast dedupes: a flapping connection retries on every dependency
+ * change and would otherwise stack a tower of identical errors.
+ */
+async function savePatch(
+  postId: string,
+  body: Record<string, unknown>,
+  label: string,
+): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/core-posts/${postId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string }
+      throw new Error(data.error || `status ${res.status}`)
+    }
+    return true
+  } catch (err) {
+    console.error(`[project][save:${label}]`, err)
+    toast.error(`שמירת ${label} נכשלה`, { id: `save-fail-${label}` })
+    return false
+  }
+}
 
 const CARD_WIDTH = 346
 const CARD_GAP = 24
@@ -154,6 +230,10 @@ function ProjectPageInner() {
   // actual delete only fires after the user clicks "כן, למחוק". The cover has
   // no standalone delete action; it lives and dies with the video.
   const [pendingVideoDelete, setPendingVideoDelete] = useState(false)
+  // Format id whose script the user asked to regenerate, awaiting confirmation.
+  // Regeneration overwrites text they may have hand-edited, so the card's
+  // button only arms this — the actual agent call happens on confirm.
+  const [pendingFormatRegen, setPendingFormatRegen] = useState<string | null>(null)
   // Video-card skeleton state. The DB load + heygen-embed conversion can take
   // a couple of seconds; without this the talking_head card just doesn't
   // render at all during that gap and the page looks like it has no video.
@@ -172,6 +252,10 @@ function ProjectPageInner() {
   // Carousel state (lifted for panel persistence)
   const [carouselImages, setCarouselImages] = useState<string[] | null>(null)
   const [carouselSlides, setCarouselSlides] = useState<SlideData[] | null>(null)
+  // Per-slide Drive links behind an imported carousel, in slide order. Lives
+  // on the post (migration 027), not in this browser — so the list follows the
+  // post to any device, the way the slides themselves already did.
+  const [carouselDriveLinks, setCarouselDriveLinks] = useState<string[] | null>(null)
   const carouselCardRef = useRef<HTMLDivElement>(null)
 
   // Image-post state (lifted so the approved image renders as its own
@@ -242,6 +326,14 @@ function ProjectPageInner() {
   const CANVAS_KEY = "canvasState_v1"
   const sessionKey = `${flow}|${initialIdea}|${hookParam}|${postId}`
   const restoredRef = useRef(false)
+  /**
+   * The post id whose MEDIA this page has already hydrated from the server.
+   * Guards the saved-flow load effect so it runs exactly once per post, which is
+   * what lets media hydration stop depending on the `corePost` emptiness check
+   * (that check exists to protect TEXT state, and it was silently suppressing
+   * media hydration too). Also distinguishes a first load from a post switch.
+   */
+  const hydratedForPostRef = useRef<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -537,18 +629,44 @@ function ProjectPageInner() {
 
   // Saved flow: load post from DB.
   //
-  // Skip the fetch when we're transitioning from an in-session generate —
-  // `corePost` is already populated, and re-fetching would (a) flip
-  // savedPostLoading to true (which would unmount the hook + workflow cards)
-  // and (b) race against any unsaved local edits to `response`.
+  // This used to bail entirely on `if (corePost) return`. The guard's purpose is
+  // real — when we transition from an in-session generate, `corePost` is already
+  // populated and re-applying the server copy would flip savedPostLoading (which
+  // unmounts the hook + workflow cards) and race unsaved local edits to
+  // `response`. But bailing skipped the MEDIA hydration too, so any path that
+  // arrived here with post text already in state opened the post with its video,
+  // cover, story frames, carousel slides and image all missing. The two concerns
+  // are now separated:
+  //
+  //   - TEXT state is still only restored when the page doesn't already have it.
+  //   - MEDIA always hydrates, exactly once per post id (`hydratedForPostRef`).
+  //
+  // The ref also makes the effect safe to re-run when `flow` flips mid-session,
+  // which it does via history.replaceState.
   useEffect(() => {
     if (flow !== "saved" || !postId) return
-    if (corePost) return
-    setSavedPostLoading(true)
+    if (hydratedForPostRef.current === postId) return
+
+    // A DIFFERENT post was hydrated before this one — i.e. the page switched
+    // posts without unmounting. Only then do we clear media the server doesn't
+    // report, because only then can there be another post's media on screen. On
+    // a first hydration there is nothing stale to clear, and clearing would risk
+    // wiping media attached in-session before the fetch resolved.
+    const isPostSwitch =
+      hydratedForPostRef.current !== null && hydratedForPostRef.current !== postId
+    hydratedForPostRef.current = postId
+
+    // Whether to take over the text state. Captured now, not inside .then().
+    // A genuine post switch always restores — otherwise post B would render
+    // post A's body.
+    const restoreText = !corePost || isPostSwitch
+
+    if (restoreText) setSavedPostLoading(true)
     fetch(`/api/core-posts/${postId}`)
       .then((res) => res.json())
       .then((data) => {
         if (data.post) {
+          if (restoreText) {
           setCorePost(data.post.body)
           setOriginalCorePost(data.post.body)
           aiCorePostRef.current = data.post.body ?? ""
@@ -589,6 +707,7 @@ function ProjectPageInner() {
             setSelectedFormats(Object.keys(fp))
             setShowFormats(true)
           }
+          } // end restoreText — everything below is MEDIA and always runs
 
           // Restore the pill colour the cover was baked with so the picker
           // opens already aligned with what's on screen. Falls through to
@@ -617,6 +736,9 @@ function ProjectPageInner() {
                 reader.readAsDataURL(blob)
               })
               .catch(() => setThCoverLoading(false))
+          } else if (isPostSwitch) {
+            setThCoverImage(null)
+            setThCoverLoading(false)
           }
 
           // Restore saved image_post media so its workflow card shows on
@@ -625,6 +747,7 @@ function ProjectPageInner() {
           // image (AI-generated or manually uploaded).
           const fm = data.post.formatMedia as Record<string, string> | undefined
           if (fm?.image_post) setImagePostUrl(fm.image_post)
+          else if (isPostSwitch) setImagePostUrl(null)
 
           // Restore the saved story frame set so its workflow card shows on
           // load. Unlike carousel, we keep them as storage URLs (the card +
@@ -634,11 +757,15 @@ function ProjectPageInner() {
             data.post.storyImageUrls.length > 0
           ) {
             setStoryImages(data.post.storyImageUrls as string[])
+          } else if (isPostSwitch) {
+            setStoryImages(null)
           }
           // A finished story VIDEO (hook burned in) is stored under a
           // "burned-" filename — surface it as the story workflow card too.
           if (fm?.story && /\/video\/burned-[^/]+\.mp4/.test(fm.story)) {
             setStoryVideoUrl(fm.story)
+          } else if (isPostSwitch) {
+            setStoryVideoUrl(null)
           }
 
           // Restore saved carousel slides. They're stored as public URLs,
@@ -672,10 +799,27 @@ function ProjectPageInner() {
               ),
             )
               .then((b64s) => {
-                prevCarouselSigRef.current = `${b64s.length}|${b64s[0]?.slice(0, 32) ?? ""}`
+                prevCarouselSigRef.current = carouselSignature(b64s)
                 setCarouselImages(b64s)
               })
-              .catch(() => {})
+              .catch((err) => {
+                // One failed slide fetch used to drop the WHOLE carousel from
+                // state without a word, which reads as "my slides disappeared".
+                console.error("[project][carousel-hydrate]", err)
+                toast.error("חלק מהשקופיות לא נטענו. רעננו את הדף.")
+              })
+          } else if (isPostSwitch) {
+            setCarouselImages(null)
+            // Keep the autosave signature aligned with the cleared state,
+            // otherwise the carousel effect treats the next real set as a
+            // no-op and never persists it.
+            prevCarouselSigRef.current = ""
+          }
+
+          // The Drive links the carousel was imported from. Restored straight
+          // from the post — no decoding needed, unlike the slides above.
+          if (Array.isArray(data.post.carouselDriveLinks)) {
+            setCarouselDriveLinks(data.post.carouselDriveLinks as string[])
           }
 
           // Load video thumbnail as data URL for cover regeneration
@@ -697,6 +841,9 @@ function ProjectPageInner() {
           // No video in DB — clear the skeleton so the layout collapses.
           if (!data.post.videoUrl) {
             setThVideoLoading(false)
+            // ...and drop the previous post's video, which the skeleton clear
+            // alone never did.
+            if (isPostSwitch) setThVideoUrl(null)
           }
 
           // Restore video URL and auto-generate cover if no saved cover
@@ -893,28 +1040,43 @@ function ProjectPageInner() {
   }, [savedPostId, flow, selectedHook, hooks, hookIds])
 
   // Auto-save video URL when it changes
+  const prevVideoUrlRef = useRef<string | null>(null)
   useEffect(() => {
     if (!savedPostId || !thVideoUrl) return
     if (thVideoUrl.startsWith("blob:")) return
-    fetch(`/api/core-posts/${savedPostId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ videoUrl: thVideoUrl }),
-    }).catch(() => {})
+    // Only PATCH when the URL actually changed. Without this the effect re-fired
+    // on unrelated re-renders and each run replaced the video row — which is how
+    // one variant ended up with 40 video rows pointing at 4 distinct URLs.
+    if (thVideoUrl === prevVideoUrlRef.current) return
+    prevVideoUrlRef.current = thVideoUrl
+    void savePatch(savedPostId, { videoUrl: thVideoUrl }, "הסרטון")
   }, [savedPostId, thVideoUrl])
 
   // Auto-save cover when it changes. Send pillColor too so the picker
   // can open already aligned with what's actually baked into the PNG on
   // the next mount (otherwise the swatch resets to black and you see a
   // mismatch between the cover and the swatch).
+  //
+  // THE 138-ROW ENGINE. This effect depends on `pillColor` as well as the image,
+  // and every run uploads a brand-new PNG under a fresh UUID server-side. With
+  // no idempotency check it re-fired on unrelated re-renders and on every colour
+  // nudge, so one post accumulated 138 cover rows pointing at 138 separate
+  // uploads over a single afternoon. The signature ref makes a repeat run a
+  // no-op, and skipping while a cover is still generating stops us persisting a
+  // half-finished intermediate.
+  const prevCoverSigRef = useRef<string>("")
   useEffect(() => {
     if (!savedPostId || !thCoverImage) return
-    fetch(`/api/core-posts/${savedPostId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ coverBase64: thCoverImage, coverPillColor: pillColor }),
-    }).catch(() => {})
-  }, [savedPostId, thCoverImage, pillColor])
+    if (thCoverLoading) return
+    const sig = `${thCoverImage.length}|${thCoverImage.slice(0, 32)}|${pillColor}`
+    if (sig === prevCoverSigRef.current) return
+    prevCoverSigRef.current = sig
+    void savePatch(
+      savedPostId,
+      { coverBase64: thCoverImage, coverPillColor: pillColor },
+      "הקאבר",
+    )
+  }, [savedPostId, thCoverImage, pillColor, thCoverLoading])
 
   // Auto-save inline hook edits. The user can edit any hook text directly
   // in the picker on /project; without this effect the change lived in
@@ -1083,25 +1245,16 @@ function ProjectPageInner() {
     return () => clearTimeout(timer)
   }, [corePost])
 
-  // Auto-save carousel images. Snapshot identity (length + first chars)
-  // is enough to detect "the user just regenerated" without doing a
-  // deep compare on full base64 strings. Skips when null/empty so a
-  // delete-all flow uses the explicit carousel-clear path instead of
-  // a no-op POST.
+  // Auto-save carousel images. Skips when null/empty so a delete-all flow
+  // uses the explicit carousel-clear path instead of a no-op POST.
   const prevCarouselSigRef = useRef<string>("")
   useEffect(() => {
     if (!savedPostId) return
-    const sig = carouselImages
-      ? `${carouselImages.length}|${carouselImages[0]?.slice(0, 32) ?? ""}`
-      : ""
+    const sig = carouselSignature(carouselImages)
     if (sig === prevCarouselSigRef.current) return
     prevCarouselSigRef.current = sig
     if (!carouselImages || carouselImages.length === 0) return
-    fetch(`/api/core-posts/${savedPostId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ carouselImages }),
-    }).catch(() => {})
+    void savePatch(savedPostId, { carouselImages }, "הקרוסלה")
   }, [savedPostId, carouselImages])
 
   // Manual hooks generation (no auto-generation)
@@ -1324,6 +1477,62 @@ function ProjectPageInner() {
     }
   }
 
+  /**
+   * Run the format agents for EXACTLY the formats passed in, and persist what
+   * comes back. Nothing outside `formats` is read or written.
+   *
+   * That scoping is the whole point. The duplication step used to regenerate
+   * every ticked format on each press of "שכפל!", so adding a fourth format
+   * silently rewrote the three the user had already edited. Both callers now
+   * hand over a narrow list:
+   *   - "שכפל!" passes only the formats with no script yet.
+   *   - The per-card "יצירה מחדש" passes exactly that one format, after the
+   *     user confirms they want its text replaced.
+   *
+   * The PATCH upserts per-format (`format_variants` keyed on
+   * core_post_id+format), so sending a partial map is safe — formats absent
+   * from `results` keep their stored body.
+   */
+  const generateFormatVariants = async (formats: string[]) => {
+    if (formats.length === 0) return
+
+    setFormatPosts((prev) => {
+      const next = { ...prev }
+      formats.forEach((fid) => {
+        next[fid] = FORMAT_GENERATING
+      })
+      return next
+    })
+
+    const results: Record<string, string> = {}
+    await Promise.all(
+      formats.map(async (fid) => {
+        try {
+          const endpoint = `/api/format/${fid === "talking_head" ? "talking-head" : fid === "image_post" ? "image-post" : fid}`
+          const res = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ corePostText: corePost }),
+          })
+          const data = await res.json()
+          const text = data.text || corePost
+          results[fid] = text
+          setFormatPosts((prev) => ({ ...prev, [fid]: text }))
+        } catch (err) {
+          console.error("[project][format-variant-generate]", err)
+          results[fid] = corePost
+          setFormatPosts((prev) => ({ ...prev, [fid]: corePost }))
+        }
+      })
+    )
+
+    // Auto-save the new variants to DB. Not silent: losing these means the
+    // format cards render text that exists nowhere but this tab.
+    if (savedPostId) {
+      void savePatch(savedPostId, { formatPosts: results }, "טקסטי הפורמטים")
+    }
+  }
+
   const handleFormatCardClick = (fid: string) => {
     setSelectedFormatCard(selectedFormatCard === fid ? null : fid)
   }
@@ -1364,6 +1573,21 @@ function ProjectPageInner() {
         onCarouselImagesChange={setCarouselImages}
         onCarouselSlidesChange={setCarouselSlides}
         carouselText={formatPosts["carousel"] ?? ""}
+        carouselDriveLinks={carouselDriveLinks}
+        onCarouselDriveLinksChange={(links) => {
+          setCarouselDriveLinks(links)
+          // Saved on every edit — the list is small, and losing it to a
+          // navigation is exactly the annoyance this replaced.
+          if (savedPostId) {
+            fetch(`/api/core-posts/${savedPostId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ carouselDriveLinks: links }),
+            }).catch((err) =>
+              console.error("[project][save-carousel-drive-links]", err),
+            )
+          }
+        }}
         onImagePostUrlChange={setImagePostUrl}
         onStoryImagesChange={setStoryImages}
         onStoryVideoUrlChange={setStoryVideoUrl}
@@ -1830,71 +2054,78 @@ function ProjectPageInner() {
                           <span className="text-p-bold text-text-primary-default">לאיזה פורמטים לשכפל?</span>
                         </div>
                         <div className="grid grid-cols-2 gap-3 px-6">
-                          {FORMATS.map((format) => (
-                            <SelectionCard
-                              key={format.id}
-                              description={format.label}
-                              icon={<format.icon className="size-4" />}
-                              isSelected={selectedFormats.includes(format.id)}
-                              onSelect={() => {
-                                setSelectedFormats((prev) =>
-                                  prev.includes(format.id)
-                                    ? prev.filter((f) => f !== format.id)
-                                    : [...prev, format.id]
-                                )
-                                setActiveCard("formats")
-                              }}
-                            />
-                          ))}
+                          {FORMATS.map((format) => {
+                            // A format that already has a script can't be
+                            // un-ticked here. Un-ticking used to drop its card
+                            // from the canvas while the variant stayed in the
+                            // DB (so it came back on reload) — a silent lie.
+                            // Removing a format is a destructive action and
+                            // belongs behind its own control, not behind a
+                            // checkbox that also means "generate".
+                            const alreadyDuplicated = hasFormatText(formatPosts, format.id)
+                            return (
+                              // Native title rather than <TooltipLabel>:
+                              // SelectionCard doesn't forward refs/props, so it
+                              // can't serve as a Radix TooltipTrigger asChild.
+                              <div
+                                key={format.id}
+                                title={alreadyDuplicated ? `${format.label} כבר שוכפל` : undefined}
+                              >
+                                <SelectionCard
+                                  description={format.label}
+                                  icon={<format.icon className="size-4" />}
+                                  isSelected={selectedFormats.includes(format.id)}
+                                  className={alreadyDuplicated ? "cursor-default" : undefined}
+                                  onSelect={() => {
+                                    if (alreadyDuplicated) return
+                                    setSelectedFormats((prev) =>
+                                      prev.includes(format.id)
+                                        ? prev.filter((f) => f !== format.id)
+                                        : [...prev, format.id]
+                                    )
+                                    setActiveCard("formats")
+                                  }}
+                                />
+                              </div>
+                            )
+                          })}
                         </div>
                         <div className="px-6 flex justify-end">
-                          <Button
-                            disabled={selectedFormats.length === 0 || activeCard !== "formats"}
-                            onClick={async () => {
-                              const formats = [...selectedFormats]
-                              setDuplicatedFormats(formats)
-                              // Initialize with loading placeholder
-                              const posts: Record<string, string> = {}
-                              formats.forEach((fid) => {
-                                posts[fid] = "מייצר..."
-                              })
-                              setFormatPosts(posts)
-
-                              // Call format agents in parallel
-                              const results: Record<string, string> = {}
-                              await Promise.all(
-                                formats.map(async (fid) => {
-                                  try {
-                                    const endpoint = `/api/format/${fid === "talking_head" ? "talking-head" : fid === "image_post" ? "image-post" : fid}`
-                                    const res = await fetch(endpoint, {
-                                      method: "POST",
-                                      headers: { "Content-Type": "application/json" },
-                                      body: JSON.stringify({ corePostText: corePost }),
-                                    })
-                                    const data = await res.json()
-                                    const text = data.text || corePost
-                                    results[fid] = text
-                                    setFormatPosts((prev) => ({ ...prev, [fid]: text }))
-                                  } catch (err) {
-                                    console.error("[project][format-variant-generate]", err)
-                                    results[fid] = corePost
-                                    setFormatPosts((prev) => ({ ...prev, [fid]: corePost }))
-                                  }
-                                })
-                              )
-
-                              // Auto-save format variants to DB (fire and forget)
-                              if (savedPostId) {
-                                fetch(`/api/core-posts/${savedPostId}`, {
-                                  method: "PATCH",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ formatPosts: results }),
-                                }).catch(() => {})
-                              }
-                            }}
-                          >
-                            שכפל!
-                          </Button>
+                          {(() => {
+                            // Only the ticked formats that have no script yet.
+                            // Everything already duplicated is left untouched —
+                            // pressing "שכפל!" after adding a format must fill
+                            // the gap, not restart the whole set.
+                            const pendingFormats = selectedFormats.filter(
+                              (fid) => !hasFormatText(formatPosts, fid),
+                            )
+                            // A format mid-generation still reads as "missing"
+                            // (its body is the placeholder), so without this
+                            // guard a second press would fire the same agents
+                            // again while the first round is in flight.
+                            const anyGenerating =
+                              Object.values(formatPosts).includes(FORMAT_GENERATING)
+                            return (
+                              <Button
+                                disabled={
+                                  pendingFormats.length === 0 ||
+                                  anyGenerating ||
+                                  activeCard !== "formats"
+                                }
+                                onClick={async () => {
+                                  // Union, ordered by FORMATS, so existing cards
+                                  // keep their position when a new one appears.
+                                  setDuplicatedFormats((prev) => {
+                                    const union = new Set([...prev, ...pendingFormats])
+                                    return FORMATS.map((f) => f.id).filter((id) => union.has(id))
+                                  })
+                                  await generateFormatVariants(pendingFormats)
+                                }}
+                              >
+                                שכפל!
+                              </Button>
+                            )
+                          })()}
                         </div>
                       </div>
                     </>
@@ -1908,6 +2139,7 @@ function ProjectPageInner() {
                           formats={duplicatedFormats}
                           formatPosts={formatPosts}
                           onPostChange={(fid, text) => setFormatPosts((prev) => ({ ...prev, [fid]: text }))}
+                          onRegenerateFormat={(fid) => setPendingFormatRegen(fid)}
                           activeCard={activeCard}
                           onActiveChange={setActiveCard}
                           selectedFormat={selectedFormatCard}
@@ -1943,11 +2175,15 @@ function ProjectPageInner() {
                           userId={userId}
                           carouselImages={carouselImages}
                           carouselCardRef={carouselCardRef}
-                          onCarouselRegenerate={() => {
-                            setCarouselImages(null)
-                            setCarouselSlides(null)
-                            setSelectedFormatCard("carousel")
-                          }}
+                          // Opening the media panel must NOT throw the current
+                          // carousel away (Hani, 2026-07-28): the old handler
+                          // cleared images+slides on click, so pressing what
+                          // read as "edit" destroyed the carousel before she
+                          // had seen a single alternative. Now it just opens
+                          // the panel — same as story / image_post — where the
+                          // saved carousel is shown on its template tile and
+                          // deleting it is a separate, explicit action.
+                          onCarouselEdit={() => setSelectedFormatCard("carousel")}
                           imagePostUrl={imagePostUrl}
                           imagePostCardRef={imagePostCardRef}
                           onImagePostEdit={() => setSelectedFormatCard("image_post")}
@@ -1985,6 +2221,28 @@ function ProjectPageInner() {
           (storyImages?.length ?? 0) > 0 ||
           !!storyVideoUrl
         }
+      />
+
+      {/* Re-run one format's agent. Confirmed rather than immediate: the card
+          may hold text the user edited by hand, and the new draft replaces it.
+          Only `pendingFormatRegen` is regenerated — the sibling formats are
+          never in the request. */}
+      <ConfirmModal
+        open={!!pendingFormatRegen}
+        onOpenChange={(open) => { if (!open) setPendingFormatRegen(null) }}
+        title={
+          pendingFormatRegen
+            ? `ליצור מחדש את הטקסט ל${FORMAT_MAP[pendingFormatRegen]?.label ?? ""}?`
+            : ""
+        }
+        description="ניצור גרסה חדשה מפוסט הליבה. הטקסט שנמצא כרגע בפורמט הזה יוחלף — שאר הפורמטים לא ישתנו."
+        confirmLabel="כן, ליצור מחדש"
+        cancelLabel="לא, להשאיר"
+        onConfirm={async () => {
+          const fid = pendingFormatRegen
+          setPendingFormatRegen(null)
+          if (fid) await generateFormatVariants([fid])
+        }}
       />
 
       <ConfirmModal
@@ -2076,6 +2334,7 @@ function FormatTree({
   formats,
   formatPosts,
   onPostChange,
+  onRegenerateFormat,
   activeCard,
   onActiveChange,
   selectedFormat,
@@ -2099,7 +2358,7 @@ function FormatTree({
   userId,
   carouselImages,
   carouselCardRef,
-  onCarouselRegenerate,
+  onCarouselEdit,
   imagePostUrl,
   imagePostCardRef,
   onImagePostEdit,
@@ -2113,6 +2372,8 @@ function FormatTree({
   formats: string[]
   formatPosts: Record<string, string>
   onPostChange: (fid: string, text: string) => void
+  /** Arms the confirm dialog for re-running ONE format's agent. */
+  onRegenerateFormat: (fid: string) => void
   activeCard: string
   onActiveChange: (card: string) => void
   selectedFormat: string | null
@@ -2136,7 +2397,7 @@ function FormatTree({
   userId: string | null
   carouselImages: string[] | null
   carouselCardRef: React.RefObject<HTMLDivElement | null>
-  onCarouselRegenerate: () => void
+  onCarouselEdit: () => void
   imagePostUrl: string | null
   imagePostCardRef: React.RefObject<HTMLDivElement | null>
   onImagePostEdit: () => void
@@ -2193,6 +2454,7 @@ function FormatTree({
           const Icon = format.icon
           const isActive = activeCard === `format-${fid}`
           const isSelected = selectedFormat === fid
+          const isGenerating = formatPosts[fid] === FORMAT_GENERATING
 
           return (
             <div key={fid} className="flex flex-col items-center" style={{ width: CARD_WIDTH }}>
@@ -2207,6 +2469,27 @@ function FormatTree({
                 <div className={`flex items-center gap-2 px-6 py-3 rounded-t-[20px] ${isActive ? "bg-bg-surface-primary-default-80" : "bg-bg-surface"}`}>
                   <span className="text-p-bold text-text-primary-default">{format.label}</span>
                   <Icon className="size-4 text-text-neutral-default" />
+                  {/* Per-format re-run of the duplication. Lives INSIDE the
+                      format card (not in the "לאיזה פורמטים לשכפל?" card)
+                      so re-generating one format can never touch the others.
+                      `ms-auto` parks it at the far end of the RTL header. */}
+                  <TooltipLabel label={`יצירה מחדש של הטקסט ל${format.label}`}>
+                    <button
+                      type="button"
+                      aria-label={`יצירה מחדש של הטקסט ל${format.label}`}
+                      disabled={isGenerating}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onRegenerateFormat(fid)
+                      }}
+                      className="ms-auto flex items-center justify-center size-8 shrink-0 rounded-lg transition-colors cursor-pointer hover:bg-bg-surface-hover disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <RotateCw
+                        className={`size-4 text-text-neutral-default ${isGenerating ? "animate-spin" : ""}`}
+                      />
+                    </button>
+                  </TooltipLabel>
                 </div>
                 <div className="px-6 flex flex-col gap-3">
                   <div className="relative group">
@@ -2488,7 +2771,7 @@ function FormatTree({
                 <CarouselResultCard
                   images={carouselImages}
                   cardRef={carouselCardRef}
-                  onRegenerate={onCarouselRegenerate}
+                  onEdit={onCarouselEdit}
                 />
               )}
 
@@ -2593,11 +2876,12 @@ function FormatTree({
 function CarouselResultCard({
   images,
   cardRef,
-  onRegenerate,
+  onEdit,
 }: {
   images: string[]
   cardRef: React.RefObject<HTMLDivElement | null>
-  onRegenerate: () => void
+  /** Opens the media panel. Non-destructive — see `onCarouselEdit`. */
+  onEdit: () => void
 }) {
   const [currentSlide, setCurrentSlide] = useState(0)
   const [downloading, setDownloading] = useState(false)
@@ -2678,8 +2962,11 @@ function CarouselResultCard({
               <Download className="size-4" />
               {downloading ? "מוריד..." : "הורד הכל"}
             </Button>
-            <Button variant="outline" className="flex-1" onClick={onRegenerate}>
-              צור מחדש
+            {/* "עריכת קרוסלה", not "צור מחדש" — the label now matches what
+                the click does. Same wording + behaviour as the image_post and
+                story result cards. */}
+            <Button variant="outline" className="flex-1" onClick={onEdit}>
+              עריכת קרוסלה
             </Button>
           </div>
         </div>
@@ -3034,15 +3321,14 @@ function CopyButton({ text }: { text: string }) {
   const handleClick = async (e: React.MouseEvent) => {
     e.stopPropagation()
     if (!text.trim()) return
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      toast.success("הועתק ללוח")
-      setTimeout(() => setCopied(false), 1500)
-    } catch (err) {
-      console.error("[project][copy-to-clipboard]", err)
-      toast.error("ההעתקה נכשלה")
+    const ok = await copyToClipboard(text)
+    if (!ok) {
+      toast.error("ההעתקה נכשלה — נסו שוב")
+      return
     }
+    setCopied(true)
+    toast.success("הועתק ללוח")
+    setTimeout(() => setCopied(false), 1500)
   }
   return (
     <TooltipLabel label={copied ? "הועתק" : "העתק"}>

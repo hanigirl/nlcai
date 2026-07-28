@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from "react"
 import Image from "next/image"
-import { X, Smartphone, Video, Layers, Image as ImageIcon, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, ChevronLeft, ChevronRight, Link2, Plus, Trash2, Type, type LucideIcon } from "lucide-react"
+import { X, Smartphone, Video, Layers, Image as ImageIcon, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, ChevronLeft, ChevronRight, GripVertical, Link2, Plus, Trash2, Type, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { AvatarPicker, type Avatar } from "@/components/avatar-picker"
@@ -92,6 +92,14 @@ interface MediaPanelProps {
   onCarouselSlidesChange: (slides: SlideData[] | null) => void
   carouselText: string
   /**
+   * Per-slide Drive links the carousel was imported from, in slide order.
+   * Lifted (like the images) because they live on the post now (migration
+   * 027) rather than in this browser's localStorage, so the parent owns the
+   * load + save and the panel just edits the list.
+   */
+  carouselDriveLinks: string[] | null
+  onCarouselDriveLinksChange: (links: string[] | null) => void
+  /**
    * Reports the persisted image_post media URL up to the parent so the
    * approved image can render as its own workflow card next to the
    * script (same pattern as talking_head's lifted video URL). Fires after
@@ -139,6 +147,8 @@ export function MediaPanel({
   onCarouselImagesChange,
   onCarouselSlidesChange,
   carouselText,
+  carouselDriveLinks,
+  onCarouselDriveLinksChange,
   onImagePostUrlChange,
   onStoryImagesChange,
   onStoryVideoUrlChange,
@@ -187,12 +197,15 @@ export function MediaPanel({
       {/* Content */}
       <div className="overflow-y-auto h-[calc(100%-57px)] px-6 py-6">
         {/* Sub-title helper — explains the two ways to provide media for the
-            format (local upload or an external Drive / Canva link). Shown for
+            format (AI generation or an external Drive / Canva link). Shown for
             every format panel, directly under the header title. Lives inside
-            the scroll area so it doesn't break the header height calc above. */}
+            the scroll area so it doesn't break the header height calc above.
+            NOTE: this used to promise "upload from your computer". There is no
+            file input anywhere in this component — that path was removed — so
+            the copy was advertising a button that does not exist. */}
         {meta && (
           <p className="mb-4 text-small text-text-neutral-default">
-            אפשר להעלות את המדיה של הפורמט מהמחשב שלכם או לתת קישור מגוגל דרייב או קנבה לתמונה / סרטון שמאוחסן שם.
+            אפשר לייצר מדיה עם AI או לתת קישור מגוגל דרייב או קנבה לתמונה / סרטון שמאוחסן שם.
           </p>
         )}
 
@@ -219,17 +232,34 @@ export function MediaPanel({
 
         {formatId === "carousel" && (
           <CarouselFlow
+            // Remount when the post changes. `savedTemplateId` is a useState
+            // INITIALIZER and the template-cache effect is mount-only, so a
+            // draft that gains its id while this flow is open would otherwise
+            // keep the previous post's template state forever.
+            key={postId ?? "none"}
             postId={postId ?? null}
             carouselText={carouselText}
             images={carouselImages}
             slides={carouselSlides}
             onImagesChange={onCarouselImagesChange}
             onSlidesChange={onCarouselSlidesChange}
+            driveLinks={carouselDriveLinks}
+            onDriveLinksChange={onCarouselDriveLinksChange}
           />
         )}
 
         {formatId && formatId !== "talking_head" && formatId !== "carousel" && (
           <MediaUploadFlow
+            // One instance serves BOTH story and image_post. Without a key,
+            // switching between them reused the same mounted component and
+            // carried its in-flight state across — an upload or a debounced
+            // Drive pull that started under story would land in the image_post
+            // view, and the delete button would then target the wrong format's
+            // asset. Keying on format+post forces a clean mount per context.
+            // (The key goes here, NOT on <MediaPanel> at project/page.tsx:1343
+            // — that shell is permanently mounted and animated via translate-x,
+            // so remounting it would kill the slide-in transition.)
+            key={`${formatId}:${postId ?? ""}`}
             format={formatId}
             postId={postId ?? null}
             hookText={panelHookText}
@@ -306,6 +336,10 @@ function TalkingHeadFlow({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const timerRef = useRef<NodeJS.Timeout | null>(null)
+  /** The live mic MediaStream, so unmount can stop its tracks. */
+  const streamRef = useRef<MediaStream | null>(null)
+  /** HeyGen poll handle, so unmount can clear it. */
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // --- video generation state ---
   const [videoPhase, setVideoPhase] = useState<"idle" | "generating" | "done">(liftedVideoUrl ? "done" : "idle")
@@ -336,6 +370,32 @@ function TalkingHeadFlow({
     }
   }, [audioUrl])
 
+  // Release everything this flow can leave running when the panel closes.
+  //
+  // All three used to survive an unmount: the recording timer kept ticking, the
+  // HeyGen status poll kept hitting /api/videos/{id} every 5s for the life of
+  // the page, and — worst — the microphone stayed OPEN, because the only place
+  // that stopped its tracks was the recorder's `onstop` handler, which closing
+  // the panel never triggers. Empty deps: this must run on unmount only.
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+      const recorder = mediaRecorderRef.current
+      if (recorder && recorder.state !== "inactive") {
+        try { recorder.stop() } catch { /* already torn down */ }
+      }
+      streamRef.current?.getTracks().forEach((t) => t.stop())
+      streamRef.current = null
+    }
+  }, [])
+
   const startRecording = async () => {
     try {
       const constraints: MediaStreamConstraints = {
@@ -346,6 +406,11 @@ function TalkingHeadFlow({
         mimeType: "audio/webm;codecs=opus",
       })
       mediaRecorderRef.current = mediaRecorder
+      // Held so unmount can release the mic. `onstop` below also stops the
+      // tracks, but that only ever fires on the explicit stopRecording() path —
+      // closing the panel mid-recording never reached it, and the browser's
+      // recording indicator stayed lit for the rest of the session.
+      streamRef.current = stream
       chunksRef.current = []
 
       mediaRecorder.ondataavailable = (e) => {
@@ -359,18 +424,29 @@ function TalkingHeadFlow({
         onAudioBlobChange(blob)
         stream.getTracks().forEach((t) => t.stop())
 
-        // Transcribe
+        // Transcribe.
+        //
+        // NOTE: /api/transcribe does not currently exist — there is no
+        // `src/app/api/transcribe` route. The 404 returns HTML, `res.json()`
+        // throws, and this used to be swallowed into a console.error: the
+        // "מתמלל..." label vanished and the transcript box stayed empty with no
+        // explanation. Until the route is built, say so and let the user type
+        // the script themselves — the recording itself is fine and saved.
         setTranscribing(true)
         try {
           const formData = new FormData()
           formData.append("audio", blob, "recording.webm")
           const res = await fetch("/api/transcribe", { method: "POST", body: formData })
+          if (!res.ok) throw new Error(`status ${res.status}`)
           const data = await res.json()
           if (data.text) {
             onTranscriptChange(data.text)
+          } else {
+            setRecError("לא הצלחנו לתמלל את ההקלטה. אפשר להקליד את הסקריפט ידנית.")
           }
         } catch (err) {
           console.error("[media-panel][transcribe]", err)
+          setRecError("התמלול נכשל. ההקלטה נשמרה — אפשר להקליד את הסקריפט ידנית.")
         } finally {
           setTranscribing(false)
         }
@@ -410,13 +486,38 @@ function TalkingHeadFlow({
   }
 
   // --- Video generation ---
+  //
+  // The interval handle lives in `pollRef` rather than a local const so the
+  // unmount cleanup above can clear it. Previously nothing outside this closure
+  // could stop it: closing the panel while HeyGen was rendering left a request
+  // firing every 5 seconds for the life of the page, calling setState into an
+  // unmounted tree each time. It is also bounded now — an id that never reaches
+  // a terminal status used to poll forever.
   const pollVideoStatus = useCallback((id: string) => {
-    const interval = setInterval(async () => {
+    if (pollRef.current) clearInterval(pollRef.current)
+    // 15 minutes at 5s. HeyGen renders in ~1-3 min; anything past this is stuck.
+    const MAX_ATTEMPTS = 180
+    let attempts = 0
+    const stop = () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+    }
+    pollRef.current = setInterval(async () => {
+      attempts++
+      if (attempts > MAX_ATTEMPTS) {
+        stop()
+        setVideoError("יצירת הוידאו לוקחת יותר מדי זמן. נסו שוב.")
+        setVideoPhase("done")
+        return
+      }
       try {
         const res = await fetch(`/api/videos/${id}`)
+        if (!res.ok) throw new Error(`status ${res.status}`)
         const data = await res.json()
         if (data.status === "completed" && data.video_url) {
-          clearInterval(interval)
+          stop()
           setVideoProgress("שומר וידאו...")
           // Download and store in Supabase Storage
           try {
@@ -425,10 +526,17 @@ function TalkingHeadFlow({
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ video_url: data.video_url }),
             })
+            if (!storeRes.ok) throw new Error(`status ${storeRes.status}`)
             const storeData = await storeRes.json()
+            // Falling back to the raw HeyGen URL is deliberate but lossy — that
+            // link expires. Warn rather than pretend the save worked.
+            if (!storeData.url) {
+              toast.error("הוידאו נוצר אבל לא נשמר אצלנו — הורידו אותו בהקדם")
+            }
             onVideoUrlChange(storeData.url || data.video_url)
           } catch (err) {
             console.error("[media-panel][store-video]", err)
+            toast.error("הוידאו נוצר אבל לא נשמר אצלנו — הורידו אותו בהקדם")
             onVideoUrlChange(data.video_url)
           }
           setVideoPhase("done")
@@ -437,7 +545,7 @@ function TalkingHeadFlow({
             generateCover(data.thumbnail_url)
           }
         } else if (data.status === "failed" || data.error) {
-          clearInterval(interval)
+          stop()
           setVideoError(data.error?.message || data.error || "יצירת הוידאו נכשלה")
           setVideoPhase("done")
         } else {
@@ -449,7 +557,7 @@ function TalkingHeadFlow({
         }
       } catch (err) {
         console.error("[media-panel][poll-video-status]", err)
-        clearInterval(interval)
+        stop()
         setVideoError("החיבור אבד בזמן בדיקת סטטוס הוידאו")
         setVideoPhase("done")
       }
@@ -508,12 +616,19 @@ function TalkingHeadFlow({
           pill_color: color ?? pillColor,
         }),
       })
+      if (!res.ok) throw new Error(`status ${res.status}`)
       const data = await res.json()
       if (data.covers?.[0]) {
         onCoverImageChange(data.covers[0])
+      } else {
+        // The cover route refuses without a brand_style (see CLAUDE.md). That
+        // refusal was invisible here — the cover slot just stayed empty and the
+        // user had no idea why or what to do about it.
+        toast.error("לא הצלחנו לייצר קאבר. ודאו שהעליתם דוגמאות קאברים בהגדרות > מדיה.")
       }
     } catch (err) {
       console.error("[media-panel][generate-cover]", err)
+      toast.error("יצירת הקאבר נכשלה. נסו שוב.")
     } finally {
       setCoverLoading(false); onCoverLoadingChange?.(false)
     }
@@ -537,6 +652,14 @@ function TalkingHeadFlow({
     setVideoError(null)
     onCoverImageChange(null)
     setCoverLoading(false)
+    // Release the PARENT's cover spinner too. Only the local flag was cleared
+    // here, so hitting "התחלה מחדש" / "החלף מדיה" while a cover was generating
+    // left `thCoverLoading` stuck true on /project — the cover slot on the
+    // canvas sat in a skeleton until a full page reload. Every place that
+    // raises this flag (the two generateCover paths) lowers both; so must this.
+    onCoverLoadingChange?.(false)
+    setDriveLoading(false)
+    setTranscribing(false)
     onSourceModeChange("choose")
     setDriveLink("")
     setDriveError(null)
@@ -650,10 +773,15 @@ function TalkingHeadFlow({
             pill_color: pillColor,
           }),
         })
+        if (!coverRes.ok) throw new Error(`status ${coverRes.status}`)
         const coverData = await coverRes.json()
         if (coverData.covers?.[0]) onCoverImageChange(coverData.covers[0])
+        else {
+          toast.error("לא הצלחנו לייצר קאבר. ודאו שהעליתם דוגמאות קאברים בהגדרות > מדיה.")
+        }
       } catch (err) {
         console.error("[media-panel][cover-from-drive]", err)
+        toast.error("יצירת הקאבר נכשלה. הסרטון חובר בהצלחה.")
       } finally {
         setCoverLoading(false)
         onCoverLoadingChange?.(false)
@@ -1103,33 +1231,66 @@ function TalkingHeadFlow({
 // Parse carousel text ("שקופית N" blocks) into slides
 function parseTextToSlides(text: string): SlideData[] {
   const slideHeaderRegex = /^\s*(?:שקופית\s*\d+|\[.*?\])\s*:?\s*$/
-  const blocks = text
-    .split(/\n\s*\n+/)
-    .map((b) => b.trim())
-    .filter(Boolean)
+  const rawLines = text.split("\n")
+  // When the text is headed ("שקופית N" / "[...]"), those headers are the
+  // ONLY slide boundary. Blank lines inside a slide belong to that slide's
+  // body — splitting on them turned a 7-slide carousel into 15 and tripped
+  // the AI-template cap (Hani 2026-07-27).
+  const hasHeaders = rawLines.some((l) => slideHeaderRegex.test(l))
+
+  // One entry per slide, each holding that slide's raw lines.
+  const blocks: string[][] = []
+  if (hasHeaders) {
+    let current: string[] | null = null
+    for (const line of rawLines) {
+      if (slideHeaderRegex.test(line)) {
+        current = []
+        blocks.push(current)
+        continue
+      }
+      // Text before the first header (a stray preamble) still becomes a
+      // block, so nothing the user wrote is silently dropped.
+      if (!current) {
+        if (!line.trim()) continue
+        current = []
+        blocks.push(current)
+      }
+      current.push(line)
+    }
+  } else {
+    // Unheaded text: a blank line is the only boundary available.
+    for (const block of text.split(/\n\s*\n+/)) {
+      const lines = block.split("\n")
+      if (lines.some((l) => l.trim())) blocks.push(lines)
+    }
+  }
 
   const parsed: SlideData[] = []
   let slideNum = 1
 
   for (const block of blocks) {
-    const lines = block.split("\n").map((l) => l.trim()).filter(Boolean)
+    // Trim the block's edges but keep the blank lines between its
+    // paragraphs — they're the slide's own line breaks.
+    const lines = block.map((l) => l.trim())
+    while (lines.length && !lines[0]) lines.shift()
+    while (lines.length && !lines[lines.length - 1]) lines.pop()
     if (lines.length === 0) continue
 
-    const hasHeader = slideHeaderRegex.test(lines[0])
-    const contentLines = hasHeader ? lines.slice(1) : lines
-    if (contentLines.length === 0) continue
-
-    const legacyTitleLine = contentLines.find((l) => l.startsWith("כותרת:"))
+    const legacyTitleLine = lines.find((l) => l.startsWith("כותרת:"))
     let title: string
     let body: string
 
     if (legacyTitleLine) {
       title = legacyTitleLine.replace("כותרת:", "").trim()
-      body = contentLines.filter((l) => l !== legacyTitleLine).join("\n").trim()
+      body = lines.filter((l) => l !== legacyTitleLine).join("\n").trim()
     } else {
-      title = contentLines[0]
-      body = contentLines.slice(1).join("\n").trim()
+      title = lines[0]
+      body = lines.slice(1).join("\n").trim()
     }
+
+    // Collapse runs of blank lines so a stray double break doesn't blow up
+    // the slide's layout.
+    body = body.replace(/\n{3,}/g, "\n\n")
 
     parsed.push({ slide: slideNum, type: "content", title, body })
     slideNum++
@@ -1148,7 +1309,7 @@ function parseTextToSlides(text: string): SlideData[] {
 const SAMPLE_COVER: SlideData = {
   slide: 1,
   type: "cover",
-  title: "ככה תיראה הקרוסלה שלכם",
+  title: "ככה תיראה הקרוסלה שלך",
   body: "תצוגה מקדימה של הטמפלט",
 }
 
@@ -1177,6 +1338,8 @@ function CarouselFlow({
   slides,
   onImagesChange,
   onSlidesChange,
+  driveLinks,
+  onDriveLinksChange,
 }: {
   postId: string | null
   carouselText: string
@@ -1184,12 +1347,19 @@ function CarouselFlow({
   slides: SlideData[] | null
   onImagesChange: (imgs: string[] | null) => void
   onSlidesChange: (slides: SlideData[] | null) => void
+  driveLinks: string[] | null
+  onDriveLinksChange: (links: string[] | null) => void
 }) {
   // No separate "current carousel" tile (Hani 2026-07-09): the template
   // that made the saved carousel shows its real cover, starts SELECTED,
   // and tapping it opens the saved slides — one tile, one selection ring.
-  // The template the saved carousel was generated with (written on approve):
-  const [savedTemplateId] = useState<string | undefined>(() => {
+  // The template the saved carousel was generated with (written on approve).
+  // Also the provenance flag: undefined + saved images = the carousel was
+  // imported from Drive, which is what decides WHERE the panel shows it
+  // (Hani, 2026-07-28 — an imported carousel belongs next to the import, not
+  // under the template grid). Stateful, not a one-shot initializer, because
+  // importing / approving / deleting all flip it inside a single mount.
+  const [savedTemplateId, setSavedTemplateId] = useState<string | undefined>(() => {
     if (!postId || typeof window === "undefined") return undefined
     const tid = getFormatMeta(postId, "carousel").templateId
     return tid && CAROUSEL_TEMPLATES.some((t) => t.id === tid) ? tid : undefined
@@ -1227,6 +1397,16 @@ function CarouselFlow({
     if (!savedTemplateId || !images || images.length === 0) return
     setGeneratedByTemplate((p) =>
       p[savedTemplateId] ? p : { ...p, [savedTemplateId]: images },
+    )
+  }, [savedTemplateId, images])
+
+  // Same idea for a Drive-imported carousel, which has no template to attribute
+  // to. Without this the "הקרוסלה שלך" tile would open an empty dialog after a
+  // refresh: the import result only ever lived in the in-memory module cache.
+  useEffect(() => {
+    if (savedTemplateId || !images || images.length === 0) return
+    setGeneratedByTemplate((p) =>
+      p[DRIVE_IMPORT_KEY] === images ? p : { ...p, [DRIVE_IMPORT_KEY]: images },
     )
   }, [savedTemplateId, images])
 
@@ -1325,12 +1505,19 @@ function CarouselFlow({
         },
       )
 
+      if (!res.ok) throw new Error(`status ${res.status}`)
       const data = await res.json()
       if (data.error) {
         // AI route returns a Hebrew user-facing `message` alongside the
         // machine `error` code (e.g. openai_not_connected).
         setError(data.message || data.error)
         toast.error(data.message || data.error, { id: genToast, duration: 8000 })
+      } else if (!data.images) {
+        // A 200 with neither `error` nor `images` used to fall straight through
+        // to `finally`, leaving the `duration: Infinity` loading toast on screen
+        // forever with no way to dismiss it.
+        setError("שגיאה ביצירת הקרוסלה")
+        toast.error("שגיאה ביצירת הקרוסלה", { id: genToast, duration: 8000 })
       } else if (data.images) {
         // Cache + preview only — the post's carousel changes when the
         // user approves inside the dialog, not on generation.
@@ -1384,11 +1571,56 @@ function CarouselFlow({
     if (!dialogSlides || !dialogFor) return
     onImagesChange(dialogSlides)
     // Remember which template made the post's carousel — its tile is the
-    // selected one next time the panel opens.
+    // selected one next time the panel opens. DRIVE_IMPORT_KEY is a
+    // pseudo-template and must never be stored as one (it would point the
+    // saved-tile lookup at a template that doesn't exist).
+    const templateId = dialogFor === DRIVE_IMPORT_KEY ? undefined : dialogFor
     if (postId) {
-      setFormatMeta(postId, "carousel", { templateId: dialogFor })
+      setFormatMeta(postId, "carousel", { templateId })
     }
+    setSavedTemplateId(templateId)
     setDialogFor(null)
+  }
+
+  // --- Removing the post's carousel ----------------------------------------
+  // The only way to drop the post's carousel, and it is deliberately here
+  // rather than on the canvas card (Hani, 2026-07-28): opening the panel from
+  // "עריכת קרוסלה" must show her what the post currently uses, and removal has
+  // to be something she does on purpose, after seeing it.
+  //
+  // The parent's autosave skips null (it can't tell "not loaded yet" from
+  // "deleted"), so the wipe is PATCHed from here. `carouselImages: null`
+  // routes through replaceImageAssetSet on the server, which clears the
+  // media_assets rows under the carousel variant.
+  const [pendingCarouselDelete, setPendingCarouselDelete] = useState(false)
+
+  const handleDeleteCarousel = async () => {
+    if (postId) {
+      try {
+        const res = await fetch(`/api/core-posts/${postId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ carouselImages: null }),
+        })
+        if (!res.ok) throw new Error("delete_failed")
+      } catch (err) {
+        console.error("[media-panel][delete-carousel]", err)
+        toast.error("מחיקת הקרוסלה נכשלה, נסו שוב")
+        return
+      }
+      // Drop the template attribution too, otherwise the next open still
+      // points a "saved" tile at a carousel that no longer exists. The Drive
+      // links survive — they describe where the slides came from, and she may
+      // well want to re-import them.
+      setFormatMeta(postId, "carousel", { templateId: undefined })
+      carouselGenCache.delete(postId)
+    }
+    setSavedTemplateId(undefined)
+    onImagesChange(null)
+    onSlidesChange(null)
+    setGeneratedByTemplate({})
+    setDialogFor(null)
+    toast.success("הקרוסלה נמחקה מהפוסט")
   }
 
   // --- Drive slide import (per-slide links → base64 carousel) ---------------
@@ -1397,17 +1629,131 @@ function CarouselFlow({
   // assemble them in list order. `from-drive` with `store:false` returns base64
   // (the carousel pipeline is base64 in-memory and re-stores on save), so no
   // orphan Storage file is left behind.
-  const [driveSlideLinks, setDriveSlideLinks] = useState<string[]>(["", ""])
+  //
+  // The link list is remembered per post, on the post itself (migration 027).
+  // It started out in localStorage, which made it per-device: the slides
+  // travelled with the post but the links they came from didn't. Now the
+  // parent owns them, so the list is the same on any machine she opens.
+  //
+  // Local mirror of the persisted list, because the form needs blank rows to
+  // type into and those are scaffolding, not data. `driveLinks` is the truth
+  // for what's saved; this is the truth for what's on screen.
+  const [driveSlideLinks, setDriveSlideLinks] = useState<string[]>(() =>
+    driveLinks && driveLinks.length > 0
+      ? // Always keep at least two rows so the form doesn't collapse to one.
+        [...driveLinks, ...(driveLinks.length === 1 ? [""] : [])]
+      : ["", ""],
+  )
   const [driveImporting, setDriveImporting] = useState(false)
   const [driveImportProgress, setDriveImportProgress] = useState("")
   const [driveImportError, setDriveImportError] = useState<string | null>(null)
 
+  // The post can finish loading after this panel mounts (the GET is async), so
+  // the initializer above often runs against a null `driveLinks`. Re-seed once
+  // the real list arrives — but never over rows the user has already started
+  // typing into, or we'd yank text out from under them.
+  const driveLinksHydratedRef = useRef(false)
+  useEffect(() => {
+    if (driveLinksHydratedRef.current) return
+    if (!driveLinks || driveLinks.length === 0) return
+    driveLinksHydratedRef.current = true
+    setDriveSlideLinks((prev) =>
+      prev.some((l) => l.trim())
+        ? prev
+        : [...driveLinks, ...(driveLinks.length === 1 ? [""] : [])],
+    )
+  }, [driveLinks])
+
+  // One write path for the links, so every mutation persists. Blank rows are
+  // stripped on save — they're form scaffolding, not data worth restoring.
+  const commitDriveSlideLinks = (next: string[]) => {
+    setDriveSlideLinks(next)
+    // A user who has touched the form owns it from here on; don't let a late
+    // hydration overwrite what they typed.
+    driveLinksHydratedRef.current = true
+    // Trailing blanks are form scaffolding and get dropped, but an INTERIOR
+    // blank is kept: row position is slide position, so collapsing a gap in
+    // the middle would silently re-point every link below it at a different
+    // slide.
+    const trimmed = next.map((l) => l.trim())
+    while (trimmed.length && !trimmed[trimmed.length - 1]) trimmed.pop()
+    onDriveLinksChange(trimmed.length > 0 ? trimmed : null)
+  }
+
   const setDriveSlideLink = (i: number, v: string) =>
-    setDriveSlideLinks((prev) => prev.map((l, idx) => (idx === i ? v : l)))
+    commitDriveSlideLinks(
+      driveSlideLinks.map((l, idx) => (idx === i ? v : l)),
+    )
   const addDriveSlideRow = () =>
     setDriveSlideLinks((prev) => (prev.length >= 10 ? prev : [...prev, ""]))
   const removeDriveSlideRow = (i: number) =>
-    setDriveSlideLinks((prev) => prev.filter((_, idx) => idx !== i))
+    commitDriveSlideLinks(driveSlideLinks.filter((_, idx) => idx !== i))
+
+  // --- Reordering slides by dragging a link row ----------------------------
+  // The link rows ARE the slide order (Hani, 2026-07-28): row 1 is slide 1.
+  // So dragging a row has to move the actual slide too, not just the text
+  // field — otherwise the panel would show one order and the post another.
+  //
+  // We reorder the imported images with the same permutation, but only when
+  // the two lists still line up 1:1 (same count, and the carousel came from
+  // an import rather than a template). When they don't, the rows still
+  // reorder and the slides follow on the next import — flagged in the UI
+  // rather than silently guessing at a mapping.
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+
+  // Give an imported carousel one row per slide. Without this a 5-slide
+  // carousel imported before the links were saved showed the default two
+  // blank rows — so there was nothing to grab for slides 3-5, and reordering
+  // was impossible for exactly the carousels that already exist. The rows
+  // start empty; they're handles for the slides, and become links if she
+  // pastes into them.
+  useEffect(() => {
+    if (savedTemplateId || !images || images.length === 0) return
+    setDriveSlideLinks((prev) =>
+      prev.length >= images.length
+        ? prev
+        : [...prev, ...Array(images.length - prev.length).fill("")],
+    )
+  }, [savedTemplateId, images])
+
+  // Row i owns slide i — positional, blank or not. Pairing on "non-empty rows
+  // only" was wrong: a carousel imported before the links were persisted (or
+  // any carousel predating migration 027) has slides and NO links, so nothing
+  // paired and dragging moved the text fields while the slides sat still.
+  const slidesFollowRowOrder =
+    !savedTemplateId &&
+    !!images &&
+    images.length > 0 &&
+    driveSlideLinks.length >= images.length
+
+  const moveRow = (from: number, to: number) => {
+    if (from === to) return
+    const imgs = images
+
+    // Pair every row with the slide at the same position, move the pair, then
+    // read the slides back off in the new row order. One splice, no index
+    // arithmetic to get wrong. Rows past the last slide own nothing, so
+    // dragging one of those leaves the carousel untouched.
+    const rows = driveSlideLinks.map((link, idx) => ({
+      link,
+      slide: slidesFollowRowOrder && imgs ? (imgs[idx] ?? null) : null,
+    }))
+    const [moved] = rows.splice(from, 1)
+    rows.splice(to, 0, moved)
+
+    commitDriveSlideLinks(rows.map((r) => r.link))
+
+    if (!slidesFollowRowOrder || !imgs) return
+    const nextImages = rows
+      .map((r) => r.slide)
+      .filter((slide): slide is string => !!slide)
+    if (nextImages.length !== imgs.length) return
+    // Handing the new order up is enough to persist it — the parent's carousel
+    // autosave keys off a per-slide signature, so a reorder registers as a
+    // change even when the slide count and slide 1 are untouched.
+    onImagesChange(nextImages)
+  }
 
   const handleDriveImport = async () => {
     const links = driveSlideLinks.map((l) => l.trim()).filter(Boolean)
@@ -1453,13 +1799,18 @@ function CarouselFlow({
       onImagesChange(slides)
       // A Drive import isn't a template — clear any template attribution so
       // the saved-template tile logic doesn't mis-point at a stale template.
+      // Clearing it is also what moves the "הקרוסלה שלך" tile down here, next
+      // to the import it came from.
       if (postId) setFormatMeta(postId, "carousel", { templateId: undefined })
+      setSavedTemplateId(undefined)
       // Surface what landed through the shared preview dialog (view-only:
       // it's already the post's carousel, so no approve button shows).
       setGeneratedByTemplate((p) => ({ ...p, [DRIVE_IMPORT_KEY]: slides }))
       setDialogFor(DRIVE_IMPORT_KEY)
       setPreviewIndex(0)
-      setDriveSlideLinks(["", ""])
+      // The links stay put on purpose — they're the recipe for this carousel,
+      // and re-importing after fixing one of them is the main repeat action.
+      commitDriveSlideLinks(links)
       toast.success(`הקרוסלה נטענה מהדרייב (${slides.length} שקופיות)`, {
         duration: 5000,
       })
@@ -1482,6 +1833,10 @@ function CarouselFlow({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ images: dialogSlides }),
       })
+
+      // Without this check a 500's JSON error body was handed straight to
+      // res.blob() and saved to the user's Downloads folder as "carousel.zip".
+      if (!res.ok) throw new Error(`status ${res.status}`)
 
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
@@ -1527,6 +1882,12 @@ function CarouselFlow({
             const tileAspect = t.size
               ? `${t.size.width} / ${t.size.height}`
               : "1 / 1"
+            // Which tile made what the post is actually using. Still one tile
+            // and one selection ring (Hani 2026-07-09) — the badge only names
+            // the current one so "which media is chosen right now" is
+            // readable at a glance instead of inferred from the ring.
+            const isPostCarousel =
+              !!images && images.length > 0 && generatedByTemplate[t.id] === images
             return (
               <button
                 key={t.id}
@@ -1539,7 +1900,7 @@ function CarouselFlow({
                   // the preview dialog; otherwise just select it.
                   if (generatedByTemplate[t.id]) openDialog(t.id)
                 }}
-                className={`flex flex-col gap-1 rounded-xl border p-1 pb-1.5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+                className={`relative flex flex-col gap-1 rounded-xl border p-1 pb-1.5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
                   isSelected
                     ? "border-yellow-50 ring-1 ring-yellow-50"
                     : "border-border-neutral-default hover:border-yellow-50"
@@ -1556,6 +1917,11 @@ function CarouselFlow({
                   className="w-full rounded-lg"
                   style={{ aspectRatio: tileAspect, backgroundColor: t.preview.bg }}
                 />
+                {isPostCarousel && (
+                  <span className="absolute top-2 start-2 rounded-md bg-bg-surface-primary-default px-1.5 py-0.5 text-xs text-text-primary-default">
+                    נוכחית
+                  </span>
+                )}
                 <span className="w-full truncate text-center text-xs text-text-primary-default">
                   {t.name}
                 </span>
@@ -1603,7 +1969,7 @@ function CarouselFlow({
           <DialogHeader>
             <DialogTitle>
               {dialogSlides === images && images
-                ? "הקרוסלה שלכם"
+                ? "הקרוסלה שלך"
                 : `תצוגה מקדימה — ${
                     CAROUSEL_TEMPLATES.find((t) => t.id === dialogFor)?.name ?? ""
                   }`}
@@ -1667,9 +2033,38 @@ function CarouselFlow({
               <Download className="size-4" />
               {downloading ? "מורידים..." : "הורדת הכל (ZIP)"}
             </Button>
+            {/* Removing the carousel is only offered on the set the post is
+                actually using, and only from inside the viewer — so it's
+                always a decision made while looking at the slides, never a
+                side effect of a button labelled something else. */}
+            {dialogSlides === images && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  // Close the viewer first — stacking the confirm on top of an
+                  // open Dialog fights over the focus trap.
+                  setDialogFor(null)
+                  setPendingCarouselDelete(true)
+                }}
+                className="w-full gap-2 border-button-destructive-default text-button-destructive-default hover:bg-red-95"
+              >
+                <Trash2 className="size-4" />
+                מחיקת הקרוסלה מהפוסט
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmModal
+        open={pendingCarouselDelete}
+        onOpenChange={(open) => { if (!open) setPendingCarouselDelete(false) }}
+        title="למחוק את הקרוסלה מהפוסט?"
+        description="השקופיות יימחקו מהפוסט. הטקסט של הקרוסלה והקישורים מהדרייב יישארו, כך שאפשר יהיה ליצור קרוסלה חדשה או לטעון שוב מהדרייב."
+        confirmLabel="כן, למחוק"
+        cancelLabel="לא, להשאיר"
+        onConfirm={handleDeleteCarousel}
+      />
 
       {/* Divider between "generate here" and "bring a ready-made carousel" */}
       <div className="flex items-center gap-3" role="separator">
@@ -1691,10 +2086,112 @@ function CarouselFlow({
           הדביקו קישור ישיר לכל שקופית (עד 10), לפי הסדר. נמשוך את התמונות ונרכיב
           מהן קרוסלה. כל קובץ צריך הרשאת „כל מי שיש לו הקישור”.
         </p>
+
+        {/* The post's carousel, when it was imported rather than generated.
+            It sits HERE and not under the template grid because this is where
+            it came from (Hani, 2026-07-28) — and it uses the template tile's
+            exact shape so "the carousel I brought" and "the carousels the AI
+            makes" read as the same kind of thing. Tapping it opens the same
+            slide viewer, which is also where deleting it lives. */}
+        {images && images.length > 0 && !savedTemplateId && (
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              type="button"
+              onClick={() => openDialog(DRIVE_IMPORT_KEY)}
+              aria-label={`הקרוסלה שלך — ${images.length} שקופיות, לצפייה ולעריכה`}
+              className="relative flex flex-col gap-1 rounded-xl border border-yellow-50 p-1 pb-1.5 ring-1 ring-yellow-50 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={`data:image/png;base64,${images[0]}`}
+                alt="השקופית הראשונה של הקרוסלה שלך"
+                className="w-full rounded-lg"
+                style={{ aspectRatio: "1 / 1", objectFit: "cover" }}
+              />
+              <span className="absolute top-2 start-2 rounded-md bg-bg-surface-primary-default px-1.5 py-0.5 text-xs text-text-primary-default">
+                {images.length} שקופיות
+              </span>
+              <span className="w-full truncate text-center text-xs text-text-primary-default">
+                הקרוסלה שלך
+              </span>
+            </button>
+          </div>
+        )}
+
+        {slidesFollowRowOrder && (
+          <p className="text-xs-body text-text-neutral-default">
+            גררו שורה כדי לשנות את סדר השקופיות בקרוסלה.
+          </p>
+        )}
+
         <div className="flex flex-col gap-2">
           {driveSlideLinks.map((link, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <span className="w-5 shrink-0 text-center text-xs text-text-neutral-default">
+            <div
+              key={i}
+              // Row-level drop target. The row is not itself draggable — only
+              // the grip is — so dragging inside the URL field still selects
+              // text instead of picking the row up.
+              onDragOver={(e) => {
+                if (dragIndex === null) return
+                e.preventDefault()
+                e.dataTransfer.dropEffect = "move"
+                setDragOverIndex(i)
+              }}
+              onDragLeave={() => {
+                setDragOverIndex((cur) => (cur === i ? null : cur))
+              }}
+              onDrop={(e) => {
+                if (dragIndex === null) return
+                e.preventDefault()
+                moveRow(dragIndex, i)
+                setDragIndex(null)
+                setDragOverIndex(null)
+              }}
+              className={`flex items-center gap-2 rounded-lg transition-colors ${
+                dragOverIndex === i && dragIndex !== i ? "bg-gray-90" : ""
+              } ${dragIndex === i ? "opacity-50" : ""}`}
+            >
+              {/* Drag handle. Doubles as the slide number so the row doesn't
+                  grow a column — the number IS what you grab, which matches
+                  "row 3 is slide 3".
+                  A <span>, not a <button>: Chrome gives a button's own
+                  mousedown behaviour priority over `draggable`, so the drag
+                  never started. role/tabIndex keep it operable and focusable,
+                  and the arrow keys do the same job without a mouse. */}
+              <span
+                role="button"
+                tabIndex={0}
+                draggable={!driveImporting && driveSlideLinks.length > 1}
+                onDragStart={(e) => {
+                  // Firefox refuses to begin a drag unless dataTransfer
+                  // carries a payload, even one nothing reads.
+                  e.dataTransfer.setData("text/plain", String(i))
+                  e.dataTransfer.effectAllowed = "move"
+                  setDragIndex(i)
+                }}
+                onDragEnd={() => {
+                  setDragIndex(null)
+                  setDragOverIndex(null)
+                }}
+                onKeyDown={(e) => {
+                  if (driveImporting) return
+                  if (e.key === "ArrowUp" && i > 0) {
+                    e.preventDefault()
+                    moveRow(i, i - 1)
+                  } else if (e.key === "ArrowDown" && i < driveSlideLinks.length - 1) {
+                    e.preventDefault()
+                    moveRow(i, i + 1)
+                  }
+                }}
+                aria-label={`שקופית ${i + 1} — גררו או השתמשו בחצים למעלה/למטה כדי לשנות את הסדר`}
+                title="גררו כדי לשנות את הסדר"
+                className={`inline-flex w-6 shrink-0 select-none items-center justify-center gap-0.5 rounded-md py-1 text-xs text-text-neutral-default transition-colors hover:bg-bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+                  driveImporting || driveSlideLinks.length < 2
+                    ? "cursor-default opacity-40"
+                    : "cursor-grab active:cursor-grabbing"
+                }`}
+              >
+                <GripVertical className="size-3" aria-hidden />
                 {i + 1}
               </span>
               <Input
@@ -1979,6 +2476,31 @@ function MediaUploadFlow({
     // Default to the image mode; the media-hydration effect flips this to
     // "video" if the post already has a bring-your-own story video.
     setStoryMode("image")
+
+    // In-flight / transient flags. These were previously left alone, so with
+    // one shared instance across story and image_post they carried over: a
+    // failed link in story rendered its error under the image_post input, and
+    // a pending pull in one format disabled the other's controls. The `key` on
+    // MediaUploadFlow now remounts on switch, so this is belt-and-braces — but
+    // it also covers a plain postId change, which does NOT remount.
+    setDrivePulling(false)
+    setDriveError(null)
+    setUploading(false)
+    setBurningText(false)
+    setSavingStory(false)
+    setPendingDelete(false)
+    setPendingStoryDelete(false)
+    lastDriveRef.current = ""
+
+    // Cancel any debounced Drive pull scheduled for the PREVIOUS (post, format).
+    // Without this the timer still fires after the switch and persists media
+    // against the format the user just left.
+    return () => {
+      if (driveDebounceRef.current) {
+        clearTimeout(driveDebounceRef.current)
+        driveDebounceRef.current = null
+      }
+    }
   }, [postId, format])
 
   // Hydrate the upload preview from media_assets when the panel opens.
@@ -2123,6 +2645,12 @@ function MediaUploadFlow({
       } = await supabase.auth.getSession()
       if (!user || !session) {
         toast.error("לא מזוהה משתמש. רעננו ונסו שוב.", { id: uploadToast })
+        // Roll back the optimistic preview like every other failure branch
+        // does. Without this the blob URL leaked AND the panel kept showing
+        // the image as though it had been saved — the upload never happened.
+        URL.revokeObjectURL(localBlobUrl)
+        setPreviewUrl(null)
+        setPreviewKind(null)
         setUploading(false)
         return
       }
@@ -2543,12 +3071,33 @@ function MediaUploadFlow({
    * Canva / non-Drive links never reach here — they can't be resolved, so
    * they stay as a reference link the user opens manually (commitDriveUrl).
    */
-  const attachDriveMedia = async (rawLink: string) => {
+  const attachDriveMedia = async (
+    rawLink: string,
+    /**
+     * The format this attach was STARTED for. Defaults to the current one, but
+     * `scheduleDrivePull` snapshots it so a 500ms-debounced pull can't drift.
+     *
+     * This function is async and reaches over the network twice, so `format`
+     * read from the render closure could be a format the user has since left.
+     * That was a real data bug: paste a Drive link under story, switch to
+     * image_post inside the debounce window, and the asset persisted to story
+     * while the image_post panel displayed it — and the "image_post accepts
+     * images only" guard below was evaluated against the stale format, so a
+     * video slipped past it entirely.
+     */
+    targetFormat: string = format,
+  ) => {
     const link = rawLink.trim()
     if (!postId || !link) return
     if (!isDriveUrl(link)) return
-    setDriveError(null)
-    setDrivePulling(true)
+    // Only paint into the panel when it is still showing the format this call
+    // belongs to. Persistence always uses `targetFormat` and is unconditional —
+    // the user's action should complete even if they navigated away.
+    const isCurrent = () => targetFormat === format
+    if (isCurrent()) {
+      setDriveError(null)
+      setDrivePulling(true)
+    }
     // Flipped once the asset is actually persisted — drives the retry reset
     // in `finally` below.
     let attached = false
@@ -2572,9 +3121,11 @@ function MediaUploadFlow({
       })
       const info = await infoRes.json()
       if (!infoRes.ok || info.error) {
-        setDriveError(
-          errorMessages[info.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.",
-        )
+        if (isCurrent()) {
+          setDriveError(
+            errorMessages[info.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.",
+          )
+        }
         return
       }
 
@@ -2582,8 +3133,10 @@ function MediaUploadFlow({
 
       // image_post accepts images only — reject a Drive video with a clear
       // message instead of silently storing something the format can't use.
-      if (format === "image_post" && kind === "video") {
-        setDriveError("פוסט תמונה תומך רק בתמונות")
+      // Checked against targetFormat, not the live one: this guard exists to
+      // protect the format being WRITTEN TO.
+      if (targetFormat === "image_post" && kind === "video") {
+        if (isCurrent()) setDriveError("פוסט תמונה תומך רק בתמונות")
         return
       }
 
@@ -2597,9 +3150,11 @@ function MediaUploadFlow({
         })
         const data = await res.json()
         if (!res.ok || data.error) {
-          setDriveError(
-            errorMessages[data.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.",
-          )
+          if (isCurrent()) {
+            setDriveError(
+              errorMessages[data.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.",
+            )
+          }
           return
         }
         mediaUrl = data.url
@@ -2608,39 +3163,52 @@ function MediaUploadFlow({
       const persistRes = await fetch(`/api/core-posts/${postId}/media`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ format, url: mediaUrl, assetType: kind }),
+        body: JSON.stringify({ format: targetFormat, url: mediaUrl, assetType: kind }),
       })
       if (!persistRes.ok) {
         const err = (await persistRes.json().catch(() => ({}))) as {
           error?: string
         }
-        setDriveError(`לא הצלחנו לשמור את המדיה: ${err.error ?? "שגיאה"}`)
+        if (isCurrent()) {
+          setDriveError(`לא הצלחנו לשמור את המדיה: ${err.error ?? "שגיאה"}`)
+        }
         return
       }
 
-      // Surface it in the panel right away. A story IMAGE belongs to the
-      // frame-set row (like a saved AI set), so it lands in savedStorySet;
-      // everything else is the single current-media slot.
-      if (format === "story" && kind === "image") {
-        setSavedStorySet([mediaUrl])
+      // Lift the result to the parent regardless of which format is on screen —
+      // the canvas card for `targetFormat` must update either way.
+      if (targetFormat === "story" && kind === "image") {
         onStoryImagesChange?.([mediaUrl])
-      } else {
-        setPreviewUrl(mediaUrl)
-        setPreviewKind(kind)
-        if (kind === "image") setImageLoading(true)
-        if (format === "image_post") onImagePostUrlChange?.(mediaUrl)
+      } else if (targetFormat === "image_post") {
+        onImagePostUrlChange?.(mediaUrl)
       }
-      // A story video means the user is on the bring-your-own path — land
-      // them on that mode so the burn-caption CTA is reachable.
-      if (format === "story" && kind === "video") setStoryMode("video")
 
-      // The media is attached — clear the input and its localStorage
-      // readiness meta, which only ever backed non-Drive reference links.
-      setDriveUrl("")
-      setDriveDirty(false)
+      // Panel painting, on the other hand, only applies if the user is still
+      // looking at this format. Otherwise we'd render story's clip inside the
+      // image_post view — and the delete button would then target the wrong one.
+      if (isCurrent()) {
+        // A story IMAGE belongs to the frame-set row (like a saved AI set),
+        // so it lands in savedStorySet; everything else is the single
+        // current-media slot.
+        if (targetFormat === "story" && kind === "image") {
+          setSavedStorySet([mediaUrl])
+        } else {
+          setPreviewUrl(mediaUrl)
+          setPreviewKind(kind)
+          if (kind === "image") setImageLoading(true)
+        }
+        // A story video means the user is on the bring-your-own path — land
+        // them on that mode so the burn-caption CTA is reachable.
+        if (targetFormat === "story" && kind === "video") setStoryMode("video")
+
+        // The media is attached — clear the input and its localStorage
+        // readiness meta, which only ever backed non-Drive reference links.
+        setDriveUrl("")
+        setDriveDirty(false)
+      }
       lastDriveRef.current = link
       attached = true
-      setFormatMeta(postId, format as FormatId, { driveUrl: undefined })
+      setFormatMeta(postId, targetFormat as FormatId, { driveUrl: undefined })
       toast.success(
         kind === "video" ? "הסרטון מהדרייב חובר לפוסט" : "המדיה נטענה מהדרייב",
         { duration: 3000 },
@@ -2648,13 +3216,15 @@ function MediaUploadFlow({
     } catch (err) {
       console.error("[media-upload-flow][drive-attach]", err)
       const timedOut = err instanceof DOMException && err.name === "TimeoutError"
-      setDriveError(
-        timedOut
-          ? "הבדיקה מול גוגל דרייב לקחה יותר מדי זמן. ודאו שהקובץ משותף ונסו שוב."
-          : "שגיאת רשת בטעינת המדיה. נסו שוב.",
-      )
+      if (isCurrent()) {
+        setDriveError(
+          timedOut
+            ? "הבדיקה מול גוגל דרייב לקחה יותר מדי זמן. ודאו שהקובץ משותף ונסו שוב."
+            : "שגיאת רשת בטעינת המדיה. נסו שוב.",
+        )
+      }
     } finally {
-      setDrivePulling(false)
+      if (isCurrent()) setDrivePulling(false)
       // Forget a FAILED attempt so re-pasting the same link retries instead
       // of being swallowed by the debounce's duplicate check. On success the
       // ref is left pointing at the handled link, which is what suppresses a
@@ -2673,9 +3243,12 @@ function MediaUploadFlow({
     if (driveDebounceRef.current) clearTimeout(driveDebounceRef.current)
     const link = value.trim()
     if (!isCompleteDriveUrl(link) || link === lastDriveRef.current) return
+    // Snapshot the format NOW, at the moment the user typed, not 500ms later
+    // when the timer fires — by then they may be looking at a different format.
+    const targetFormat = format
     driveDebounceRef.current = setTimeout(() => {
       lastDriveRef.current = link
-      attachDriveMedia(link)
+      attachDriveMedia(link, targetFormat)
     }, 500)
   }
 
