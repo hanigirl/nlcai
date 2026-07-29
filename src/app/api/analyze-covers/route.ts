@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { analyzeBrandStyle } from "@/lib/agents/brand-style-analyzer"
+import { getAuthUser } from "@/lib/auth-user"
 
 export async function POST(req: Request) {
   const supabase = await createClient()
@@ -23,7 +24,7 @@ export async function POST(req: Request) {
     const brandStyle = await analyzeBrandStyle(apiKey, images)
 
     // Save to user's profile
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (user) {
       await supabase
         .from("users")

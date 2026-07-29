@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { extractFileContent, type FileContent } from "@/lib/extract-file-content"
 import { scrapeUrlToText, ScrapeError } from "@/lib/scrape-url"
+import { getAuthUser } from "@/lib/auth-user"
 
 // Doc + Sonnet can run 30-45s; match the identity flow so Vercel doesn't
 // silently kill the request mid-summary.
@@ -49,9 +50,7 @@ function deriveTitle(opts: { title?: string; url?: string; fileName?: string }):
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
@@ -223,9 +222,7 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
@@ -253,9 +250,7 @@ export async function DELETE(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }

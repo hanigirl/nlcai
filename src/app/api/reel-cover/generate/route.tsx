@@ -3,6 +3,7 @@ import satori from "satori"
 import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import type { BrandStyle } from "@/lib/supabase/types"
+import { getAuthUser } from "@/lib/auth-user"
 
 const COVER_WIDTH = 1080
 const COVER_HEIGHT = 1920 // 9:16 aspect ratio
@@ -340,7 +341,7 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }

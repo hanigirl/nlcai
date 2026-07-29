@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
+import { getAuthUser } from "@/lib/auth-user"
 
 // Diagnostic endpoint for the ideas pipeline.
 // Run this in the browser when creator posts don't show up to see exactly
@@ -37,7 +38,7 @@ async function callApifyRaw(actor: string, input: Record<string, unknown>, token
 
 export async function GET() {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getAuthUser(supabase)
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   let apifyToken: string | null = null

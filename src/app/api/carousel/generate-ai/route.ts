@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getTemplate } from "@/lib/carousel-templates"
 import type { SlideData } from "@/lib/carousel-templates"
+import { getAuthUser } from "@/lib/auth-user"
 
 // gpt-image-2 takes 30-120s per image; several slides run with limited
 // concurrency, so leave generous headroom.
@@ -161,9 +162,7 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }

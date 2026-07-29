@@ -5,6 +5,7 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { buildRefinerSystemPrompt } from "@/lib/agents/core-post-refiner"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import { fetchBusinessSourceInsights } from "@/lib/business-source-insights"
+import { getAuthUser } from "@/lib/auth-user"
 
 interface ChatTurn {
   role: "user" | "assistant"
@@ -14,9 +15,7 @@ interface ChatTurn {
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
 
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })

@@ -9,6 +9,7 @@ import {
 import { anthropicErrorToHebrew } from "@/lib/anthropic-errors"
 import { extractFileContent, type FileContent } from "@/lib/extract-file-content"
 import { extractFirstJsonObject } from "@/lib/extract-first-json"
+import { getAuthUser } from "@/lib/auth-user"
 
 // Re-parsing PDFs/docx via Claude is the slow path; align with parse-identity.
 // Admin diagnostic — runs Claude against the stored raw_file_text to figure
@@ -21,7 +22,7 @@ type Type = "core" | "audience"
 export async function POST(req: NextRequest) {
   // 1. Gate: only Hani.
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getAuthUser(supabase)
   if (!user || !isAdminEmail(user.email)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   }

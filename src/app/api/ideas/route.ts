@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
+import { getAuthUser } from "@/lib/auth-user"
 
 // ── Types ──────────────────────────────────────────────
 interface SerperResult { title: string; link: string; snippet: string; date?: string }
@@ -268,7 +269,7 @@ const MIN_FOLLOWERS = 10_000
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     let previousIdeas: string[] = []

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { FORMAT_TYPES, type FormatType } from "@/lib/supabase/types"
+import { getAuthUser } from "@/lib/auth-user"
 
 /**
  * The `format_type` enum. Imported, not mirrored — the local copy that used to
@@ -61,7 +62,7 @@ export async function POST(
   try {
     const { id } = await params
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
@@ -227,7 +228,7 @@ export async function DELETE(
   try {
     const { id } = await params
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }

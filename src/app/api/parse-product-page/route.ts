@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { scrapeUrlToText, ScrapeError } from "@/lib/scrape-url"
+import { getAuthUser } from "@/lib/auth-user"
 
 const PRODUCT_PAGE_PROMPT = `את סוכנת שמנתחת דפי מכירה של מוצרים דיגיטליים.
 
@@ -25,9 +26,7 @@ const PRODUCT_PAGE_PROMPT = `את סוכנת שמנתחת דפי מכירה של
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
 
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })

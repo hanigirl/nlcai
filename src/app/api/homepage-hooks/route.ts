@@ -20,6 +20,7 @@ import { fetchLearningInsights } from "@/lib/learning-insights"
 import { fetchBusinessSourceInsights } from "@/lib/business-source-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
 import { withRetry } from "@/lib/supabase/retry"
+import { getAuthUser } from "@/lib/auth-user"
 
 // Streaming SSE pipeline (plan → write+judge+polish per hook). Even with a
 // reduced HOOK_COUNT=10 in one batch, full run lands at ~30-60s. Vercel's
@@ -59,7 +60,7 @@ export async function POST(req: NextRequest) {
     } catch { /* no body */ }
 
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
 
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })

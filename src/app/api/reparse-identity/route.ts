@@ -9,6 +9,7 @@ import {
   AUDIENCE_IDENTITY_TOOL,
 } from "@/lib/agents/identity-parser"
 import { anthropicErrorToHebrew } from "@/lib/anthropic-errors"
+import { getAuthUser } from "@/lib/auth-user"
 
 // Same reasoning as parse-identity: a 10s default timeout silently kills the
 // Claude call mid-flight on borderline files. 300s is the Pro plan ceiling;
@@ -18,9 +19,7 @@ export const maxDuration = 300
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
 
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { getAuthUser } from "@/lib/auth-user"
 
 // Catch-all sink for client-side React crashes. Called from error.tsx and
 // global-error.tsx on mount so we get the stack trace + the user's email
@@ -22,7 +23,7 @@ export async function POST(req: NextRequest) {
     let userId: string | null = null
     try {
       const supabase = await createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const user = await getAuthUser(supabase)
       email = user?.email ?? null
       userId = user?.id ?? null
     } catch { /* ignore — we still want to log the crash */ }
