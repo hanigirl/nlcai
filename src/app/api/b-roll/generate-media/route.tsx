@@ -8,6 +8,7 @@ import {
   CAPTION_CANVAS_HEIGHT,
   CAPTION_CANVAS_WIDTH,
   renderCaptionOverlayPng,
+  renderSecondaryCaptionPng,
 } from "@/lib/caption-overlay"
 import { getAuthUser } from "@/lib/auth-user"
 
@@ -57,6 +58,7 @@ const CLIP_FPS = 25
 function renderClip(
   backgroundPath: string,
   captionPath: string,
+  secondaryPath: string,
   outputPath: string,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -69,6 +71,7 @@ function renderClip(
       "-y",
       "-loop", "1", "-i", backgroundPath,
       "-loop", "1", "-t", String(CLIP_SECONDS), "-i", captionPath,
+      "-loop", "1", "-t", String(CLIP_SECONDS), "-i", secondaryPath,
       "-filter_complex",
       `[0:v]scale=${CAPTION_CANVAS_WIDTH * 2}:${CAPTION_CANVAS_HEIGHT * 2}:flags=lanczos,` +
         `zoompan=z='min(1+0.0006*on,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':` +
@@ -77,7 +80,11 @@ function renderClip(
         // Fades in and STAYS — no fade-out. The last frame is the one that
         // gets screenshotted and re-shared.
         `[1:v]format=rgba,fade=t=in:st=0.7:d=0.9:alpha=1,setsar=1[cap];` +
-        `[bg][cap]overlay=0:0:shortest=1[v]`,
+        `[bg][cap]overlay=0:0:shortest=1[v1];` +
+        // "קראו בתיאור" arrives at 2s — after the hook has been read, well
+        // inside a 7s clip — and stays to the end.
+        `[2:v]format=rgba,fade=t=in:st=2:d=0.7:alpha=1,setsar=1[cap2];` +
+        `[v1][cap2]overlay=0:0[v]`,
       "-map", "[v]",
       "-c:v", "libx264",
       "-preset", "veryfast",
@@ -288,6 +295,7 @@ export async function POST(req: NextRequest) {
     // Background and caption stay SEPARATE files — that separation is what
     // lets ffmpeg drift one and fade the other.
     const captionPng = await renderCaptionOverlayPng(hook, rest || undefined)
+    const secondaryPng = await renderSecondaryCaptionPng()
 
     const os = await import("os")
     const fs = await import("fs/promises")
@@ -296,12 +304,14 @@ export async function POST(req: NextRequest) {
     const stamp = crypto.randomUUID()
     const bgPath = path.join(tmp, `broll-bg-${stamp}.png`)
     const capPath = path.join(tmp, `broll-cap-${stamp}.png`)
+    const cap2Path = path.join(tmp, `broll-cap2-${stamp}.png`)
     const outPath = path.join(tmp, `broll-${stamp}.mp4`)
-    tmpFiles.push(bgPath, capPath, outPath)
+    tmpFiles.push(bgPath, capPath, cap2Path, outPath)
 
     await fs.writeFile(bgPath, Buffer.from(background, "base64"))
     await fs.writeFile(capPath, captionPng)
-    await renderClip(bgPath, capPath, outPath)
+    await fs.writeFile(cap2Path, secondaryPng)
+    await renderClip(bgPath, capPath, cap2Path, outPath)
     const clip = await fs.readFile(outPath)
 
     // Store it and hand back the URL — the panel just renders what it gets.

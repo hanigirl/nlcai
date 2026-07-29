@@ -5,7 +5,10 @@ import { createClient } from "@/lib/supabase/server"
 import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
 import { fetchDriveFile } from "@/lib/drive-fetch"
 import { frameCaption } from "@/lib/story-text-split"
-import { renderCaptionOverlayPng } from "@/lib/caption-overlay"
+import {
+  renderCaptionOverlayPng,
+  renderSecondaryCaptionPng,
+} from "@/lib/caption-overlay"
 import { getAuthUser } from "@/lib/auth-user"
 
 // Downloading + re-encoding a user video is heavier than an image render;
@@ -51,20 +54,48 @@ function burnOverlay(
   inputPath: string,
   overlayPath: string,
   outputPath: string,
+  /**
+   * Optional second caption ("קראו בתיאור" on b-roll), arriving after the
+   * hook has had time to land.
+   */
+  secondaryPath?: string,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!ffmpegPath) {
       reject(new Error("ffmpeg binary not found"))
       return
     }
+    // The caption FADES IN rather than being present from frame one
+    // (Hani, 2026-07-29). The AI b-roll generator always animated its
+    // caption; this path — the user's own clip from Drive — pasted a static
+    // layer, so the same feature behaved differently depending on where the
+    // footage came from.
+    const filter =
+      `[0:v]scale=${CANVAS_WIDTH}:${CANVAS_HEIGHT}:force_original_aspect_ratio=increase,` +
+      `crop=${CANVAS_WIDTH}:${CANVAS_HEIGHT},setsar=1[bg];` +
+      `[1:v]format=rgba,fade=t=in:st=0.7:d=0.9:alpha=1,setsar=1[cap];` +
+      (secondaryPath
+        ? // Comes in at 2s, once the hook has been read, and stays.
+          `[bg][cap]overlay=0:0[v1];` +
+          `[2:v]format=rgba,fade=t=in:st=2:d=0.7:alpha=1,setsar=1[cap2];` +
+          `[v1][cap2]overlay=0:0[v]`
+        : `[bg][cap]overlay=0:0[v]`)
+
     const args = [
       "-y",
       "-i", inputPath,
-      "-i", overlayPath,
+      // `-loop 1` on the caption stills is what makes the fade possible, and
+      // it is NOT optional: a single-frame input has no timeline, so `fade`
+      // holds it at its t=0 value — fully transparent — and overlay's
+      // repeat-last-frame behaviour then pastes that invisible frame for the
+      // whole clip. Without the loop the caption never appears at all.
+      // Verified by sampling frame colour at 0.2s / 1.5s / 3.0s.
+      "-loop", "1", "-t", String(MAX_CLIP_SECONDS), "-i", overlayPath,
+      ...(secondaryPath
+        ? ["-loop", "1", "-t", String(MAX_CLIP_SECONDS), "-i", secondaryPath]
+        : []),
       "-filter_complex",
-      `[0:v]scale=${CANVAS_WIDTH}:${CANVAS_HEIGHT}:force_original_aspect_ratio=increase,` +
-        `crop=${CANVAS_WIDTH}:${CANVAS_HEIGHT},setsar=1[bg];` +
-        `[bg][1:v]overlay=0:0[v]`,
+      filter,
       "-map", "[v]",
       "-map", "0:a?", // keep audio if the source has any
       "-c:v", "libx264",
@@ -297,7 +328,18 @@ export async function POST(req: NextRequest) {
     )
     await fs.writeFile(overlayPath, overlayPng)
 
-    await burnOverlay(inputPath, overlayPath, outputPath)
+    // Every b-roll carries the follow-up line; the story doesn't — its frames
+    // already end on their own CTA block.
+    let secondaryPath: string | undefined
+    if (format === "b_roll") {
+      const fsMod = await import("fs/promises")
+      const pathMod = await import("path")
+      secondaryPath = pathMod.join(tmp, `story-ovl2-${id}.png`)
+      tmpFiles.push(secondaryPath)
+      await fsMod.writeFile(secondaryPath, await renderSecondaryCaptionPng())
+    }
+
+    await burnOverlay(inputPath, overlayPath, outputPath, secondaryPath)
 
     const outBuffer = await fs.readFile(outputPath)
     // "burned-" prefix marks a text-baked output. The client reads this from
