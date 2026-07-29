@@ -6,6 +6,13 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       { hostname: "files2.heygen.ai" },
       { hostname: "resource2.heygen.ai" },
+      // Our own storage bucket. Without this entry next/image refuses the
+      // host and every preview falls back to a raw <img> — which meant a
+      // 200px slot downloading the full 1080x1920 PNG the generator saved
+      // (~2.3MB) instead of a resized WebP (~tens of KB). Supabase's own
+      // image transformation would do the same job, but it's a paid add-on
+      // and returns FeatureNotEnabled on this project.
+      { hostname: "mwogbieylrteorftphhi.supabase.co" },
     ],
   },
   serverExternalPackages: ["@resvg/resvg-js", "ffmpeg-static"],
