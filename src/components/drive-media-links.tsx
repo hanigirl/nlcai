@@ -22,10 +22,11 @@
  * rows on screen, the drag, and the pairing maths.
  */
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { GripVertical, Loader2, Plus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { isCompleteDriveUrl } from "@/lib/drive-media"
 
 export type DriveMediaLinksProps = {
   /** Persisted link list for this (post, format). Null when none saved. */
@@ -67,9 +68,21 @@ export type DriveMediaLinksProps = {
   addRowLabel: string
   /** Import button text. */
   importLabel: string
-  /** Sentence shown only when a drag will actually move media. */
-  reorderHint: string
+  /**
+   * Optional sentence shown only when a drag will actually move media.
+   * Omit it where the grip icon is explanation enough — the line is a
+   * permanent cost paid for a one-time lesson.
+   */
+  reorderHint?: string
   maxRows?: number
+  /**
+   * Load as soon as a row holds a complete Drive link, with no button
+   * (Hani, 2026-07-29). Pasting a link IS the instruction — a "load" button
+   * next to it is a second way to say the same thing. The button still shows
+   * when this is off, for hosts whose import is expensive enough to want an
+   * explicit trigger.
+   */
+  autoImport?: boolean
   /**
    * Slot rendered between the explainer and the rows — hosts use it for the
    * "here's what you already imported" tile, which belongs under the heading
@@ -96,6 +109,7 @@ export function DriveMediaLinks({
   importLabel,
   reorderHint,
   maxRows = 10,
+  autoImport = false,
   beforeRows,
 }: DriveMediaLinksProps) {
   // Rows are DERIVED, not synced. `edited` is null until she touches the
@@ -104,19 +118,26 @@ export function DriveMediaLinks({
   // racing the async GET and overwriting what she may have typed.
   const [edited, setEdited] = useState<string[] | null>(null)
 
+  // A single-slot field (b-roll: one clip) starts with exactly one row and
+  // never grows; a multi-frame field keeps a spare so the form doesn't
+  // collapse to a lone input.
+  const singleSlot = maxRows === 1
   const baseRows =
     edited ??
     (savedLinks && savedLinks.length > 0
-      ? // Always keep at least two rows so the form doesn't collapse to one.
-        [...savedLinks, ...(savedLinks.length === 1 ? [""] : [])]
-      : ["", ""])
+      ? singleSlot
+        ? [savedLinks[0]]
+        : [...savedLinks, ...(savedLinks.length === 1 ? [""] : [])]
+      : singleSlot
+        ? [""]
+        : ["", ""])
 
   // One handle per media item, even when there are no links to show. Without
   // this a 5-item set with no saved links renders the two default blank rows,
   // leaving items 3-5 with nothing to grab. Padding here rather than in state
   // keeps it a pure function of (links, items).
   const rows =
-    items && items.length > baseRows.length
+    !singleSlot && items && items.length > baseRows.length
       ? [...baseRows, ...Array(items.length - baseRows.length).fill("")]
       : baseRows
 
@@ -168,6 +189,30 @@ export function DriveMediaLinks({
   const trimmedRows = rows.map((l) => l.trim())
   const hasAnyLink = trimmedRows.some(Boolean)
 
+  // Fire the import once a row holds a complete Drive link and typing has
+  // settled. Keyed on the joined links so a reorder (same links, new order)
+  // doesn't re-pull anything — reordering is handled by `onItemsReorder`.
+  const autoKey = trimmedRows.join("|")
+  const lastAutoKeyRef = useRef<string | null>(null)
+  const importingRef = useRef(importing)
+  importingRef.current = importing
+  useEffect(() => {
+    if (!autoImport) return
+    if (!trimmedRows.some((l) => isCompleteDriveUrl(l))) return
+    if (lastAutoKeyRef.current === autoKey) return
+    const t = setTimeout(() => {
+      // Re-check at fire time: an import that started while we were waiting
+      // would otherwise get a second one stacked on top of it.
+      if (importingRef.current) return
+      lastAutoKeyRef.current = autoKey
+      onImport(trimmedRows)
+    }, 900)
+    return () => clearTimeout(t)
+    // `onImport` is a fresh closure each render; depending on it would reset
+    // the debounce on every keystroke and never fire.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoImport, autoKey])
+
   return (
     <div className="flex flex-col gap-2">
       <p className="text-small-bold text-text-primary-default">{heading}</p>
@@ -175,7 +220,7 @@ export function DriveMediaLinks({
 
       {beforeRows}
 
-      {canPair && (
+      {canPair && reorderHint && (
         <p className="text-xs-body text-text-neutral-default">{reorderHint}</p>
       )}
 
@@ -213,6 +258,7 @@ export function DriveMediaLinks({
                 mousedown behaviour priority over `draggable`, so the drag
                 never started. role/tabIndex keep it operable, and the arrow
                 keys do the same job without a mouse. */}
+            {!singleSlot && (
             <span
               role="button"
               tabIndex={0}
@@ -249,6 +295,7 @@ export function DriveMediaLinks({
               <GripVertical className="size-3" aria-hidden />
               {i + 1}
             </span>
+            )}
             <Input
               dir="ltr"
               inputSize="small"
@@ -263,7 +310,7 @@ export function DriveMediaLinks({
               className="flex-1 text-xs"
               aria-label={`קישור ל${unitLabel} ${i + 1}`}
             />
-            {rows.length > 1 && (
+            {(rows.length > 1 || singleSlot) && (
               <button
                 type="button"
                 onClick={() => removeRow(i)}
@@ -283,28 +330,39 @@ export function DriveMediaLinks({
           type="button"
           onClick={addRow}
           disabled={importing}
-          className="inline-flex items-center gap-1 self-start text-xs text-text-neutral-default transition-colors hover:text-text-primary-default disabled:opacity-40"
+          className="inline-flex items-center gap-1 self-start text-xs font-medium text-text-primary-default transition-colors hover:text-text-primary-default/70 disabled:opacity-40"
         >
           <Plus className="size-3.5" />
           {addRowLabel}
         </button>
       )}
 
-      <Button
-        onClick={() => onImport(trimmedRows)}
-        disabled={importing || !hasAnyLink}
-        variant="outline"
-        className="w-full gap-2"
-      >
-        {importing ? (
-          <>
-            <Loader2 className="size-4 animate-spin" />
+      {autoImport ? (
+        // No button — but the work still has to be visible, or a paste looks
+        // like it did nothing for the ten seconds the pull takes.
+        importing && (
+          <p className="inline-flex items-center gap-2 self-start text-xs text-text-neutral-default">
+            <Loader2 className="size-3.5 animate-spin" />
             {importProgress || "טוען..."}
-          </>
-        ) : (
-          importLabel
-        )}
-      </Button>
+          </p>
+        )
+      ) : (
+        <Button
+          onClick={() => onImport(trimmedRows)}
+          disabled={importing || !hasAnyLink}
+          variant="outline"
+          className="w-full gap-2"
+        >
+          {importing ? (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              {importProgress || "טוען..."}
+            </>
+          ) : (
+            importLabel
+          )}
+        </Button>
+      )}
 
       {importError && (
         <p className="text-xs text-button-destructive-default">{importError}</p>
