@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server"
 import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
+import {
+  desiredFrameCount,
+  splitScriptIntoFrames,
+} from "@/lib/story-text-split"
+import { getAuthUser } from "@/lib/auth-user"
 
 // gpt-image-2 takes 30-120s per image; a long story fans out to up to 3
 // frames run with limited concurrency, so leave generous headroom.
@@ -10,18 +15,6 @@ export const maxDuration = 300
 // Instagram Story — 9:16 vertical.
 const IMAGE_WIDTH = 1080
 const IMAGE_HEIGHT = 1920
-
-// Committed to ONE image by default. We only split when the story text is
-// long enough that fitting it all on one frame would shrink the type past
-// comfortable legibility — and never past 3 frames (an IG story people
-// actually tap through).
-const MAX_STORY_FRAMES = 3
-
-// Legibility thresholds, in Hebrew characters, tuned for a designed 9:16
-// poster where the type must stay large. Below the first threshold the
-// whole script fits one frame comfortably; each further band adds a frame.
-const ONE_FRAME_MAX_CHARS = 220
-const TWO_FRAME_MAX_CHARS = 460
 
 // Parallel OpenAI image calls per story (rate-limit friendly).
 const CONCURRENCY = 3
@@ -43,111 +36,16 @@ const CONCURRENCY = 3
 /**
  * Split the story body into designed frames.
  *
- * The real story format body (see story-generator) is three blocks —
- * hook / content / CTA — separated by blank lines, with NO labels. Older
- * dummy text used `[מסך N]` labels, so we strip any such label defensively.
- *
- * We stay committed to ONE frame and only add frames (up to 3) when the
- * total text would be too dense for one legible 9:16 poster. When we do
- * split, we keep each block whole and group consecutive blocks so the
- * per-frame text is roughly balanced. A single over-long block (rare — the
- * hook and CTA are their own blocks) falls back to a sentence split so the
- * feature still relieves density instead of giving up.
+ * The split itself lives in `lib/story-text-split` so the Drive-import path
+ * burns captions on exactly the same boundaries (Hani, 2026-07-29). Here we
+ * still CHOOSE the frame count from the script's length — the AI path owns
+ * that decision, whereas the import path is told the count by how many links
+ * the user pasted.
  */
 function splitStoryIntoFrames(body: string): string[] {
-  const blocks = body
-    .split(/\n\s*\n+/)
-    .map((b) =>
-      b
-        // Drop a leading `[מסך N]` / `[screen N]`-style label if present.
-        .replace(/^\s*\[[^\]]*\]\s*/g, "")
-        .trim(),
-    )
-    .filter(Boolean)
-
-  if (blocks.length === 0) return []
-
-  const totalChars = blocks.reduce((n, b) => n + b.length, 0)
-  const desiredFrames = Math.min(
-    MAX_STORY_FRAMES,
-    totalChars <= ONE_FRAME_MAX_CHARS
-      ? 1
-      : totalChars <= TWO_FRAME_MAX_CHARS
-        ? 2
-        : 3,
-  )
-
-  if (desiredFrames <= 1) return [blocks.join("\n\n")]
-
-  // Enough blocks to hit the target by grouping whole blocks — the common
-  // case (hook / content / CTA → 3 blocks).
-  if (blocks.length >= desiredFrames) {
-    return balanceBlocksIntoGroups(blocks, desiredFrames)
-  }
-
-  // Fewer blocks than frames (e.g. one giant paragraph). Sentence-split the
-  // longest block repeatedly until we have enough pieces, then group.
-  const pieces = [...blocks]
-  while (pieces.length < desiredFrames) {
-    let longest = 0
-    for (let i = 1; i < pieces.length; i++) {
-      if (pieces[i].length > pieces[longest].length) longest = i
-    }
-    const halves = splitBlockInHalf(pieces[longest])
-    if (halves.length < 2) break // can't split further — bail with what we have
-    pieces.splice(longest, 1, halves[0], halves[1])
-  }
-  return balanceBlocksIntoGroups(pieces, Math.min(desiredFrames, pieces.length))
+  return splitScriptIntoFrames(body, desiredFrameCount(body))
 }
 
-/**
- * Group consecutive blocks into `groups` frames, keeping order and
- * balancing character counts greedily (each block joins the current frame
- * until doing so would overshoot the even per-frame target).
- */
-function balanceBlocksIntoGroups(blocks: string[], groups: number): string[] {
-  const total = blocks.reduce((n, b) => n + b.length, 0)
-  const target = total / groups
-  const frames: string[] = []
-  let current: string[] = []
-  let currentChars = 0
-  for (let i = 0; i < blocks.length; i++) {
-    const remainingBlocks = blocks.length - i
-    const remainingSlots = groups - frames.length
-    // Keep at least one block per remaining frame slot.
-    const mustClose = remainingBlocks <= remainingSlots - 1
-    if (
-      current.length > 0 &&
-      (mustClose ||
-        (frames.length < groups - 1 && currentChars >= target * 0.9))
-    ) {
-      frames.push(current.join("\n\n"))
-      current = []
-      currentChars = 0
-    }
-    current.push(blocks[i])
-    currentChars += blocks[i].length
-  }
-  if (current.length > 0) frames.push(current.join("\n\n"))
-  return frames
-}
-
-/** Split one block near its middle, preferring a sentence boundary. */
-function splitBlockInHalf(block: string): string[] {
-  const sentences = block.split(/(?<=[.!?…])\s+/).filter(Boolean)
-  if (sentences.length >= 2) {
-    const mid = Math.ceil(sentences.length / 2)
-    return [
-      sentences.slice(0, mid).join(" ").trim(),
-      sentences.slice(mid).join(" ").trim(),
-    ]
-  }
-  // No sentence boundary — split on the nearest space to the midpoint.
-  const mid = Math.floor(block.length / 2)
-  const left = block.lastIndexOf(" ", mid)
-  const cut = left > 0 ? left : mid
-  return [block.slice(0, cut).trim(), block.slice(cut).trim()].filter(Boolean)
-}
 
 /**
  * Palette / mood variants — the story has no template picker, so we rotate
@@ -297,9 +195,7 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
