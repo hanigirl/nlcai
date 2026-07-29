@@ -14,6 +14,7 @@
 import satori from "satori"
 import { Resvg } from "@resvg/resvg-js"
 import { RtlText } from "@/lib/carousel-templates/shared"
+import { BROLL_VIDEO_CTA } from "@/lib/broll-copy"
 
 export const CAPTION_CANVAS_WIDTH = 1080
 export const CAPTION_CANVAS_HEIGHT = 1920
@@ -251,7 +252,7 @@ export function renderCaptionOverImagePng(
  * caption, because it has to arrive on a different beat — one PNG can't have
  * two entrances.
  */
-export const SECONDARY_CAPTION_TEXT = "קראו בתיאור"
+export const SECONDARY_CAPTION_TEXT = BROLL_VIDEO_CTA
 
 export async function renderSecondaryCaptionPng(
   text: string = SECONDARY_CAPTION_TEXT,

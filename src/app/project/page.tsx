@@ -33,6 +33,7 @@ import {
 import { copyToClipboard } from "@/lib/copy-to-clipboard"
 import { userKey } from "@/lib/user-scoped-storage"
 import { logLearningEdit } from "@/lib/learning-capture"
+import { BROLL_SCRIPT_CTA } from "@/lib/broll-copy"
 
 type Flow = "idea" | "hook" | "saved"
 
@@ -1562,7 +1563,12 @@ function ProjectPageInner() {
         // Falling through to the fetch below would 404 on /api/format/b_roll
         // and land the whole core post in the variant via the catch.
         if (FORMATS_WITHOUT_GENERATION.has(fid)) {
-          const text = activeHook || corePost
+          // Hook + the call-to-action that pairs with the clip's on-screen
+          // line (Hani, 2026-07-29). Same constant the API seeds with, so a
+          // b-roll reads identically whichever path created it.
+          const text = [activeHook || corePost, BROLL_SCRIPT_CTA]
+            .filter(Boolean)
+            .join("\n\n")
           results[fid] = text
           setFormatPosts((prev) => ({ ...prev, [fid]: text }))
           return

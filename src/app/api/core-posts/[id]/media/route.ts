@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { FORMAT_TYPES, type FormatType } from "@/lib/supabase/types"
 import { getAuthUser } from "@/lib/auth-user"
+import { BROLL_SCRIPT_CTA } from "@/lib/broll-copy"
 
 /**
  * The `format_type` enum. Imported, not mirrored — the local copy that used to
@@ -129,7 +130,11 @@ export async function POST(
       // with media already attached, and the hook missing from the format
       // entirely. Seed it here, where the row is born.
       const seedBody =
-        format === "b_roll" ? (post.hook_text ?? "").trim() : ""
+        format === "b_roll"
+          ? [(post.hook_text ?? "").trim(), BROLL_SCRIPT_CTA]
+              .filter(Boolean)
+              .join("\n\n")
+          : ""
       const { data: newVariant, error: insertErr } = await supabase
         .from("format_variants")
         .insert({ core_post_id: id, format, body: seedBody } as never)
