@@ -1057,9 +1057,25 @@ export function CorePostSheet({
                 (r) => r.format === format,
               )
               const publishedAt = publishedMap[format]?.publishedAt
+              // Format-first script logic:
+              // 1. If formatBodies exists as a key on the post AND has an entry
+              //    for this format → use the format-specific script.
+              // 2. If formatBodies is defined but does NOT have an entry for
+              //    this format → use post.body with a "generic fallback" notice.
+              // 3. If formatBodies is undefined (legacy post) → use post.body
+              //    silently (no notice — the user has never gone through the
+              //    new generation flow).
+              const hasFormatBodiesMap = post.formatBodies !== undefined
               const perFormatBody = post.formatBodies?.[format]
-              const sectionBody =
-                perFormatBody !== undefined ? perFormatBody : post.body
+              const hasFormatSpecificScript =
+                perFormatBody !== undefined && perFormatBody.trim().length > 0
+              // `isGenericFallback` = formatBodies map exists but this format
+              // has no entry (or an empty entry) → show the muted notice.
+              const isGenericFallback =
+                hasFormatBodiesMap && !hasFormatSpecificScript
+              const sectionBody = hasFormatSpecificScript
+                ? perFormatBody
+                : post.body
               const formatHasMedia =
                 post.formatsWithMedia?.includes(format) ?? false
               const perFormatMedia = post.formatMedia?.[format]
@@ -1096,6 +1112,7 @@ export function CorePostSheet({
                     format={format}
                     state={state}
                     body={sectionBody}
+                    isGenericFallback={isGenericFallback}
                     mediaUrl={mediaUrl}
                     coverUrl={formatCoverUrl}
                     driveUrl={formatMeta.driveUrl}
@@ -1309,6 +1326,7 @@ function FormatPanel({
   format,
   state,
   body,
+  isGenericFallback,
   mediaUrl,
   coverUrl,
   driveUrl,
@@ -1324,6 +1342,13 @@ function FormatPanel({
   format: FormatId
   state: FormatReadiness
   body: string | null
+  /**
+   * When true, `body` is the post-level generic script (formatBodies map
+   * exists but has no entry for this format). The ScriptBlock will render
+   * a muted notice to inform the user this is a fallback, not a
+   * format-specific script.
+   */
+  isGenericFallback?: boolean
   mediaUrl: string | null
   coverUrl: string | null
   driveUrl: string | undefined
@@ -1345,6 +1370,7 @@ function FormatPanel({
         format={format}
         state={state}
         body={body}
+        isGenericFallback={isGenericFallback}
         onCreateScript={onCreateScript}
         onEditScript={onEditScript}
       />
@@ -1404,12 +1430,19 @@ function ScriptBlock({
   format,
   state,
   body,
+  isGenericFallback,
   onCreateScript,
   onEditScript,
 }: {
   format: FormatId
   state: FormatReadiness
   body: string | null
+  /**
+   * When true, body is the generic post-level fallback (formatBodies map
+   * exists but has no specific entry for this format). Renders a muted
+   * notice so the user understands it is not a format-specific script.
+   */
+  isGenericFallback?: boolean
   onCreateScript: () => void
   onEditScript: () => void
 }) {
@@ -1447,7 +1480,17 @@ function ScriptBlock({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs-body text-text-neutral-default">סקריפט</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs-body text-text-neutral-default">סקריפט</span>
+          {/* Muted fallback notice — only shown when formatBodies map exists
+              but has no dedicated entry for this format. Signals to the user
+              that they are seeing the generic post script, not a tailored one. */}
+          {isGenericFallback && (
+            <span className="inline-flex items-center rounded-full bg-bg-surface border border-border-neutral-default px-2 py-0.5 text-xs-body text-text-neutral-default">
+              סקריפט כללי — טרם נוצר סקריפט ייעודי
+            </span>
+          )}
+        </div>
         {hasBody && (
           <button
             type="button"
