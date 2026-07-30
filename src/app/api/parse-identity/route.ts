@@ -12,6 +12,7 @@ import {
 import { anthropicErrorToHebrew } from "@/lib/anthropic-errors"
 import { extractFileContent, type FileContent } from "@/lib/extract-file-content"
 import { classifyUploadError } from "@/lib/upload-errors"
+import { getAuthUser } from "@/lib/auth-user"
 
 // Vercel default is 10s. Identity parsing with Sonnet on a ~10K-char file can
 // take 30–45s end-to-end; without this it'd timeout silently and the row would
@@ -31,7 +32,7 @@ const MAX_PDF_BYTES = 10 * 1024 * 1024
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
 
     if (!user) {
       return NextResponse.json(

@@ -19,6 +19,14 @@ import {
 } from "@/components/ui/dialog"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { DriveVideoPreview } from "@/components/drive-video-preview"
+import {
+  subscribeBRollGeneration,
+  getBRollGenerationSnapshot,
+  startBRollGeneration,
+  startCaptionBurn,
+  startStoryDriveImport,
+  clearStoryImportError,
+} from "@/lib/broll-generation-store"
 import { StoryPlayer } from "@/components/story-player"
 import { DriveMediaLinks } from "@/components/drive-media-links"
 import {
@@ -109,6 +117,33 @@ interface MediaPanelProps {
   storyDriveLinks: string[] | null
   onStoryDriveLinksChange: (links: string[] | null) => void
   /**
+   * Per-format media URLs the PAGE already loaded. The panel runs its own
+   * hydration fetch, and until that lands it can't know whether media exists
+   * — so it rendered empty for a second on every open, for data the app was
+   * already holding. Seeding from this paints immediately; the fetch then
+   * confirms or corrects.
+   */
+  initialFormatMedia?: Record<string, string>
+  /** The story's saved frames, already loaded by the page. */
+  initialStoryFrames?: string[] | null
+  /**
+   * True once the page's own post fetch has resolved. When it has, the panel
+   * skips its hydration request entirely — it was re-fetching the exact post
+   * the page had just fetched, and each of those calls costs ~1s (almost all
+   * of it auth verification, measured 2026-07-29), so opening a panel paid
+   * for the same data twice.
+   */
+  postLoaded?: boolean
+  /**
+   * Reports the b-roll's finished clip up to the page so it renders as its
+   * own workflow card next to the b-roll script — the same lift story and
+   * talking_head already do for their media.
+   */
+  onBRollUrlChange?: (url: string | null) => void
+  /** The b-roll's source Drive link. One clip, so at most one entry. */
+  bRollDriveLinks: string[] | null
+  onBRollDriveLinksChange: (links: string[] | null) => void
+  /**
    * Reports the persisted image_post media URL up to the parent so the
    * approved image can render as its own workflow card next to the
    * script (same pattern as talking_head's lifted video URL). Fires after
@@ -160,6 +195,12 @@ export function MediaPanel({
   onCarouselDriveLinksChange,
   storyDriveLinks,
   onStoryDriveLinksChange,
+  initialFormatMedia,
+  initialStoryFrames,
+  postLoaded,
+  onBRollUrlChange,
+  bRollDriveLinks,
+  onBRollDriveLinksChange,
   onImagePostUrlChange,
   onStoryImagesChange,
   onStoryVideoUrlChange,
@@ -214,7 +255,7 @@ export function MediaPanel({
             NOTE: this used to promise "upload from your computer". There is no
             file input anywhere in this component — that path was removed — so
             the copy was advertising a button that does not exist. */}
-        {meta && (
+        {meta && formatId !== "story" && formatId !== "b_roll" && formatId !== "image_post" && (
           <p className="mb-4 text-small text-text-neutral-default">
             אפשר לייצר מדיה עם AI או לתת קישור מגוגל דרייב או קנבה לתמונה / סרטון שמאוחסן שם.
           </p>
@@ -279,6 +320,12 @@ export function MediaPanel({
             onStoryVideoUrlChange={onStoryVideoUrlChange}
             storyDriveLinks={storyDriveLinks}
             onStoryDriveLinksChange={onStoryDriveLinksChange}
+            bRollDriveLinks={bRollDriveLinks}
+            onBRollDriveLinksChange={onBRollDriveLinksChange}
+            onBRollUrlChange={onBRollUrlChange}
+            initialMediaUrl={formatId ? initialFormatMedia?.[formatId] : undefined}
+            initialStoryFrames={initialStoryFrames}
+            postLoaded={postLoaded}
           />
         )}
       </div>
@@ -1241,6 +1288,65 @@ function TalkingHeadFlow({
 /*  Carousel — template selection + PNG generation                     */
 /* ------------------------------------------------------------------ */
 
+/**
+ * A carousel never runs past this many slides (Hani, 2026-07-29). Not a
+ * truncation — a ceiling that forces condensing, because a 9-slide carousel
+ * is both worse to read and, on an AI template, nine paid image renders
+ * (one generation measured at 7 minutes).
+ */
+const MAX_CAROUSEL_SLIDES = 6
+
+/**
+ * Fold a long slide list down to `max` by merging ADJACENT slides, keeping
+ * order. The first slide (the hook) and the last (the CTA) are preserved on
+ * their own wherever possible — the same shape the story split uses — so
+ * condensing costs the middle, never the opening or the close.
+ */
+function condenseSlides(slides: SlideData[], max: number): SlideData[] {
+  if (slides.length <= max) return slides
+  if (max <= 1) {
+    return [
+      {
+        ...slides[0],
+        slide: 1,
+        body: slides
+          .map((s) => [s.title, s.body].filter(Boolean).join("\n"))
+          .join("\n\n")
+          .trim(),
+      },
+    ]
+  }
+
+  const first = slides[0]
+  const last = slides[slides.length - 1]
+  const middle = slides.slice(1, -1)
+  const middleSlots = max - 2
+
+  // Spread the middle as evenly as possible across the slots it has left.
+  const groups: SlideData[][] = Array.from({ length: middleSlots }, () => [])
+  middle.forEach((slide, i) => {
+    groups[Math.floor((i * middleSlots) / middle.length)].push(slide)
+  })
+
+  const merged = groups
+    .filter((g) => g.length > 0)
+    .map((g) => ({
+      ...g[0],
+      title: g[0].title,
+      body: g
+        .map((sl, i) =>
+          // Only the first slide of a group keeps its title as a title; the
+          // rest fold their title into the body so nothing is lost.
+          i === 0 ? sl.body : [sl.title, sl.body].filter(Boolean).join("\n"),
+        )
+        .filter(Boolean)
+        .join("\n\n")
+        .trim(),
+    }))
+
+  return [first, ...merged, last].map((sl, i) => ({ ...sl, slide: i + 1 }))
+}
+
 // Parse carousel text ("שקופית N" blocks) into slides
 function parseTextToSlides(text: string): SlideData[] {
   const slideHeaderRegex = /^\s*(?:שקופית\s*\d+|\[.*?\])\s*:?\s*$/
@@ -1483,11 +1589,18 @@ function CarouselFlow({
     setGenerating(true)
     setError(null)
 
-    const parsedSlides = parseTextToSlides(carouselText)
-    if (parsedSlides.length === 0) {
+    const allSlides = parseTextToSlides(carouselText)
+    if (allSlides.length === 0) {
       setError("לא נמצאו סליידים בטקסט הקרוסלה")
       setGenerating(false)
       return
+    }
+    const parsedSlides = condenseSlides(allSlides, MAX_CAROUSEL_SLIDES)
+    if (allSlides.length > parsedSlides.length) {
+      toast.info(
+        `צימצמנו את הקרוסלה מ-${allSlides.length} ל-${parsedSlides.length} שקופיות`,
+        { duration: 5000 },
+      )
     }
 
     // Bottom-of-screen toast per generation — parallel generations across
@@ -1524,7 +1637,28 @@ function CarouselFlow({
         // AI route returns a Hebrew user-facing `message` alongside the
         // machine `error` code (e.g. openai_not_connected).
         setError(data.message || data.error)
-        toast.error(data.message || data.error, { id: genToast, duration: 8000 })
+        {
+          const msg = String(data.message || data.error)
+          const isBilling = /תקרת החיוב|קרדיט|billing|quota/i.test(msg)
+          toast.error(msg, {
+            id: genToast,
+            duration: isBilling ? 30000 : 8000,
+            // A billing failure is the one error the user can actually fix,
+            // and only from somewhere else — so the toast carries the way
+            // there rather than making her hunt for it.
+            action: isBilling
+              ? {
+                  label: "הטענת קרדיט",
+                  onClick: () =>
+                    window.open(
+                      "https://platform.openai.com/settings/organization/billing/overview",
+                      "_blank",
+                      "noopener,noreferrer",
+                    ),
+                }
+              : undefined,
+          })
+        }
       } else if (!data.images) {
         // A 200 with neither `error` nor `images` used to fall straight through
         // to `finally`, leaving the `duration: Infinity` loading toast on screen
@@ -1532,8 +1666,6 @@ function CarouselFlow({
         setError("שגיאה ביצירת הקרוסלה")
         toast.error("שגיאה ביצירת הקרוסלה", { id: genToast, duration: 8000 })
       } else if (data.images) {
-        // Cache + preview only — the post's carousel changes when the
-        // user approves inside the dialog, not on generation.
         if (postId) {
           carouselGenCache.set(postId, {
             ...(carouselGenCache.get(postId) ?? {}),
@@ -1541,6 +1673,17 @@ function CarouselFlow({
           })
         }
         setGeneratedByTemplate((p) => ({ ...p, [genId]: data.images }))
+        // Generating IS choosing (Hani, 2026-07-29). This used to be a
+        // preview that only became the post's carousel once she pressed
+        // approve inside the dialog — so a generated set lived in memory,
+        // showed no workflow card, and vanished on refresh. Every other
+        // format now saves on generate; swapping happens by generating
+        // again or importing, from this panel.
+        onImagesChange(data.images)
+        if (postId && genId !== DRIVE_IMPORT_KEY) {
+          setFormatMeta(postId, "carousel", { templateId: genId })
+        }
+        setSavedTemplateId(genId === DRIVE_IMPORT_KEY ? undefined : genId)
         setDialogFor(genId)
         setPreviewIndex(0)
         toast.success(`הקרוסלה (${templateName}) מוכנה`, {
@@ -1861,6 +2004,36 @@ function CarouselFlow({
         )}
       </Button>
 
+      {error && (
+        // A billing failure gets its own treatment: the user can't act on
+        // "it failed", but she can act on "your OpenAI credit ran out, top up
+        // here". Detected from the message the route already returns rather
+        // than a new error code, so every path that surfaces it benefits.
+        /תקרת החיוב|קרדיט|billing|quota/i.test(error) ? (
+          <div className="flex flex-col gap-2 rounded-xl border border-border-neutral-default bg-bg-surface p-3">
+            <p className="text-small-bold text-text-primary-default">
+              נגמר הקרדיט ב-OpenAI
+            </p>
+            <p className="text-xs-body text-text-neutral-default">
+              יצירת קרוסלה עם טמפלט AI מציירת כל שקופית בנפרד דרך מפתח ה-OpenAI
+              שלך, וזה נגמר. אפשר להטעין קרדיט ולנסות שוב — או לבחור טמפלט
+              רגיל, שנוצר אצלנו בשניות וללא עלות.
+            </p>
+            <a
+              href="https://platform.openai.com/settings/organization/billing/overview"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 self-start rounded-lg border border-border-neutral-default bg-white px-3 py-1.5 text-xs font-medium text-text-primary-default transition-colors hover:bg-bg-surface-hover dark:bg-gray-10"
+            >
+              <Link2 className="size-3.5" />
+              הטענת קרדיט ב-OpenAI
+            </a>
+          </div>
+        ) : (
+          <p className="text-sm text-button-destructive-default text-center">{error}</p>
+        )
+      )}
+
       {/* Preview dialog — scroll through the slides, then approve to make
           this the post's carousel (mirrors the image_post lightbox). */}
       <Dialog
@@ -2037,8 +2210,34 @@ function CarouselFlow({
         />
       </div>
 
-      {error && (
-        <p className="text-sm text-button-destructive-default text-center">{error}</p>
+
+      {/* The post's carousel, in the same grey band story and b-roll use
+          (Hani, 2026-07-29 — every format's panel should end the same way).
+          Playable right here: tapping a slide steps through the set without
+          leaving the panel. Purely additive — the template tiles, the saved
+          slides and the import above are untouched. */}
+      {images && images.length > 0 && (
+        <div className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-5 bg-gray-95 px-6 py-5 dark:bg-gray-10">
+          <p className="text-center text-xs text-text-neutral-default">
+            הקרוסלה שלך
+          </p>
+          <button
+            type="button"
+            onClick={() => openDialog(savedTemplateId ?? DRIVE_IMPORT_KEY)}
+            aria-label={`הקרוסלה שלך — ${images.length} שקופיות, לצפייה`}
+            className="relative w-[200px] overflow-hidden rounded-[10px] border border-border-neutral-default bg-bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={`data:image/png;base64,${images[0]}`}
+              alt="השקופית הראשונה של הקרוסלה שלך"
+              className="w-full"
+            />
+            <span className="absolute bottom-2 start-2 rounded-md bg-black/60 px-2 py-0.5 text-xs text-white">
+              1/{images.length}
+            </span>
+          </button>
+        </div>
       )}
     </div>
   )
@@ -2127,6 +2326,12 @@ function MediaUploadFlow({
   onStoryVideoUrlChange,
   storyDriveLinks,
   onStoryDriveLinksChange,
+  bRollDriveLinks,
+  onBRollDriveLinksChange,
+  onBRollUrlChange,
+  initialMediaUrl,
+  initialStoryFrames,
+  postLoaded,
 }: {
   format: string
   postId: string | null
@@ -2136,6 +2341,12 @@ function MediaUploadFlow({
   onStoryVideoUrlChange?: (url: string | null) => void
   storyDriveLinks?: string[] | null
   onStoryDriveLinksChange?: (links: string[] | null) => void
+  bRollDriveLinks?: string[] | null
+  onBRollDriveLinksChange?: (links: string[] | null) => void
+  onBRollUrlChange?: (url: string | null) => void
+  initialMediaUrl?: string
+  initialStoryFrames?: string[] | null
+  postLoaded?: boolean
 }) {
   // Read once, before any narrowing. Inside the burn-button condition TS has
   // already pinned `format` to "story", so a literal check for b-roll there
@@ -2160,19 +2371,33 @@ function MediaUploadFlow({
   const lastDriveRef = useRef<string>("")
 
   // Uploaded asset preview (data URL while uploading; persistent URL after).
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  // Seeded from what the page already loaded, so existing media is on screen
+  // in the first paint. Story is excluded on purpose: its frames belong to
+  // the ordered set, and a lone frame-1 here would masquerade as "the single
+  // current media" — the same reason the hydration below skips it.
+  const seedMediaUrl =
+    initialMediaUrl && (format !== "story" || isVideoUrl(initialMediaUrl))
+      ? initialMediaUrl
+      : null
+  const [previewUrl, setPreviewUrl] = useState<string | null>(seedMediaUrl)
   // Once the replacement actually lands, put the field away again — otherwise
   // swapping a clip leaves the panel permanently back in "paste a link" mode.
   useEffect(() => {
     if (previewUrl) setReplacingMedia(false)
   }, [previewUrl])
-  const [previewKind, setPreviewKind] = useState<"image" | "video" | null>(null)
+  const [previewKind, setPreviewKind] = useState<"image" | "video" | null>(
+    seedMediaUrl ? (isVideoUrl(seedMediaUrl) ? "video" : "image") : null,
+  )
   const [uploading, setUploading] = useState(false)
   // Hydration phase = "we still don't know if there's existing media". True
   // while the /api/core-posts fetch is in flight. Without this, the panel
   // briefly renders the empty upload CTA before flipping to the preview
   // — which reads as "the image wasn't saved" to the user.
-  const [hydrating, setHydrating] = useState<boolean>(() => !!postId)
+  // Only "hydrating" when we actually have to go and ask. If the page has
+  // already loaded the post, everything this panel needs arrived as props.
+  const [hydrating, setHydrating] = useState<boolean>(
+    () => !!postId && !postLoaded,
+  )
   // Image element loading — flips false on `<img onLoad>`. Hides the
   // <img> behind a skeleton until the bytes have actually decoded, so
   // there's no flash of empty box between "src set" and "image painted".
@@ -2218,7 +2443,9 @@ function MediaUploadFlow({
   const storyInFlight = storyGenState.inFlight
   // The story set currently saved to the post (storage URLs, or a base64 set
   // optimistically after save until the next reload rehydrates URLs).
-  const [savedStorySet, setSavedStorySet] = useState<string[]>([])
+  const [savedStorySet, setSavedStorySet] = useState<string[]>(
+    () => (format === "story" && initialStoryFrames) || [],
+  )
   // Story lightbox: which set is open and which frame within it.
   const [storyLightbox, setStoryLightbox] = useState<{
     set: string[]
@@ -2226,8 +2453,6 @@ function MediaUploadFlow({
   } | null>(null)
   const [savingStory, setSavingStory] = useState(false)
   const [pendingStoryDelete, setPendingStoryDelete] = useState(false)
-  // True while the burn-the-caption-into-the-video render is running.
-  const [burningText, setBurningText] = useState(false)
   // A story video whose caption is already baked in — the burn route stores
   // it under a "burned-" filename, so we can tell a finished clip from a raw
   // source across reloads and avoid double-stacking the text.
@@ -2247,14 +2472,27 @@ function MediaUploadFlow({
       return
     }
     const meta = getFormatMeta(postId, format as FormatId)
-    setDriveUrl(meta.driveUrl ?? "")
+    setDriveUrl(
+      // B-roll remembers its source link on the post; everything else falls
+      // back to the local reference-link store.
+      (format === "b_roll" ? bRollDriveLinks?.[0] : undefined) ??
+        meta.driveUrl ??
+        "",
+    )
     setDriveDirty(false)
     // Reset the upload preview when the post changes — otherwise
     // navigating between posts would leak a previous post's preview into
     // a fresh open.
-    setPreviewUrl(null)
-    setPreviewKind(null)
-    setHydrating(true)
+    setPreviewUrl(seedMediaUrl)
+    setPreviewKind(
+      seedMediaUrl ? (isVideoUrl(seedMediaUrl) ? "video" : "image") : null,
+    )
+    // Only "hydrating" if we're actually about to fetch. When the page has
+    // already handed us the post, the fetch effect below returns early — so
+    // flipping this to true here left it stuck true forever, and every
+    // control gated on `!hydrating` (the whole b-roll panel bar one button)
+    // never rendered.
+    setHydrating(!!postId && !postLoaded)
     setImageLoading(false)
     // aiPreviews are NOT reset here — they live in the per-postId store and
     // intentionally persist across panel open/close so in-flight and
@@ -2266,7 +2504,10 @@ function MediaUploadFlow({
     // Story: reset the saved set + lightbox; the actual saved set is
     // hydrated from storyImageUrls in the media-hydration effect below. The
     // in-memory generated `sets` intentionally persist across open/close.
-    setSavedStorySet([])
+    // Same reasoning as `hydrating`: when the page already supplied the
+    // frames there is no fetch coming to put them back, so clearing here
+    // would empty the story panel permanently.
+    setSavedStorySet((format === "story" && initialStoryFrames) || [])
     setStoryLightbox(null)
 
     // In-flight / transient flags. These were previously left alone, so with
@@ -2278,7 +2519,9 @@ function MediaUploadFlow({
     setDrivePulling(false)
     setDriveError(null)
     setUploading(false)
-    setBurningText(false)
+    // Burn progress is NOT reset here any more — it lives in the module store
+    // now, precisely so switching format or closing the panel can't cancel
+    // the user's view of work that's still running.
     setSavingStory(false)
     setPendingDelete(false)
     setPendingStoryDelete(false)
@@ -2308,6 +2551,9 @@ function MediaUploadFlow({
   // detection so the preview type stays consistent across surfaces.
   useEffect(() => {
     if (!postId) return
+    // The page fetched this post already and handed the results down. Asking
+    // again costs a full second for bytes we're holding.
+    if (postLoaded) return
     let cancelled = false
     fetch(`/api/core-posts/${postId}`)
       .then((res) => (res.ok ? res.json() : null))
@@ -2586,51 +2832,14 @@ function MediaUploadFlow({
    * to the finished clip. The route persists the result in the same video
    * slot, so nothing else needs to save.
    */
-  const handleBurnText = async () => {
+  const handleBurnText = () => {
     if (!postId) {
       toast.error("שמרו קודם את הפוסט", { duration: 4000 })
       return
     }
-    setBurningText(true)
-    const toastId = "story-burn"
-    toast.loading("מטמיעים את הכיתוב בסרטון...", {
-      id: toastId,
-      duration: Infinity,
-    })
-    try {
-      const res = await fetch("/api/story/generate-video-media", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // b-roll burns the same way story does — same route, same overlay,
-        // different variant.
-        body: JSON.stringify({ postId, format }),
-      })
-      const data = (await res.json().catch(() => ({}))) as {
-        url?: string
-        error?: string
-        message?: string
-      }
-      if (!res.ok || !data.url) {
-        toast.error(data.message ?? data.error ?? "הטמעת הכיתוב נכשלה", {
-          id: toastId,
-          duration: 10000,
-        })
-        return
-      }
-      setPreviewUrl(data.url)
-      setPreviewKind("video")
-      // Lift the finished clip so it renders as the story workflow card.
-      onStoryVideoUrlChange?.(data.url)
-      toast.success("הכיתוב הוטמע בסרטון", { id: toastId, duration: 4000 })
-    } catch (err) {
-      toast.error(
-        `הטמעת הכיתוב נכשלה: ${err instanceof Error ? err.message : String(err)}`,
-        { id: toastId, duration: 10000 },
-      )
-    } finally {
-      setBurningText(false)
-    }
+    startCaptionBurn(postId, format)
   }
+
 
   /**
    * Persist a generated story SET as the post's story media — the
@@ -2715,82 +2924,170 @@ function MediaUploadFlow({
   // `store:true` handles both: the file lands in Storage and we get a URL
   // back. The story PATCH re-points existing URLs rather than re-uploading
   // them, so the frame set holds URLs from here on.
-  const [storyDriveImporting, setStoryDriveImporting] = useState(false)
-  const [storyDriveProgress, setStoryDriveProgress] = useState("")
-  const [storyDriveError, setStoryDriveError] = useState<string | null>(null)
+  // The link rows start collapsed behind a button (Hani, 2026-07-29 — Figma
+  // 598:3). At rest the panel offers two choices, not two choices plus a
+  // form; the rows appear once she's actually chosen to import. Opened by
+  // default when links are already saved, so a returning user isn't asked to
+  // re-find work she already did.
+  const [showStoryDriveLinks, setShowStoryDriveLinks] = useState(
+    () => (storyDriveLinks?.length ?? 0) > 0,
+  )
+  const bRollSubscribe = useCallback(
+    (cb: () => void) => subscribeBRollGeneration(postId ?? null, cb),
+    [postId],
+  )
+  const bRollSnapshot = useCallback(
+    () => getBRollGenerationSnapshot(postId ?? null),
+    [postId],
+  )
+  const bRollState = useSyncExternalStore(
+    bRollSubscribe,
+    bRollSnapshot,
+    bRollSnapshot,
+  )
+  const storyDriveImporting = bRollState.storyImporting
+  const storyDriveProgress = bRollState.storyProgress
+  const storyDriveError = bRollState.storyError
 
-  const handleStoryDriveImport = async (rows: string[]) => {
-    if (!postId) {
-      setStoryDriveError("שמרו את הפוסט לפני ייבוא הסטורי")
-      return
-    }
-    const links = rows.filter(Boolean)
-    if (links.length === 0) {
-      setStoryDriveError("הדביקו לפחות קישור אחד")
-      return
-    }
-    if (links.some((l) => !/drive\.google\.com|docs\.google\.com/i.test(l))) {
-      setStoryDriveError("כל הקישורים צריכים להיות מגוגל דרייב (קאנבה לא נתמך כאן)")
-      return
-    }
-    setStoryDriveError(null)
-    setStoryDriveImporting(true)
-    const errMap: Record<string, string> = {
-      invalid_drive_link: "לא זוהה קובץ באחד הקישורים.",
-      drive_not_public:
-        'אחד הקבצים לא ציבורי — שנו הרשאה ל„כל מי שיש לו הקישור”.',
-      file_too_large: `אחד הקבצים גדול מדי (מקסימום ${MAX_FILE_MB}MB).`,
-    }
+  /**
+   * Lay the post's hook + story body over one frame and return the burned
+   * URL. Returns null on failure — a frame that couldn't be captioned is
+   * still a usable frame, so the import keeps the raw one and carries on
+   * rather than throwing the whole set away.
+   */
+  const burnCaptionInto = async (
+    url: string,
+    frameIndex: number,
+    frameCount: number,
+  ): Promise<string | null> => {
+    if (!postId) return null
     try {
-      // Merge, don't replace (Hani, 2026-07-28: "אם הוספתי זה יהיה רק תוספת").
-      // Row i IS frame i, so a row that already has a frame and no new link
-      // keeps exactly what it had — importing a second frame must not
-      // re-create the first one, and must not drop a frame that came from
-      // the AI generator or the single-link field.
-      const frames: string[] = []
-      let pulled = 0
-      const toPull = links.length
-      for (let i = 0; i < rows.length; i++) {
-        const link = rows[i]
-        if (!link) {
-          const existing = savedStorySet[i]
-          if (existing) frames.push(existing)
-          continue
-        }
-        pulled++
-        setStoryDriveProgress(`טוען פריים ${pulled} מתוך ${toPull}...`)
-        const res = await fetch("/api/media/from-drive", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: link, store: true }),
-        })
-        const data = await res.json()
-        if (!res.ok || data.error || !data.url) {
-          setStoryDriveError(
-            `${errMap[data.error] ?? "טעינת אחד הפריימים נכשלה."} (פריים ${i + 1})`,
-          )
-          return
-        }
-        frames.push(data.url as string)
-      }
-      // Any frames beyond the rows on screen are still part of the story —
-      // keep them rather than truncating the set to the form's length.
-      if (savedStorySet.length > rows.length) {
-        frames.push(...savedStorySet.slice(rows.length))
-      }
-      // Stored URLs, so this goes through the reorder-safe writer rather than
-      // handleStorySave (which short-circuits on an all-URL set).
-      await persistStorySet(frames)
-      toast.success(`הסטורי נטען מהדרייב (${frames.length} פריימים)`, {
-        duration: 5000,
+      const res = await fetch("/api/story/generate-video-media", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          postId,
+          format: "story",
+          sourceUrl: url,
+          // The frame belongs to the ordered set; it must not also be written
+          // into the variant's single video slot.
+          persist: false,
+          // Its position decides which slice of the script it carries.
+          frameIndex,
+          frameCount,
+        }),
       })
+      const data = await res.json()
+      if (!res.ok || data.error || !data.url) {
+        console.error("[media-panel][story-burn]", data.error ?? res.status)
+        return null
+      }
+      return data.url as string
     } catch (err) {
-      console.error("[media-panel][story-drive-import]", err)
-      setStoryDriveError("שגיאת רשת בטעינת הפריימים. נסו שוב.")
-    } finally {
-      setStoryDriveImporting(false)
-      setStoryDriveProgress("")
+      console.error("[media-panel][story-burn]", err)
+      return null
     }
+  }
+
+  // Anything that will land in the grey band when it finishes — an AI
+  // generation or a Drive pull. Both produce the story, so both belong in the
+  // same slot rather than each inventing its own progress affordance.
+  const busyOnStory = storyInFlight > 0 || storyDriveImporting
+
+  // --- AI b-roll ------------------------------------------------------------
+  // A still with the caption over it, animated into a 7s clip. The work runs
+  // in a module-level store, NOT here: this component unmounts the moment the
+  // panel closes, and generation takes up to a minute. Same pattern
+  // image_post and story already use.
+  const bRollGenerating = bRollState.inFlight > 0
+  const burningText = bRollState.burning > 0
+  const bRollAttemptRef = useRef(0)
+
+  // Whether the b-roll link field is open. Closed at rest behind the Drive
+  // button and opened by pressing it — the same two-step the story uses, so
+  // the panel offers choices rather than choices plus a form.
+  const showBRollDriveField = replacingMedia
+
+  // Pick up a clip that finished while this panel was closed.
+  useEffect(() => {
+    if (format !== "b_roll" || !bRollState.url) return
+    setPreviewUrl(bRollState.url)
+    setPreviewKind("video")
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [format, bRollState.url])
+
+  // The story frame set produced by a background import — picked up whether
+  // the panel was open the whole time or opened after it finished.
+  const importedStoryFrames = bRollState.storyFrames
+  useEffect(() => {
+    if (format !== "story" || !importedStoryFrames) return
+    setSavedStorySet(importedStoryFrames)
+    onStoryImagesChange?.(importedStoryFrames)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [format, importedStoryFrames])
+
+  // Same for a caption burn that finished while the panel was shut. Guarded
+  // on format so a story burn can't land in the b-roll panel and vice versa.
+  const burned = bRollState.burned
+  useEffect(() => {
+    if (!burned || burned.format !== format) return
+    setPreviewUrl(burned.url)
+    setPreviewKind("video")
+    if (format === "b_roll") onBRollUrlChange?.(burned.url)
+    else onStoryVideoUrlChange?.(burned.url)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [format, burned])
+
+  const handleBRollGenerate = () => {
+    if (!postId) {
+      toast.error("שמרו קודם את הפוסט", { duration: 4000 })
+      return
+    }
+    // Bumped per press so a retry varies the palette instead of returning a
+    // near-identical picture.
+    startBRollGeneration(postId, bRollAttemptRef.current++)
+  }
+
+  // Save what the AI just made, without waiting to be asked (Hani,
+  // 2026-07-29). Story and image_post used to hold their results as
+  // candidates until the user approved one in a dialog — which is why a
+  // generated story showed in the panel but had no workflow card and did not
+  // survive a refresh. Generating is the choice; replacing means generating
+  // again or importing from this panel.
+  //
+  // Guarded by a ref rather than by "is there already media": re-running the
+  // effect must not re-save the same set, but a DELIBERATE second generation
+  // must replace the first.
+  const autoSavedStoryRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (format !== "story") return
+    const latest = storySets[storySets.length - 1]
+    if (!latest || latest.length === 0) return
+    const key = `${latest.length}|${latest[0]?.slice(0, 24)}`
+    if (autoSavedStoryRef.current === key) return
+    autoSavedStoryRef.current = key
+    void handleStorySave(latest)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [format, storySets])
+
+  const autoSavedImageRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (format !== "image_post") return
+    const latest = aiPreviews[aiPreviews.length - 1]
+    if (!latest) return
+    const key = latest.slice(0, 24)
+    if (autoSavedImageRef.current === key) return
+    autoSavedImageRef.current = key
+    void handleAiSave(latest)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [format, aiPreviews])
+
+  const handleStoryDriveImport = (rows: string[]) => {
+    if (!postId) {
+      toast.error("שמרו את הפוסט לפני ייבוא הסטורי", { duration: 4000 })
+      return
+    }
+    startStoryDriveImport(postId, rows, savedStorySet)
   }
 
   /** Clear the saved story set (PATCH { storyImages: null }). */
@@ -2910,6 +3207,11 @@ function MediaUploadFlow({
         if (deletedUrl) removeGenerationResult(postId, deletedUrl)
       }
       // Deleting the story video removes its workflow card too.
+      // Deleting is the one place absence is real, so it clears the canvas
+      // card explicitly — the lift effect above deliberately never does.
+      if (format === "b_roll") {
+        onBRollUrlChange?.(null)
+      }
       if (format === "story" && assetType === "video") {
         onStoryVideoUrlChange?.(null)
       }
@@ -3082,6 +3384,17 @@ function MediaUploadFlow({
 
       // Lift the result to the parent regardless of which format is on screen —
       // the canvas card for `targetFormat` must update either way.
+      // B-roll: choosing the clip IS the instruction to caption it
+      // (Hani, 2026-07-29). No separate "burn" button — the attach and the
+      // caption are one action, with the progress line below as the
+      // indication. Images can't be burned by the video pipeline, so only a
+      // video triggers it.
+      if (targetFormat === "b_roll") {
+        onBRollDriveLinksChange?.([link])
+      }
+      if (targetFormat === "b_roll" && kind === "video") {
+        void handleBurnText()
+      }
       if (targetFormat === "story") {
         // The single-link field and the per-frame list are the SAME story
         // (Hani, 2026-07-28): a link pasted up there is frame 1 down here, and
@@ -3208,65 +3521,49 @@ function MediaUploadFlow({
           link OR upload — with no "או" divider. */}
       {format === "image_post" && (
         <>
-          {/* CTA. Gated by `hydrating` ONLY so the empty banner doesn't
-              flash before we know whether saved media exists. Everything
-              below (bring-your-own + the photos row/skeletons) is NOT
-              gated — the photos come from the generation store and must
-              appear the instant the panel opens, whether a background
-              generation already finished or is still running. */}
+          {/* Same shape as the story panel (Hani, 2026-07-29): the card stays
+              open with its explainer instead of collapsing to a bare button
+              once an image exists, so the panel reads the same in every
+              format. The generate action lives inside it. */}
           {hydrating ? (
-            <Skeleton className="h-11 w-full rounded-xl" />
-          ) : aiPreviews.length === 0 && !previewUrl && inFlight === 0 ? (
-                <button
-                  type="button"
-                  onClick={handleAiGenerate}
-                  disabled={!postId}
-                  className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 p-6 hover:bg-bg-surface transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-                  aria-label="יצירת תמונה בלחיצה"
-                >
-                  {/* Camera illustration — split into two assets so the tile
-                      reads as centered while the sparkle cluster hangs off
-                      to its upper-left. */}
-                  <div className="relative size-10 shrink-0">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src="/images/ai-camera.png"
-                      alt=""
-                      className="size-full object-contain"
-                    />
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src="/images/ai-camera-sparkle.png"
-                      alt=""
-                      className="pointer-events-none absolute -left-3.5 -top-1 w-5"
-                    />
-                  </div>
-                  <span className="text-small font-semibold text-text-primary-default">
-                    יצירת תמונה בלחיצה
-                  </span>
-                  <span className="text-xs text-text-neutral-default text-center leading-relaxed max-w-[286px]">
-                    ניצור תמונה מעוצבת לפי תוכן הפוסט, עם הטקסט של הפורמט
-                    (כותרת, תת-כותרת וטקסט תחתון) משולב בעיצוב.
-                  </span>
-                </button>
-              ) : (
-                // Stays enabled while generations run so more can be queued
-                // in parallel; progress shows as skeletons in the row below.
-                <Button
-                  onClick={handleAiGenerate}
-                  disabled={!postId}
-                  className="w-full gap-1.5"
-                >
-                  <ImagePlus className="size-4" />
-                  יצירת תמונה עם AI
-                  {inFlight > 0 && (
-                    <span className="inline-flex items-center gap-1 text-xs opacity-80">
-                      <Loader2 className="size-3.5 animate-spin" />
-                      {inFlight}
-                    </span>
-                  )}
-                </Button>
-              )}
+            <Skeleton className="h-[190px] w-full rounded-[18px]" />
+          ) : (
+            <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
+              {/* Camera illustration — split into two assets so the tile
+                  reads as centered while the sparkle cluster hangs off to
+                  its upper-left. */}
+              <div className="relative size-10 shrink-0">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/images/ai-camera.png"
+                  alt=""
+                  className="size-full object-contain"
+                />
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/images/ai-camera-sparkle.png"
+                  alt=""
+                  className="pointer-events-none absolute -left-3.5 -top-1 w-5"
+                />
+              </div>
+              <span className="text-small font-semibold text-text-primary-default">
+                יצירת תמונה בלחיצה
+              </span>
+              <span className="max-w-[286px] text-center text-xs leading-relaxed text-text-neutral-default">
+                ניצור תמונה מעוצבת לפי תוכן הפוסט, עם הטקסט של הפורמט משולב
+                בעיצוב
+              </span>
+              <Button
+                variant="outline"
+                onClick={handleAiGenerate}
+                disabled={!postId}
+                className="w-full gap-1.5"
+              >
+                {inFlight > 0 && <Loader2 className="size-3.5 animate-spin" />}
+                יצירת תמונה עם AI
+              </Button>
+            </div>
+          )}
 
               {/* Bring your own — paste a Drive/Canva link. Drive links are
                   attached automatically — a video stays in Drive and plays
@@ -3327,81 +3624,53 @@ function MediaUploadFlow({
                 )}
               </div>
 
-              {/* Your photos — at the BOTTOM. The saved/current image is
-                  highlighted (yellow ring + border + check badge) so it's
-                  obvious which one is attached to the post; generated
-                  candidates are tappable to view big and pick. */}
-              {(aiPreviews.length > 0 || previewUrl || inFlight > 0) && (
-                <div className="flex flex-col gap-2">
-                  <p className="text-small-bold text-text-primary-default">
-                    התמונות שלכם
-                  </p>
-                  <div className="flex gap-2 overflow-x-auto px-1 py-2">
-                    {previewUrl && (
-                      <div className="group relative aspect-[4/5] w-[72px] shrink-0 overflow-hidden rounded-lg border-2 border-yellow-50 bg-bg-surface ring-2 ring-yellow-50 ring-offset-2 ring-offset-white dark:ring-offset-gray-10">
-                        {imageLoading && (
-                          <Skeleton
-                            className="absolute inset-0 rounded-lg"
-                            aria-hidden
-                          />
-                        )}
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={previewUrl}
-                          alt="המדיה הנבחרת"
-                          onLoad={() => setImageLoading(false)}
-                          onError={() => setImageLoading(false)}
-                          className={`w-full h-full object-cover transition-opacity duration-200 ${
-                            imageLoading ? "opacity-0" : "opacity-100"
-                          }`}
-                        />
-                        {/* Selected badge — white circle backdrop keeps the
-                            check legible over any image. */}
-                        <CircleCheck className="absolute start-1 top-1 size-4 rounded-full bg-white text-yellow-30 shadow-sm" />
-                        <button
-                          type="button"
-                          onClick={() => setPendingDelete(true)}
-                          disabled={uploading || !postId}
-                          aria-label="מחיקת המדיה"
-                          className="absolute end-1 top-1 flex size-6 items-center justify-center rounded-md bg-white/90 text-button-destructive-default opacity-0 shadow-sm transition-opacity hover:bg-white focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
+              {/* The saved image and the AI candidates used to live in a
+                  72px thumbnail row here. The grey band below now shows the
+                  post's image at a size worth looking at, so the row was the
+                  same thing said twice (Hani, 2026-07-29). Only the
+                  in-progress skeletons remain — nothing else reports that a
+                  generation is running. */}
+              {inFlight > 0 && (
+                <div className="flex gap-2 overflow-x-auto px-1 py-2">
+                  {Array.from({ length: inFlight }).map((_, i) => (
+                    <div
+                      key={`img-gen-${i}`}
+                      className="relative aspect-[4/5] w-[72px] shrink-0 overflow-hidden rounded-lg border border-border-neutral-default"
+                      aria-label="מייצרים תמונה חדשה"
+                    >
+                      <Skeleton className="absolute inset-0 rounded-lg" aria-hidden />
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <Loader2 className="size-5 animate-spin text-text-neutral-default" />
                       </div>
-                    )}
-                    {aiPreviews
-                      .filter((src) => src !== previewUrl)
-                      .map((src, i) => (
-                        <button
-                          key={src}
-                          type="button"
-                          onClick={() => setLightboxSrc(src)}
-                          className="relative aspect-[4/5] w-[72px] shrink-0 overflow-hidden rounded-lg border border-border-neutral-default transition-colors hover:border-yellow-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-                          aria-label={`תמונה ${i + 1} — להגדלה ושמירה`}
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={src} alt="" className="size-full object-cover" />
-                        </button>
-                      ))}
-                    {/* In-progress placeholders — one skeleton per running
-                        generation, so parallel generations each show a
-                        thumbnail-on-the-way. Appended last to match the
-                        order the results land in. */}
-                    {Array.from({ length: inFlight }).map((_, i) => (
-                      <div
-                        key={`gen-${i}`}
-                        className="relative aspect-[4/5] w-[72px] shrink-0 overflow-hidden rounded-lg border border-border-neutral-default"
-                        aria-label="מייצרים תמונה חדשה"
-                      >
-                        <Skeleton className="absolute inset-0 rounded-lg" aria-hidden />
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <Loader2 className="size-5 text-text-neutral-default animate-spin" />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                    </div>
+                  ))}
                 </div>
               )}
+
+          {/* The post's image, in the same grey band every other format ends
+              with (Hani, 2026-07-29). Additive — the AI section and the
+              thumbnail row above are untouched. */}
+          {!hydrating && previewUrl && (
+            <div className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-5 bg-gray-95 px-6 py-5 dark:bg-gray-10">
+              <p className="text-center text-xs text-text-neutral-default">
+                התמונה שלך
+              </p>
+              <button
+                type="button"
+                onClick={() => setLightboxSrc(previewUrl)}
+                aria-label="התמונה שלך — להגדלה"
+                className="group relative w-[200px] aspect-[4/5] overflow-hidden rounded-[10px] border border-border-neutral-default bg-bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+              >
+                <Image
+                  src={previewUrl}
+                  alt="התמונה שלך"
+                  width={200}
+                  height={250}
+                  className="h-full w-full object-cover"
+                />
+              </button>
+            </div>
+          )}
         </>
       )}
 
@@ -3409,25 +3678,48 @@ function MediaUploadFlow({
           (1 frame, or up to 3 when the script is long), with the Hebrew
           text baked in. Mirrors the image_post AI section; the manual
           bring-your-own path stays below. */}
-      {format === "story" && (
+      {/* STORY — rebuilt to the Figma spec (Hani, 2026-07-29, node 597:730).
+          Three blocks, top to bottom: make one with AI, or bring your own
+          frames by Drive link, then the story itself.
+
+          What the redesign removed, deliberately:
+            • the single "paste a link" field — the per-frame list IS the
+              link input now, so there was no reason for two;
+            • the "הטמעת הכיתוב בסרטון" button — pasting a link is the intent,
+              so the caption is burned on import with no second step;
+            • the saved-story thumbnail strip — the preview at the bottom is
+              the story, at a size you can actually read.
+          The candidate strip survives for AI results, which are transient and
+          need somewhere to be approved from. */}
+      {/* Loading. A skeleton of the REAL layout, not a spinner and not a
+          single grey bar: the panel reads from the post over the network, and
+          until that lands the controls can't say anything true (is there a
+          story? are there links?). Half-drawn controls that then rearrange
+          themselves read as a bug; a shape that becomes the thing reads as
+          loading. */}
+      {format === "story" && hydrating && (
         <>
-          {/* No image/video switch (Hani, 2026-07-28). A story is a story —
-              she brings a photo or a clip and both are valid. Asking her to
-              declare the type up front made her pick a lane before she had
-              the file, and hid half the panel behind the wrong choice. The
-              media itself now decides what renders. */}
-          {hydrating ? (
-            <Skeleton className="h-11 w-full rounded-xl" />
-          ) : savedStorySet.length === 0 &&
-            storySets.length === 0 &&
-            storyInFlight === 0 ? (
-            <button
-              type="button"
-              onClick={handleStoryGenerate}
-              disabled={!postId}
-              className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 p-6 hover:bg-bg-surface transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-              aria-label="יצירת סטורי בלחיצה"
-            >
+          <Skeleton className="h-[190px] w-full rounded-[18px]" />
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-px flex-1" />
+            <Skeleton className="h-3 w-6" />
+            <Skeleton className="h-px flex-1" />
+          </div>
+          <Skeleton className="h-9 w-full rounded-lg" />
+          <div className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-5 bg-gray-95 px-6 py-5 dark:bg-gray-10">
+            <Skeleton className="h-3 w-20" />
+            <Skeleton className="w-[200px] aspect-[9/16] rounded-[10px]" />
+          </div>
+        </>
+      )}
+
+      {format === "story" && !hydrating && (
+        <>
+          {/* 1. Make one with AI. Always the full card — the design keeps the
+                 explainer visible rather than collapsing to a bare button
+                 once frames exist. */}
+          {(
+            <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
               <div className="relative size-10 shrink-0">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
@@ -3443,129 +3735,85 @@ function MediaUploadFlow({
                 />
               </div>
               <span className="text-small font-semibold text-text-primary-default">
-                יצירת סטורי בלחיצה
+                יצירת תמונה בלחיצה
               </span>
-              <span className="text-xs text-text-neutral-default text-center leading-relaxed max-w-[286px]">
-                ניצור סטורי מעוצב לפי טקסט הפורמט, עם הכיתוב משולב בתמונה. טקסט
-                ארוך יתחלק אוטומטית לעד 3 פריימים כדי לשמור על קריאוּת.
+              <span className="max-w-[286px] text-center text-xs leading-relaxed text-text-neutral-default">
+                ניצור רקע שמתאים לתוכן הפוסט ונשלב עליו את הטקסט של הסטורי
               </span>
-            </button>
-          ) : (
-            <Button
-              onClick={handleStoryGenerate}
-              disabled={!postId}
-              className="w-full gap-1.5"
-            >
-              <ImagePlus className="size-4" />
-              יצירת סטורי עם AI
-              {storyInFlight > 0 && (
-                <span className="inline-flex items-center gap-1 text-xs opacity-80">
+              <Button
+                variant="outline"
+                onClick={handleStoryGenerate}
+                disabled={!postId}
+                className="w-full gap-1.5"
+              >
+                {storyInFlight > 0 && (
                   <Loader2 className="size-3.5 animate-spin" />
-                  {storyInFlight}
-                </span>
-              )}
-            </Button>
-          )}
-
-          {(savedStorySet.length > 0 ||
-            storySets.length > 0 ||
-            storyInFlight > 0) && (
-            <div className="flex flex-col gap-2">
-              <p className="text-small-bold text-text-primary-default">
-                הסטורי שלכם
-              </p>
-              <div className="flex gap-2 overflow-x-auto px-1 py-2">
-                {/* Saved set — highlighted, tappable, deletable. */}
-                {savedStorySet.length > 0 && (
-                  <div className="group relative aspect-[9/16] w-[72px] shrink-0 overflow-hidden rounded-lg border-2 border-yellow-50 bg-bg-surface ring-2 ring-yellow-50 ring-offset-2 ring-offset-white dark:ring-offset-gray-10">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setStoryLightbox({ set: savedStorySet, index: 0 })
-                      }
-                      className="block size-full"
-                      aria-label="הסטורי הנבחר — להגדלה"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={localStoryFrameSrc(savedStorySet[0])}
-                        alt="הסטורי הנבחר"
-                        className="size-full object-cover"
-                      />
-                    </button>
-                    {savedStorySet.length > 1 && (
-                      <span className="absolute bottom-1 start-1 rounded bg-black/60 px-1 py-0.5 text-[10px] font-medium text-white">
-                        1/{savedStorySet.length}
-                      </span>
-                    )}
-                    <CircleCheck className="absolute start-1 top-1 size-4 rounded-full bg-white text-yellow-30 shadow-sm" />
-                    <button
-                      type="button"
-                      onClick={() => setPendingStoryDelete(true)}
-                      disabled={!postId}
-                      aria-label="מחיקת הסטורי"
-                      className="absolute end-1 top-1 flex size-6 items-center justify-center rounded-md bg-white/90 text-button-destructive-default opacity-0 shadow-sm transition-opacity hover:bg-white focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed"
-                    >
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  </div>
                 )}
-                {/* Generated candidate sets. */}
-                {storySets.map((set, i) => (
-                  <button
-                    key={`story-set-${i}`}
-                    type="button"
-                    onClick={() => setStoryLightbox({ set, index: 0 })}
-                    className="relative aspect-[9/16] w-[72px] shrink-0 overflow-hidden rounded-lg border border-border-neutral-default transition-colors hover:border-yellow-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-                    aria-label={`סטורי ${i + 1} — להגדלה ושמירה`}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={localStoryFrameSrc(set[0])}
-                      alt=""
-                      className="size-full object-cover"
-                    />
-                    {set.length > 1 && (
-                      <span className="absolute bottom-1 start-1 rounded bg-black/60 px-1 py-0.5 text-[10px] font-medium text-white">
-                        1/{set.length}
-                      </span>
-                    )}
-                  </button>
-                ))}
-                {/* In-progress placeholders — one per running generation. */}
-                {Array.from({ length: storyInFlight }).map((_, i) => (
-                  <div
-                    key={`story-gen-${i}`}
-                    className="relative aspect-[9/16] w-[72px] shrink-0 overflow-hidden rounded-lg border border-border-neutral-default"
-                    aria-label="מייצרים סטורי חדש"
-                  >
-                    <Skeleton className="absolute inset-0 rounded-lg" aria-hidden />
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <Loader2 className="size-5 text-text-neutral-default animate-spin" />
-                    </div>
-                  </div>
-                ))}
-              </div>
+                יצירת תמונה לסטורי עם AI
+              </Button>
             </div>
           )}
 
-          {/* Divider between "make it here" and "bring frames you already
-              designed" — same shape as the carousel panel. */}
+          {/* Candidate sets from AI — not in the design, which shows the
+              resting state. They're transient and need a place to be
+              approved from, so they stay. The SAVED story is no longer here;
+              it's the preview at the bottom. */}
+          {storySets.length > 0 && (
+            <div className="flex gap-2 overflow-x-auto px-1 py-2">
+              {storySets.map((set, i) => (
+                <button
+                  key={`story-set-${i}`}
+                  type="button"
+                  onClick={() => setStoryLightbox({ set, index: 0 })}
+                  className="relative aspect-[9/16] w-[72px] shrink-0 overflow-hidden rounded-lg border border-border-neutral-default transition-colors hover:border-yellow-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+                  aria-label={`סטורי ${i + 1} — להגדלה ושמירה`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={localStoryFrameSrc(set[0])}
+                    alt=""
+                    className="size-full object-cover"
+                  />
+                  {set.length > 1 && (
+                    <span className="absolute bottom-1 start-1 rounded bg-black/60 px-1 py-0.5 text-[10px] font-medium text-white">
+                      1/{set.length}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* 2. "או" */}
           <div className="flex items-center gap-3" role="separator">
             <span className="h-px flex-1 bg-border-neutral-default" />
             <span className="text-xs text-text-neutral-default">או</span>
             <span className="h-px flex-1 bg-border-neutral-default" />
           </div>
 
-          {/* One Drive link per story frame, in order — the same component the
-              carousel uses, so "add a frame" and reordering by dragging a row
-              behave identically across the two multi-frame formats
-              (Hani, 2026-07-28). Row i is frame i, so a drag rearranges the
-              saved story itself, not just the form. */}
+          {/* 3. Bring your own frames — behind a button until asked for.
+                 Row i is frame i, so dragging a row reorders the story
+                 itself, not just the form. */}
+          {!showStoryDriveLinks ? (
+            <Button
+              variant="outline"
+              onClick={() => setShowStoryDriveLinks(true)}
+              className="w-full gap-2"
+            >
+              {/* The real Drive mark, not a generic cloud glyph — this button
+                  is a promise about WHERE the media comes from, and the brand
+                  is what makes that legible at a glance. Icon first so it
+                  lands on the right in this RTL panel. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/images/google-drive.svg"
+                alt=""
+                className="size-4 shrink-0"
+              />
+              יבוא מדיה מ Google Drive
+            </Button>
+          ) : (
           <DriveMediaLinks
-            // Falls back to whatever link the story already has attached, so
-            // media added through the single-link field above shows up as
-            // frame 1 instead of leaving the list looking empty.
             savedLinks={storyDriveLinks ?? existingStoryLinkAsFrames}
             onSaveLinks={(links) => onStoryDriveLinksChange?.(links)}
             items={savedStorySet.length > 0 ? savedStorySet : null}
@@ -3575,14 +3823,65 @@ function MediaUploadFlow({
             importing={storyDriveImporting}
             importProgress={storyDriveProgress}
             importError={storyDriveError}
-            onImportErrorClear={() => setStoryDriveError(null)}
-            heading="ייבוא פריימים מגוגל דרייב"
-            helpText="הדביקו קישור ישיר לכל פריים (עד 10), לפי הסדר שבו הם יעלו לסטורי. כל קובץ צריך הרשאת „כל מי שיש לו הקישור”."
+            onImportErrorClear={() => clearStoryImportError(postId ?? null)}
+            heading="ייבוא מדיה"
+            helpText="הדביקו קישור ישיר מגוגל דרייב"
             unitLabel="פריים"
             addRowLabel="הוסיפו פריים"
-            importLabel="טענו סטורי מהדרייב"
-            reorderHint="גררו שורה כדי לשנות את סדר הפריימים בסטורי."
+            importLabel="טענו את המדיה"
+            autoImport
           />
+          )}
+
+          {/* 4. The story itself. Bleeds past the panel's 24px padding so the
+                 grey band spans the full rail, as in the design. */}
+          {/* 4. The grey band is where the story lives — AND where it's made
+                 (Hani, 2026-07-29 — Figma 598:83). Work in progress renders
+                 here at full size rather than as a 72px tile off to the side,
+                 so what you watch being made is the thing you end up with. */}
+          {(savedStorySet.length > 0 || busyOnStory) && (
+            <div className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-5 bg-gray-95 px-6 py-5 dark:bg-gray-10">
+              <p className="text-center text-xs text-text-neutral-default">
+                {busyOnStory ? "מייצרים מדיה לסטורי..." : "הסטורי שלך"}
+              </p>
+              {busyOnStory && (
+                <div
+                  className="flex w-[200px] aspect-[9/16] items-center justify-center rounded-[10px] border border-border-neutral-default bg-gray-90 dark:bg-gray-20"
+                  aria-label="מייצרים מדיה לסטורי"
+                >
+                  <Loader2 className="size-5 animate-spin text-text-neutral-default" />
+                </div>
+              )}
+              {/* Delete is a hover icon ON the media, not a text link under
+                  it (Hani, 2026-07-29) — that's the convention everywhere
+                  else in the app (the video card, the /core_posts cards, the
+                  old story thumbnail). Sits above the player's own controls
+                  via z-10 and stops propagation so it can't be read as a tap
+                  on the story. */}
+              {!busyOnStory && savedStorySet.length > 0 && (
+              <div className="group relative">
+                <StoryPlayer
+                  frames={savedStorySet}
+                  className="w-[200px] aspect-[9/16] border border-border-neutral-default"
+                />
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setPendingStoryDelete(true)
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  disabled={!postId}
+                  aria-label="מחיקת הסטורי"
+                  title="מחיקת הסטורי"
+                  className="absolute end-2 top-2 z-10 flex size-7 items-center justify-center rounded-md bg-white/90 text-button-destructive-default opacity-0 shadow-sm transition-opacity hover:bg-white focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </div>
+              )}
+            </div>
+          )}
         </>
       )}
 
@@ -3591,9 +3890,62 @@ function MediaUploadFlow({
           image link" option next to Create-with-AI; in "video" mode it's how
           the user brings their clip (then burns the caption in).
           Upload-from-computer was removed per Hani; Drive/Canva link only. */}
-      {format !== "image_post" && (
+      {/* Bring-your-own for the OTHER formats. Story is excluded now: its
+          per-frame list is the link input, and a second single-link field
+          next to it was two doors to the same room (Hani, 2026-07-29). */}
+      {format !== "image_post" && format !== "story" && (
         <>
-          {!hydrating && previewUrl && (
+          {/* B-ROLL — same opening shape as the story (Hani, 2026-07-29):
+              make one with AI, "או", bring your own. The generator differs
+              from the story's: it draws a BACKGROUND and we lay the caption
+              over it, because b-roll is an image with a caption on top, not
+              a frame the model composes end to end. */}
+          {isBRoll && !hydrating && (
+            <>
+              <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
+                <div className="relative size-10 shrink-0">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src="/images/ai-camera.png"
+                    alt=""
+                    className="size-full object-contain"
+                  />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src="/images/ai-camera-sparkle.png"
+                    alt=""
+                    className="pointer-events-none absolute -left-3.5 -top-1 w-5"
+                  />
+                </div>
+                <span className="text-small font-semibold text-text-primary-default">
+                  יצירת בי-רול בלחיצה
+                </span>
+                <span className="max-w-[286px] text-center text-xs leading-relaxed text-text-neutral-default">
+                  ניצור רקע שמתאים לתוכן הפוסט, נשלב עליו את הטקסט של הבי-רול
+                  ונהפוך את זה לסרטון קצר
+                </span>
+                <Button
+                  variant="outline"
+                  onClick={handleBRollGenerate}
+                  disabled={!postId || bRollGenerating}
+                  className="w-full gap-1.5"
+                >
+                  {bRollGenerating && (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  )}
+                  יצירת בי-רול עם AI
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-3" role="separator">
+                <span className="h-px flex-1 bg-border-neutral-default" />
+                <span className="text-xs text-text-neutral-default">או</span>
+                <span className="h-px flex-1 bg-border-neutral-default" />
+              </div>
+            </>
+          )}
+
+          {!hydrating && previewUrl && !isBRoll && (
             <div className="flex flex-col gap-2">
               <p className="text-small-bold text-text-primary-default">
                 המדיה הנוכחית
@@ -3667,7 +4019,7 @@ function MediaUploadFlow({
           {/* Burn the hook into the story video (story mode only). Shown once
               a video is present; once burned, we swap to a "done" state so the
               caption isn't stacked twice. */}
-          {(format === "story" || format === "b_roll") &&
+          {format === "b_roll" &&
             !hydrating &&
             previewKind === "video" &&
             previewUrl &&
@@ -3678,27 +4030,15 @@ function MediaUploadFlow({
                   ? "הכיתוב הוטמע בסרטון — הבי-רול מוכן"
                   : "הכיתוב הוטמע בסרטון — הסטורי מוכן"}
               </div>
-            ) : (
-              <div className="flex flex-col gap-1.5">
-                <Button
-                  onClick={handleBurnText}
-                  disabled={burningText || !postId}
-                  className="w-full gap-1.5"
-                >
-                  {burningText ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Type className="size-4" />
-                  )}
-                  {burningText
-                    ? "מטמיעים את הכיתוב..."
-                    : "הטמעת הכיתוב בסרטון"}
-                </Button>
-                <span className="text-xs text-text-neutral-default text-center">
-                  נטמיע את ההוק של הפוסט על גבי הסרטון, בפורמט 9:16
-                </span>
-              </div>
-            ))}
+            ) : burningText ? (
+              // The indication the caption is going on. It replaced a button:
+              // pasting the link already said "caption this", so a second
+              // press was asking the same question twice.
+              <p className="inline-flex items-center gap-2 self-start text-xs text-text-neutral-default">
+                <Loader2 className="size-3.5 animate-spin" />
+                מטמיעים את הכיתוב בסרטון...
+              </p>
+            ) : null)}
 
           {/* Bring your own — paste a Drive/Canva link. Drive links are
               attached automatically — a video stays in Drive and plays from
@@ -3709,23 +4049,45 @@ function MediaUploadFlow({
               open reads as "you still need to paste something" under a video
               that's already there. Collapse it behind a replace button and only
               bring it back when the user asks to swap the clip. */}
-          {isBRoll && previewUrl && !hydrating && !replacingMedia ? (
+          {isBRoll && !showBRollDriveField ? (
+            // Same door as the story's (Hani, 2026-07-29): one button naming
+            // where the media comes from, with the field behind it. Doubles
+            // as the "replace" affordance once a clip is in — swapping and
+            // adding are the same action here, since b-roll holds one clip.
             <Button
               variant="outline"
               onClick={() => {
                 setReplacingMedia(true)
                 setDriveUrl("")
               }}
-              className="w-full gap-1.5"
+              className="w-full gap-2"
             >
-              <Link2 className="size-4" />
-              החלפת מדיה
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/images/google-drive.svg"
+                alt=""
+                className="size-4 shrink-0"
+              />
+              {previewUrl ? "החלפת מדיה מ Google Drive" : "יבוא מדיה מ Google Drive"}
             </Button>
           ) : (
           <div className="flex flex-col gap-2">
+            {/* B-roll follows the story's wording (Hani, 2026-07-29 — Figma
+                597:969). Its field auto-pulls on paste already, and the
+                caption now goes on straight after, so "ייבוא מדיה" describes
+                the whole action rather than just the text box. */}
             <p className="text-small-bold text-text-primary-default">
-              {format === "story" ? "או הדביקו קישור למדיה" : "מדיה משלכם"}
+              {isBRoll
+                ? "ייבוא מדיה"
+                : format === "story"
+                  ? "או הדביקו קישור למדיה"
+                  : "מדיה משלכם"}
             </p>
+            {isBRoll && (
+              <p className="text-xs-body text-text-neutral-default">
+                הדביקו קישור ישיר מגוגל דרייב
+              </p>
+            )}
             <div className="relative">
               <Input
                 dir="rtl"
@@ -3776,6 +4138,77 @@ function MediaUploadFlow({
               </p>
             )}
           </div>
+          )}
+
+          {/* The b-roll itself, in the same grey band the story uses — and,
+              like the story, the band is also where it's made: the caption
+              render shows here rather than as a line of text somewhere else.
+              Delete is the hover icon on the clip, matching every other
+              media surface in the app. */}
+          {isBRoll && (previewUrl || burningText || bRollGenerating) && (
+            <div className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-5 bg-gray-95 px-6 py-5 dark:bg-gray-10">
+              <p className="text-center text-xs text-text-neutral-default">
+                {bRollGenerating
+                  ? "מייצרים מדיה לבי-רול..."
+                  : burningText
+                    ? "מטמיעים את הכיתוב בסרטון..."
+                    : "הבי-רול שלך"}
+              </p>
+              {burningText || bRollGenerating ? (
+                <div
+                  className="flex w-[200px] aspect-[9/16] items-center justify-center rounded-[10px] border border-border-neutral-default bg-gray-90 dark:bg-gray-20"
+                  aria-label="מטמיעים את הכיתוב בסרטון"
+                >
+                  <Loader2 className="size-5 animate-spin text-text-neutral-default" />
+                </div>
+              ) : previewUrl ? (
+                <div className="group relative w-[200px] aspect-[9/16] overflow-hidden rounded-[10px] border border-border-neutral-default bg-bg-surface">
+                  {isDriveUrl(previewUrl) ? (
+                    // Link-mode video — streams from Drive, no copy of ours.
+                    <DriveVideoPreview url={previewUrl} label="הבי-רול שלך" />
+                  ) : previewKind === "image" ? (
+                    // An AI b-roll: the caption is already part of the image.
+                    // next/image, NOT <img> — the stored asset is a
+                    // publish-quality 1080x1920 PNG (~2.3MB) and this slot is
+                    // 200px wide. Serving the original here was the "long
+                    // delay" (Hani, 2026-07-29).
+                    <Image
+                      src={previewUrl}
+                      alt="הבי-רול שלך"
+                      width={200}
+                      height={356}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <video
+                      src={
+                        previewUrl.startsWith("blob:")
+                          ? previewUrl
+                          : `${previewUrl}#t=0.001`
+                      }
+                      controls
+                      playsInline
+                      muted
+                      // Metadata only until she presses play. A burned clip is
+                      // ~2MB and took 3.5s to pull in full — a wait paid on
+                      // every panel open for a frame she may never play.
+                      preload="metadata"
+                      className="h-full w-full object-cover"
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPendingDelete(true)}
+                    disabled={uploading || !postId}
+                    aria-label="מחיקת הבי-רול"
+                    title="מחיקת הבי-רול"
+                    className="absolute end-2 top-2 z-10 flex size-7 items-center justify-center rounded-md bg-white/90 text-button-destructive-default opacity-0 shadow-sm transition-opacity hover:bg-white focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
+              ) : null}
+            </div>
           )}
         </>
       )}

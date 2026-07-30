@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { getAuthUser } from "@/lib/auth-user"
 
 // Server-validated onboarding completion. Sets user_metadata.onboarding_completed=true
 // ONLY after confirming the critical identity fields actually have content in
@@ -10,7 +11,7 @@ import { createClient } from "@/lib/supabase/server"
 // endpoint stops the bad flag from being written in the first place.
 export async function POST() {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getAuthUser(supabase)
   if (!user) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 })
   }

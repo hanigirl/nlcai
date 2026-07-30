@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { getAuthUser } from "@/lib/auth-user"
 
 interface FormatVariantRow {
   format: string
@@ -185,26 +186,26 @@ export async function GET(
   try {
     const { id } = await params
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { data: post, error } = await supabase
-      .from("core_posts")
-      .select("*")
-      .eq("id", id)
-      .eq("user_id", user.id)
-      .single()
+    // In parallel: the variants query doesn't depend on the post row, and RLS
+    // scopes format_variants through core_posts.user_id anyway — so a
+    // non-owner gets zero rows here and still 404s on the post check below.
+    // Serialising them just added a round trip to every panel open.
+    const [{ data: post, error }, { data: vData }] = await Promise.all([
+      supabase.from("core_posts").select("*").eq("id", id).eq("user_id", user.id).single(),
+      supabase
+        .from("format_variants")
+        .select("id, format, body, drive_slide_links")
+        .eq("core_post_id", id),
+    ])
 
     if (error || !post) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 })
     }
-
-    const { data: vData } = await supabase
-      .from("format_variants")
-      .select("id, format, body, drive_slide_links")
-      .eq("core_post_id", id)
 
     const variants = (vData ?? []) as unknown as {
       id: string
@@ -231,6 +232,14 @@ export async function GET(
     const storyDriveLinks = Array.isArray(storyLinksVariant?.drive_slide_links)
       ? storyLinksVariant.drive_slide_links
       : null
+    // B-roll keeps its source link too. It can't be read back off the asset
+    // like a raw link-mode video can, because burning the caption REPLACES
+    // the asset with a rendered mp4 — so without storing it, the field would
+    // empty itself the moment the caption went on.
+    const bRollLinksVariant = variants.find((v) => v.format === "b_roll")
+    const bRollDriveLinks = Array.isArray(bRollLinksVariant?.drive_slide_links)
+      ? bRollLinksVariant.drive_slide_links
+      : null
 
     // Per-format readiness needs to know which formats have media. We do a
     // single batched lookup against media_assets and project to a set of
@@ -250,10 +259,22 @@ export async function GET(
     const variantIds = variants.map((v) => v.id)
     const formatsWithMedia: string[] = []
     const formatMedia: Record<string, string> = {}
+    // EVERY media row for this post, read once. The video / cover / carousel
+    // / story lookups below used to be four more round trips against this
+    // same table for subsets of these same rows — five sequential queries
+    // where one does. `metadata` rides along for the cover's pill colour,
+    // the only field the others needed that this select was missing.
+    type MediaRow = {
+      format_variant_id: string
+      url: string | null
+      asset_type: string | null
+      metadata: Record<string, unknown> | null
+    }
+    let allMedia: MediaRow[] = []
     if (variantIds.length > 0) {
       const { data: mediaRows } = await supabase
         .from("media_assets")
-        .select("format_variant_id, url, asset_type, created_at")
+        .select("format_variant_id, url, asset_type, created_at, metadata")
         .in("format_variant_id", variantIds)
         // ASCENDING, deliberately. Carousel and story insert their frames in
         // array order, so oldest-first is slide 1. This used to sort descending,
@@ -261,15 +282,12 @@ export async function GET(
         // contradicting the comment below and every thumbnail that reads it.
         // Matches the ordering `carouselImageUrls` / `storyImageUrls` use later.
         .order("created_at", { ascending: true })
+      allMedia = (mediaRows ?? []) as unknown as MediaRow[]
       const variantToFormat: Record<string, string> = {}
       for (const v of variants) variantToFormat[v.id] = v.format
       const seen = new Set<string>()
       const formatBestType: Record<string, string> = {}
-      for (const m of (mediaRows ?? []) as unknown as {
-        format_variant_id: string
-        url: string | null
-        asset_type: string | null
-      }[]) {
+      for (const m of allMedia) {
         if (!m.url || m.asset_type === "cover") continue
         const fmt = variantToFormat[m.format_variant_id]
         if (!fmt) continue
@@ -301,33 +319,24 @@ export async function GET(
     let coverPillColor: string | null = null
     const thVariant = variants.find((v) => v.format === "talking_head")
     if (thVariant) {
-      const { data: mediaData } = await supabase
-        .from("media_assets")
-        .select("url")
-        .eq("format_variant_id", thVariant.id)
-        .eq("asset_type", "video")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .single()
-
-      if (mediaData) {
-        videoUrl = (mediaData as unknown as { url: string }).url
+      // `allMedia` is ascending by created_at, so the LAST match is the
+      // newest — the same row the old `order(desc).limit(1)` returned.
+      const newest = (assetType: string) => {
+        for (let i = allMedia.length - 1; i >= 0; i--) {
+          const m = allMedia[i]
+          if (m.format_variant_id === thVariant.id && m.asset_type === assetType) {
+            return m
+          }
+        }
+        return undefined
       }
 
-      // Load cover URL + pill colour
-      const { data: coverData } = await supabase
-        .from("media_assets")
-        .select("url, metadata")
-        .eq("format_variant_id", thVariant.id)
-        .eq("asset_type", "cover")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .single()
+      videoUrl = newest("video")?.url ?? null
 
-      if (coverData) {
-        const row = coverData as unknown as { url: string; metadata: Record<string, unknown> | null }
-        coverUrl = row.url
-        const pill = row.metadata?.pill_color
+      const cover = newest("cover")
+      if (cover?.url) {
+        coverUrl = cover.url
+        const pill = cover.metadata?.pill_color
         if (typeof pill === "string" && /^#[0-9a-fA-F]{6}$/.test(pill)) {
           coverPillColor = pill
         }
@@ -339,36 +348,24 @@ export async function GET(
     // "image") under the `carousel` format_variant. Order ascending by
     // created_at to preserve the slide order they were uploaded in (the
     // PATCH handler inserts them sequentially in array order).
-    let carouselImageUrls: string[] = []
+    const imageUrlsFor = (variantId: string | undefined): string[] =>
+      variantId
+        ? allMedia
+            .filter(
+              (m) => m.format_variant_id === variantId && m.asset_type === "image",
+            )
+            .map((m) => m.url)
+            .filter((u): u is string => !!u)
+        : []
+
     const carouselVariant = variants.find((v) => v.format === "carousel")
-    if (carouselVariant) {
-      const { data: carRows } = await supabase
-        .from("media_assets")
-        .select("url")
-        .eq("format_variant_id", carouselVariant.id)
-        .eq("asset_type", "image")
-        .order("created_at", { ascending: true })
-      carouselImageUrls = ((carRows ?? []) as unknown as { url: string | null }[])
-        .map((r) => r.url)
-        .filter((u): u is string => !!u)
-    }
+    const carouselImageUrls = imageUrlsFor(carouselVariant?.id)
 
     // Story frames rehydrate the same way — each of the 1-3 AI-generated
     // frames is an `image` row under the `story` variant, ordered by
     // created_at so the frame sequence is preserved.
-    let storyImageUrls: string[] = []
     const storyVariant = variants.find((v) => v.format === "story")
-    if (storyVariant) {
-      const { data: storyRows } = await supabase
-        .from("media_assets")
-        .select("url")
-        .eq("format_variant_id", storyVariant.id)
-        .eq("asset_type", "image")
-        .order("created_at", { ascending: true })
-      storyImageUrls = ((storyRows ?? []) as unknown as { url: string | null }[])
-        .map((r) => r.url)
-        .filter((u): u is string => !!u)
-    }
+    const storyImageUrls = imageUrlsFor(storyVariant?.id)
 
     return NextResponse.json({
       post: {
@@ -382,6 +379,7 @@ export async function GET(
         carouselImageUrls,
         carouselDriveLinks,
         storyDriveLinks,
+        bRollDriveLinks,
         storyImageUrls,
       },
     })
@@ -399,12 +397,12 @@ export async function PATCH(
   try {
     const { id } = await params
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, videoUrl, deleteVideo, coverBase64, coverPillColor, coverText, deleteCover, carouselImages, carouselDriveLinks, storyImages, storyDriveLinks } = (await req.json()) as {
+    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, videoUrl, deleteVideo, coverBase64, coverPillColor, coverText, deleteCover, carouselImages, carouselDriveLinks, storyImages, storyDriveLinks, bRollDriveLinks } = (await req.json()) as {
       body?: string
       hookText?: string
       hookId?: string
@@ -438,6 +436,8 @@ export async function PATCH(
       storyImages?: string[] | null
       /** Same contract as `carouselDriveLinks`, for the story frame set. */
       storyDriveLinks?: string[] | null
+      /** Same again for b-roll, which holds exactly one. */
+      bRollDriveLinks?: string[] | null
     }
 
     // Track whether the PATCH touched any *child* table (format_variants,
@@ -724,6 +724,7 @@ export async function PATCH(
     for (const [format, links] of [
       ["carousel", carouselDriveLinks],
       ["story", storyDriveLinks],
+      ["b_roll", bRollDriveLinks],
     ] as const) {
       if (links === undefined) continue
       const { error: linksErr } = await supabase
@@ -786,7 +787,7 @@ export async function DELETE(
   try {
     const { id } = await params
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }

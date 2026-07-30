@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { validateApiKeyFormat, type KeyName } from "@/lib/api-keys"
+import { getAuthUser } from "@/lib/auth-user"
 
 // 10s is plenty — each live check is one tiny GET/POST. If a provider
 // is genuinely slow, we'd rather time out and let the user retry than
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest) {
   // for THIS user, and the endpoint shouldn't be open to key-stuffing
   // attacks against providers.
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getAuthUser(supabase)
   if (!user) {
     return NextResponse.json({ ok: false, code: "format", message: "Unauthorized" } satisfies Verdict, { status: 401 })
   }

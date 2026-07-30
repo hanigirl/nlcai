@@ -7,6 +7,7 @@ import { DUMMY_CORE_POST } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import { fetchBusinessSourceInsights } from "@/lib/business-source-insights"
 import { detectAddressGender } from "@/lib/detect-addressing"
+import { getAuthUser } from "@/lib/auth-user"
 
 const USE_DUMMY = false
 
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
 
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })

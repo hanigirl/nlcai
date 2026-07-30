@@ -33,6 +33,7 @@ import {
 import { copyToClipboard } from "@/lib/copy-to-clipboard"
 import { userKey } from "@/lib/user-scoped-storage"
 import { logLearningEdit } from "@/lib/learning-capture"
+import { BROLL_SCRIPT_CTA } from "@/lib/broll-copy"
 
 type Flow = "idea" | "hook" | "saved"
 
@@ -274,6 +275,19 @@ function ProjectPageInner() {
   // Same idea for the story frame set — it imports from Drive with the exact
   // same per-frame link mechanic the carousel uses.
   const [storyDriveLinks, setStoryDriveLinks] = useState<string[] | null>(null)
+  const [bRollDriveLinks, setBRollDriveLinks] = useState<string[] | null>(null)
+  // Per-format media URLs from the post load. Handed to MediaPanel so a panel
+  // can paint its existing media immediately instead of blocking on its own
+  // copy of a fetch this page already made.
+  const [formatMedia, setFormatMedia] = useState<Record<string, string>>({})
+  // The b-roll's finished clip, mirrored from the panel so it renders as its
+  // own workflow card under the b-roll script.
+  const [bRollUrl, setBRollUrl] = useState<string | null>(null)
+  // Set ONLY after the post GET has actually resolved. `savedPostLoading`
+  // can't stand in for this: it starts false whenever the URL carries no
+  // post_id, which reads as "loaded" for a post that was never fetched — and
+  // that told the media panel to skip its own fetch and render nothing.
+  const [postFetched, setPostFetched] = useState(false)
   const carouselCardRef = useRef<HTMLDivElement>(null)
 
   // Image-post state (lifted so the approved image renders as its own
@@ -293,6 +307,7 @@ function ProjectPageInner() {
   // from the panel so it renders as its own workflow card like the frame set.
   const [storyVideoUrl, setStoryVideoUrl] = useState<string | null>(null)
   const storyVideoCardRef = useRef<HTMLDivElement>(null)
+  const bRollCardRef = useRef<HTMLDivElement>(null)
 
   // Learning log — store originals to detect edits
   const [originalHooks, setOriginalHooks] = useState<string[]>([])
@@ -797,6 +812,12 @@ function ProjectPageInner() {
             data.post.carouselImageUrls.length > 0
           ) {
             const urls = data.post.carouselImageUrls as string[]
+            // Show the card immediately from the URLs. The base64 decode
+            // below still runs — the media panel needs base64 to re-save a
+            // set — but the canvas no longer waits for it, and a failed
+            // decode can no longer hide the carousel entirely.
+            prevCarouselSigRef.current = carouselSignature(urls)
+            setCarouselImages(urls)
             Promise.all(
               urls.map((u) =>
                 fetch(u)
@@ -842,6 +863,15 @@ function ProjectPageInner() {
           if (Array.isArray(data.post.storyDriveLinks)) {
             setStoryDriveLinks(data.post.storyDriveLinks as string[])
           }
+          if (Array.isArray(data.post.bRollDriveLinks)) {
+            setBRollDriveLinks(data.post.bRollDriveLinks as string[])
+          }
+          if (data.post.formatMedia && typeof data.post.formatMedia === "object") {
+            const media = data.post.formatMedia as Record<string, string>
+            setFormatMedia(media)
+            if (media.b_roll) setBRollUrl(media.b_roll)
+          }
+          setPostFetched(true)
 
           // Load video thumbnail as data URL for cover regeneration
           if (data.post.videoUrl) {
@@ -1533,7 +1563,12 @@ function ProjectPageInner() {
         // Falling through to the fetch below would 404 on /api/format/b_roll
         // and land the whole core post in the variant via the catch.
         if (FORMATS_WITHOUT_GENERATION.has(fid)) {
-          const text = activeHook || corePost
+          // Hook + the call-to-action that pairs with the clip's on-screen
+          // line (Hani, 2026-07-29). Same constant the API seeds with, so a
+          // b-roll reads identically whichever path created it.
+          const text = [activeHook || corePost, BROLL_SCRIPT_CTA]
+            .filter(Boolean)
+            .join("\n\n")
           results[fid] = text
           setFormatPosts((prev) => ({ ...prev, [fid]: text }))
           return
@@ -1563,6 +1598,54 @@ function ProjectPageInner() {
       void savePatch(savedPostId, { formatPosts: results }, "טקסטי הפורמטים")
     }
   }
+
+  // Autosave the per-format scripts, the way the core post already autosaves
+  // (Hani asked 2026-07-29 — it didn't). Editing a format's text only ever
+  // reached this browser's canvas state, so the edit survived a refresh here
+  // and nowhere else: another machine showed the old text, and a carousel
+  // generated from the "saved" script used the pre-edit version.
+  //
+  // Debounced, and it skips the placeholder a format wears while its agent is
+  // still writing — persisting "מייצר..." as the script would be worse than
+  // not saving at all.
+  // Per-format save status, same three states the core post shows. Keyed by
+  // format so four cards can each report their own.
+  const [formatSaveStatus, setFormatSaveStatus] = useState<
+    Record<string, "saving" | "saved" | "error">
+  >({})
+  const savedFormatPostsRef = useRef<string>("")
+  useEffect(() => {
+    if (!savedPostId) return
+    const persistable: Record<string, string> = {}
+    for (const [fid, text] of Object.entries(formatPosts)) {
+      if (hasFormatText(formatPosts, fid)) persistable[fid] = text
+    }
+    if (Object.keys(persistable).length === 0) return
+    const snapshot = JSON.stringify(persistable)
+    if (snapshot === savedFormatPostsRef.current) return
+
+    const changed = Object.keys(persistable)
+    const timer = setTimeout(() => {
+      savedFormatPostsRef.current = snapshot
+      setFormatSaveStatus((prev) => {
+        const next = { ...prev }
+        changed.forEach((fid) => (next[fid] = "saving"))
+        return next
+      })
+      void savePatch(
+        savedPostId,
+        { formatPosts: persistable },
+        "טקסטי הפורמטים",
+      ).then((ok) => {
+        setFormatSaveStatus((prev) => {
+          const next = { ...prev }
+          changed.forEach((fid) => (next[fid] = ok ? "saved" : "error"))
+          return next
+        })
+      })
+    }, 1200)
+    return () => clearTimeout(timer)
+  }, [formatPosts, savedPostId])
 
   const handleFormatCardClick = (fid: string) => {
     setSelectedFormatCard(selectedFormatCard === fid ? null : fid)
@@ -1629,6 +1712,26 @@ function ProjectPageInner() {
               body: JSON.stringify({ storyDriveLinks: links }),
             }).catch((err) =>
               console.error("[project][save-story-drive-links]", err),
+            )
+          }
+        }}
+        initialFormatMedia={formatMedia}
+        initialStoryFrames={storyImages}
+        // Only when the page genuinely holds this post's data. In the
+        // hook/idea flows nothing is fetched here, so the panel keeps doing
+        // its own load rather than rendering an empty shell.
+        postLoaded={postFetched && savedPostId === postId}
+        onBRollUrlChange={setBRollUrl}
+        bRollDriveLinks={bRollDriveLinks}
+        onBRollDriveLinksChange={(links) => {
+          setBRollDriveLinks(links)
+          if (savedPostId) {
+            fetch(`/api/core-posts/${savedPostId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ bRollDriveLinks: links }),
+            }).catch((err) =>
+              console.error("[project][save-broll-drive-links]", err),
             )
           }
         }}
@@ -2184,6 +2287,7 @@ function ProjectPageInner() {
                           formatPosts={formatPosts}
                           onPostChange={(fid, text) => setFormatPosts((prev) => ({ ...prev, [fid]: text }))}
                           onRegenerateFormat={(fid) => setPendingFormatRegen(fid)}
+                          formatSaveStatus={formatSaveStatus}
                           activeCard={activeCard}
                           onActiveChange={setActiveCard}
                           selectedFormat={selectedFormatCard}
@@ -2235,6 +2339,9 @@ function ProjectPageInner() {
                           storyCardRef={storyCardRef}
                           onStoryEdit={() => setSelectedFormatCard("story")}
                           storyVideoUrl={storyVideoUrl}
+                          bRollUrl={bRollUrl}
+                          bRollCardRef={bRollCardRef}
+                          onBRollEdit={() => setSelectedFormatCard("b_roll")}
                         />
                       </div>
                     </div>
@@ -2377,6 +2484,7 @@ function FormatTree({
   formatPosts,
   onPostChange,
   onRegenerateFormat,
+  formatSaveStatus,
   activeCard,
   onActiveChange,
   selectedFormat,
@@ -2408,12 +2516,17 @@ function FormatTree({
   storyCardRef,
   onStoryEdit,
   storyVideoUrl,
+  bRollUrl,
+  bRollCardRef,
+  onBRollEdit,
 }: {
   formats: string[]
   formatPosts: Record<string, string>
   onPostChange: (fid: string, text: string) => void
   /** Arms the confirm dialog for re-running ONE format's agent. */
   onRegenerateFormat: (fid: string) => void
+  /** Autosave state per format, shown next to each card's title. */
+  formatSaveStatus: Record<string, "saving" | "saved" | "error">
   activeCard: string
   onActiveChange: (card: string) => void
   selectedFormat: string | null
@@ -2445,6 +2558,9 @@ function FormatTree({
   storyCardRef: React.RefObject<HTMLDivElement | null>
   onStoryEdit: () => void
   storyVideoUrl: string | null
+  bRollUrl: string | null
+  bRollCardRef: React.RefObject<HTMLDivElement | null>
+  onBRollEdit: () => void
 }) {
   const count = formats.length
   const totalWidth = count * CARD_WIDTH + (count - 1) * CARD_GAP
@@ -2507,6 +2623,30 @@ function FormatTree({
                 <div className={`flex items-center gap-2 px-6 py-3 rounded-t-[20px] ${isActive ? "bg-bg-surface-primary-default-80" : "bg-bg-surface"}`}>
                   <span className="text-p-bold text-text-primary-default">{format.label}</span>
                   <Icon className="size-4 text-text-neutral-default" />
+                  {/* Autosave state, the same three the core post shows —
+                      editing a format script now persists, so it needs to say
+                      so (Hani, 2026-07-29). Sits before the regenerate icon,
+                      which keeps its `ms-auto` and holds the far end. */}
+                  {formatSaveStatus[fid] && (
+                    <span className="flex items-center gap-1 text-xs text-text-neutral-default">
+                      {formatSaveStatus[fid] === "saving" ? (
+                        <>
+                          <Loader2 className="size-3 animate-spin" />
+                          <span>שומר...</span>
+                        </>
+                      ) : formatSaveStatus[fid] === "error" ? (
+                        <span className="text-button-destructive-default">
+                          שגיאה בשמירה
+                        </span>
+                      ) : (
+                        <>
+                          <Check className="size-3" />
+                          <span>נשמר</span>
+                        </>
+                      )}
+                    </span>
+                  )}
+
                   {/* Per-format re-run of the duplication. Lives INSIDE the
                       format card (not in the "לאיזה פורמטים לשכפל?" card)
                       so re-generating one format can never touch the others.
@@ -2840,6 +2980,45 @@ function FormatTree({
                 )
               })()}
 
+              {/* The generated b-roll clip, as its own card under the b-roll
+                  script — the same shape story and talking_head use, so every
+                  format's finished media reads the same way on the canvas. */}
+              {fid === "b_roll" && bRollUrl && (
+                <>
+                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <div
+                    ref={bRollCardRef}
+                    dir="rtl"
+                    className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
+                  >
+                    <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface-primary-default-80">
+                      <span className="text-p-bold text-text-primary-default">הבי-רול שלכם</span>
+                      <Film className="size-4 text-text-neutral-default" />
+                    </div>
+                    <div className="px-6 flex flex-col gap-4">
+                      <div className="flex justify-center">
+                        <div className="w-[200px] aspect-[9/16] overflow-hidden rounded-xl border border-border-neutral-default bg-bg-surface">
+                          <video
+                            src={`${bRollUrl}#t=0.001`}
+                            controls
+                            playsInline
+                            muted
+                            // Metadata only — the card sits on the canvas
+                            // whether or not she plays it.
+                            preload="metadata"
+                            className="w-full h-full object-cover"
+                            onMouseDown={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                      </div>
+                      <Button variant="outline" className="w-full" onClick={onBRollEdit}>
+                        עריכת בי-רול
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              )}
+
               {/* Image result below image_post card — appears once the user
                   has generated + approved (or uploaded) an image. Same
                   connected-card pattern as the talking_head video/cover
@@ -2971,7 +3150,11 @@ function CarouselResultCard({
           <div className="relative w-full rounded-xl overflow-hidden bg-gray-95">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={`data:image/png;base64,${images[currentSlide]}`}
+              // URL or base64. The card used to assume base64 only, so it
+              // depended on the page decoding every slide from storage on
+              // load — an async step that fails silently and left the canvas
+              // with no carousel card at all (Hani, 2026-07-29).
+              src={storyFrameSrc(images[currentSlide])}
               alt={`סלייד ${currentSlide + 1}`}
               className="w-full h-auto"
               onMouseDown={(e) => e.stopPropagation()}

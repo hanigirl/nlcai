@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { extractDriveFileId } from "@/lib/drive-media"
 import { fetchDriveFile } from "@/lib/drive-fetch"
+import { getAuthUser } from "@/lib/auth-user"
 
 // Downloads a file from a public Google Drive share link and stores it in
 // Supabase Storage.
@@ -49,9 +50,7 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }

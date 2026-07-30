@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server"
 import { spawn } from "child_process"
-import satori from "satori"
-import { Resvg } from "@resvg/resvg-js"
 import ffmpegPath from "ffmpeg-static"
-import { RtlText } from "@/lib/carousel-templates/shared"
 import { createClient } from "@/lib/supabase/server"
 import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
 import { fetchDriveFile } from "@/lib/drive-fetch"
+import { frameCaption } from "@/lib/story-text-split"
+import {
+  renderCaptionOverlayPng,
+  renderSecondaryCaptionPng,
+} from "@/lib/caption-overlay"
+import { getAuthUser } from "@/lib/auth-user"
 
 // Downloading + re-encoding a user video is heavier than an image render;
 // libx264 on a short clip still runs in seconds, but leave generous headroom.
@@ -41,172 +44,6 @@ const MAX_CLIP_SECONDS = 60
  * a re-encoded video is too big to round-trip as base64 through the client.
  */
 
-// ---- Hebrew font ----
-// Rubik, NOT Heebo: the local Heebo-*.ttf files are ~23KB Latin-only subsets
-// with NO Hebrew glyphs (satori renders tofu boxes with them). The full
-// Rubik-*.ttf files (~175KB) carry Hebrew — this is exactly why the live
-// carousel `default` template renders Hebrew via satori using `fontFamily:
-// "Rubik"`. We reuse the same font here.
-let rubikExtraBold: ArrayBuffer | null = null
-let rubikBold: ArrayBuffer | null = null
-
-async function loadRubik() {
-  if (rubikExtraBold && rubikBold)
-    return { extraBold: rubikExtraBold, bold: rubikBold }
-  const fs = await import("fs/promises")
-  const path = await import("path")
-  const read = async (file: string) => {
-    const buf = await fs.readFile(
-      path.join(process.cwd(), "public", "fonts", file),
-    )
-    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
-  }
-  rubikExtraBold = await read("Rubik-ExtraBold.ttf")
-  rubikBold = await read("Rubik-Bold.ttf")
-  return { extraBold: rubikExtraBold, bold: rubikBold }
-}
-
-/**
- * Font size steps down as the hook gets longer, so a short punchy hook is
- * big and a longer one still fits without overflowing the safe band.
- */
-function fontSizeForHook(text: string): number {
-  const len = text.trim().length
-  if (len <= 22) return 96
-  if (len <= 44) return 78
-  if (len <= 80) return 62
-  return 52
-}
-
-/**
- * The body sits UNDER the hook and must read as secondary, so it steps down
- * from the hook's size rather than tracking its own length independently —
- * the ratio is what makes the hierarchy legible at a glance.
- */
-function fontSizeForBody(hookSize: number, body: string): number {
-  const base = Math.round(hookSize * 0.46)
-  const len = body.trim().length
-  if (len <= 90) return base
-  if (len <= 180) return Math.round(base * 0.86)
-  return Math.round(base * 0.74)
-}
-
-/**
- * How much body text can sit on a story frame before it stops being a story.
- * Past this we trim on a word boundary and add an ellipsis — silently
- * dropping the tail would let a long script render as a wall of type that
- * overflows the safe zone.
- */
-const MAX_BODY_CHARS = 240
-
-export function trimBodyForOverlay(body: string): string {
-  const clean = body.trim().replace(/\s+/g, " ")
-  if (clean.length <= MAX_BODY_CHARS) return clean
-  const cut = clean.slice(0, MAX_BODY_CHARS)
-  const lastSpace = cut.lastIndexOf(" ")
-  return `${(lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trim()}…`
-}
-
-/**
- * Transparent 9:16 overlay burned onto the user's OWN media.
- *
- * Visual language is deliberately the reel cover's (Hani, 2026-07-28: "בדומה
- * למה שעשינו בקאבר"): white Rubik ExtraBold on a SOLID black pill, 24px
- * radius, centred. The previous version used a translucent 42%-black scrim
- * with a 32px radius — close enough to look like a mistake next to a cover,
- * far enough to read as a different product.
- *
- * Two tiers, not one: the hook is the headline and the body is support, so
- * they get separate pills with a gap between them. One merged block made the
- * hook stop reading as a hook.
- *
- * Nothing here runs for an AI-generated story — those frames arrive from the
- * model with their text already designed in, and laying a second caption over
- * them would double it up.
- */
-async function renderOverlayPng(hook: string, body?: string): Promise<Buffer> {
-  const { extraBold, bold } = await loadRubik()
-  const hookSize = fontSizeForHook(hook)
-  const bodyText = body ? trimBodyForOverlay(body) : ""
-  const bodySize = bodyText ? fontSizeForBody(hookSize, bodyText) : 0
-
-  // Same solid pill the cover uses — it carries contrast on any footage, so
-  // no scrim and no text-shadow are needed on top of it.
-  const pill = {
-    display: "flex" as const,
-    backgroundColor: "#000000",
-    borderRadius: 24,
-    maxWidth: CANVAS_WIDTH - 180,
-  }
-
-  const svg = await satori(
-    <div
-      style={{
-        width: CANVAS_WIDTH,
-        height: CANVAS_HEIGHT,
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "flex-end",
-        alignItems: "center",
-        // Keep the text inside the IG safe zone: clear of the reply bar
-        // (bottom ~24%) and the profile header (top ~14%).
-        paddingBottom: 520,
-        paddingLeft: 90,
-        paddingRight: 90,
-        // The gap IS the separation between hook and body.
-        gap: 20,
-      }}
-    >
-      <div style={{ ...pill, padding: "36px 48px" }}>
-        {/* RtlText, NOT a raw string: satori has no BiDi, so bare Hebrew
-            renders mirrored. This is the SAME shared helper the carousel
-            templates use. */}
-        <RtlText
-          text={hook}
-          align="center"
-          style={{
-            color: "#ffffff",
-            fontFamily: "Rubik",
-            fontWeight: 800,
-            fontSize: hookSize,
-            lineHeight: 1.25,
-          }}
-        />
-      </div>
-
-      {bodyText && (
-        <div style={{ ...pill, padding: "24px 40px" }}>
-          <RtlText
-            text={bodyText}
-            align="center"
-            style={{
-              color: "#ffffff",
-              fontFamily: "Rubik",
-              // Bold, not ExtraBold — the weight drop reinforces the size
-              // drop so the hierarchy survives even at a glance.
-              fontWeight: 700,
-              fontSize: bodySize,
-              lineHeight: 1.35,
-            }}
-          />
-        </div>
-      )}
-    </div>,
-    {
-      width: CANVAS_WIDTH,
-      height: CANVAS_HEIGHT,
-      fonts: [
-        { name: "Rubik", data: extraBold, weight: 800, style: "normal" },
-        { name: "Rubik", data: bold, weight: 700, style: "normal" },
-      ],
-    },
-  )
-
-  return Buffer.from(
-    new Resvg(svg, { background: "rgba(0,0,0,0)" }).render().asPng(),
-  )
-}
-
 /**
  * Burn the overlay into the source video and cover-crop to exactly
  * 1080×1920 (scale-to-fill then crop — same object-fit:cover behaviour as
@@ -217,20 +54,48 @@ function burnOverlay(
   inputPath: string,
   overlayPath: string,
   outputPath: string,
+  /**
+   * Optional second caption ("קראו בתיאור" on b-roll), arriving after the
+   * hook has had time to land.
+   */
+  secondaryPath?: string,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!ffmpegPath) {
       reject(new Error("ffmpeg binary not found"))
       return
     }
+    // The caption FADES IN rather than being present from frame one
+    // (Hani, 2026-07-29). The AI b-roll generator always animated its
+    // caption; this path — the user's own clip from Drive — pasted a static
+    // layer, so the same feature behaved differently depending on where the
+    // footage came from.
+    const filter =
+      `[0:v]scale=${CANVAS_WIDTH}:${CANVAS_HEIGHT}:force_original_aspect_ratio=increase,` +
+      `crop=${CANVAS_WIDTH}:${CANVAS_HEIGHT},setsar=1[bg];` +
+      `[1:v]format=rgba,fade=t=in:st=0.7:d=0.9:alpha=1,setsar=1[cap];` +
+      (secondaryPath
+        ? // Comes in at 2s, once the hook has been read, and stays.
+          `[bg][cap]overlay=0:0[v1];` +
+          `[2:v]format=rgba,fade=t=in:st=2:d=0.7:alpha=1,setsar=1[cap2];` +
+          `[v1][cap2]overlay=0:0[v]`
+        : `[bg][cap]overlay=0:0[v]`)
+
     const args = [
       "-y",
       "-i", inputPath,
-      "-i", overlayPath,
+      // `-loop 1` on the caption stills is what makes the fade possible, and
+      // it is NOT optional: a single-frame input has no timeline, so `fade`
+      // holds it at its t=0 value — fully transparent — and overlay's
+      // repeat-last-frame behaviour then pastes that invisible frame for the
+      // whole clip. Without the loop the caption never appears at all.
+      // Verified by sampling frame colour at 0.2s / 1.5s / 3.0s.
+      "-loop", "1", "-t", String(MAX_CLIP_SECONDS), "-i", overlayPath,
+      ...(secondaryPath
+        ? ["-loop", "1", "-t", String(MAX_CLIP_SECONDS), "-i", secondaryPath]
+        : []),
       "-filter_complex",
-      `[0:v]scale=${CANVAS_WIDTH}:${CANVAS_HEIGHT}:force_original_aspect_ratio=increase,` +
-        `crop=${CANVAS_WIDTH}:${CANVAS_HEIGHT},setsar=1[bg];` +
-        `[bg][1:v]overlay=0:0[v]`,
+      filter,
       "-map", "[v]",
       "-map", "0:a?", // keep audio if the source has any
       "-c:v", "libx264",
@@ -258,10 +123,46 @@ function burnOverlay(
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
   try {
-    const { postId, format: rawFormat } = (await req.json().catch(() => ({}))) as {
+    const {
+      postId,
+      format: rawFormat,
+      sourceUrl: rawSourceUrl,
+      persist: rawPersist,
+      frameIndex: rawFrameIndex,
+      frameCount: rawFrameCount,
+    } = (await req.json().catch(() => ({}))) as {
       postId?: string
       format?: string
+      /**
+       * Burn THIS source instead of the variant's stored video slot. The
+       * story panel imports N frames by Drive link and needs each one burned
+       * on the way in (Hani, 2026-07-29: "בלי כפתור נוסף"), and those frames
+       * live as ordered image rows, not in the single video slot.
+       */
+      sourceUrl?: string
+      /**
+       * Write the result back into the variant's video slot. Defaults true —
+       * the original one-video behaviour. Per-frame callers pass false and
+       * store the returned URL themselves, in order, as part of the set.
+       */
+      persist?: boolean
+      /**
+       * Which frame of the story this source is, and how many there are.
+       * The script is divided across the set so the frames read as one story
+       * (Hani, 2026-07-29): frame 1 leads with the hook, the body is spread
+       * over the middle, the closing block lands last. Omitted → the whole
+       * script on a single frame.
+       */
+      frameIndex?: number
+      frameCount?: number
     }
+    const sourceUrl = rawSourceUrl?.trim() || undefined
+    const persist = rawPersist !== false
+    const frameCount = Math.max(1, Math.floor(rawFrameCount ?? 1))
+    const frameIndex = Math.min(
+      Math.max(0, Math.floor(rawFrameIndex ?? 0)),
+      frameCount - 1,
+    )
     if (!postId) {
       return NextResponse.json({ error: "postId is required" }, { status: 400 })
     }
@@ -279,9 +180,7 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
@@ -326,7 +225,8 @@ export async function POST(req: NextRequest) {
       .eq("format_variant_id", variant.id)
       .eq("asset_type", "video")
       .maybeSingle()
-    const videoUrl = (assetRow as { url: string } | null)?.url
+    // An explicit source wins; otherwise fall back to the variant's slot.
+    const videoUrl = sourceUrl ?? (assetRow as { url: string } | null)?.url
     if (!videoUrl) {
       return NextResponse.json(
         {
@@ -356,22 +256,21 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // The story body, minus whatever line the hook already came from — the
-    // script usually opens WITH the hook, and burning it twice (once big,
-    // once small, one under the other) is the obvious failure mode here.
-    const overlayBody = (() => {
-      const raw = variant.body?.trim()
-      if (!raw) return undefined
-      const rest = raw
-        .split(/\n+/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        // Compare loosely: the script's opening line is often the hook with
-        // different punctuation or spacing.
-        .filter((line) => line.replace(/\s+/g, "") !== hook.replace(/\s+/g, ""))
-        .join(" ")
-      return rest || undefined
-    })()
+    // This frame's share of the script. The whole script is divided across
+    // `frameCount` frames on paragraph boundaries, so each frame carries a
+    // coherent piece rather than the same caption repeated N times.
+    //
+    // Falls back to the hook alone when there's no script body to divide.
+    const caption = variant.body?.trim()
+      ? frameCaption(variant.body, frameIndex, frameCount)
+      : { headline: hook, body: undefined }
+    const overlayHook = caption.headline ?? (frameIndex === 0 ? hook : undefined)
+    const overlayBody = caption.body
+    if (!overlayHook && !overlayBody) {
+      // Nothing to say on this frame — hand the source back untouched rather
+      // than burning an empty pill onto it.
+      return NextResponse.json({ url: sourceUrl ?? "" })
+    }
 
     const os = await import("os")
     const fs = await import("fs/promises")
@@ -395,7 +294,7 @@ export async function POST(req: NextRequest) {
       isDriveUrl(videoUrl)
         ? fetchDriveFile(extractDriveFileId(videoUrl)!)
         : fetch(videoUrl),
-      renderOverlayPng(hook, overlayBody),
+      renderCaptionOverlayPng(overlayHook, overlayBody),
     ])
     const srcContentType = (videoRes.headers.get("content-type") || "")
       .split(";")[0]
@@ -429,7 +328,18 @@ export async function POST(req: NextRequest) {
     )
     await fs.writeFile(overlayPath, overlayPng)
 
-    await burnOverlay(inputPath, overlayPath, outputPath)
+    // Every b-roll carries the follow-up line; the story doesn't — its frames
+    // already end on their own CTA block.
+    let secondaryPath: string | undefined
+    if (format === "b_roll") {
+      const fsMod = await import("fs/promises")
+      const pathMod = await import("path")
+      secondaryPath = pathMod.join(tmp, `story-ovl2-${id}.png`)
+      tmpFiles.push(secondaryPath)
+      await fsMod.writeFile(secondaryPath, await renderSecondaryCaptionPng())
+    }
+
+    await burnOverlay(inputPath, overlayPath, outputPath, secondaryPath)
 
     const outBuffer = await fs.readFile(outputPath)
     // "burned-" prefix marks a text-baked output. The client reads this from
@@ -449,17 +359,22 @@ export async function POST(req: NextRequest) {
 
     // Persist as the story's video media — replaces the raw source in the
     // same (variant, video) slot, so the finished clip is what the post uses.
-    await supabase
-      .from("media_assets")
-      .delete()
-      .eq("format_variant_id", variant.id)
-      .eq("asset_type", "video")
-    await supabase.from("media_assets").insert({
-      format_variant_id: variant.id,
-      asset_type: "video",
-      url: publicUrl,
-      status: "completed",
-    } as never)
+    // Skipped for per-frame burns: those belong to the ordered frame set, and
+    // writing each one into the single video slot would leave the last frame
+    // masquerading as "the story's video".
+    if (persist) {
+      await supabase
+        .from("media_assets")
+        .delete()
+        .eq("format_variant_id", variant.id)
+        .eq("asset_type", "video")
+      await supabase.from("media_assets").insert({
+        format_variant_id: variant.id,
+        asset_type: "video",
+        url: publicUrl,
+        status: "completed",
+      } as never)
+    }
 
     return NextResponse.json({ url: publicUrl })
   } catch (error) {

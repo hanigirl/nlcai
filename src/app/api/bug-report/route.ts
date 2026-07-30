@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { getAuthUser } from "@/lib/auth-user"
 
 // Bug reports submitted from the in-app "נתקלת בבאג?" widget land in a Notion
 // database. The app authenticates to Notion with an internal integration token
@@ -14,7 +15,7 @@ const PAGES = new Set(["בית", "פוסטי ליבה", "רעיונות", "מח�
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const token = process.env.NOTION_API_KEY

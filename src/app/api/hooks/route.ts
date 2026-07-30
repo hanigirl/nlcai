@@ -9,6 +9,7 @@ import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
 import { detectAddressGender } from "@/lib/detect-addressing"
+import { getAuthUser } from "@/lib/auth-user"
 
 // Pipeline is generate → judge×N → polish×N — 3 sequential LLM rounds.
 // At count=10 this lands around 20-40s; Vercel's 10s default would always
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
 
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })

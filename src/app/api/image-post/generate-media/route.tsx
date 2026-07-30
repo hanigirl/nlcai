@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
+import { getAuthUser } from "@/lib/auth-user"
 
 // gpt-image-2 generation can take 60-120s; leave headroom for the normalize pass.
 export const maxDuration = 300
@@ -217,9 +218,7 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }

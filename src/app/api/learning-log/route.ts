@@ -7,6 +7,7 @@ import {
   type LearningOutcome,
   type LearningSource,
 } from "@/lib/learning-insights"
+import { getAuthUser } from "@/lib/auth-user"
 
 const CONTENT_TYPES: LearningContentType[] = ["hook", "core_post"]
 const SOURCES: LearningSource[] = ["manual_edit", "chat_instruction"]
@@ -15,7 +16,7 @@ const OUTCOMES: LearningOutcome[] = ["accepted", "rejected"]
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
 
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })

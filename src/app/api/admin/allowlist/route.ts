@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/server"
 import { createAdminClient, isAdminEmail } from "@/lib/supabase/admin"
+import { getAuthUser } from "@/lib/auth-user"
 
 // In-app management of the signup allowlist (public.allowed_emails).
 // Owner-only — same gate as the other /api/admin routes.
@@ -21,7 +22,7 @@ const PROTECTED_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 
 async function requireOwner() {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = await getAuthUser(supabase)
   if (!user || !isAdminEmail(user.email)) return null
   return user
 }

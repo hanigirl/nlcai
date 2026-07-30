@@ -211,10 +211,17 @@ export function StoryPlayer({
         />
       )}
 
-      {/* Progress bars — one per frame, newest fill on the current one.
-          `flex-row-reverse` puts frame 1 on the right so the bars advance in
-          the same direction as the tap-forward zone. */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-row-reverse gap-1 p-2">
+      {/* Progress bars — one per frame, frame 1 leftmost, each filling
+          left-to-right (Hani, 2026-07-29).
+          `dir="ltr"` is doing real work here, not decoration: the panel is
+          RTL, so without it the fill div's inline start edge is the RIGHT
+          one and every bar drained rightward into leftward — backwards.
+          Instagram doesn't mirror story bars in Hebrew either; only the tap
+          zones below follow reading direction. */}
+      <div
+        dir="ltr"
+        className="pointer-events-none absolute inset-x-0 top-0 flex gap-1 p-2"
+      >
         {frames.map((_, i) => (
           <div
             key={i}

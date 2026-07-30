@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { extractDriveFileId, driveEmbedUrl, driveThumbnailUrl } from "@/lib/drive-media"
 import { probeDriveFile } from "@/lib/drive-fetch"
+import { getAuthUser } from "@/lib/auth-user"
 
 // Headroom over the 12s Drive header timeout in lib/drive-fetch, so OUR
 // error wins the race against the platform killing the function.
@@ -41,9 +42,7 @@ export async function POST(req: NextRequest) {
     // Auth-gate it like every other media endpoint — this reaches out to a
     // third party on the caller's behalf, so it isn't an open proxy.
     const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
