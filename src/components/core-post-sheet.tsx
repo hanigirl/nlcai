@@ -896,6 +896,14 @@ export function CorePostSheet({
                     Clicking a chip navigates to /project?post_id=X&format=Y
                     (the format edit screen). The Sheet itself never shows
                     per-format detail; that lives on its own page. */}
+                {/* Format picker — hidden when the Sheet was opened FOR a format
+                    (Hani, 2026-07-30). A calendar entry is a scheduled
+                    (post, format) pair: the carousel itself is what's in the
+                    diary, not a core post to pick formats from. Offering the
+                    choice again there asks a question already answered. It stays
+                    for /core_posts, where a post genuinely holds all its
+                    formats at once. */}
+                {!initialFormat && (
                 <section aria-labelledby="formats-heading">
                   <h3
                     id="formats-heading"
@@ -955,9 +963,14 @@ export function CorePostSheet({
                     })}
                   </div>
                 </section>
+                )}
 
-                {/* divider */}
-                <div className="border-t border-border-neutral-default" />
+                {/* divider — belongs to the format picker above it, so it
+                    goes when the picker does. Left behind it drew a line
+                    under nothing. */}
+                {!initialFormat && (
+                  <div className="border-t border-border-neutral-default" />
+                )}
 
                 {/* --- Post settings (הגדרות הפוסט) ---
                     Product + trigger word. Moved out of the script heading
@@ -1022,28 +1035,51 @@ export function CorePostSheet({
                 {/* divider */}
                 <div className="border-t border-border-neutral-default" />
 
-                {/* --- Master script ---
-                    The core post script — the shared idea before format
-                    adaptation. Sits last in the panel (Hani 2026-06-25). */}
-                {post.body?.trim() && (
-                  <section aria-labelledby="master-script-heading">
-                    <h3
-                      id="master-script-heading"
-                      className="text-base font-bold text-text-primary-default mb-3"
-                    >
-                      הסקריפט
-                    </h3>
-                    <div className="relative bg-bg-surface border border-border-neutral-default rounded-md px-4 py-3 text-right">
-                      <CopyIconButton
-                        text={post.body}
-                        ariaLabel="העתיקו את הסקריפט המרכזי"
-                      />
-                      <p className="text-small text-text-primary-default whitespace-pre-wrap leading-relaxed pl-9">
-                        {post.body}
-                      </p>
-                    </div>
-                  </section>
-                )}
+                {/* --- Script ---
+                    THE SELECTED FORMAT'S script, not the core post's
+                    (Hani, 2026-07-30). This section was hardcoded to
+                    `post.body`, so opening a scheduled carousel from the
+                    calendar showed the core post text — the shared idea
+                    before format adaptation — while the carousel's own
+                    script sat unused two fields away. The core post body is
+                    the fallback for a format that hasn't been written yet,
+                    not the thing to show by default. */}
+                {(() => {
+                  // When the Sheet was opened FOR a format, that format is
+                  // the subject — not whatever tab state happens to hold.
+                  const scriptFormat = initialFormat ?? activeTab
+                  const formatScript = post.formatBodies?.[scriptFormat]
+                  const hasFormatScript = !!formatScript?.trim()
+                  const scriptText = hasFormatScript
+                    ? formatScript
+                    : post.body
+                  if (!scriptText?.trim()) return null
+                  return (
+                    <section aria-labelledby="master-script-heading">
+                      <h3
+                        id="master-script-heading"
+                        className="text-base font-bold text-text-primary-default mb-3"
+                      >
+                        {hasFormatScript
+                          ? `הסקריפט — ${getFormatChipLabel(scriptFormat)}`
+                          : "הסקריפט"}
+                      </h3>
+                      <div className="relative bg-bg-surface border border-border-neutral-default rounded-md px-4 py-3 text-right">
+                        <CopyIconButton
+                          text={scriptText}
+                          ariaLabel={
+                            hasFormatScript
+                              ? `העתיקו את הסקריפט ל${getFormatChipLabel(scriptFormat)}`
+                              : "העתיקו את הסקריפט המרכזי"
+                          }
+                        />
+                        <p className="text-small text-text-primary-default whitespace-pre-wrap leading-relaxed pl-9">
+                          {scriptText}
+                        </p>
+                      </div>
+                    </section>
+                  )
+                })()}
 
               </>
             )}
@@ -1069,9 +1105,20 @@ export function CorePostSheet({
                 (r) => r.format === format,
               )
               const publishedAt = publishedMap[format]?.publishedAt
+              // Format-first script logic:
+              // 1. If formatBodies exists as a key on the post AND has an entry
+              //    for this format → use the format-specific script.
+              // 2. If formatBodies is defined but does NOT have an entry for
+              //    this format → use post.body with a "generic fallback" notice.
+              // 3. If formatBodies is undefined (legacy post) → use post.body
+              //    silently (no notice — the user has never gone through the
+              //    new generation flow).
               const perFormatBody = post.formatBodies?.[format]
-              const sectionBody =
-                perFormatBody !== undefined ? perFormatBody : post.body
+              const hasFormatSpecificScript =
+                perFormatBody !== undefined && perFormatBody.trim().length > 0
+              const sectionBody = hasFormatSpecificScript
+                ? perFormatBody
+                : post.body
               const formatHasMedia =
                 post.formatsWithMedia?.includes(format) ?? false
               const perFormatMedia = post.formatMedia?.[format]
