@@ -884,6 +884,14 @@ export function CorePostSheet({
                     Clicking a chip navigates to /project?post_id=X&format=Y
                     (the format edit screen). The Sheet itself never shows
                     per-format detail; that lives on its own page. */}
+                {/* Format picker — hidden when the Sheet was opened FOR a format
+                    (Hani, 2026-07-30). A calendar entry is a scheduled
+                    (post, format) pair: the carousel itself is what's in the
+                    diary, not a core post to pick formats from. Offering the
+                    choice again there asks a question already answered. It stays
+                    for /core_posts, where a post genuinely holds all its
+                    formats at once. */}
+                {!initialFormat && (
                 <section aria-labelledby="formats-heading">
                   <h3
                     id="formats-heading"
@@ -943,9 +951,14 @@ export function CorePostSheet({
                     })}
                   </div>
                 </section>
+                )}
 
-                {/* divider */}
-                <div className="border-t border-border-neutral-default" />
+                {/* divider — belongs to the format picker above it, so it
+                    goes when the picker does. Left behind it drew a line
+                    under nothing. */}
+                {!initialFormat && (
+                  <div className="border-t border-border-neutral-default" />
+                )}
 
                 {/* --- Post settings (הגדרות הפוסט) ---
                     Product + trigger word. Moved out of the script heading
@@ -1010,28 +1023,51 @@ export function CorePostSheet({
                 {/* divider */}
                 <div className="border-t border-border-neutral-default" />
 
-                {/* --- Master script ---
-                    The core post script — the shared idea before format
-                    adaptation. Sits last in the panel (Hani 2026-06-25). */}
-                {post.body?.trim() && (
-                  <section aria-labelledby="master-script-heading">
-                    <h3
-                      id="master-script-heading"
-                      className="text-base font-bold text-text-primary-default mb-3"
-                    >
-                      הסקריפט
-                    </h3>
-                    <div className="relative bg-bg-surface border border-border-neutral-default rounded-md px-4 py-3 text-right">
-                      <CopyIconButton
-                        text={post.body}
-                        ariaLabel="העתיקו את הסקריפט המרכזי"
-                      />
-                      <p className="text-small text-text-primary-default whitespace-pre-wrap leading-relaxed pl-9">
-                        {post.body}
-                      </p>
-                    </div>
-                  </section>
-                )}
+                {/* --- Script ---
+                    THE SELECTED FORMAT'S script, not the core post's
+                    (Hani, 2026-07-30). This section was hardcoded to
+                    `post.body`, so opening a scheduled carousel from the
+                    calendar showed the core post text — the shared idea
+                    before format adaptation — while the carousel's own
+                    script sat unused two fields away. The core post body is
+                    the fallback for a format that hasn't been written yet,
+                    not the thing to show by default. */}
+                {(() => {
+                  // When the Sheet was opened FOR a format, that format is
+                  // the subject — not whatever tab state happens to hold.
+                  const scriptFormat = initialFormat ?? activeTab
+                  const formatScript = post.formatBodies?.[scriptFormat]
+                  const hasFormatScript = !!formatScript?.trim()
+                  const scriptText = hasFormatScript
+                    ? formatScript
+                    : post.body
+                  if (!scriptText?.trim()) return null
+                  return (
+                    <section aria-labelledby="master-script-heading">
+                      <h3
+                        id="master-script-heading"
+                        className="text-base font-bold text-text-primary-default mb-3"
+                      >
+                        {hasFormatScript
+                          ? `הסקריפט — ${getFormatChipLabel(scriptFormat)}`
+                          : "הסקריפט"}
+                      </h3>
+                      <div className="relative bg-bg-surface border border-border-neutral-default rounded-md px-4 py-3 text-right">
+                        <CopyIconButton
+                          text={scriptText}
+                          ariaLabel={
+                            hasFormatScript
+                              ? `העתיקו את הסקריפט ל${getFormatChipLabel(scriptFormat)}`
+                              : "העתיקו את הסקריפט המרכזי"
+                          }
+                        />
+                        <p className="text-small text-text-primary-default whitespace-pre-wrap leading-relaxed pl-9">
+                          {scriptText}
+                        </p>
+                      </div>
+                    </section>
+                  )
+                })()}
 
               </>
             )}
@@ -1065,14 +1101,9 @@ export function CorePostSheet({
               // 3. If formatBodies is undefined (legacy post) → use post.body
               //    silently (no notice — the user has never gone through the
               //    new generation flow).
-              const hasFormatBodiesMap = post.formatBodies !== undefined
               const perFormatBody = post.formatBodies?.[format]
               const hasFormatSpecificScript =
                 perFormatBody !== undefined && perFormatBody.trim().length > 0
-              // `isGenericFallback` = formatBodies map exists but this format
-              // has no entry (or an empty entry) → show the muted notice.
-              const isGenericFallback =
-                hasFormatBodiesMap && !hasFormatSpecificScript
               const sectionBody = hasFormatSpecificScript
                 ? perFormatBody
                 : post.body
@@ -1112,7 +1143,6 @@ export function CorePostSheet({
                     format={format}
                     state={state}
                     body={sectionBody}
-                    isGenericFallback={isGenericFallback}
                     mediaUrl={mediaUrl}
                     coverUrl={formatCoverUrl}
                     driveUrl={formatMeta.driveUrl}
@@ -1326,7 +1356,6 @@ function FormatPanel({
   format,
   state,
   body,
-  isGenericFallback,
   mediaUrl,
   coverUrl,
   driveUrl,
@@ -1342,13 +1371,6 @@ function FormatPanel({
   format: FormatId
   state: FormatReadiness
   body: string | null
-  /**
-   * When true, `body` is the post-level generic script (formatBodies map
-   * exists but has no entry for this format). The ScriptBlock will render
-   * a muted notice to inform the user this is a fallback, not a
-   * format-specific script.
-   */
-  isGenericFallback?: boolean
   mediaUrl: string | null
   coverUrl: string | null
   driveUrl: string | undefined
@@ -1370,7 +1392,6 @@ function FormatPanel({
         format={format}
         state={state}
         body={body}
-        isGenericFallback={isGenericFallback}
         onCreateScript={onCreateScript}
         onEditScript={onEditScript}
       />
@@ -1430,19 +1451,12 @@ function ScriptBlock({
   format,
   state,
   body,
-  isGenericFallback,
   onCreateScript,
   onEditScript,
 }: {
   format: FormatId
   state: FormatReadiness
   body: string | null
-  /**
-   * When true, body is the generic post-level fallback (formatBodies map
-   * exists but has no specific entry for this format). Renders a muted
-   * notice so the user understands it is not a format-specific script.
-   */
-  isGenericFallback?: boolean
   onCreateScript: () => void
   onEditScript: () => void
 }) {
@@ -1480,17 +1494,7 @@ function ScriptBlock({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="text-xs-body text-text-neutral-default">סקריפט</span>
-          {/* Muted fallback notice — only shown when formatBodies map exists
-              but has no dedicated entry for this format. Signals to the user
-              that they are seeing the generic post script, not a tailored one. */}
-          {isGenericFallback && (
-            <span className="inline-flex items-center rounded-full bg-bg-surface border border-border-neutral-default px-2 py-0.5 text-xs-body text-text-neutral-default">
-              סקריפט כללי — טרם נוצר סקריפט ייעודי
-            </span>
-          )}
-        </div>
+        <span className="text-xs-body text-text-neutral-default">סקריפט</span>
         {hasBody && (
           <button
             type="button"
