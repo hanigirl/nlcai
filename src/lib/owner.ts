@@ -21,6 +21,25 @@ const OWNER_EMAILS = new Set([
 // to the primary owner (Hani). New checks should call `isOwner` instead.
 export const OWNER_EMAIL = "hanigirl@gmail.com"
 
+// Single-reviewer preview gate, separate from the owner cohort above.
+//
+// The "no credits" media card and the optional OpenAI field in onboarding ship
+// to production behind this so Nataliya can review them on the live site while
+// every other student keeps the previous behaviour (Hani, 2026-08-02). This is
+// a UI-visibility gate only — nothing server-side changes, and a student who
+// already has an OpenAI key keeps generating media exactly as before.
+//
+// To open the feature to everyone: delete this function and its call sites
+// (the /api/connections/openai route and the onboarding step-1 field).
+const MEDIA_CREDITS_PREVIEW_EMAILS = new Set(["nataliya@nataliyarey.com"])
+
+export function canPreviewMediaCredits(
+  email: string | null | undefined,
+): boolean {
+  if (!email) return false
+  return MEDIA_CREDITS_PREVIEW_EMAILS.has(email.toLowerCase().trim())
+}
+
 export function isOwner(email: string | null | undefined): boolean {
   if (!email) return false
   // QA preview hatch — any logged-in user can opt into the non-owner view

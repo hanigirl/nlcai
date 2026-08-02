@@ -179,6 +179,38 @@ interface UploadingFile {
   status: "uploading" | "done" | "error"
 }
 
+type MediaSection = "fonts" | "elements" | "covers" | "carousels"
+
+// Sub-sections per main tab. Module scope, not component scope, because the
+// initial state has to resolve `?sub=...` against it before the first render —
+// leaving the fallback to a mount effect is what broke every deep link.
+const SUB_SECTIONS: Record<SettingsTab, { id: string; label: string; icon: typeof Type }[]> = {
+  connections: [
+    { id: "claude", label: "Claude", icon: Link2 },
+    { id: "heygen", label: "HeyGen", icon: Link2 },
+    { id: "apify", label: "Apify", icon: Link2 },
+    { id: "openai", label: "OpenAI", icon: Link2 },
+  ],
+  business: [
+    { id: "about", label: "על העסק", icon: Type },
+    { id: "you", label: "עליך", icon: Type },
+    { id: "files", label: "קבצים להעלאה", icon: Upload },
+    { id: "sources", label: "מקורות ידע", icon: Link2 },
+  ],
+  products: [
+    { id: "list", label: "המוצרים שלכם", icon: Type },
+  ],
+  creators: [
+    { id: "list", label: "היוצרים שלכם", icon: Type },
+  ],
+  media: [
+    { id: "fonts", label: "פונטים", icon: Type },
+    { id: "elements", label: "אלמנטים גרפיים", icon: ImageIcon },
+    { id: "covers", label: "קאברים", icon: Sparkles },
+    { id: "carousels", label: "קרוסלות", icon: ImageIcon },
+  ],
+}
+
 export default function SettingsPage() {
   return (
     <Suspense fallback={null}>
@@ -199,10 +231,18 @@ function SettingsPageInner() {
   // "קבצים להעלאה" panel inside the business tab instead of forcing them
   // to find it manually.
   const initialSub = searchParams.get("sub") || ""
+  // Resolved once, up front: a `?sub` that names a real section of the opening
+  // tab wins, anything else (missing, misspelled, belonging to another tab)
+  // falls back to that tab's first section.
+  const resolvedSub =
+    (SUB_SECTIONS[initialTab] ?? []).find((s) => s.id === initialSub)?.id ??
+    SUB_SECTIONS[initialTab]?.[0]?.id ??
+    ""
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
-  const [activeSubSection, setActiveSubSection] = useState<string>(initialSub)
-  type MediaSection = "fonts" | "elements" | "covers" | "carousels"
-  const [activeMediaSection, setActiveMediaSection] = useState<MediaSection>("fonts")
+  const [activeSubSection, setActiveSubSection] = useState<string>(resolvedSub)
+  const [activeMediaSection, setActiveMediaSection] = useState<MediaSection>(
+    initialTab === "media" ? (resolvedSub as MediaSection) : "fonts",
+  )
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<KeyName | null>(null)
   const [reparsing, setReparsing] = useState(false)
@@ -972,42 +1012,27 @@ function SettingsPageInner() {
     { id: "media", label: "מדיה" },
   ]
 
-  // Sub-sections per main tab
-  const SUB_SECTIONS: Record<SettingsTab, { id: string; label: string; icon: typeof Type }[]> = {
-    connections: [
-      { id: "claude", label: "Claude", icon: Link2 },
-      { id: "heygen", label: "HeyGen", icon: Link2 },
-      { id: "apify", label: "Apify", icon: Link2 },
-      { id: "openai", label: "OpenAI", icon: Link2 },
-    ],
-    business: [
-      { id: "about", label: "על העסק", icon: Type },
-      { id: "you", label: "עליך", icon: Type },
-      { id: "files", label: "קבצים להעלאה", icon: Upload },
-      { id: "sources", label: "מקורות ידע", icon: Link2 },
-    ],
-    products: [
-      { id: "list", label: "המוצרים שלכם", icon: Type },
-    ],
-    creators: [
-      { id: "list", label: "היוצרים שלכם", icon: Type },
-    ],
-    media: [
-      { id: "fonts", label: "פונטים", icon: Type },
-      { id: "elements", label: "אלמנטים גרפיים", icon: ImageIcon },
-      { id: "covers", label: "קאברים", icon: Sparkles },
-      { id: "carousels", label: "קרוסלות", icon: ImageIcon },
-    ],
-  }
-
-  // Reset sub-section when tab changes
+  // Reset the sub-section when the tab ACTUALLY changes — never on mount.
+  //
+  // This effect also fires on mount, where it used to overwrite `?sub=...`
+  // with the tab's first sub-section before the user saw anything, so every
+  // deep link landed on the wrong panel: ?sub=openai opened Claude, the home
+  // banner's ?sub=files opened "על העסק".
+  //
+  // It's gated on "did the tab change since last run" rather than a
+  // fired-once flag, because Strict Mode runs mount effects TWICE — a
+  // once-flag is spent by the first pass and the second pass resets anyway.
+  // Comparing the previous tab is idempotent, so re-running changes nothing.
+  const prevTabRef = useRef(activeTab)
   useEffect(() => {
+    if (prevTabRef.current === activeTab) return
+    prevTabRef.current = activeTab
+
     const subs = SUB_SECTIONS[activeTab]
-    if (subs && subs.length > 0) {
-      setActiveSubSection(subs[0].id)
-      if (activeTab === "media") setActiveMediaSection(subs[0].id as MediaSection)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!subs || subs.length === 0) return
+
+    setActiveSubSection(subs[0].id)
+    if (activeTab === "media") setActiveMediaSection(subs[0].id as MediaSection)
   }, [activeTab])
 
   function SubNav({ sections, active, onChange }: { sections: { id: string; label: string; icon: typeof Type }[]; active: string; onChange: (id: string) => void }) {

@@ -19,6 +19,8 @@ import {
 } from "@/components/ui/dialog"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { DriveVideoPreview } from "@/components/drive-video-preview"
+import { MediaCreditsCard } from "@/components/media-credits-card"
+import { useOpenAiConnected } from "@/hooks/use-openai-connected"
 import {
   subscribeBRollGeneration,
   getBRollGenerationSnapshot,
@@ -1491,6 +1493,9 @@ function CarouselFlow({
   const [error, setError] = useState<string | null>(null)
   const [previewIndex, setPreviewIndex] = useState(0)
   const [downloading, setDownloading] = useState(false)
+  // AI templates run on the user's own OpenAI key; the satori templates render
+  // on our side for free. So a missing key blocks only the AI tiles.
+  const openAiConnected = useOpenAiConnected()
 
   // Live slide-1 previews per template (base64 PNG). Every tile shows its
   // static sample thumbnail immediately; satori templates then swap in a
@@ -1980,29 +1985,36 @@ function CarouselFlow({
       </div>
 
       {/* 2. Actions — previews live in the dialog, not in the panel. */}
-      {isAiTemplate && (
+      {isAiTemplate && openAiConnected !== false && (
         <p className="text-xs-body text-text-neutral-default">
           טמפלט AI מצייר כל שקופית עם gpt-image-2 דרך מפתח ה-OpenAI שלכם —
           זה לוקח כמה דקות.
         </p>
       )}
 
-      <Button
-        onClick={handleGenerate}
-        disabled={generating || !carouselText.trim()}
-        className="w-full gap-2"
-      >
-        {generating ? (
-          <>
-            <Loader2 className="size-4 animate-spin" />
-            {isAiTemplate ? "מציירים עם AI... כמה דקות" : "יוצרים קרוסלה..."}
-          </>
-        ) : generatedByTemplate[selectedTemplate] ? (
-          "יצירה מחדש"
-        ) : (
-          "יצירת קרוסלה"
-        )}
-      </Button>
+      {/* An AI template with no OpenAI key connected can only fail, so the
+          generate button is replaced by the way to fix it. The satori
+          templates are unaffected — picking one brings the button back. */}
+      {isAiTemplate && openAiConnected === false ? (
+        <MediaCreditsCard />
+      ) : (
+        <Button
+          onClick={handleGenerate}
+          disabled={generating || !carouselText.trim()}
+          className="w-full gap-2"
+        >
+          {generating ? (
+            <>
+              <Loader2 className="size-4 animate-spin" />
+              {isAiTemplate ? "מציירים עם AI... כמה דקות" : "יוצרים קרוסלה..."}
+            </>
+          ) : generatedByTemplate[selectedTemplate] ? (
+            "יצירה מחדש"
+          ) : (
+            "יצירת קרוסלה"
+          )}
+        </Button>
+      )}
 
       {error && (
         // A billing failure gets its own treatment: the user can't act on
@@ -2352,6 +2364,10 @@ function MediaUploadFlow({
   // already pinned `format` to "story", so a literal check for b-roll there
   // reads as unreachable code.
   const isBRoll = format === "b_roll"
+  // Every AI path in this panel (image post, story, b-roll) draws through the
+  // user's own OpenAI key. `null` while we're still asking; `false` swaps the
+  // generate card for MediaCreditsCard.
+  const openAiConnected = useOpenAiConnected()
   // The paste-a-link field hides itself once media is attached; this is the
   // user asking for it back to swap the clip.
   const [replacingMedia, setReplacingMedia] = useState(false)
@@ -3525,8 +3541,13 @@ function MediaUploadFlow({
               open with its explainer instead of collapsing to a bare button
               once an image exists, so the panel reads the same in every
               format. The generate action lives inside it. */}
-          {hydrating ? (
+          {/* The connection answer is folded into the existing hydration
+              skeleton, so the card never flips from "generate" to "connect
+              credits" in front of the user. */}
+          {hydrating || openAiConnected === null ? (
             <Skeleton className="h-[190px] w-full rounded-[18px]" />
+          ) : openAiConnected === false ? (
+            <MediaCreditsCard />
           ) : (
             <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
               {/* Camera illustration — split into two assets so the tile
@@ -3564,6 +3585,18 @@ function MediaUploadFlow({
               </Button>
             </div>
           )}
+
+              {/* With no OpenAI key the "מדיה משלכם" field stops being the
+                  second option and becomes the ONLY way forward, so it gets
+                  the "או" divider the other panels have. In the normal state
+                  image_post deliberately has no divider. */}
+              {openAiConnected === false && (
+                <div className="flex items-center gap-3" role="separator">
+                  <span className="h-px flex-1 bg-border-neutral-default" />
+                  <span className="text-xs text-text-neutral-default">או</span>
+                  <span className="h-px flex-1 bg-border-neutral-default" />
+                </div>
+              )}
 
               {/* Bring your own — paste a Drive/Canva link. Drive links are
                   attached automatically — a video stays in Drive and plays
@@ -3697,7 +3730,7 @@ function MediaUploadFlow({
           story? are there links?). Half-drawn controls that then rearrange
           themselves read as a bug; a shape that becomes the thing reads as
           loading. */}
-      {format === "story" && hydrating && (
+      {format === "story" && (hydrating || openAiConnected === null) && (
         <>
           <Skeleton className="h-[190px] w-full rounded-[18px]" />
           <div className="flex items-center gap-3">
@@ -3713,12 +3746,15 @@ function MediaUploadFlow({
         </>
       )}
 
-      {format === "story" && !hydrating && (
+      {format === "story" && !hydrating && openAiConnected !== null && (
         <>
           {/* 1. Make one with AI. Always the full card — the design keeps the
                  explainer visible rather than collapsing to a bare button
-                 once frames exist. */}
-          {(
+                 once frames exist. With no OpenAI key connected, the same slot
+                 holds the "connect credits" card instead. */}
+          {openAiConnected === false ? (
+            <MediaCreditsCard />
+          ) : (
             <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
               <div className="relative size-10 shrink-0">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -3900,7 +3936,33 @@ function MediaUploadFlow({
               from the story's: it draws a BACKGROUND and we lay the caption
               over it, because b-roll is an image with a caption on top, not
               a frame the model composes end to end. */}
-          {isBRoll && !hydrating && (
+          {/* Waiting on the OpenAI connection answer. B-roll had no skeleton
+              of its own, so this keeps the slot the right height instead of
+              letting the AI card render and then flip to the credits card. */}
+          {isBRoll && !hydrating && openAiConnected === null && (
+            <>
+              <Skeleton className="h-[190px] w-full rounded-[18px]" />
+              <div className="flex items-center gap-3">
+                <Skeleton className="h-px flex-1" />
+                <Skeleton className="h-3 w-6" />
+                <Skeleton className="h-px flex-1" />
+              </div>
+            </>
+          )}
+
+          {isBRoll && !hydrating && openAiConnected === false && (
+            <>
+              <MediaCreditsCard />
+
+              <div className="flex items-center gap-3" role="separator">
+                <span className="h-px flex-1 bg-border-neutral-default" />
+                <span className="text-xs text-text-neutral-default">או</span>
+                <span className="h-px flex-1 bg-border-neutral-default" />
+              </div>
+            </>
+          )}
+
+          {isBRoll && !hydrating && openAiConnected === true && (
             <>
               <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
                 <div className="relative size-10 shrink-0">

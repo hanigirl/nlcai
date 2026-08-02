@@ -7,6 +7,7 @@ import { ArrowLeft, Paperclip, Loader2, Link2 } from "lucide-react"
 import logoNew from "../../../images/logo-new.png"
 import onboardingHero from "../../../images/art-onboarding.png"
 import { createClient } from "@/lib/supabase/client"
+import { canPreviewMediaCredits } from "@/lib/owner"
 import { parseCreatorInput, validateCreatorInput } from "@/lib/creator-url"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -192,6 +193,13 @@ function OnboardingPageInner() {
   const [anthropicKey, setAnthropicKey] = useState("")
   const [heygenKey, setHeygenKey] = useState("")
   const [apifyKey, setApifyKey] = useState("")
+  // OPTIONAL on purpose. Without it the app still works end to end — the user
+  // just can't one-click generate media, and the media panel shows
+  // MediaCreditsCard pointing back to Settings. It must never gate `canProceed`.
+  const [openaiKey, setOpenaiKey] = useState("")
+  // ...and limited to the single reviewer for now, alongside the media card it
+  // pairs with. Everyone else sees step 1 exactly as it was.
+  const [showOpenaiField, setShowOpenaiField] = useState(false)
 
   // Step 2 - Business
   const [businessName, setBusinessName] = useState("")
@@ -259,16 +267,19 @@ function OnboardingPageInner() {
           return
         }
 
+        if (!cancelled) setShowOpenaiField(canPreviewMediaCredits(user.email))
+
         const [usersRes, coreRes, audRes, creatorsRes, productsRes] =
           await Promise.all([
             supabase
               .from("users")
-              .select("anthropic_api_key, apify_api_key, heygen_api_key")
+              .select("anthropic_api_key, apify_api_key, heygen_api_key, openai_api_key")
               .eq("id", user.id)
               .maybeSingle<{
                 anthropic_api_key: string | null
                 apify_api_key: string | null
                 heygen_api_key: string | null
+                openai_api_key: string | null
               }>(),
             supabase
               .from("core_identities")
@@ -318,6 +329,7 @@ function OnboardingPageInner() {
         if (usersRow?.anthropic_api_key) setAnthropicKey(usersRow.anthropic_api_key)
         if (usersRow?.apify_api_key) setApifyKey(usersRow.apify_api_key)
         if (usersRow?.heygen_api_key) setHeygenKey(usersRow.heygen_api_key)
+        if (usersRow?.openai_api_key) setOpenaiKey(usersRow.openai_api_key)
 
         const coreRow = coreRes.data
         if (coreRow?.product_name) setBusinessName(coreRow.product_name)
@@ -519,10 +531,13 @@ function OnboardingPageInner() {
           // Validate every entered key against its provider before persisting.
           // Catches the recurring "pasted into wrong field" bug + dead keys.
           // Each entry runs format + live check via the same endpoint Settings uses.
-          const entries: Array<["anthropic_api_key" | "heygen_api_key" | "apify_api_key", string, string]> = []
+          const entries: Array<["anthropic_api_key" | "heygen_api_key" | "apify_api_key" | "openai_api_key", string, string]> = []
           if (anthropicKey.trim()) entries.push(["anthropic_api_key", anthropicKey.trim(), "Anthropic"])
           if (heygenKey.trim()) entries.push(["heygen_api_key", heygenKey.trim(), "HeyGen"])
           if (apifyKey.trim()) entries.push(["apify_api_key", apifyKey.trim(), "Apify"])
+          // Only validated if actually typed — an empty OpenAI field is a
+          // legitimate choice, not a missing field.
+          if (openaiKey.trim()) entries.push(["openai_api_key", openaiKey.trim(), "OpenAI"])
 
           for (const [keyName, value, label] of entries) {
             const v = await fetch("/api/validate-api-key", {
@@ -1224,6 +1239,39 @@ function OnboardingPageInner() {
                   </a>
                 </p>
               </div>
+
+              {/* OpenAI — the image model behind "יצירת מדיה עם AI". Optional
+                  by design: skipping it costs the one-click media generation,
+                  nothing else, and the media panel says so with a card that
+                  links back to Settings. Shown only to the reviewer cohort for
+                  now, so students see the step unchanged. */}
+              {showOpenaiField && (
+              <div className="flex flex-col gap-2">
+                <label className="text-small-bold text-text-primary-default flex items-center gap-2">
+                  <Link2 className="size-4" />
+                  OpenAI API Key (אופציונאלי)
+                </label>
+                <Input
+                  dir="ltr"
+                  placeholder="sk-..."
+                  value={openaiKey}
+                  onChange={(e) => setOpenaiKey(e.target.value)}
+                />
+                <p className="text-xs-body text-text-neutral-default">
+                  מצאו את ה-API key שלכם ב-{" "}
+                  <a
+                    href="https://platform.openai.com/api-keys"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-text-primary-default font-semibold hover:underline"
+                  >
+                    platform.openai.com
+                  </a>
+                  {" "}והטעינו קרדיטים. זה מה שמאפשר לייצר תמונות ומדיה בלחיצה —
+                  אפשר לדלג ולחבר את זה מאוחר יותר בהגדרות.
+                </p>
+              </div>
+              )}
 
               <div className="flex flex-col gap-2">
                 <label className="text-small-bold text-text-primary-default flex items-center gap-2">
