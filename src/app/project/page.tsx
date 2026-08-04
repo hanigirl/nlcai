@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
-import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, MessageCircle, type LucideIcon } from "lucide-react"
+import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { AppShell } from "@/components/app-shell"
 import { InfiniteCanvas } from "@/components/infinite-canvas"
@@ -19,6 +19,7 @@ import { ConfirmModal } from "@/components/confirm-modal"
 import { CorePostCelebration } from "@/components/core-post-celebration"
 import { ScheduleInCalendarBar } from "@/components/schedule-in-calendar-bar"
 import { CorePostChat } from "@/components/core-post-chat"
+import { AiRefineButton, type AiRefineDesign } from "@/components/ai-refine-button"
 import { StoryPlayer, storyFrameSrc } from "@/components/story-player"
 import { ColorSwatchPicker } from "@/components/color-swatch-picker"
 import type { Avatar } from "@/components/avatar-picker"
@@ -174,7 +175,27 @@ function ProjectPageInner() {
   const hookParam = searchParams.get("hook") ?? ""
   const hookIdParam = searchParams.get("hook_id") ?? ""
   const postId = searchParams.get("post_id") ?? ""
-  const flow: Flow = postId ? "saved" : hookParam ? "hook" : "idea"
+
+  // ── Review harness (design deliverable, off in production) ────────────────
+  // `?variant=a|b` mounts a live clone of the core-post card so the two AI-icon
+  // designs can be reviewed inside the real app chrome — no flow, no credits,
+  // no DB writes. With no param this is all inert and /project is unchanged.
+  const rawVariant = searchParams.get("variant")
+  const reviewVariant: AiRefineDesign | null =
+    rawVariant === "a" || rawVariant === "b" ? rawVariant : null
+  const reviewMode = reviewVariant !== null
+  // Which icon state the reviewer is inspecting (state toggle at top of page).
+  const [reviewState, setReviewState] = useState<
+    "default" | "generating" | "frozen" | "panel"
+  >("default")
+
+  const flow: Flow = reviewMode
+    ? "hook"
+    : postId
+      ? "saved"
+      : hookParam
+        ? "hook"
+        : "idea"
 
   const [idea, setIdea] = useState(initialIdea)
   useEffect(() => { setIdea(initialIdea) }, [initialIdea])
@@ -473,6 +494,7 @@ function ProjectPageInner() {
   }, [flow, userId, hookIdParam])
 
   useEffect(() => {
+    if (reviewMode) return // review harness owns its own seeded state
     if (restoredRef.current) return
     if (!userId) return
     restoredRef.current = true
@@ -529,10 +551,11 @@ function ProjectPageInner() {
       }
       if (typeof saved.triggerWord === "string") setTriggerWord(saved.triggerWord)
     } catch (err) { console.error("[project][canvas-restore]", err) }
-  }, [sessionKey, postId, router, userId])
+  }, [sessionKey, postId, router, userId, reviewMode])
 
   // Save canvas state on changes (debounced)
   useEffect(() => {
+    if (reviewMode) return // never persist the seeded review state
     if (!restoredRef.current) return
     if (!userId) return
     const t = setTimeout(() => {
@@ -557,7 +580,39 @@ function ProjectPageInner() {
       } catch (err) { console.error("[project][canvas-save]", err) }
     }, 300)
     return () => clearTimeout(t)
-  }, [sessionKey, idea, hooks, hookIds, selectedHook, response, corePost, showFormats, selectedFormats, duplicatedFormats, formatPosts, editableHook, coverText, thTranscript, thSourceMode, savedHookText, originalHooks, originalCorePost, selectedProductId, triggerWord, savedPostId, userId])
+  }, [sessionKey, idea, hooks, hookIds, selectedHook, response, corePost, showFormats, selectedFormats, duplicatedFormats, formatPosts, editableHook, coverText, thTranscript, thSourceMode, savedHookText, originalHooks, originalCorePost, selectedProductId, triggerWord, savedPostId, userId, reviewMode])
+
+  // ── Review harness: seed a dummy core post so the card renders immediately,
+  // and translate the state toggle into the real state the card already reads.
+  // savedPostId stays null, so every auto-save effect above no-ops → no DB
+  // writes, and no generation route is ever called → no credits spent.
+  const reviewSeededRef = useRef(false)
+  useEffect(() => {
+    if (!reviewMode || reviewSeededRef.current) return
+    reviewSeededRef.current = true
+    const seedHook = "5 טעויות שכמעט כל יועצת עושה בפוסט הראשון"
+    const seedPost =
+      "5 טעויות שכמעט כל יועצת עושה בפוסט הראשון\n\n" +
+      "כשהתחלתי לכתוב תוכן, הייתי בטוחה שאם רק אשב מספיק זמן מול המסך — המילים יגיעו.\n\n" +
+      "הן לא הגיעו. ישבתי, מחקתי, כתבתי, מחקתי שוב.\n\n" +
+      "מה שכן עזר לי בסוף זה לא עוד השראה — אלא מבנה. הנה מה שלמדתי:\n\n" +
+      "• תתחילו מהכאב של הלקוחה, לא מהפתרון שלכן\n" +
+      "• משפט ראשון קצר. תמיד.\n" +
+      "• תכתבו כמו שאתן מדברות\n\n" +
+      "מה הטעות שהכי מוכרת לכן? ספרו לי בתגובות."
+    setEditableHook(seedHook)
+    setSavedHookText(seedHook)
+    setCorePost(seedPost)
+    setActiveCard("post")
+  }, [reviewMode])
+
+  // Drive the existing card state from the review toggle.
+  useEffect(() => {
+    if (!reviewMode) return
+    setChatBusy(reviewState === "generating")
+    setDuplicatedFormats(reviewState === "frozen" ? ["story"] : [])
+    setChatOpen(reviewState === "panel")
+  }, [reviewMode, reviewState])
 
   // Extract a frame from a video URL as a data URL
   const extractVideoFrame = (videoSrc: string): Promise<string | null> => {
@@ -1661,6 +1716,47 @@ function ProjectPageInner() {
 
   return (
     <AppShell idea={shortenTitle(idea || hookParam || (postId ? "עריכת פוסט" : ""))}>
+      {/* ── Review harness state toggle (design deliverable, ?variant only) ── */}
+      {reviewMode && (
+        <div
+          dir="rtl"
+          className="fixed left-1/2 top-4 z-50 flex -translate-x-1/2 flex-col items-center gap-1.5 rounded-[16px] border border-border-neutral-default bg-white/95 dark:bg-gray-10/95 px-4 py-2.5 shadow-xl backdrop-blur"
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-xs-body font-semibold text-text-primary-default">
+              סקירת עיצוב · הצעה {reviewVariant === "a" ? "א׳" : "ב׳"}
+            </span>
+            <span className="text-xs text-text-neutral-default">
+              ({reviewVariant === "a" ? "תווית גרדיאנט" : "אייקון גרדיאנט"})
+            </span>
+          </div>
+          <div className="flex items-center gap-1">
+            {([
+              ["default", "רגיל"],
+              ["generating", "מייצר"],
+              ["frozen", "נעול (אחרי שיכפול)"],
+              ["panel", "פאנל פתוח"],
+            ] as const).map(([value, labelText]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setReviewState(value)}
+                className={`rounded-full px-3 py-1 text-xs transition-colors ${
+                  reviewState === value
+                    ? "bg-bg-surface-primary-default-80 text-text-primary-default font-medium"
+                    : "text-text-neutral-default hover:bg-bg-surface-hover"
+                }`}
+              >
+                {labelText}
+              </button>
+            ))}
+          </div>
+          <span className="text-[11px] text-text-neutral-default">
+            תצוגת סקירה — ללא קרדיטים, ללא שמירה ל-DB
+          </span>
+        </div>
+      )}
+
       {/* Media Panel — sibling to InfiniteCanvas, slides from left */}
       <MediaPanel
         formatId={selectedFormatCard}
@@ -1760,6 +1856,7 @@ function ProjectPageInner() {
           setActiveCard("post")
         }}
         onBusyChange={setChatBusy}
+        demo={reviewMode}
       />
 
       <InfiniteCanvas>
@@ -1950,7 +2047,7 @@ function ProjectPageInner() {
                 we have hooks in state (in-session or hydrated by the DB-by-
                 idea fetch); this stack is reserved for hook-flow entries
                 without an associated idea-text + hooks set. */}
-          {!((flow === "idea") || hooks.length > 0) &&
+          {!reviewMode && !((flow === "idea") || hooks.length > 0) &&
             (flow === "hook" || (flow === "saved" && !!(savedHookText || editableHook))) && (
             <>
               {/* Hook card — editable */}
@@ -2020,7 +2117,7 @@ function ProjectPageInner() {
                   the URL flips to `saved`), so the connector must follow them
                   rather than be omitted as it was when `saved` had nothing
                   before the core post. */}
-              {(flow !== "saved" || !!(savedHookText || editableHook)) && (
+              {!reviewMode && (flow !== "saved" || !!(savedHookText || editableHook)) && (
                 <div className="flex items-center mt-[55px]">
                   <div className="h-[2px] w-7 bg-gray-80" />
                 </div>
@@ -2146,21 +2243,18 @@ function ProjectPageInner() {
                           label={
                             formatsLocked
                               ? "אי אפשר לערוך בשיחה אחרי שיכפול לפורמטים"
-                              : "עריכת פוסט ליבה"
+                              : reviewVariant
+                                ? "עריכה עם AI"
+                                : "עריכת פוסט ליבה"
                           }
                         >
                           <span className="inline-flex">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="icon"
+                            <AiRefineButton
+                              design={reviewVariant ?? "legacy"}
                               disabled={formatsLocked}
-                              aria-label="עריכת פוסט ליבה"
+                              busy={chatBusy}
                               onClick={() => setChatOpen(true)}
-                              className="size-[44px] rounded-[12px]"
-                            >
-                              <MessageCircle className="size-4" />
-                            </Button>
+                            />
                           </span>
                         </TooltipLabel>
                         <Button
