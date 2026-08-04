@@ -561,7 +561,19 @@
   animation: ai-ring-pulse 1.6s ease-in-out infinite;
 }
 
+/* The AI-refine entry-point sparkle "breathes" while a revision is generating,
+   so the entry point itself signals work (not just the card). */
+@keyframes ai-sparkle-pulse {
+  0%, 100% { opacity: 1;    transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(0.86); }
+}
+
+.ai-sparkle-pulse {
+  animation: ai-sparkle-pulse 1.2s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ai-text-shimmer { animation: none; }
   .ai-card-working { animation: none; }
+  .ai-sparkle-pulse { animation: none; }
 }
