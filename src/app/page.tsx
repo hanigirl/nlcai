@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { toast } from "sonner"
-import { ArrowUp, Mic, Loader2, Bug } from "lucide-react"
+import { ArrowUp, Loader2, Bug } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AppLink } from "@/components/ui/app-link"
 import { AppShell } from "@/components/app-shell"
@@ -13,6 +13,7 @@ import { HookCard } from "@/components/hook-card"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { BugReportModal } from "@/components/bug-report-modal"
+import { HomeMicRecorder } from "@/components/home-mic-recorder"
 import { createClient } from "@/lib/supabase/client"
 import { userKey } from "@/lib/user-scoped-storage"
 import {
@@ -779,12 +780,7 @@ function HomeContent() {
                 className="min-h-[56px] border-none bg-transparent px-0 py-0 text-p text-text-primary-default shadow-none placeholder:text-text-neutral-default resize-none focus-visible:ring-0"
               />
               <div className="flex items-center justify-between">
-                <button
-                  type="button"
-                  className="p-2 text-text-neutral-default hover:text-text-primary-default transition-colors"
-                >
-                  <Mic className="size-4" />
-                </button>
+                <HomeMicRecorder value={idea} onChange={setIdea} />
                 <Button onClick={handleSubmit} disabled={!idea.trim()} className="gap-2">
                   תייצר לי הוקים
                   <ArrowUp className="size-4" />
