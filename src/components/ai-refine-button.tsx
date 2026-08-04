@@ -1,35 +1,22 @@
 "use client"
 
-import { MessageCircle } from "lucide-react"
-
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 /**
  * The entry point that opens the core-post AI-refine chat (CorePostChat).
  *
- * `design` selects the visual treatment:
- *   - "legacy" — the shipped white outline MessageCircle icon button. Rendered
- *     when no ?variant param is present, so /project stays byte-identical to
- *     production.
- *   - "a" — labeled AI pill: white surface + neutral border, a gradient-filled
- *     sparkle glyph, and the visible words "עריכה עם AI". The action is
- *     legible without hover (Rachel's D2 / the Canva "Magic Write", Instagram
- *     "Write with Meta AI" pattern).
- *   - "b" — compact icon button: the same 44×44 footprint as today, white
- *     surface, gradient-filled sparkle glyph, no label — for the tight RTL
- *     action row.
+ * A labeled AI pill: the project's secondary button (white surface + neutral
+ * border) carrying a gradient-filled sparkle glyph and the visible words
+ * "עריכה עם AI". The action is legible without hover (Rachel's D2 / the Canva
+ * "Magic Write", Instagram "Write with Meta AI" pattern).
  *
- * Per Hani (2026-08-04): the gradient paints the GLYPH, not the button — the
- * surface stays white. The gradient and the "frozen/disabled" treatment live
- * here once and are shared by both variants — they must never diverge per
- * call site.
+ * Picked by Hani on 2026-08-04 over an icon-only variant, and over the
+ * previous generic MessageCircle icon button which didn't read as AI. The
+ * gradient paints the GLYPH, not the button — the surface stays white.
  */
 
-export type AiRefineDesign = "legacy" | "a" | "b"
-
 interface AiRefineButtonProps {
-  design: AiRefineDesign
   /** Frozen after "שיכפול לפורמטים" — the core post can no longer be edited. */
   disabled?: boolean
   /** The AI is currently generating a revision — pulse the sparkle. */
@@ -123,89 +110,40 @@ function AiGradientDefs() {
 }
 
 export function AiRefineButton({
-  design,
   disabled = false,
   busy = false,
   onClick,
   label = "עריכה עם AI",
 }: AiRefineButtonProps) {
-  // Byte-identical to the shipped control — used when no ?variant is set.
-  if (design === "legacy") {
-    return (
-      <Button
-        type="button"
-        variant="outline"
-        size="icon"
-        disabled={disabled}
-        aria-label="עריכת פוסט ליבה"
-        onClick={onClick}
-        className="size-[44px] rounded-[12px]"
-      >
-        <MessageCircle className="size-4" />
-      </Button>
-    )
-  }
-
-  // Gradient-filled glyph on a white button (per Hani). Frozen state drops the
-  // gradient for the flat disabled token — dignified "locked", not a glitch.
+  // Frozen state drops the gradient for the flat disabled token — a dignified
+  // "locked", not a glitch.
   const glyphStyle = disabled ? undefined : { fill: `url(#${AI_GRADIENT_ID})` }
-
-  const sparkle = (
-    <AiSparkIcon
-      style={glyphStyle}
-      className={cn(
-        "size-4 shrink-0",
-        disabled && "fill-current text-text-primary-disabled",
-        busy && !disabled && "ai-sparkle-pulse",
-      )}
-    />
-  )
 
   // The surface is the project's secondary button — `variant="outline"` on the
   // shared Button (white + border-border-neutral-default + gray-95 hover), the
-  // same control the legacy icon button used and the same one used across the
-  // app's 60-odd secondary actions. NOT `variant="secondary"`, which is still
-  // on raw shadcn theme colours. Only the glyph is bespoke.
-  if (design === "a") {
-    return (
-      <>
-        <AiGradientDefs />
-        <Button
-          type="button"
-          variant="outline"
-          disabled={disabled}
-          aria-label={label}
-          onClick={onClick}
-          className="gap-1.5"
-        >
-          {sparkle}
-          <span>{label}</span>
-        </Button>
-      </>
-    )
-  }
-
-  // design === "b" — icon-only gradient sparkle, same 44×44 footprint as today.
+  // same one used across the app's other secondary actions. NOT
+  // `variant="secondary"`, which is still on raw shadcn theme colours. Only
+  // the glyph is bespoke.
   return (
     <>
       <AiGradientDefs />
       <Button
         type="button"
         variant="outline"
-        size="icon"
         disabled={disabled}
         aria-label={label}
         onClick={onClick}
-        className="size-[44px] rounded-[12px]"
+        className="gap-1.5"
       >
         <AiSparkIcon
           style={glyphStyle}
           className={cn(
-            "size-5 shrink-0",
+            "size-4 shrink-0",
             disabled && "fill-current text-text-primary-disabled",
             busy && !disabled && "ai-sparkle-pulse",
           )}
         />
+        <span>{label}</span>
       </Button>
     </>
   )

@@ -45,12 +45,6 @@ interface CorePostChatProps {
    * can animate the core post card (shimmer) while the user waits.
    */
   onBusyChange?: (busy: boolean) => void
-  /**
-   * Review-harness only: when true, `send` never calls the paid refine route.
-   * It fakes a short "generating" beat and returns a canned revision, so the
-   * design ?variant preview can exercise the full loop with zero credits.
-   */
-  demo?: boolean
 }
 
 const ERROR_COPY: Record<string, string> = {
@@ -81,7 +75,6 @@ export function CorePostChat({
   hookText,
   onPreview,
   onBusyChange,
-  demo = false,
 }: CorePostChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([INTRO])
   const [workingPost, setWorkingPost] = useState(corePost)
@@ -156,29 +149,6 @@ export function CorePostChat({
     setInput("")
     setLoading(true)
     setError("")
-
-    // Review-harness short-circuit: no network, no credits. Fake a brief
-    // "thinking" beat, then return a canned revision so the loop is reviewable.
-    if (demo) {
-      await new Promise((r) => setTimeout(r, 900))
-      const revertTo = workingPost
-      const revisedPost = `${workingPost}\n\n(עודכן לצורך הדגמה — "${text}")`
-      onPreview(revisedPost)
-      setWorkingPost(revisedPost)
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "עדכנתי את הפוסט (הדגמה).",
-          revisedPost,
-          revertTo,
-          status: "pending",
-          instruction: text,
-        },
-      ])
-      setLoading(false)
-      return
-    }
 
     try {
       const res = await fetch("/api/core-post/refine", {
