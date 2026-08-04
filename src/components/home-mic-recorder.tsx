@@ -8,23 +8,15 @@
  * state. This component turns it into a round button (gray hover — "האפור שלנו")
  * that actually records the user's voice and transcribes it (Hebrew, he-IL)
  * straight into the idea textarea, mirroring the mic on the core-post editor
- * (WorkflowCard). The recording + device-selection logic is shared here; the
- * two variants only differ in HOW they surface it (see below), so the treatment
- * lives in ONE component instead of being duplicated per variant.
+ * (WorkflowCard).
  *
- * Variant "a" — מודאל בחירה (modal-first): click opens a centered dialog with a
- *   device picker + a big record button. Identical mental model to פוסט ליבה.
- * Variant "b" — הקלטה מיידית (record-first inline): click starts recording
- *   immediately, inline in the card, with live transcription into the textarea;
- *   the device picker is demoted to a small secondary control.
+ * Interaction — הקלטה מיידית (record-first inline): click starts recording
+ * immediately, inline in the card, with live transcription into the textarea;
+ * the device picker is demoted to a small secondary control. (Picked over a
+ * modal-first alternative during design review.)
  *
  * SAFETY: uses the browser-local Web Speech API only (like WorkflowCard). No
- * server call, no API credits, no DB writes. Safe to open on a live link.
- *
- * The `preview` prop is a REVIEW-ONLY affordance: it renders a given visual
- * state (recording / error) with seeded data and WITHOUT touching the mic, so a
- * reviewer can inspect every state without granting mic permission. With
- * preview unset the component is fully live.
+ * server call, no API credits, no DB writes.
  */
 
 import { useState, useRef, useEffect, useCallback } from "react"
@@ -37,29 +29,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
-export type MicVariant = "a" | "b"
-export type MicPreview = "recording" | "error" | null
-
 interface HomeMicRecorderProps {
-  variant: MicVariant
   /** The idea textarea value — transcribed speech is appended to it. */
   value: string
   onChange: (value: string) => void
-  /** Review-only: force a visual state with seeded data, no real mic access. */
-  preview?: MicPreview
 }
 
-const PREVIEW_DEVICES = [
-  { deviceId: "default", label: "מיקרופון ברירת מחדל (מובנה)" } as MediaDeviceInfo,
-  { deviceId: "ext", label: "AirPods" } as MediaDeviceInfo,
-]
-
-export function HomeMicRecorder({
-  variant,
-  value,
-  onChange,
-  preview = null,
-}: HomeMicRecorderProps) {
+export function HomeMicRecorder({ value, onChange }: HomeMicRecorderProps) {
   const [showDeviceDialog, setShowDeviceDialog] = useState(false)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [selectedDeviceId, setSelectedDeviceId] = useState("")
@@ -75,22 +51,7 @@ export function HomeMicRecorder({
     valueRef.current = value
   }, [value])
 
-  // --- Review-only preview: paint the state, don't touch the mic ----------
-  const previewRecording = preview === "recording"
-  const previewError = preview === "error"
-  const showRecording = previewRecording || isRecording
-  const displayTime = previewRecording ? 7 : recordingTime
-  const displayError = previewError
-    ? "לא ניתן לגשת למיקרופון. אפשרו גישה בהגדרות הדפדפן."
-    : error
-  const displayDevices = preview ? PREVIEW_DEVICES : devices
-
   const loadDevices = useCallback(async () => {
-    if (preview) {
-      setDevices(PREVIEW_DEVICES)
-      setSelectedDeviceId(PREVIEW_DEVICES[0].deviceId)
-      return
-    }
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true })
       const all = await navigator.mediaDevices.enumerateDevices()
@@ -102,7 +63,7 @@ export function HomeMicRecorder({
     } catch {
       setError("לא ניתן לגשת למיקרופון. אפשרו גישה בהגדרות הדפדפן.")
     }
-  }, [preview, selectedDeviceId])
+  }, [selectedDeviceId])
 
   useEffect(() => {
     if (showDeviceDialog) loadDevices()
@@ -116,7 +77,6 @@ export function HomeMicRecorder({
   }, [])
 
   const startRecording = () => {
-    if (preview) return // review-only: never touch the mic
     const SpeechRecognitionCtor =
       window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognitionCtor) {
@@ -182,7 +142,7 @@ export function HomeMicRecorder({
   const roundBtn =
     "flex items-center justify-center rounded-full transition-colors text-text-neutral-default hover:bg-gray-95 dark:hover:bg-gray-20 hover:text-text-primary-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-neutral-default"
 
-  // ---- Shared device-picker dialog (used by both variants) ---------------
+  // ---- Device-picker dialog (secondary control) --------------------------
   const deviceDialog = (
     <Dialog open={showDeviceDialog} onOpenChange={setShowDeviceDialog}>
       <DialogContent dir="rtl" className="sm:max-w-md">
@@ -198,10 +158,10 @@ export function HomeMicRecorder({
             onChange={(e) => setSelectedDeviceId(e.target.value)}
             className="h-10 rounded-lg border border-border-neutral-default bg-white dark:bg-gray-10 px-3 text-small text-text-primary-default"
           >
-            {displayDevices.length === 0 && (
+            {devices.length === 0 && (
               <option value="">מיקרופון ברירת מחדל (מובנה)</option>
             )}
-            {displayDevices.map((device, i) => (
+            {devices.map((device, i) => (
               <option key={device.deviceId} value={device.deviceId}>
                 {device.label || `מיקרופון ${i + 1}`}
               </option>
@@ -215,99 +175,8 @@ export function HomeMicRecorder({
     </Dialog>
   )
 
-  // ======================================================================
-  // Variant A — מודאל בחירה (modal-first): mirrors the פוסט ליבה mic.
-  // ======================================================================
-  if (variant === "a") {
-    return (
-      <>
-        <button
-          type="button"
-          aria-label="הקלטה קולית"
-          onClick={() => setShowDeviceDialog(true)}
-          className={cn(roundBtn, "size-9")}
-        >
-          <Mic className="size-4" />
-        </button>
-
-        <Dialog
-          open={showDeviceDialog}
-          onOpenChange={(open) => {
-            if (!open && isRecording) stopRecording()
-            setShowDeviceDialog(open)
-          }}
-        >
-          <DialogContent dir="rtl" className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>הקלטה קולית</DialogTitle>
-            </DialogHeader>
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
-                <label className="text-small-bold text-text-primary-default">
-                  בחירת מיקרופון
-                </label>
-                <select
-                  value={selectedDeviceId}
-                  onChange={(e) => setSelectedDeviceId(e.target.value)}
-                  disabled={showRecording}
-                  className="h-10 rounded-lg border border-border-neutral-default bg-white dark:bg-gray-10 px-3 text-small text-text-primary-default disabled:opacity-60"
-                >
-                  {displayDevices.length === 0 && (
-                    <option value="">מיקרופון ברירת מחדל (מובנה)</option>
-                  )}
-                  {displayDevices.map((device, i) => (
-                    <option key={device.deviceId} value={device.deviceId}>
-                      {device.label || `מיקרופון ${i + 1}`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex flex-col items-center gap-4 py-4">
-                {showRecording && (
-                  <div className="flex items-center gap-2">
-                    <span className="size-2 rounded-full bg-red-500 animate-pulse" />
-                    <span className="text-p-bold text-text-primary-default font-mono">
-                      {formatTime(displayTime)}
-                    </span>
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={showRecording ? stopRecording : startRecording}
-                  className={cn(
-                    "size-16 rounded-full flex items-center justify-center transition-all text-white",
-                    showRecording
-                      ? "bg-red-500 hover:bg-red-600"
-                      : "bg-button-primary-default hover:bg-button-primary-hover"
-                  )}
-                >
-                  {showRecording ? (
-                    <Square className="size-6" />
-                  ) : (
-                    <Mic className="size-6" />
-                  )}
-                </button>
-                <p className="text-small text-text-neutral-default text-center">
-                  {showRecording ? "מקליט... לחצו לעצור" : "לחצו כדי להתחיל הקלטה"}
-                </p>
-                {displayError && (
-                  <p className="text-small text-button-destructive-default text-center">
-                    {displayError}
-                  </p>
-                )}
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </>
-    )
-  }
-
-  // ======================================================================
-  // Variant B — הקלטה מיידית (record-first inline): one tap to talk.
-  // ======================================================================
-  if (showRecording) {
+  // ---- Recording state: stop / timer / cancel ----------------------------
+  if (isRecording) {
     return (
       <div className="flex items-center gap-3">
         <button
@@ -321,7 +190,7 @@ export function HomeMicRecorder({
         <div className="flex items-center gap-2">
           <span className="size-2 rounded-full bg-red-500 animate-pulse" />
           <span className="text-small-bold text-text-primary-default font-mono">
-            {formatTime(displayTime)}
+            {formatTime(recordingTime)}
           </span>
           <span className="text-small text-text-neutral-default">
             מקליט ומתמלל...
@@ -359,9 +228,9 @@ export function HomeMicRecorder({
           <ChevronDown className="size-3.5" />
         </button>
       </div>
-      {displayError && (
+      {error && (
         <p className="text-xs-body text-button-destructive-default">
-          {displayError}
+          {error}
         </p>
       )}
       {deviceDialog}

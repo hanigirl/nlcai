@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { toast } from "sonner"
-import { ArrowUp, Mic, Loader2, Bug } from "lucide-react"
+import { ArrowUp, Loader2, Bug } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AppLink } from "@/components/ui/app-link"
 import { AppShell } from "@/components/app-shell"
@@ -13,7 +13,7 @@ import { HookCard } from "@/components/hook-card"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { BugReportModal } from "@/components/bug-report-modal"
-import { HomeMicRecorder, type MicVariant, type MicPreview } from "@/components/home-mic-recorder"
+import { HomeMicRecorder } from "@/components/home-mic-recorder"
 import { createClient } from "@/lib/supabase/client"
 import { userKey } from "@/lib/user-scoped-storage"
 import {
@@ -70,20 +70,6 @@ function HomeContent() {
   // Review-only state toggle: lets the reviewer jump between setup states
   // without driving the real onboarding flow. Default 2 (the requested 2/3).
   const [bannerDone, setBannerDone] = useState(2)
-
-  // --- Home-page mic recorder (Notion task 3b24d905) -------------------
-  // Gated behind ?mic=a|b (its OWN param — the page already uses ?variant for
-  // the onboarding banner above, so we don't collide). With NO ?mic param the
-  // idea-box mic is byte-identical to production (the current dead icon).
-  // Under the param the mic becomes a real, round, gray-hover recording button
-  // that transcribes speech (he-IL) into the idea box — all browser-local, so
-  // ZERO side effects: no API call, no credits, no DB writes.
-  const micVariant = searchParams.get("mic") as MicVariant | null
-  const showMic = micVariant === "a" || micVariant === "b"
-  // Review-only state toggle: paints each mic state (idle / recording / error)
-  // WITHOUT touching the real microphone, so the reviewer can inspect every
-  // state without granting permission. "live" = real recording.
-  const [micPreview, setMicPreview] = useState<MicPreview | "live">("live")
 
   const [userName, setUserName] = useState("")
   const [idea, setIdea] = useState("")
@@ -451,37 +437,6 @@ function HomeContent() {
           ))}
         </div>
       )}
-      {/* Review-only state toggle for the home mic recorder. Visible only under
-          ?mic=a|b — lets the reviewer inspect every mic state (רגיל · מקליט ·
-          שגיאה) WITHOUT granting mic permission. Not part of the shipped
-          design. "רגיל" is live (real recording works). */}
-      {showMic && (
-        <div
-          dir="rtl"
-          className="fixed top-4 right-4 z-50 flex items-center gap-2 rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-sm"
-        >
-          <span className="text-xs-body text-text-neutral-default">מצב מיקרופון:</span>
-          {[
-            { v: "live" as const, label: "רגיל (חי)" },
-            { v: "recording" as const, label: "מקליט" },
-            { v: "error" as const, label: "שגיאה" },
-          ].map((opt) => (
-            <button
-              key={opt.v}
-              type="button"
-              onClick={() => setMicPreview(opt.v)}
-              aria-pressed={micPreview === opt.v}
-              className={`rounded-lg px-2.5 py-1 text-small-bold transition-colors ${
-                micPreview === opt.v
-                  ? "bg-button-primary-default text-white"
-                  : "bg-bg-surface text-text-primary-default hover:bg-bg-surface-hover"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      )}
       {modelFallback && (
         <div dir="rtl" className="fixed top-4 right-1/2 translate-x-1/2 z-50 max-w-md mx-auto rounded-xl border border-yellow-50 bg-yellow-95 px-4 py-2 shadow-sm">
           <p className="text-small text-text-primary-default text-center">
@@ -825,21 +780,7 @@ function HomeContent() {
                 className="min-h-[56px] border-none bg-transparent px-0 py-0 text-p text-text-primary-default shadow-none placeholder:text-text-neutral-default resize-none focus-visible:ring-0"
               />
               <div className="flex items-center justify-between">
-                {showMic ? (
-                  <HomeMicRecorder
-                    variant={micVariant as MicVariant}
-                    value={idea}
-                    onChange={setIdea}
-                    preview={micPreview === "live" ? null : micPreview}
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    className="p-2 text-text-neutral-default hover:text-text-primary-default transition-colors"
-                  >
-                    <Mic className="size-4" />
-                  </button>
-                )}
+                <HomeMicRecorder value={idea} onChange={setIdea} />
                 <Button onClick={handleSubmit} disabled={!idea.trim()} className="gap-2">
                   תייצר לי הוקים
                   <ArrowUp className="size-4" />
