@@ -18,12 +18,15 @@ import { usesGeminiHooks } from "@/lib/owner"
  * Renders nothing once a key is connected, so it costs connected users
  * nothing and disappears by itself the moment the problem is solved.
  */
-export function GeminiConnectNotice({
-  variant = "banner",
-}: {
-  variant?: "banner" | "floating"
-}) {
-  // Starts false so nothing renders until we know — the banner must never
+/**
+ * Whether the connect notice should be on screen for this user.
+ *
+ * Exported so a page can both render the floating notice AND reserve room for
+ * it in the same pass — on /project the notice is fixed, so without the page
+ * knowing about it the flow cards end up underneath.
+ */
+export function useGeminiNoticeVisible(): boolean {
+  // Starts false so nothing renders until we know — the notice must never
   // flash at users who already have a key.
   const [visible, setVisible] = useState(false)
 
@@ -66,6 +69,15 @@ export function GeminiConnectNotice({
     return () => { cancelled = true }
   }, [])
 
+  return visible
+}
+
+export function GeminiConnectNotice({
+  variant = "banner",
+}: {
+  variant?: "banner" | "floating"
+}) {
+  const visible = useGeminiNoticeVisible()
   if (!visible) return null
 
   return <GeminiConnectNoticeCard variant={variant} />

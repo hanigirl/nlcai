@@ -6,7 +6,7 @@ import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { AppShell } from "@/components/app-shell"
-import { GeminiConnectNotice } from "@/components/gemini-connect-notice"
+import { GeminiConnectNoticeCard, useGeminiNoticeVisible } from "@/components/gemini-connect-notice"
 import { InfiniteCanvas } from "@/components/infinite-canvas"
 import { WorkflowCard } from "@/components/workflow-card"
 import { SelectionCard } from "@/components/selection-card"
@@ -193,6 +193,9 @@ function ProjectPageInner() {
   // still runs on Claude, so the banner has to name the one that's actually
   // missing instead of always saying "Claude".
   const [apiNotConnected, setApiNotConnected] = useState<"Claude" | "Gemini" | null>(null)
+  // Read at page level, not inside the notice, so the canvas can reserve room
+  // for the pinned card instead of letting it land on the first flow card.
+  const geminiNoticeVisible = useGeminiNoticeVisible()
   const [response, setResponse] = useState("")
   const [corePost, setCorePost] = useState("")
   const [postLoading, setPostLoading] = useState(false)
@@ -1774,8 +1777,10 @@ function ProjectPageInner() {
         {/* Shown before the user even tries to generate, rather than letting
             them hit "gemini_not_connected" and only then find out. Pinned to
             the viewport, not dropped onto the canvas — panning must not carry
-            it away. Renders nothing once a key is connected. */}
-        <GeminiConnectNotice variant="floating" />
+            it away. The flow row below reserves room for it so it never lands
+            on top of the first card. Renders nothing once a key is
+            connected. */}
+        {geminiNoticeVisible && <GeminiConnectNoticeCard variant="floating" />}
         {apiNotConnected && (
           <div dir="rtl" className="mx-6 mt-6 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4 flex items-center justify-between">
             <p className="text-small text-text-neutral-default">
@@ -1786,7 +1791,11 @@ function ProjectPageInner() {
             </Link>
           </div>
         )}
-        <div className="flex items-start gap-0 pt-24 pr-24" dir="rtl">
+        {/* pt-[340px] clears the pinned notice (72px offset + ~220px card +
+            breathing room) so the first card starts below it instead of
+            underneath. Falls back to the normal pt-24 the moment a key is
+            connected and the notice is gone. */}
+        <div className={`flex items-start gap-0 pr-24 ${geminiNoticeVisible ? "pt-[340px]" : "pt-24"}`} dir="rtl">
 
           {/* === Flow: from idea ===
                 Trigger on state (hooks generated or fresh idea entry) rather
