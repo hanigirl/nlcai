@@ -76,9 +76,16 @@ export function GeminiConnectNotice() {
       <p className="text-small text-text-neutral-default">
         <span className="font-semibold text-text-primary-default">רוצים את האיכות הגבוהה ביותר?</span>{" "}
         מפתח חינמי עובד, אבל הוא מריץ את המודל הקל של Gemini וההוקים יוצאים פחות
-        חדים. כדי לקבל את המודל החזק צריך לטעון קרדיט לפרויקט ב-AI Studio (מינימום
-        10$, ומספיק להמון הוקים). שימו לב — מנוי Gemini Advanced אינו מספיק, כי הוא
-        מנוי לצ׳אט של גוגל ולא ל-API.
+        חדים. המודל החזק דורש שיהיה <span className="font-semibold">חיוב פעיל (Cloud Billing)
+        על הפרויקט</span> שממנו יצרתם את המפתח — או דרך הארגון שלכם, אם אתם על
+        חשבון עסקי, או בטעינת קרדיט ב-AI Studio (מינימום 10$, ומספיק להמון הוקים).
+      </p>
+
+      <p className="text-small text-text-neutral-default">
+        ⚠️ <span className="font-semibold text-text-primary-default">מנוי לא מספיק.</span>{" "}
+        מנוי Gemini Advanced או Google Workspace פותח את המודלים החזקים רק בתוך
+        האתר של Google AI Studio — לא דרך מפתח API כמו שאנחנו משתמשים. אל תשלמו על
+        מנוי בשביל זה.
       </p>
 
       <div className="flex flex-wrap items-center gap-3 pt-1">
