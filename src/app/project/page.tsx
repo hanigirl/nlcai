@@ -1773,14 +1773,16 @@ function ProjectPageInner() {
         onBusyChange={setChatBusy}
       />
 
+      {/* Overlay layer — OUTSIDE InfiniteCanvas on purpose. The canvas applies
+          `transform: translate(...) scale(...)` to its children, and a fixed
+          element inside a transformed ancestor anchors to that ancestor rather
+          than the viewport. Placed within the canvas it therefore panned and
+          zoomed along with the cards instead of staying put. As a sibling it
+          is a true overlay: the canvas moves underneath it, untouched.
+          Renders nothing once a key is connected. */}
+      {geminiNoticeVisible && <GeminiConnectNoticeCard variant="floating" />}
+
       <InfiniteCanvas>
-        {/* Shown before the user even tries to generate, rather than letting
-            them hit "gemini_not_connected" and only then find out. Pinned to
-            the viewport, not dropped onto the canvas — panning must not carry
-            it away. The flow row below reserves room for it so it never lands
-            on top of the first card. Renders nothing once a key is
-            connected. */}
-        {geminiNoticeVisible && <GeminiConnectNoticeCard variant="floating" />}
         {apiNotConnected && (
           <div dir="rtl" className="mx-6 mt-6 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4 flex items-center justify-between">
             <p className="text-small text-text-neutral-default">
@@ -1791,11 +1793,7 @@ function ProjectPageInner() {
             </Link>
           </div>
         )}
-        {/* pt-[340px] clears the pinned notice (72px offset + ~220px card +
-            breathing room) so the first card starts below it instead of
-            underneath. Falls back to the normal pt-24 the moment a key is
-            connected and the notice is gone. */}
-        <div className={`flex items-start gap-0 pr-24 ${geminiNoticeVisible ? "pt-[340px]" : "pt-24"}`} dir="rtl">
+        <div className="flex items-start gap-0 pt-24 pr-24" dir="rtl">
 
           {/* === Flow: from idea ===
                 Trigger on state (hooks generated or fresh idea entry) rather
