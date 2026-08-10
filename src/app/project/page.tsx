@@ -6,6 +6,7 @@ import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { AppShell } from "@/components/app-shell"
+import { GeminiConnectNotice } from "@/components/gemini-connect-notice"
 import { InfiniteCanvas } from "@/components/infinite-canvas"
 import { WorkflowCard } from "@/components/workflow-card"
 import { SelectionCard } from "@/components/selection-card"
@@ -1770,6 +1771,12 @@ function ProjectPageInner() {
       />
 
       <InfiniteCanvas>
+        {/* Shown before the user even tries to generate, rather than letting
+            them hit "gemini_not_connected" and only then find out. Renders
+            nothing once a key is connected. */}
+        <div className="mx-6 mt-6 empty:hidden">
+          <GeminiConnectNotice />
+        </div>
         {apiNotConnected && (
           <div dir="rtl" className="mx-6 mt-6 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4 flex items-center justify-between">
             <p className="text-small text-text-neutral-default">

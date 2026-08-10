@@ -19,6 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { HookCard } from "@/components/hook-card"
 import { GeneratingStatus } from "@/components/generating-status"
+import { GeminiConnectNotice } from "@/components/gemini-connect-notice"
 import { createClient } from "@/lib/supabase/client"
 import { withRetry } from "@/lib/supabase/retry"
 import { formatPostDate, getDayKey } from "@/lib/format-date"
@@ -273,6 +274,13 @@ export default function HooksPage() {
   return (
     <AppShell>
       <div className="max-w-[1200px] mx-auto" dir="rtl">
+        {/* Sits above the header on purpose — it's the first thing that has to
+            be dealt with, and generating is what the page is for. Renders
+            nothing once a Gemini key is connected. */}
+        <div className="mb-6 empty:mb-0">
+          <GeminiConnectNotice />
+        </div>
+
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-2">

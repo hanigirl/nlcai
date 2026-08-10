@@ -7,6 +7,7 @@ import { ArrowUp, Loader2, Bug } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AppLink } from "@/components/ui/app-link"
 import { AppShell } from "@/components/app-shell"
+import { GeminiConnectNotice } from "@/components/gemini-connect-notice"
 import { Typewriter } from "@/components/typewriter"
 import { StickyNote } from "@/components/sticky-note"
 import { HookCard } from "@/components/hook-card"
@@ -708,6 +709,11 @@ function HomeContent() {
         )}
 
         <div className="flex flex-col gap-10">
+          {/* Same notice as /hooks — the home page generates hooks too, so a
+              user who never opens the warehouse still has to see it. Renders
+              nothing once a Gemini key is connected. */}
+          <GeminiConnectNotice />
+
           {/* Section 1: Hooks */}
           <div
             className="flex flex-col gap-4 animate-in fade-in slide-in-from-top-4 duration-700"
