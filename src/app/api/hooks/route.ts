@@ -1,17 +1,23 @@
 import { NextRequest, NextResponse } from "next/server"
+import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { buildHookGeneratorPrompt, parseHooks } from "@/lib/agents/hook-generator"
+import { polishHookForHebrew } from "@/lib/agents/hook-hebrew-polish"
+import { judgeHook } from "@/lib/agents/hook-judge"
 import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
+import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
 import { generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
 import { detectAddressGender, detectAddressGenderFromText } from "@/lib/detect-addressing"
+import { usesGeminiHooks } from "@/lib/owner"
 import { getAuthUser } from "@/lib/auth-user"
 
-// Hooks are now a single Gemini call — the Claude judge and Hebrew-polish
-// rounds were removed so we can see what Gemini produces unassisted. One
-// thinking-heavy call still exceeds Vercel's 10s default; 300s is the Pro
-// plan ceiling, and on Hobby it caps silently to 60s.
+// Two engines live here, picked per user by usesGeminiHooks (see owner.ts):
+//   cohort  — one Gemini call, no judge, no Hebrew polish
+//   default — the original Sonnet writer → Opus judge → Sonnet polish chain
+// Either way this is well past Vercel's 10s default. 300s is the Pro plan
+// ceiling; on Hobby it caps silently to 60s.
 export const maxDuration = 300
 
 const USE_DUMMY = false
@@ -86,26 +92,38 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "audience_missing" }, { status: 400 })
     }
 
-    // Gemini writes the hooks — without it there is nothing to generate.
-    let geminiKey: string
-    try {
-      geminiKey = await getUserApiKey(supabase, "gemini_api_key")
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (msg === "gemini_not_connected") {
-        return NextResponse.json({ error: "gemini_not_connected" }, { status: 400 })
+    const geminiCohort = usesGeminiHooks(user.email)
+
+    // In the cohort Gemini writes the hooks, so its key is the hard
+    // requirement and Anthropic is optional — its only remaining job is the
+    // Haiku fallback inside addressing detection, which already degrades to a
+    // code-only pass. Outside the cohort nothing changed: Anthropic is
+    // required and Gemini is never touched.
+    let geminiKey = ""
+    if (geminiCohort) {
+      try {
+        geminiKey = await getUserApiKey(supabase, "gemini_api_key")
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (msg === "gemini_not_connected") {
+          return NextResponse.json({ error: "gemini_not_connected" }, { status: 400 })
+        }
+        return NextResponse.json({ error: msg }, { status: 500 })
       }
-      return NextResponse.json({ error: msg }, { status: 500 })
     }
 
-    // Anthropic is now optional here: its only remaining job is the Haiku
-    // fallback inside addressing detection, which already degrades to the
-    // code-only pass. A missing key must not block hook generation.
     let anthropicKey = ""
     try {
       anthropicKey = await getUserApiKey(supabase, "anthropic_api_key")
-    } catch {
-      // no-op — detection falls back to the regex pass below
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (!geminiCohort) {
+        if (msg === "anthropic_not_connected") {
+          return NextResponse.json({ error: "anthropic_not_connected" }, { status: 400 })
+        }
+        return NextResponse.json({ error: msg }, { status: 500 })
+      }
+      // Cohort only: detection falls back to the regex pass below.
     }
 
     // Load verified creators + trend context from niche_creators cache
@@ -182,8 +200,9 @@ export async function POST(req: NextRequest) {
 
     // Detect the addressing gender from the user's own words (idea +
     // description) in code — see detect-addressing.ts for why this isn't a
-    // prompt priority. With the judge and polish gone, the writer prompt is
-    // the only place it can be enforced.
+    // prompt priority. On the Claude path it's applied to the writer, the
+    // judge and the polish; on the Gemini path the writer prompt is the only
+    // place left that can enforce it.
     const addressSource = [userResponse, idea].filter(Boolean).join("\n")
     const addressGender = anthropicKey
       ? await detectAddressGender(anthropicKey, addressSource)
@@ -202,24 +221,74 @@ export async function POST(req: NextRequest) {
       addressGender,
     })
 
-    // One Gemini call, the exact same prompt the Claude writer received. No
-    // judge, no Hebrew polish — whatever Gemini returns is what the user sees,
-    // which is the point of the switch: we want to read its unassisted Hebrew.
-    //
-    // The budget covers thinking AND the hooks. Sized generously on purpose:
-    // running out mid-response truncates the list and silently costs the user
-    // hooks, while unused budget costs nothing.
-    const { text: rawText, fallback: modelFallback } = await generateWithGeminiFallback(geminiKey, {
-      prompt,
-      maxOutputTokens: count > 5 ? 24576 : 16384,
-      thinkingLevel: "high",
-    })
+    let hookTexts: string[]
+    let modelFallback = false
 
-    const hookTexts = parseHooks(rawText, count)
+    if (geminiCohort) {
+      // One Gemini call, the exact same prompt the Claude writer receives
+      // below. No judge, no Hebrew polish — whatever Gemini returns is what
+      // the user sees.
+      //
+      // The budget covers thinking AND the hooks. Sized generously on purpose:
+      // running out mid-response truncates the list and silently costs the
+      // user hooks, while unused budget costs nothing.
+      const { text: rawText, fallback } = await generateWithGeminiFallback(geminiKey, {
+        prompt,
+        maxOutputTokens: count > 5 ? 24576 : 16384,
+        thinkingLevel: "high",
+      })
+      modelFallback = fallback
+      hookTexts = parseHooks(rawText, count)
 
-    if (hookTexts.length === 0) {
-      console.error(`[api/hooks] Gemini returned nothing parseable. First 300 chars: ${rawText.slice(0, 300)}`)
-      return NextResponse.json({ error: "no_hooks_generated" }, { status: 502 })
+      if (hookTexts.length === 0) {
+        console.error(`[api/hooks] Gemini returned nothing parseable. First 300 chars: ${rawText.slice(0, 300)}`)
+        return NextResponse.json({ error: "no_hooks_generated" }, { status: 502 })
+      }
+    } else {
+      // Unchanged Claude path: write → judge every hook → polish the ones the
+      // judge accepted.
+      const client = new Anthropic({ apiKey: anthropicKey })
+      const baseParams = {
+        max_tokens: count > 5 ? 2048 : 1024,
+        messages: [{ role: "user" as const, content: prompt }],
+      }
+
+      let message
+      try {
+        message = await client.messages.create({ ...baseParams, model: PRIMARY_MODEL })
+      } catch (err) {
+        if (!isOverloadError(err)) throw err
+        modelFallback = true
+        message = await client.messages.create({ ...baseParams, model: FALLBACK_MODEL })
+      }
+
+      const textBlock = message.content.find((b) => b.type === "text")
+      const rawHooks = parseHooks(textBlock?.text ?? "", count)
+
+      // Judge pass — enforces the same quality bar as /api/homepage-hooks.
+      // Track whether the judge rewrote, so we can skip redundant polish below.
+      const judged = await Promise.all(
+        rawHooks.map(async (h) => {
+          const result = await judgeHook(client, {
+            hook: h,
+            template: "", // Per-idea flow doesn't commit to a template slot
+            specificTopic: idea,
+            targetPainOrDesire: userResponse || idea,
+            programmaticIssues: [],
+            addressGender,
+          })
+          return { text: result.valid ? h : result.rewritten, rewrote: !result.valid }
+        }),
+      )
+
+      // Polish only when judge accepted the original. Judge rewrites come from
+      // Opus 4.7 and are already natural Hebrew — skipping the Sonnet polish
+      // on those saves 3-6s per hook with no quality loss.
+      hookTexts = await Promise.all(
+        judged.map(({ text, rewrote }) =>
+          rewrote ? Promise.resolve(text) : polishHookForHebrew(client, text, PRIMARY_MODEL, addressGender),
+        ),
+      )
     }
 
     // Persist every generated hook to the user's inventory so the unselected

@@ -40,6 +40,27 @@ export function canPreviewMediaCredits(
   return MEDIA_CREDITS_PREVIEW_EMAILS.has(email.toLowerCase().trim())
 }
 
+// Which hook engine a user gets. Inside the cohort: Gemini writes the hook in
+// one call, with no Claude judge and no Hebrew polish. Outside it: the original
+// Sonnet writer → Opus judge → Sonnet polish chain, unchanged.
+//
+// Unlike canPreviewMediaCredits above, this is NOT only a UI gate — it picks a
+// different model, a different API key, and a different quality profile on the
+// server. Both paths are therefore kept alive in the hook routes, and the flag
+// is read from the authenticated user's email, never from the request body.
+//
+// Piloting with Nataliya before students are asked to go get a Gemini key of
+// their own (Hani, 2026-08-10).
+//
+// To open it to everyone: make this return true and delete the Claude branch in
+// /api/hooks and /api/homepage-hooks.
+const GEMINI_HOOKS_EMAILS = new Set(["nataliya@nataliyarey.com"])
+
+export function usesGeminiHooks(email: string | null | undefined): boolean {
+  if (!email) return false
+  return GEMINI_HOOKS_EMAILS.has(email.toLowerCase().trim())
+}
+
 export function isOwner(email: string | null | undefined): boolean {
   if (!email) return false
   // QA preview hatch — any logged-in user can opt into the non-owner view

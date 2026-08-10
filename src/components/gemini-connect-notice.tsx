@@ -5,6 +5,7 @@ import Link from "next/link"
 import { Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { createClient } from "@/lib/supabase/client"
+import { usesGeminiHooks } from "@/lib/owner"
 
 /**
  * In-page notice (deliberately not a toast) telling the user that hook
@@ -28,6 +29,10 @@ export function GeminiConnectNotice() {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
+      // Students outside the pilot still generate hooks with Claude and were
+      // never asked for a Gemini key — telling them to go get one would be
+      // instructions for a change that hasn't reached them.
+      if (!usesGeminiHooks(user.email)) return
       const { data, error } = await supabase
         .from("users")
         .select("gemini_api_key")

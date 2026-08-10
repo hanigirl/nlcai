@@ -4,9 +4,11 @@ import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { detectAudienceGender } from "@/lib/detect-addressing"
 import { TEMPLATE_LIBRARY, getTemplatesByCategorySorted, templateText, templatePriority, type TemplateCategory, type HookTemplate } from "@/lib/agents/hook-templates"
-import { validateHookLocally } from "@/lib/agents/hook-judge"
+import { polishHookForHebrew } from "@/lib/agents/hook-hebrew-polish"
+import { judgeHook, validateHookLocally } from "@/lib/agents/hook-judge"
 import { classifyHooksByProduct } from "@/lib/agents/hook-product-classifier"
 import { GeminiError, generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
+import { usesGeminiHooks } from "@/lib/owner"
 
 interface PlanItem {
   category: TemplateCategory
@@ -126,15 +128,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: msg }, { status: 500 })
     }
 
-    let geminiKey: string
-    try {
-      geminiKey = await getUserApiKey(supabase, "gemini_api_key")
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (msg === "gemini_not_connected") {
-        return NextResponse.json({ error: "gemini_not_connected" }, { status: 400 })
+    // Only the cohort needs a Gemini key; everyone else never reaches Gemini
+    // and must not be blocked on a key they were never asked for.
+    const geminiCohort = usesGeminiHooks(user.email)
+    let geminiKey = ""
+    if (geminiCohort) {
+      try {
+        geminiKey = await getUserApiKey(supabase, "gemini_api_key")
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (msg === "gemini_not_connected") {
+          return NextResponse.json({ error: "gemini_not_connected" }, { status: 400 })
+        }
+        return NextResponse.json({ error: msg }, { status: 500 })
       }
-      return NextResponse.json({ error: msg }, { status: 500 })
     }
 
     const identitySection = `
@@ -520,12 +527,11 @@ ${categoriesCatalog}
           // The judge and polish rounds that used to sit between the write and
           // the insert are gone; a plan is now one model call, not three.
           let skipped = 0
-          // Each plan is now ONE Gemini call instead of three Claude calls, but
-          // the ceiling that matters moved: Gemini keys are per-user and the
-          // free tier allows only a handful of Pro requests per minute. 5
-          // concurrent is the compromise — still ~2x faster than serial, and
-          // survivable on a free key. Raise it once we know users are on paid.
-          const BATCH_SIZE = 5
+          // Claude path: 10 plans × 3 calls = 30 concurrent, safely within
+          // Tier 1 Anthropic limits — the number this route has always used.
+          // Gemini path: 5, because Gemini keys are per-user and a free key
+          // allows only a handful of requests per minute.
+          const BATCH_SIZE = geminiCohort ? 5 : 10
 
           interface DraftHook { template_index?: number; slot_fills?: Record<string, string>; hook?: string }
 
@@ -609,37 +615,63 @@ ${formatTemplatesForPrompt()}
 - \`slot_fills\` = המילים שמילאת ב-slots (אובייקט). ב-free-form אפשר אובייקט ריק \`{}\`.
 - \`hook\` = ההוק המלא, בדיוק כפי שיוצג לקורא. **זה השדה היחיד שמשנה לקורא — ההוק עצמו חייב לעמוד בשלוש העמודות, גם אם בחרת free-form.**`
 
-            // Write the hook — Gemini Pro with a Flash overload fallback.
-            //
-            // 16384, not 4096: Pro's thinking is billed against this same
-            // budget, so a tight cap doesn't shorten the hook, it truncates
-            // the JSON mid-object and the whole plan gets dropped. At 4096
-            // roughly half of every batch was disappearing this way. The hook
-            // itself is one sentence — the headroom is entirely for thinking,
-            // and unused budget costs nothing.
             let draft: DraftHook | null = null
             let rawText = ""
-            try {
-              const { text: raw, fallback } = await generateWithGeminiFallback(geminiKey, {
-                prompt: writePrompt,
-                maxOutputTokens: 16384,
-                thinkingLevel: "high",
-              })
-              if (fallback && !usedFallback) {
+
+            if (geminiCohort) {
+              // Gemini Pro with a Flash overload fallback.
+              //
+              // 16384, not 4096: Pro's thinking is billed against this same
+              // budget, so a tight cap doesn't shorten the hook, it truncates
+              // the JSON mid-object and the whole plan gets dropped. At 4096
+              // roughly half of every batch was disappearing this way. The
+              // hook itself is one sentence — the headroom is entirely for
+              // thinking, and unused budget costs nothing.
+              try {
+                const { text: raw, fallback } = await generateWithGeminiFallback(geminiKey, {
+                  prompt: writePrompt,
+                  maxOutputTokens: 16384,
+                  thinkingLevel: "high",
+                })
+                if (fallback && !usedFallback) {
+                  usedFallback = true
+                  safeEnqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
+                }
+                rawText = raw
+                draft = parseDraftJson(raw)
+              } catch (err) {
+                // A quota error means the user's Gemini plan is rate-limiting
+                // the batch — every remaining plan will hit it too, so record
+                // it and report it once at end-of-stream rather than silently
+                // shipping a short batch.
+                if (err instanceof GeminiError && err.code === "quota") quotaHit = true
+                skipped++
+                console.warn(`Homepage Hooks: Gemini writer failed for "${plan.specific_topic}":`, err)
+                return
+              }
+            } else {
+              // Unchanged Claude path — Sonnet with a Haiku overload fallback.
+              const doCall = async (model: string) => {
+                const res = await client.messages.create({
+                  model,
+                  max_tokens: 600,
+                  messages: [{ role: "user", content: writePrompt }],
+                })
+                rawText = res.content.find((b) => b.type === "text")?.text ?? ""
+                draft = parseDraftJson(rawText)
+              }
+              try {
+                await doCall(usedFallback ? FALLBACK_MODEL : PRIMARY_MODEL)
+              } catch (err) {
+                if (!isOverloadError(err) || usedFallback) {
+                  skipped++
+                  console.warn(`Homepage Hooks: writer crashed for "${plan.specific_topic}":`, err)
+                  return
+                }
                 usedFallback = true
                 safeEnqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
+                await doCall(FALLBACK_MODEL)
               }
-              rawText = raw
-              draft = parseDraftJson(raw)
-            } catch (err) {
-              // A quota error means the user's Gemini plan is rate-limiting the
-              // batch — every remaining plan will hit it too, so record it and
-              // report it once at end-of-stream rather than silently shipping a
-              // short batch.
-              if (err instanceof GeminiError && err.code === "quota") quotaHit = true
-              skipped++
-              console.warn(`Homepage Hooks: Gemini writer failed for "${plan.specific_topic}":`, err)
-              return
             }
 
             if (!draft || !(draft as DraftHook).hook || typeof (draft as DraftHook).hook !== "string" || ((draft as DraftHook).hook!).trim().length <= 10) {
@@ -656,20 +688,56 @@ ${formatTemplatesForPrompt()}
               return
             }
             const d = draft as DraftHook
-            const hookText = cleanRawHook(d.hook!)
+            let hookText = cleanRawHook(d.hook!)
 
-            // The Opus judge and the Sonnet Hebrew polish used to run here.
-            // Both are gone: what Gemini writes is what ships, so we can read
-            // its unassisted Hebrew before deciding whether either is still
-            // earning its keep.
-            //
-            // The programmatic check survives — it costs nothing and it's code,
-            // not a model. It no longer drops hooks though: it only logs, so a
-            // batch that trips it still shows us exactly what Gemini produced
-            // instead of quietly shrinking.
-            const issues = validateHookLocally(hookText, plan.specific_topic)
-            if (issues.length > 0) {
-              console.log(`Homepage Hooks: [gemini-raw] "${hookText}" would have been flagged: ${issues.join(", ")}`)
+            // Programmatic check — deterministic, cheap, and code rather than
+            // a model, so it runs on both paths. What differs is the
+            // consequence: on the Claude path it feeds the judge and can drop
+            // a hook, on the Gemini path it only logs, so a cohort batch shows
+            // exactly what the model produced instead of quietly shrinking.
+            let issues = validateHookLocally(hookText, plan.specific_topic)
+
+            if (geminiCohort) {
+              if (issues.length > 0) {
+                console.log(`Homepage Hooks: [gemini-raw] "${hookText}" would have been flagged: ${issues.join(", ")}`)
+              }
+            } else {
+              const templateIdx = Number.isInteger(d.template_index) ? d.template_index! : 0
+              const isFreeForm = templateIdx < 0
+              const chosenTemplate = isFreeForm ? null : (templates[templateIdx] ?? templates[0])
+              const chosenTemplateText = chosenTemplate ? templateText(chosenTemplate) : "free-form (ללא תבנית)"
+
+              // Judge (Opus) — always. Catches curiosity-gap + logic failures code can't.
+              const judgeResult = await judgeHook(client, {
+                hook: hookText,
+                template: chosenTemplateText,
+                specificTopic: plan.specific_topic,
+                targetPainOrDesire: plan.target_pain_or_desire,
+                programmaticIssues: issues,
+                addressGender: audienceAddress,
+              })
+
+              const judgeRewrote = !judgeResult.valid
+              if (judgeRewrote) {
+                console.log(`Homepage Hooks: judge rewrote "${hookText.slice(0, 40)}..." — issues: ${judgeResult.issues.join("; ")}`)
+                hookText = judgeResult.rewritten
+                issues = validateHookLocally(hookText, plan.specific_topic)
+                if (issues.length > 0) {
+                  skipped++
+                  console.warn(`Homepage Hooks: skipping "${plan.specific_topic}" — judge rewrite still failed: ${issues.join(", ")}`)
+                  return
+                }
+              }
+
+              if (hookText.length <= 10) { skipped++; return }
+
+              // Polish only if judge accepted the original. When judge rewrote,
+              // the Opus output is already clean natural Hebrew — running the
+              // Sonnet polish on top is redundant and occasionally re-edits
+              // something Opus got right.
+              if (!judgeRewrote) {
+                hookText = await polishHookForHebrew(client, hookText, PRIMARY_MODEL, audienceAddress)
+              }
             }
 
             if (hookText.length <= 10) { skipped++; return }

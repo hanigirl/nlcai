@@ -7,7 +7,7 @@ import { ArrowLeft, Paperclip, Loader2, Link2 } from "lucide-react"
 import logoNew from "../../../images/logo-new.png"
 import onboardingHero from "../../../images/art-onboarding.png"
 import { createClient } from "@/lib/supabase/client"
-import { canPreviewMediaCredits } from "@/lib/owner"
+import { canPreviewMediaCredits, usesGeminiHooks } from "@/lib/owner"
 import { parseCreatorInput, validateCreatorInput } from "@/lib/creator-url"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -193,9 +193,11 @@ function OnboardingPageInner() {
   const [anthropicKey, setAnthropicKey] = useState("")
   const [heygenKey, setHeygenKey] = useState("")
   const [apifyKey, setApifyKey] = useState("")
-  // REQUIRED — every hook in the app is written by Gemini. It gates
-  // `canProceed` alongside the Anthropic and Apify keys.
+  // Required, but ONLY for the Gemini-hooks pilot cohort — for them the whole
+  // hook engine runs on this key. Everyone else still writes hooks with Claude
+  // and never sees the field, so it must not gate their `canProceed`.
   const [geminiKey, setGeminiKey] = useState("")
+  const [showGeminiField, setShowGeminiField] = useState(false)
   // OPTIONAL on purpose. Without it the app still works end to end — the user
   // just can't one-click generate media, and the media panel shows
   // MediaCreditsCard pointing back to Settings. It must never gate `canProceed`.
@@ -271,6 +273,8 @@ function OnboardingPageInner() {
         }
 
         if (!cancelled) setShowOpenaiField(canPreviewMediaCredits(user.email))
+        const geminiCohort = usesGeminiHooks(user.email)
+        if (!cancelled) setShowGeminiField(geminiCohort)
 
         const [usersRes, coreRes, audRes, creatorsRes, productsRes] =
           await Promise.all([
@@ -346,7 +350,7 @@ function OnboardingPageInner() {
         const step0Done =
           hasText(usersRow?.anthropic_api_key) &&
           hasText(usersRow?.apify_api_key) &&
-          hasText(usersRow?.gemini_api_key)
+          (!geminiCohort || hasText(usersRow?.gemini_api_key))
         const step1Done =
           !!coreRow &&
           [coreRow.who_i_am, coreRow.niche, coreRow.how_i_sound].every(hasText)
@@ -508,7 +512,10 @@ function OnboardingPageInner() {
   const canProceed = () => {
     if (saving) return false
     if (currentStep === 0) {
-      return anthropicKey.trim() && apifyKey.trim() && geminiKey.trim()
+      // Gemini only gates the cohort — for everyone else the field isn't even
+      // rendered, so requiring it would be an unsatisfiable block.
+      if (showGeminiField && !geminiKey.trim()) return false
+      return anthropicKey.trim() && apifyKey.trim()
     }
     if (currentStep === 1) {
       return businessName.trim() && niche.trim() && expertise.trim() && !!styleFile
@@ -1224,9 +1231,11 @@ function OnboardingPageInner() {
                 </p>
               </div>
 
-              {/* Gemini — the model that writes every hook, on both /hooks and
-                  the per-idea flow. Required, not optional: without it the
-                  app's core loop produces nothing. */}
+              {/* Gemini — the model that writes every hook for the pilot
+                  cohort, on both /hooks and the per-idea flow. Required for
+                  them (without it their core loop produces nothing) and hidden
+                  from everyone else, who still writes hooks with Claude. */}
+              {showGeminiField && (
               <div className="flex flex-col gap-2">
                 <label className="text-small-bold text-text-primary-default flex items-center gap-2">
                   <Link2 className="size-4" />
@@ -1251,6 +1260,7 @@ function OnboardingPageInner() {
                   {" "}— זה המנוע שכותב את ההוקים
                 </p>
               </div>
+              )}
 
               <div className="flex flex-col gap-2">
                 <label className="text-small-bold text-text-primary-default flex items-center gap-2">
