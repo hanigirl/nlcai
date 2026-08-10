@@ -258,7 +258,7 @@ export async function POST(req: NextRequest) {
           {
             error: "openai_not_connected",
             message:
-              "כדי לייצר סטורי עם AI צריך לחבר מפתח OpenAI בהגדרות → חיבורים → OpenAI.",
+              "כדי לייצר סטורי עם AI צריך לחבר מפתח OpenAI בהגדרות ← חיבורים ← OpenAI.",
           },
           { status: 402 },
         )

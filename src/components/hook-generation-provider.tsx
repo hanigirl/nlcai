@@ -31,6 +31,11 @@ interface HookGenContextValue {
   sessionHookIds: string[]
   error: string | null
   /**
+   * Model that wrote the most recent batch, as reported by the server — never
+   * inferred from the absence of a warning. null before the first batch.
+   */
+  engine: string | null
+  /**
    * Kick off a hook-generation batch. Pass a `product` to generate hooks
    * focused on (and tagged with) that product; omit it for a general batch.
    */
@@ -54,12 +59,31 @@ export function useHookGeneration(): HookGenContextValue {
 const TOTAL_HOOKS = 6
 const TOAST_ID = "hook-generation-status"
 
+// The route streams raw error codes. Without this map the user sees English
+// snake_case in a toast — most of these are new since hooks moved to Gemini.
+const ERROR_MESSAGES: Record<string, string> = {
+  audience_missing: "לא הצלחנו לקרוא את ניתוח קהל היעד. יש לעדכן את הקובץ בהגדרות.",
+  gemini_not_connected: "לא חובר מפתח Gemini. צריך לחבר אותו בהגדרות כדי לייצר הוקים.",
+  gemini_key_invalid: "מפתח ה-Gemini לא תקף. צריך לחבר אותו מחדש בהגדרות.",
+  gemini_quota_exceeded: "חרגתם מהמכסה של Gemini. בדקו את המגבלות בחשבון או נסו שוב מאוחר יותר.",
+  gemini_overloaded: "השרתים של Gemini עמוסים כרגע. נסו שוב בעוד דקה.",
+  anthropic_not_connected: "לא חובר מפתח Anthropic. צריך לחבר אותו בהגדרות.",
+  anthropic_overloaded: "השרתים של Anthropic עמוסים כרגע. נסו שוב בעוד דקה.",
+  credits_exhausted: "נגמרו הקרדיטים של Anthropic.",
+}
+
+function hookErrorMessage(code: unknown): string {
+  if (typeof code !== "string" || !code) return "שגיאה ביצירת הוקים"
+  return ERROR_MESSAGES[code] ?? code
+}
+
 export function HookGenerationProvider({ children }: { children: React.ReactNode }) {
   const [isGenerating, setIsGenerating] = useState(false)
   const [progress, setProgress] = useState(0)
   const [total, setTotal] = useState(TOTAL_HOOKS)
   const [sessionHookIds, setSessionHookIds] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [engine, setEngine] = useState<string | null>(null)
 
   // Listener sets — /hooks page subscribes while mounted so it can add hooks
   // to its local state in real time. If the page is unmounted (user navigated),
@@ -135,10 +159,9 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        const msg = data.error || "שגיאה ביצירת הוקים"
-        setError(msg)
+        setError(data.error || "שגיאה ביצירת הוקים")
         setIsGenerating(false)
-        toast.error(msg, { id: TOAST_ID, duration: 6000 })
+        toast.error(hookErrorMessage(data.error), { id: TOAST_ID, duration: 6000 })
         return
       }
 
@@ -154,6 +177,9 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
       let buffer = ""
       let count = 0
       let errorSeen = false
+      // The route emits model_fallback once, but guard anyway — one toast per
+      // batch, not one per hook.
+      let fallbackNotified = false
 
       while (true) {
         const { done, value } = await reader.read()
@@ -171,10 +197,37 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
             if (parsed.error) {
               errorSeen = true
               setError(parsed.error)
-              toast.error(parsed.error === "audience_missing"
-                ? "לא הצלחנו לקרוא את ניתוח קהל היעד. יש לעדכן את הקובץ בהגדרות."
-                : (parsed.error || "שגיאה ביצירת הוקים"),
-                { id: TOAST_ID, duration: 6000 },
+              toast.error(hookErrorMessage(parsed.error), { id: TOAST_ID, duration: 6000 })
+              continue
+            }
+            // The route has always streamed this; the warehouse path used to
+            // drop it on the floor, so a whole batch could come from the
+            // weaker model with nothing on screen saying so. That matters now
+            // that hook quality is the thing being judged — a free Gemini key
+            // can't reach Pro at all, and silently reading Flash output as if
+            // it were Pro would send us to the wrong conclusion.
+            // Positive statement of which model wrote the batch. Kept separate
+            // from the fallback warning below on purpose: a warning that fails
+            // to appear reads as "all good", and that misread cost a whole
+            // evaluation session — every hook was judged as Pro output when it
+            // had all come from Flash.
+            if (typeof parsed.engine === "string") {
+              console.log(`[hooks] batch written by ${parsed.engine}`)
+              setEngine(parsed.engine)
+              continue
+            }
+            if (parsed.model_fallback && !fallbackNotified) {
+              fallbackNotified = true
+              toast("⚡ נוצר במודל קל יותר — האיכות עשויה להיות נמוכה מהרגיל", { duration: 10000 })
+              continue
+            }
+            // Partial failure, not fatal — some hooks got through before the
+            // user's Gemini plan started rate-limiting. Warn, but let the
+            // success path below run for the hooks that did land.
+            if (parsed.gemini_quota_warning) {
+              toast.error(
+                "חלק מההוקים לא נוצרו כי חרגתם מהמכסה של Gemini. נסו שוב בעוד דקה.",
+                { duration: 8000 },
               )
               continue
             }
@@ -222,7 +275,7 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
           id: TOAST_ID,
           duration: 10000,
           action: {
-            label: "לצפייה →",
+            label: "לצפייה ←",
             onClick: () => { window.location.href = "/hooks" },
           },
         })
@@ -252,10 +305,11 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
     total,
     sessionHookIds,
     error,
+    engine,
     startGeneration,
     subscribeHook,
     subscribeDone,
-  }), [isGenerating, progress, total, sessionHookIds, error, startGeneration, subscribeHook, subscribeDone])
+  }), [isGenerating, progress, total, sessionHookIds, error, engine, startGeneration, subscribeHook, subscribeDone])
 
   return <HookGenContext.Provider value={value}>{children}</HookGenContext.Provider>
 }

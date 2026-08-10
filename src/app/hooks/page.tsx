@@ -19,6 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { HookCard } from "@/components/hook-card"
 import { GeneratingStatus } from "@/components/generating-status"
+import { GeminiConnectNotice } from "@/components/gemini-connect-notice"
 import { createClient } from "@/lib/supabase/client"
 import { withRetry } from "@/lib/supabase/retry"
 import { formatPostDate, getDayKey } from "@/lib/format-date"
@@ -53,6 +54,7 @@ export default function HooksPage() {
     progress,
     total,
     sessionHookIds,
+    engine,
     startGeneration,
     subscribeHook,
     subscribeDone,
@@ -273,11 +275,28 @@ export default function HooksPage() {
   return (
     <AppShell>
       <div className="max-w-[1200px] mx-auto" dir="rtl">
+        {/* Sits above the header on purpose — it's the first thing that has to
+            be dealt with, and generating is what the page is for. Renders
+            nothing once a Gemini key is connected. */}
+        <div className="mb-6 empty:mb-0">
+          <GeminiConnectNotice />
+        </div>
+
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-2">
             <img src="/images/hook-min.png" alt="" className="w-[48px] h-[48px]" />
             <h2 className="text-text-primary-default">מחסן הוקים</h2>
+            {/* Says which model wrote the last batch. Judging hook quality
+                without knowing this is judging the wrong thing. */}
+            {engine && (
+              <span
+                className="text-xs-body text-text-neutral-default border border-border-neutral-default rounded-full px-2 py-0.5"
+                title={`ההוקים האחרונים נכתבו על ידי ${engine}`}
+              >
+                {engine.includes("pro") ? "Gemini Pro" : engine.includes("flash") ? "Gemini Flash" : engine}
+              </span>
+            )}
           </div>
           {/* Generate button — now a dropdown (chevron variant): pick a
               general batch, or "לפי מוצר" to focus + tag the batch on a

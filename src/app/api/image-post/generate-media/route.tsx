@@ -266,7 +266,7 @@ export async function POST(req: NextRequest) {
       const msg = err instanceof Error ? err.message : String(err)
       if (msg === "openai_not_connected") {
         return NextResponse.json(
-          { error: "openai_not_connected", message: "כדי לייצר תמונות עם AI צריך לחבר מפתח OpenAI בהגדרות → חיבורים → OpenAI." },
+          { error: "openai_not_connected", message: "כדי לייצר תמונות עם AI צריך לחבר מפתח OpenAI בהגדרות ← חיבורים ← OpenAI." },
           { status: 402 },
         )
       }

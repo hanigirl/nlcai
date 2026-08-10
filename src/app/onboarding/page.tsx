@@ -7,7 +7,7 @@ import { ArrowLeft, Paperclip, Loader2, Link2 } from "lucide-react"
 import logoNew from "../../../images/logo-new.png"
 import onboardingHero from "../../../images/art-onboarding.png"
 import { createClient } from "@/lib/supabase/client"
-import { canPreviewMediaCredits } from "@/lib/owner"
+import { canPreviewMediaCredits, usesGeminiHooks } from "@/lib/owner"
 import { parseCreatorInput, validateCreatorInput } from "@/lib/creator-url"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -193,6 +193,11 @@ function OnboardingPageInner() {
   const [anthropicKey, setAnthropicKey] = useState("")
   const [heygenKey, setHeygenKey] = useState("")
   const [apifyKey, setApifyKey] = useState("")
+  // Required, but ONLY for the Gemini-hooks pilot cohort — for them the whole
+  // hook engine runs on this key. Everyone else still writes hooks with Claude
+  // and never sees the field, so it must not gate their `canProceed`.
+  const [geminiKey, setGeminiKey] = useState("")
+  const [showGeminiField, setShowGeminiField] = useState(false)
   // OPTIONAL on purpose. Without it the app still works end to end — the user
   // just can't one-click generate media, and the media panel shows
   // MediaCreditsCard pointing back to Settings. It must never gate `canProceed`.
@@ -268,18 +273,21 @@ function OnboardingPageInner() {
         }
 
         if (!cancelled) setShowOpenaiField(canPreviewMediaCredits(user.email))
+        const geminiCohort = usesGeminiHooks(user.email)
+        if (!cancelled) setShowGeminiField(geminiCohort)
 
         const [usersRes, coreRes, audRes, creatorsRes, productsRes] =
           await Promise.all([
             supabase
               .from("users")
-              .select("anthropic_api_key, apify_api_key, heygen_api_key, openai_api_key")
+              .select("anthropic_api_key, apify_api_key, heygen_api_key, openai_api_key, gemini_api_key")
               .eq("id", user.id)
               .maybeSingle<{
                 anthropic_api_key: string | null
                 apify_api_key: string | null
                 heygen_api_key: string | null
                 openai_api_key: string | null
+                gemini_api_key: string | null
               }>(),
             supabase
               .from("core_identities")
@@ -330,6 +338,7 @@ function OnboardingPageInner() {
         if (usersRow?.apify_api_key) setApifyKey(usersRow.apify_api_key)
         if (usersRow?.heygen_api_key) setHeygenKey(usersRow.heygen_api_key)
         if (usersRow?.openai_api_key) setOpenaiKey(usersRow.openai_api_key)
+        if (usersRow?.gemini_api_key) setGeminiKey(usersRow.gemini_api_key)
 
         const coreRow = coreRes.data
         if (coreRow?.product_name) setBusinessName(coreRow.product_name)
@@ -339,7 +348,9 @@ function OnboardingPageInner() {
         // Step completeness — same rules the middleware and
         // /api/onboarding/complete use, so all three agree on "done".
         const step0Done =
-          hasText(usersRow?.anthropic_api_key) && hasText(usersRow?.apify_api_key)
+          hasText(usersRow?.anthropic_api_key) &&
+          hasText(usersRow?.apify_api_key) &&
+          (!geminiCohort || hasText(usersRow?.gemini_api_key))
         const step1Done =
           !!coreRow &&
           [coreRow.who_i_am, coreRow.niche, coreRow.how_i_sound].every(hasText)
@@ -501,6 +512,9 @@ function OnboardingPageInner() {
   const canProceed = () => {
     if (saving) return false
     if (currentStep === 0) {
+      // Gemini only gates the cohort — for everyone else the field isn't even
+      // rendered, so requiring it would be an unsatisfiable block.
+      if (showGeminiField && !geminiKey.trim()) return false
       return anthropicKey.trim() && apifyKey.trim()
     }
     if (currentStep === 1) {
@@ -531,8 +545,9 @@ function OnboardingPageInner() {
           // Validate every entered key against its provider before persisting.
           // Catches the recurring "pasted into wrong field" bug + dead keys.
           // Each entry runs format + live check via the same endpoint Settings uses.
-          const entries: Array<["anthropic_api_key" | "heygen_api_key" | "apify_api_key" | "openai_api_key", string, string]> = []
+          const entries: Array<["anthropic_api_key" | "heygen_api_key" | "apify_api_key" | "openai_api_key" | "gemini_api_key", string, string]> = []
           if (anthropicKey.trim()) entries.push(["anthropic_api_key", anthropicKey.trim(), "Anthropic"])
+          if (geminiKey.trim()) entries.push(["gemini_api_key", geminiKey.trim(), "Gemini"])
           if (heygenKey.trim()) entries.push(["heygen_api_key", heygenKey.trim(), "HeyGen"])
           if (apifyKey.trim()) entries.push(["apify_api_key", apifyKey.trim(), "Apify"])
           // Only validated if actually typed — an empty OpenAI field is a
@@ -1215,6 +1230,37 @@ function OnboardingPageInner() {
                   {" "}והטעינו קרדיטים בסך של לפחות 5$
                 </p>
               </div>
+
+              {/* Gemini — the model that writes every hook for the pilot
+                  cohort, on both /hooks and the per-idea flow. Required for
+                  them (without it their core loop produces nothing) and hidden
+                  from everyone else, who still writes hooks with Claude. */}
+              {showGeminiField && (
+              <div className="flex flex-col gap-2">
+                <label className="text-small-bold text-text-primary-default flex items-center gap-2">
+                  <Link2 className="size-4" />
+                  Gemini API Key *
+                </label>
+                <Input
+                  dir="ltr"
+                  placeholder="AIza..."
+                  value={geminiKey}
+                  onChange={(e) => setGeminiKey(e.target.value)}
+                />
+                <p className="text-xs-body text-text-neutral-default">
+                  מצאו את ה-API key שלכם ב-{" "}
+                  <a
+                    href="https://aistudio.google.com/apikey"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-text-primary-default font-semibold hover:underline"
+                  >
+                    aistudio.google.com
+                  </a>
+                  {" "}— זה המנוע שכותב את ההוקים
+                </p>
+              </div>
+              )}
 
               <div className="flex flex-col gap-2">
                 <label className="text-small-bold text-text-primary-default flex items-center gap-2">

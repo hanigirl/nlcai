@@ -7,6 +7,7 @@ import { ArrowUp, Loader2, Bug } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AppLink } from "@/components/ui/app-link"
 import { AppShell } from "@/components/app-shell"
+import { GeminiConnectNotice } from "@/components/gemini-connect-notice"
 import { Typewriter } from "@/components/typewriter"
 import { StickyNote } from "@/components/sticky-note"
 import { HookCard } from "@/components/hook-card"
@@ -223,6 +224,8 @@ function HomeContent() {
           const errData = await res.json().catch(() => ({}))
           if (errData.error === "audience_missing") {
             setNicheError("לא הצלחנו לקרוא את ניתוח קהל היעד. יש לעדכן את הקובץ בהגדרות.")
+          } else if (errData.error === "gemini_not_connected") {
+            setNicheError("לא חובר מפתח Gemini. צריך לחבר אותו בהגדרות כדי לייצר הוקים.")
           }
           setHooksLoading(false)
           return
@@ -440,7 +443,10 @@ function HomeContent() {
       {modelFallback && (
         <div dir="rtl" className="fixed top-4 right-1/2 translate-x-1/2 z-50 max-w-md mx-auto rounded-xl border border-yellow-50 bg-yellow-95 px-4 py-2 shadow-sm">
           <p className="text-small text-text-primary-default text-center">
-            ⚡ עברנו זמנית למודל קל יותר בגלל עומס. האיכות עשויה להיות מעט נמוכה
+            {/* Shared by the ideas stream (Claude overload) and the hooks
+                stream (a free Gemini key has no Pro access at all), so the
+                wording can't claim a single cause. */}
+            ⚡ עברנו למודל קל יותר. האיכות עשויה להיות מעט נמוכה
           </p>
         </div>
       )}
@@ -703,6 +709,11 @@ function HomeContent() {
         )}
 
         <div className="flex flex-col gap-10">
+          {/* Same notice as /hooks — the home page generates hooks too, so a
+              user who never opens the warehouse still has to see it. Renders
+              nothing once a Gemini key is connected. */}
+          <GeminiConnectNotice />
+
           {/* Section 1: Hooks */}
           <div
             className="flex flex-col gap-4 animate-in fade-in slide-in-from-top-4 duration-700"
@@ -811,7 +822,7 @@ function HomeContent() {
               <div className="w-full rounded-xl border border-border-neutral-default bg-bg-surface p-4 text-center">
                 <p className="text-small text-text-neutral-default mb-2">{nicheError}</p>
                 <a href="/settings?tab=business" className="text-small-bold text-text-primary-default hover:underline">
-                  עדכנו פרטים בהגדרות →
+                  עדכנו פרטים בהגדרות ←
                 </a>
               </div>
             )}
@@ -873,27 +884,27 @@ function HomeContent() {
                 },
                 anthropic_not_connected: {
                   message: "לא חובר מפתח Anthropic API. צריך לחבר אותו בהגדרות כדי להתחיל",
-                  action: { href: "/settings?tab=connections", label: "לחיבור מפתח API →" },
+                  action: { href: "/settings?tab=connections", label: "לחיבור מפתח API ←" },
                 },
                 audience_missing: {
                   message: "לא הצלחנו לקרוא את ניתוח קהל היעד. יש לעדכן את הקובץ בהגדרות",
-                  action: { href: "/settings?tab=business", label: "לעמוד ההגדרות →" },
+                  action: { href: "/settings?tab=business", label: "לעמוד ההגדרות ←" },
                 },
                 core_identity_missing: {
                   message: "חסרה זהות ליבה. יש להשלים את תהליך ה־onboarding",
-                  action: { href: "/onboarding", label: "להשלמת onboarding →" },
+                  action: { href: "/onboarding", label: "להשלמת onboarding ←" },
                 },
                 unauthorized: {
                   message: "נראה שהתנתקת. יש להתחבר מחדש",
-                  action: { href: "/login", label: "למסך ההתחברות →" },
+                  action: { href: "/login", label: "למסך ההתחברות ←" },
                 },
                 no_trends_found: {
                   message: "לא מצאנו טרנדים חדשים בנישה שלכם כרגע. הוסיפו יוצרים מובילים כדי לקבל רעיונות גם מהם, או נסו שוב בעוד כמה דקות",
-                  action: { href: "/settings?tab=business", label: "להוספת יוצרים מובילים →" },
+                  action: { href: "/settings?tab=business", label: "להוספת יוצרים מובילים ←" },
                 },
                 no_creator_content: {
                   message: "לא מצאנו תוכן ויראלי אצל היוצרים שהוספתם וגם אין טרנדים רלוונטיים. בדקו שהקישורים תקינים או נסו יוצרים נוספים",
-                  action: { href: "/settings?tab=business", label: "לעדכון רשימת היוצרים →" },
+                  action: { href: "/settings?tab=business", label: "לעדכון רשימת היוצרים ←" },
                 },
                 no_ideas_generated: {
                   message: "הסוכן סיים אבל לא החזיר אף רעיון. זה יכול לקרות כשאין מספיק חומר גלם — נסו שוב בעוד רגע",

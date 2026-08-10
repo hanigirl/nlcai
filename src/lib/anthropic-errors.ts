@@ -12,7 +12,7 @@ const PATTERNS: Array<{ test: (m: string) => boolean; message: string }> = [
     test: (m) =>
       /invalid x-api-key|authentication.*fail|invalid api key|401/i.test(m),
     message:
-      "מפתח Anthropic לא תקין או שפג תוקפו. עדכנו אותו בהגדרות → חיבור חשבונות.",
+      "מפתח Anthropic לא תקין או שפג תוקפו. עדכנו אותו בהגדרות ← חיבור חשבונות.",
   },
   {
     test: (m) => /rate.?limit|429/i.test(m),
@@ -37,7 +37,7 @@ const PATTERNS: Array<{ test: (m: string) => boolean; message: string }> = [
   {
     test: (m) =>
       /^anthropic_not_connected$|claude api key not connected/i.test(m),
-    message: "מפתח Claude לא מחובר. חברו אותו בהגדרות → חיבור חשבונות.",
+    message: "מפתח Claude לא מחובר. חברו אותו בהגדרות ← חיבור חשבונות.",
   },
   {
     test: (m) => /no_json_block_in_response|json/i.test(m),
