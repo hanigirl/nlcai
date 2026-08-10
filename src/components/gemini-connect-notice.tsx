@@ -21,7 +21,7 @@ import { usesGeminiHooks } from "@/lib/owner"
 export function GeminiConnectNotice({
   variant = "banner",
 }: {
-  variant?: "banner" | "card"
+  variant?: "banner" | "floating"
 }) {
   // Starts false so nothing renders until we know — the banner must never
   // flash at users who already have a key.
@@ -97,30 +97,31 @@ function NoticeBody() {
 }
 
 /**
- * `banner` — the standalone strip from the Figma, for full-width page tops.
- * `card`   — the same message wearing the /project flow-card chrome (20px
- *            radius, tinted header strip, 567px to line up with the hook
- *            card). On that canvas everything is a card, so a full-width
- *            banner reads as something that fell in from another screen.
+ * `banner`   — the standalone strip from the Figma, for full-width page tops.
+ * `floating` — pinned message for the /project canvas. Fixed rather than
+ *              placed in the flow: the canvas pans, and a notice that drifts
+ *              off-screen with it stops being a notice. Sits below the sticky
+ *              header and clear of the collapsed right sidebar.
  */
 export function GeminiConnectNoticeCard({
   variant = "banner",
 }: {
-  variant?: "banner" | "card"
+  variant?: "banner" | "floating"
 }) {
-  if (variant === "card") {
+  if (variant === "floating") {
     return (
       <div
         dir="rtl"
-        className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[567px] shrink-0"
+        // top: 3.5rem header + 1rem gap. right: 3rem collapsed sidebar + 1.5rem
+        // gap, so it never sits under the rail. z-40 keeps it under the
+        // header's z-50 rather than covering it.
+        className="fixed top-[4.5rem] right-[4.5rem] z-40 w-[380px] rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-lg px-6 py-5 flex flex-col gap-3"
       >
-        <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface">
-          <GeminiIcon className="size-4 shrink-0" id="project-notice" />
+        <div className="flex items-start gap-2">
+          <GeminiIcon className="size-4 shrink-0 mt-0.5" id="project-notice" />
           <span className="text-p-bold text-text-primary-default">{NOTICE_TITLE}</span>
         </div>
-        <div className="px-6 flex flex-col gap-3">
-          <NoticeBody />
-        </div>
+        <NoticeBody />
       </div>
     )
   }
