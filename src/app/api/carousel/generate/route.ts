@@ -3,6 +3,7 @@ import satori from "satori"
 import { Resvg } from "@resvg/resvg-js"
 import { getTemplate, SLIDE_SIZE } from "@/lib/carousel-templates"
 import type { SlideData } from "@/lib/carousel-templates"
+import { assertFeedSafeAspect } from "@/lib/social/media-spec"
 
 // Source of truth for families/weights available to satori templates. A
 // fontWeight used in template JSX that is NOT registered here silently
@@ -130,6 +131,13 @@ export async function POST(req: NextRequest) {
 
     const width = template.size?.width ?? SLIDE_SIZE
     const height = template.size?.height ?? SLIDE_SIZE
+
+    // A carousel is a feed post, so it lives under Instagram's 4:5–1.91:1
+    // rule. Every template today is 1080×1350 or 1080×1080 and passes; this
+    // catches the next one added at a natural-feeling 9:16, which would
+    // otherwise render fine, sit on the calendar looking finished, and fail
+    // only at publish time — in the background, days later.
+    assertFeedSafeAspect(width, height, `תבנית "${templateId}"`)
 
     const pngBuffers: string[] = []
 

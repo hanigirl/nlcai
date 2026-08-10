@@ -28,6 +28,7 @@ import type {
   SocialAccountRow,
   SocialPlatform,
 } from "@/lib/supabase/types"
+import { MAX_CAPTION_CHARS, MAX_CAROUSEL_ITEMS } from "./media-spec"
 import {
   SocialPublishError,
   type ConnectHandoff,
@@ -58,8 +59,8 @@ const API_VERSION = "2021-07-28"
  * aspect-ratio rule needs real dimensions and belongs at render time.
  */
 const LIMITS = {
-  maxCarouselItems: 10,
-  maxCaptionChars: 2200,
+  maxCarouselItems: MAX_CAROUSEL_ITEMS,
+  maxCaptionChars: MAX_CAPTION_CHARS,
   /** Stories take no caption at all, and no API can add text or stickers to one. */
   storyCaptionChars: 0,
 } as const

@@ -28,6 +28,7 @@ import { HighLevelPublisher } from "./highlevel"
 import type { SocialPublisher } from "./types"
 
 export * from "./types"
+export * from "./media-spec"
 
 /**
  * Env-driven so the switch can be staged per environment — point staging at

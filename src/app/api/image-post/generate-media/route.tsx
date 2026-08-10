@@ -4,13 +4,17 @@ import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
 import { parseImagePostBody, type ImagePostTexts } from "@/lib/image-post-text"
+import { assertFeedSafeAspect } from "@/lib/social/media-spec"
 
 // gpt-image-2 generation can take 60-120s; leave headroom for the normalize pass.
 export const maxDuration = 300
 
-// Instagram feed image post — 4:5 portrait.
+// Instagram feed image post — 4:5 portrait, which is the TALLEST shape the
+// feed accepts (the rule is 4:5 to 1.91:1). Asserted rather than trusted, so
+// this pair can never drift to 9:16 without the generator saying so.
 const IMAGE_WIDTH = 1080
 const IMAGE_HEIGHT = 1350
+assertFeedSafeAspect(IMAGE_WIDTH, IMAGE_HEIGHT, "פוסט תמונה")
 
 /**
  * AI media generation for the `image_post` format.
