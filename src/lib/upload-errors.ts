@@ -45,7 +45,7 @@ const PATTERNS: Array<{
     kind: "quota_exceeded",
     test: (m) => /quota|storage.*full|insufficient.*storage|507/i.test(m),
     message:
-      "אין מקום פנוי באחסון. מחקו קבצים ישנים בהגדרות → מדיה ונסו שוב.",
+      "אין מקום פנוי באחסון. מחקו קבצים ישנים בהגדרות ← מדיה ונסו שוב.",
   },
   {
     kind: "payload_too_large",

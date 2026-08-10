@@ -275,7 +275,7 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
           id: TOAST_ID,
           duration: 10000,
           action: {
-            label: "לצפייה →",
+            label: "לצפייה ←",
             onClick: () => { window.location.href = "/hooks" },
           },
         })

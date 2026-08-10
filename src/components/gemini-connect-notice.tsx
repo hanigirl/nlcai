@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { GeminiIcon } from "@/components/gemini-icon"
 import { createClient } from "@/lib/supabase/client"
 import { usesGeminiHooks } from "@/lib/owner"
 
@@ -19,13 +19,23 @@ import { usesGeminiHooks } from "@/lib/owner"
  * nothing and disappears by itself the moment the problem is solved.
  */
 export function GeminiConnectNotice() {
-  // null = still checking. Nothing renders until we know, so the banner never
-  // flashes at users who already have a key.
-  const [connected, setConnected] = useState<boolean | null>(null)
+  // Starts false so nothing renders until we know — the banner must never
+  // flash at users who already have a key.
+  const [visible, setVisible] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     const check = async () => {
+      // ?preview=gemini-notice forces the card on in its real page context.
+      // Once a key is connected the banner is unreachable by design, which
+      // otherwise makes it impossible to review in place without first
+      // disconnecting a working key. Same idea as the ?variant= gates used
+      // elsewhere for design review. Read inside the async body, not in the
+      // effect body, so this isn't a synchronous setState during an effect.
+      if (new URLSearchParams(window.location.search).get("preview") === "gemini-notice") {
+        setVisible(true)
+        return
+      }
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
@@ -40,20 +50,19 @@ export function GeminiConnectNotice() {
         .maybeSingle()
       if (cancelled) return
       if (error) {
-        // Treat a failed lookup as "connected" — showing a setup banner to
-        // someone who is already set up is worse than showing nothing.
+        // Stay hidden on a failed lookup — showing a setup banner to someone
+        // who is already set up is worse than showing nothing.
         console.error("[gemini-notice]", error)
-        setConnected(true)
         return
       }
       const key = (data as { gemini_api_key?: string | null } | null)?.gemini_api_key
-      setConnected(!!key && key.trim().length > 0)
+      setVisible(!key || key.trim().length === 0)
     }
     check()
     return () => { cancelled = true }
   }, [])
 
-  if (connected !== false) return null
+  if (!visible) return null
 
   return <GeminiConnectNoticeCard />
 }
@@ -67,10 +76,10 @@ export function GeminiConnectNoticeCard() {
   return (
     <div
       dir="rtl"
-      className="rounded-2xl border border-border-neutral-default bg-bg-surface-primary-default px-6 py-5 flex flex-col gap-3"
+      className="rounded-[18px] border border-border-neutral-default bg-bg-surface px-6 py-5 flex flex-col gap-3"
     >
       <div className="flex items-center gap-2">
-        <Sparkles className="size-4 text-text-primary-default shrink-0" />
+        <GeminiIcon className="size-4 shrink-0" id="connect-notice" />
         <span className="text-p-bold text-text-primary-default">
           ההוקים עברו למנוע חדש — צריך לחבר מפתח Gemini
         </span>
@@ -82,33 +91,10 @@ export function GeminiConnectNoticeCard() {
         נכנסים ל-Google AI Studio, יוצרים מפתח, ומדביקים אותו בהגדרות.
       </p>
 
-      <p className="text-small text-text-neutral-default">
-        <span className="font-semibold text-text-primary-default">רוצים את האיכות הגבוהה ביותר?</span>{" "}
-        מפתח חינמי עובד, אבל הוא מריץ את המודל הקל של Gemini וההוקים יוצאים פחות
-        חדים. המודל החזק דורש שיהיה <span className="font-semibold">חיוב פעיל (Cloud Billing)
-        על הפרויקט</span> שממנו יצרתם את המפתח — או דרך הארגון שלכם, אם אתם על
-        חשבון עסקי, או בטעינת קרדיט ב-AI Studio (מינימום 10$, ומספיק להמון הוקים).
-      </p>
-
-      <p className="text-small text-text-neutral-default">
-        ⚠️ <span className="font-semibold text-text-primary-default">מנוי לא מספיק.</span>{" "}
-        מנוי Gemini Advanced או Google Workspace פותח את המודלים החזקים רק בתוך
-        האתר של Google AI Studio — לא דרך מפתח API כמו שאנחנו משתמשים. אל תשלמו על
-        מנוי בשביל זה.
-      </p>
-
-      <div className="flex flex-wrap items-center gap-3 pt-1">
-        <Button asChild size="sm" className="gap-1.5">
+      <div className="flex justify-start pt-1">
+        <Button asChild size="sm">
           <Link href="/settings?tab=connections&sub=gemini">לחיבור המפתח</Link>
         </Button>
-        <a
-          href="https://aistudio.google.com/apikey"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-small-bold text-text-primary-default hover:underline"
-        >
-          ליצירת מפתח ב-Google AI Studio →
-        </a>
       </div>
     </div>
   )

@@ -822,7 +822,7 @@ function HomeContent() {
               <div className="w-full rounded-xl border border-border-neutral-default bg-bg-surface p-4 text-center">
                 <p className="text-small text-text-neutral-default mb-2">{nicheError}</p>
                 <a href="/settings?tab=business" className="text-small-bold text-text-primary-default hover:underline">
-                  עדכנו פרטים בהגדרות →
+                  עדכנו פרטים בהגדרות ←
                 </a>
               </div>
             )}
@@ -884,27 +884,27 @@ function HomeContent() {
                 },
                 anthropic_not_connected: {
                   message: "לא חובר מפתח Anthropic API. צריך לחבר אותו בהגדרות כדי להתחיל",
-                  action: { href: "/settings?tab=connections", label: "לחיבור מפתח API →" },
+                  action: { href: "/settings?tab=connections", label: "לחיבור מפתח API ←" },
                 },
                 audience_missing: {
                   message: "לא הצלחנו לקרוא את ניתוח קהל היעד. יש לעדכן את הקובץ בהגדרות",
-                  action: { href: "/settings?tab=business", label: "לעמוד ההגדרות →" },
+                  action: { href: "/settings?tab=business", label: "לעמוד ההגדרות ←" },
                 },
                 core_identity_missing: {
                   message: "חסרה זהות ליבה. יש להשלים את תהליך ה־onboarding",
-                  action: { href: "/onboarding", label: "להשלמת onboarding →" },
+                  action: { href: "/onboarding", label: "להשלמת onboarding ←" },
                 },
                 unauthorized: {
                   message: "נראה שהתנתקת. יש להתחבר מחדש",
-                  action: { href: "/login", label: "למסך ההתחברות →" },
+                  action: { href: "/login", label: "למסך ההתחברות ←" },
                 },
                 no_trends_found: {
                   message: "לא מצאנו טרנדים חדשים בנישה שלכם כרגע. הוסיפו יוצרים מובילים כדי לקבל רעיונות גם מהם, או נסו שוב בעוד כמה דקות",
-                  action: { href: "/settings?tab=business", label: "להוספת יוצרים מובילים →" },
+                  action: { href: "/settings?tab=business", label: "להוספת יוצרים מובילים ←" },
                 },
                 no_creator_content: {
                   message: "לא מצאנו תוכן ויראלי אצל היוצרים שהוספתם וגם אין טרנדים רלוונטיים. בדקו שהקישורים תקינים או נסו יוצרים נוספים",
-                  action: { href: "/settings?tab=business", label: "לעדכון רשימת היוצרים →" },
+                  action: { href: "/settings?tab=business", label: "לעדכון רשימת היוצרים ←" },
                 },
                 no_ideas_generated: {
                   message: "הסוכן סיים אבל לא החזיר אף רעיון. זה יכול לקרות כשאין מספיק חומר גלם — נסו שוב בעוד רגע",

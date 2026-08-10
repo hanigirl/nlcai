@@ -1884,21 +1884,21 @@ function ProjectPageInner() {
                       <>
                         <span className="text-small text-text-primary-default">חרגתם מהמכסה של Gemini</span>
                         <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-small-bold text-text-primary-default hover:underline">
-                          לבדיקת המכסה →
+                          לבדיקת המכסה ←
                         </a>
                       </>
                     ) : error === "gemini_key_invalid" ? (
                       <>
                         <span className="text-small text-text-primary-default">מפתח ה-Gemini לא תקף יותר. צריך לחבר אותו מחדש</span>
                         <Link href="/settings?tab=connections&sub=gemini" className="text-small-bold text-text-primary-default hover:underline">
-                          לעמוד ההגדרות →
+                          לעמוד ההגדרות ←
                         </Link>
                       </>
                     ) : error === "credits_exhausted" ? (
                       <>
                         <span className="text-small text-text-primary-default">נגמרו לכם הקרדיטים של Anthropic</span>
                         <a href="https://console.anthropic.com/settings/billing" target="_blank" rel="noopener noreferrer" className="text-small-bold text-text-primary-default hover:underline">
-                          לרכישת קרדיטים →
+                          לרכישת קרדיטים ←
                         </a>
                       </>
                     ) : (
