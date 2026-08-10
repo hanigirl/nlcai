@@ -31,6 +31,7 @@ import type {
   SocialPlatform,
   SocialProvider,
 } from "@/lib/supabase/types"
+import type { InstagramDestination } from "./media-spec"
 
 /** A connected destination, as the app thinks of it — no vendor fields. */
 export interface SocialAccount {
@@ -75,7 +76,16 @@ export interface SchedulePostInput {
    * `story` accepts no caption at all and cannot carry text or stickers added
    * by an API — any text has to be baked into the image itself.
    */
-  kind: "post" | "reel" | "story"
+  kind: InstagramDestination
+  /**
+   * Reel cover, as a public image URL.
+   *
+   * Reels only. A feed post has no separate cover — the first slide *is* the
+   * cover — and a story has no cover concept at all, so this is ignored for
+   * both. The app already generates one at 1080×1920 and stores it apart from
+   * the content media, which is exactly the shape needed here.
+   */
+  coverUrl?: string
 }
 
 export interface ScheduleResult {

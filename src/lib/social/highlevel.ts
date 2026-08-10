@@ -146,6 +146,11 @@ function buildPostBody(input: SchedulePostInput, externalAccountId: string) {
     summary: input.caption,
     media: input.media.map((m) => ({ url: m.url, type: m.type })),
     type: input.kind,
+    // Reel cover. HighLevel documents thumbnail support for reels but not the
+    // field name, so this is one of the guesses — omitted entirely rather than
+    // sent as null, since a stray null is likelier to be rejected than a
+    // missing key.
+    ...(input.coverUrl ? { thumbnail: input.coverUrl } : {}),
     // ISO-8601. `publishAt` is already an absolute instant by contract — the
     // calendar's local-day-plus-hour has been resolved before it gets here.
     scheduleDate: input.publishAt.toISOString(),

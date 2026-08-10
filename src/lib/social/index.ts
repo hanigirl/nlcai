@@ -29,6 +29,7 @@ import type { SocialPublisher } from "./types"
 
 export * from "./types"
 export * from "./media-spec"
+export * from "./assemble"
 
 /**
  * Env-driven so the switch can be staged per environment — point staging at
