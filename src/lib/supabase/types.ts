@@ -317,9 +317,23 @@ export interface ScheduledPostRow {
   published_at: string | null;
   /** Denormalised hook so day-cell chips render without a join. */
   hook: string | null;
+
+  // ---- publishing arm (033) ----
+  /** Null = board-only slot: a plan, not a promise. Every pre-033 row is this. */
+  social_account_id: string | null;
+  /** The provider's handle on the queued post — needed to edit or cancel it. */
+  provider_post_id: string | null;
+  publish_status: SchedulePublishStatus;
+  /** Meant to reach the user: expired connection, bad aspect ratio, etc. */
+  publish_error: string | null;
+  publish_synced_at: string | null;
+
   created_at: string;
   updated_at: string;
 }
+
+/** `idle` is the pre-033 world: on the calendar, owed to nobody. */
+export type SchedulePublishStatus = "idle" | "queued" | "published" | "failed";
 
 export type ScheduledPostInsert = Pick<
   ScheduledPostRow,
@@ -328,7 +342,84 @@ export type ScheduledPostInsert = Pick<
   Partial<Pick<ScheduledPostRow, "scheduled_time" | "published_at" | "hook">>;
 
 export type ScheduledPostUpdate = Partial<
-  Pick<ScheduledPostRow, "scheduled_date" | "scheduled_time" | "published_at" | "hook">
+  Pick<
+    ScheduledPostRow,
+    | "scheduled_date"
+    | "scheduled_time"
+    | "published_at"
+    | "hook"
+    | "social_account_id"
+    | "provider_post_id"
+    | "publish_status"
+    | "publish_error"
+    | "publish_synced_at"
+  >
+>;
+
+// ---- social publishing (033) ----
+
+/**
+ * Which system holds the OAuth relationship with Instagram.
+ *
+ * `highlevel` — we borrow the founders' HighLevel agency account. It owns the
+ *   connection and it owns the clock.
+ * `meta` — nlcai's own Meta app. Free at any volume and keeps the user inside
+ *   the product, but gated behind business verification and app review.
+ *
+ * This union is the seam. Everything provider-specific lives behind it.
+ */
+export type SocialProvider = "highlevel" | "meta";
+
+/** Only Instagram today; the column is text so a new destination ships without a migration. */
+export type SocialPlatform = "instagram";
+
+/**
+ * `needs_reconnect` is the one to design for. Instagram tokens lapse after
+ * ~60 days, and sooner if the user changes her password or switches account
+ * type. The post then silently never goes out.
+ */
+export type SocialAccountStatus = "connected" | "needs_reconnect" | "revoked";
+
+/** Provider-scoped workspace for one user. A HighLevel sub-account; unused by `meta`. */
+export interface SocialTenantRow {
+  id: string;
+  user_id: string;
+  provider: SocialProvider;
+  /** HighLevel locationId. Opaque to everything above the adapter. */
+  external_tenant_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type SocialTenantInsert = Pick<
+  SocialTenantRow,
+  "user_id" | "provider" | "external_tenant_id"
+>;
+
+/** One connected publishing destination. */
+export interface SocialAccountRow {
+  id: string;
+  user_id: string;
+  provider: SocialProvider;
+  platform: SocialPlatform;
+  /** HighLevel accountId today; the Instagram user id if we go direct. */
+  external_account_id: string;
+  external_tenant_id: string | null;
+  handle: string | null;
+  avatar_url: string | null;
+  status: SocialAccountStatus;
+  connected_at: string;
+  updated_at: string;
+}
+
+export type SocialAccountInsert = Pick<
+  SocialAccountRow,
+  "user_id" | "provider" | "platform" | "external_account_id"
+> &
+  Partial<Pick<SocialAccountRow, "external_tenant_id" | "handle" | "avatar_url" | "status">>;
+
+export type SocialAccountUpdate = Partial<
+  Pick<SocialAccountRow, "handle" | "avatar_url" | "status" | "external_tenant_id">
 >;
 
 // ---- Supabase Database type (for client generics) ----
@@ -410,6 +501,16 @@ export interface Database {
         Row: ScheduledPostRow;
         Insert: ScheduledPostInsert;
         Update: ScheduledPostUpdate;
+      };
+      social_tenants: {
+        Row: SocialTenantRow;
+        Insert: SocialTenantInsert;
+        Update: never;
+      };
+      social_accounts: {
+        Row: SocialAccountRow;
+        Insert: SocialAccountInsert;
+        Update: SocialAccountUpdate;
       };
     };
     Views: Record<string, never>;
