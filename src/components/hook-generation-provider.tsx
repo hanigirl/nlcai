@@ -171,6 +171,9 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
       let buffer = ""
       let count = 0
       let errorSeen = false
+      // The route emits model_fallback once, but guard anyway — one toast per
+      // batch, not one per hook.
+      let fallbackNotified = false
 
       while (true) {
         const { done, value } = await reader.read()
@@ -189,6 +192,17 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
               errorSeen = true
               setError(parsed.error)
               toast.error(hookErrorMessage(parsed.error), { id: TOAST_ID, duration: 6000 })
+              continue
+            }
+            // The route has always streamed this; the warehouse path used to
+            // drop it on the floor, so a whole batch could come from the
+            // weaker model with nothing on screen saying so. That matters now
+            // that hook quality is the thing being judged — a free Gemini key
+            // can't reach Pro at all, and silently reading Flash output as if
+            // it were Pro would send us to the wrong conclusion.
+            if (parsed.model_fallback && !fallbackNotified) {
+              fallbackNotified = true
+              toast("⚡ נוצר במודל קל יותר — האיכות עשויה להיות נמוכה מהרגיל", { duration: 10000 })
               continue
             }
             // Partial failure, not fatal — some hooks got through before the
