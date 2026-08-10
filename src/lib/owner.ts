@@ -54,7 +54,10 @@ export function canPreviewMediaCredits(
 //
 // To open it to everyone: make this return true and delete the Claude branch in
 // /api/hooks and /api/homepage-hooks.
-const GEMINI_HOOKS_EMAILS = new Set(["nataliya@nataliyarey.com"])
+const GEMINI_HOOKS_EMAILS = new Set([
+  "nataliya@nataliyarey.com",
+  "hanigirl@gmail.com",
+])
 
 export function usesGeminiHooks(email: string | null | undefined): boolean {
   if (!email) return false

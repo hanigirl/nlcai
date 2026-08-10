@@ -54,6 +54,15 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
+
+  // Component preview routes (/test/*) render a single component in isolation
+  // so it can be reviewed without an account that happens to be in the right
+  // state. Public on local dev only — in production they stay behind auth like
+  // every other page, so this is a local convenience, not a hole.
+  if (process.env.NODE_ENV !== "production" && path.startsWith("/test/")) {
+    return supabaseResponse;
+  }
+
   const isAuthRoute = path.startsWith("/login") || path.startsWith("/auth");
   const isOnboardingRoute = path.startsWith("/onboarding");
   const isSettingsRoute = path.startsWith("/settings");

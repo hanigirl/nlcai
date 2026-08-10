@@ -55,6 +55,15 @@ export function GeminiConnectNotice() {
 
   if (connected !== false) return null
 
+  return <GeminiConnectNoticeCard />
+}
+
+/**
+ * The card itself, with no gating. Split out so it can be rendered directly
+ * (e.g. /test/gemini-notice) to review the copy without holding an account
+ * that is in the cohort and missing a key.
+ */
+export function GeminiConnectNoticeCard() {
   return (
     <div
       dir="rtl"
