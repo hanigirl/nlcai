@@ -54,6 +54,7 @@ export default function HooksPage() {
     progress,
     total,
     sessionHookIds,
+    engine,
     startGeneration,
     subscribeHook,
     subscribeDone,
@@ -286,6 +287,16 @@ export default function HooksPage() {
           <div className="flex items-center gap-2">
             <img src="/images/hook-min.png" alt="" className="w-[48px] h-[48px]" />
             <h2 className="text-text-primary-default">מחסן הוקים</h2>
+            {/* Says which model wrote the last batch. Judging hook quality
+                without knowing this is judging the wrong thing. */}
+            {engine && (
+              <span
+                className="text-xs-body text-text-neutral-default border border-border-neutral-default rounded-full px-2 py-0.5"
+                title={`ההוקים האחרונים נכתבו על ידי ${engine}`}
+              >
+                {engine.includes("pro") ? "Gemini Pro" : engine.includes("flash") ? "Gemini Flash" : engine}
+              </span>
+            )}
           </div>
           {/* Generate button — now a dropdown (chevron variant): pick a
               general batch, or "לפי מוצר" to focus + tag the batch on a

@@ -488,6 +488,10 @@ ${categoriesCatalog}
         // free-tier limits are low, so "fewer hooks than expected" is far more
         // often rate limiting than model quality — the client needs to be told.
         let quotaHit = false
+        // One engine announcement per batch, from the first writer that
+        // actually succeeds — that's the only point where the model in use is
+        // known for certain rather than assumed.
+        let engineReported = false
         // Collected as hooks stream out, so we can batch-classify by product at the end.
         const generatedHooks: Array<{ id: string; text: string }> = []
 
@@ -628,11 +632,20 @@ ${formatTemplatesForPrompt()}
               // hook itself is one sentence — the headroom is entirely for
               // thinking, and unused budget costs nothing.
               try {
-                const { text: raw, fallback } = await generateWithGeminiFallback(geminiKey, {
+                const { text: raw, fallback, model } = await generateWithGeminiFallback(geminiKey, {
                   prompt: writePrompt,
                   maxOutputTokens: 16384,
                   thinkingLevel: "high",
                 })
+                // Report the model by name, once per batch. We spent a whole
+                // session concluding "no fallback banner, therefore Pro" and
+                // were wrong — every hook had come from Flash. Absence of a
+                // warning is not evidence; the engine has to say what it is.
+                if (!engineReported) {
+                  engineReported = true
+                  console.log(`Homepage Hooks: writing with ${model}`)
+                  safeEnqueue(encoder.encode(`data: ${JSON.stringify({ engine: model })}\n\n`))
+                }
                 if (fallback && !usedFallback) {
                   usedFallback = true
                   safeEnqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))

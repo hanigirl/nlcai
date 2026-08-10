@@ -31,6 +31,11 @@ interface HookGenContextValue {
   sessionHookIds: string[]
   error: string | null
   /**
+   * Model that wrote the most recent batch, as reported by the server — never
+   * inferred from the absence of a warning. null before the first batch.
+   */
+  engine: string | null
+  /**
    * Kick off a hook-generation batch. Pass a `product` to generate hooks
    * focused on (and tagged with) that product; omit it for a general batch.
    */
@@ -78,6 +83,7 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
   const [total, setTotal] = useState(TOTAL_HOOKS)
   const [sessionHookIds, setSessionHookIds] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [engine, setEngine] = useState<string | null>(null)
 
   // Listener sets — /hooks page subscribes while mounted so it can add hooks
   // to its local state in real time. If the page is unmounted (user navigated),
@@ -200,6 +206,16 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
             // that hook quality is the thing being judged — a free Gemini key
             // can't reach Pro at all, and silently reading Flash output as if
             // it were Pro would send us to the wrong conclusion.
+            // Positive statement of which model wrote the batch. Kept separate
+            // from the fallback warning below on purpose: a warning that fails
+            // to appear reads as "all good", and that misread cost a whole
+            // evaluation session — every hook was judged as Pro output when it
+            // had all come from Flash.
+            if (typeof parsed.engine === "string") {
+              console.log(`[hooks] batch written by ${parsed.engine}`)
+              setEngine(parsed.engine)
+              continue
+            }
             if (parsed.model_fallback && !fallbackNotified) {
               fallbackNotified = true
               toast("⚡ נוצר במודל קל יותר — האיכות עשויה להיות נמוכה מהרגיל", { duration: 10000 })
@@ -289,10 +305,11 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
     total,
     sessionHookIds,
     error,
+    engine,
     startGeneration,
     subscribeHook,
     subscribeDone,
-  }), [isGenerating, progress, total, sessionHookIds, error, startGeneration, subscribeHook, subscribeDone])
+  }), [isGenerating, progress, total, sessionHookIds, error, engine, startGeneration, subscribeHook, subscribeDone])
 
   return <HookGenContext.Provider value={value}>{children}</HookGenContext.Provider>
 }

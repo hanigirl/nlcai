@@ -169,13 +169,15 @@ export async function generateWithGemini(
 export async function generateWithGeminiFallback(
   apiKey: string,
   opts: Omit<GenerateOptions, "model">,
-): Promise<{ text: string; fallback: boolean }> {
+): Promise<{ text: string; fallback: boolean; model: string }> {
   try {
-    return { text: await generateWithGemini(apiKey, { ...opts, model: GEMINI_PRIMARY_MODEL }), fallback: false }
+    const text = await generateWithGemini(apiKey, { ...opts, model: GEMINI_PRIMARY_MODEL })
+    return { text, fallback: false, model: GEMINI_PRIMARY_MODEL }
   } catch (err) {
     const code = err instanceof GeminiError ? err.code : "unknown"
     console.log(`[gemini] ${GEMINI_PRIMARY_MODEL} failed (${code}) — retrying on ${GEMINI_FALLBACK_MODEL}`)
-    return { text: await generateWithGemini(apiKey, { ...opts, model: GEMINI_FALLBACK_MODEL }), fallback: true }
+    const text = await generateWithGemini(apiKey, { ...opts, model: GEMINI_FALLBACK_MODEL })
+    return { text, fallback: true, model: GEMINI_FALLBACK_MODEL }
   }
 }
 
