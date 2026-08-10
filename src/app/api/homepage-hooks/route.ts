@@ -4,9 +4,9 @@ import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { detectAudienceGender } from "@/lib/detect-addressing"
 import { TEMPLATE_LIBRARY, getTemplatesByCategorySorted, templateText, templatePriority, type TemplateCategory, type HookTemplate } from "@/lib/agents/hook-templates"
-import { polishHookForHebrew } from "@/lib/agents/hook-hebrew-polish"
-import { judgeHook, validateHookLocally } from "@/lib/agents/hook-judge"
+import { validateHookLocally } from "@/lib/agents/hook-judge"
 import { classifyHooksByProduct } from "@/lib/agents/hook-product-classifier"
+import { GeminiError, generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
 
 interface PlanItem {
   category: TemplateCategory
@@ -22,10 +22,9 @@ import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-
 import { withRetry } from "@/lib/supabase/retry"
 import { getAuthUser } from "@/lib/auth-user"
 
-// Streaming SSE pipeline (plan → write+judge+polish per hook). Even with a
-// reduced HOOK_COUNT=10 in one batch, full run lands at ~30-60s. Vercel's
-// 10s default cuts the stream mid-batch. 300s is the Pro plan ceiling; on
-// Hobby Vercel silently caps to 60s.
+// Streaming SSE pipeline (Claude plans the topics → Gemini writes one hook per
+// plan). Vercel's 10s default cuts the stream mid-batch. 300s is the Pro plan
+// ceiling; on Hobby Vercel silently caps to 60s.
 export const maxDuration = 300
 
 const USE_DUMMY = false
@@ -113,6 +112,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "audience_missing" }, { status: 400 })
     }
 
+    // Claude still runs the two steps that aren't hook writing: the topic plan
+    // and the product classifier (plus the audience-gender probe). Gemini
+    // writes every hook. Both keys are therefore required here.
     let apiKey: string
     try {
       apiKey = await getUserApiKey(supabase, "anthropic_api_key")
@@ -120,6 +122,17 @@ export async function POST(req: NextRequest) {
       const msg = err instanceof Error ? err.message : String(err)
       if (msg === "anthropic_not_connected") {
         return NextResponse.json({ error: "anthropic_not_connected" }, { status: 400 })
+      }
+      return NextResponse.json({ error: msg }, { status: 500 })
+    }
+
+    let geminiKey: string
+    try {
+      geminiKey = await getUserApiKey(supabase, "gemini_api_key")
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg === "gemini_not_connected") {
+        return NextResponse.json({ error: "gemini_not_connected" }, { status: 400 })
       }
       return NextResponse.json({ error: msg }, { status: 500 })
     }
@@ -247,9 +260,10 @@ ${audienceIdentity.limiting_beliefs}
     // ============= PIPELINE STEP 1 — PLANNING =============
     // Generate angle plans: { category, angle, target_emotion, audience_quote, specific_topic }
     // Home page shows the first 4; the rest live in /hooks as the user's hook inventory.
-    // Temporary: dropped to 6 because the full write→judge→polish chain still
-    // exceeded the 60s Vercel cap at 10 (504 in prod). Until we slim the pipeline
-    // or move to Pro plan (300s ceiling), 6 keeps every run inside the budget.
+    // Was dropped to 6 because the write→judge→polish chain blew the 60s
+    // Vercel cap at 10 (504 in prod). That chain is now a single Gemini call
+    // per hook, so the old reason no longer binds — left at 6 on purpose until
+    // we've measured real Gemini latency and per-user rate limits.
     const HOOK_COUNT = 6
 
     const categoriesCatalog = TEMPLATE_LIBRARY
@@ -338,15 +352,16 @@ ${categoriesCatalog}
     // ============= PIPELINE EXECUTION =============
     // Tight per-call timeout + lower retry count so a hung Anthropic request
     // (overload retry storm) can't stall the batch for the SDK's 10-minute
-    // default. Each plan does write→judge→polish, so 90s × 3 = 4.5min worst
-    // case per plan, well under what the user perceives as "stuck".
+    // default. This client now only serves planning, the audience-gender probe
+    // and the product classifier — the hook writing runs on Gemini.
     const client = new Anthropic({ apiKey, timeout: 90000, maxRetries: 1 })
     const userId = user.id
 
     // Homepage hooks have no user draft to detect an addressing gender from,
     // so the audience decides: women → feminine singular, men → masculine
     // singular, mixed/unclear → plural (the old always-plural behavior).
-    // Resolved once per request, injected into writer + judge + polish.
+    // Resolved once per request and injected into the writer prompt — with the
+    // judge and polish gone, that prompt is the only place it can be enforced.
     const audienceGenderSource = (audienceIdentity ?? {}) as Partial<
       Record<"identity_statements" | "cross_audience_quotes" | "employment" | "behavioral", string>
     >
@@ -462,6 +477,10 @@ ${categoriesCatalog}
         // distinct from `skipped`, which counts AI-quality drops the user
         // doesn't need to know about.
         let saveFailures = 0
+        // Set when any writer call comes back 429. Gemini keys are per-user and
+        // free-tier limits are low, so "fewer hooks than expected" is far more
+        // often rate limiting than model quality — the client needs to be told.
+        let quotaHit = false
         // Collected as hooks stream out, so we can batch-classify by product at the end.
         const generatedHooks: Array<{ id: string; text: string }> = []
 
@@ -493,19 +512,20 @@ ${categoriesCatalog}
           }
           console.log(`Homepage Hooks: planning done — ${plans.length} plans, fallback=${fallback}`)
 
-          // ============= STEP 2: WRITING — parallel batches of 5, streamed as each completes =============
+          // ============= STEP 2: WRITING — parallel batches, streamed as each completes =============
           // Pipeline per hook (runs concurrently in batches):
-          //   write (structured JSON) → programmatic check → judge → polish → insert → stream
-          //   If judge rewrite still fails programmatic check, skip the plan.
+          //   write on Gemini (structured JSON) → programmatic check (log only)
+          //   → insert → stream
           //
-          // Parallelizing cuts total time from ~12min (serial) to ~2min for 20 hooks.
-          // Batch size 5 keeps us well under Anthropic tier-1 rate limits (4k req/min;
-          // 5 plans × 3 Claude calls = 15 concurrent — safe).
+          // The judge and polish rounds that used to sit between the write and
+          // the insert are gone; a plan is now one model call, not three.
           let skipped = 0
-          // 10 × 3 concurrent Claude calls = 30 at peak, safely within Tier 1
-          // Anthropic limits (4000 req/min, 80K in-tok/min; our burst ~30-40K).
-          // If hitting 429s, drop back to 5-7.
-          const BATCH_SIZE = 10
+          // Each plan is now ONE Gemini call instead of three Claude calls, but
+          // the ceiling that matters moved: Gemini keys are per-user and the
+          // free tier allows only a handful of Pro requests per minute. 5
+          // concurrent is the compromise — still ~2x faster than serial, and
+          // survivable on a free key. Raise it once we know users are on paid.
+          const BATCH_SIZE = 5
 
           interface DraftHook { template_index?: number; slot_fills?: Record<string, string>; hook?: string }
 
@@ -589,28 +609,31 @@ ${formatTemplatesForPrompt()}
 - \`slot_fills\` = המילים שמילאת ב-slots (אובייקט). ב-free-form אפשר אובייקט ריק \`{}\`.
 - \`hook\` = ההוק המלא, בדיוק כפי שיוצג לקורא. **זה השדה היחיד שמשנה לקורא — ההוק עצמו חייב לעמוד בשלוש העמודות, גם אם בחרת free-form.**`
 
-            // Write the hook — Sonnet with Haiku overload fallback
+            // Write the hook — Gemini Pro with a Flash overload fallback.
+            // 4096 output tokens, not 600: the thinking pass draws from the
+            // same budget, and a starved budget returns a completed call with
+            // no text at all.
             let draft: DraftHook | null = null
-            const doCall = async (model: string) => {
-              const res = await client.messages.create({
-                model,
-                max_tokens: 600,
-                messages: [{ role: "user", content: writePrompt }],
-              })
-              const raw = res.content.find((b) => b.type === "text")?.text ?? ""
-              draft = parseDraftJson(raw)
-            }
             try {
-              await doCall(usedFallback ? FALLBACK_MODEL : PRIMARY_MODEL)
-            } catch (err) {
-              if (!isOverloadError(err) || usedFallback) {
-                skipped++
-                console.warn(`Homepage Hooks: writer crashed for "${plan.specific_topic}":`, err)
-                return
+              const { text: raw, fallback } = await generateWithGeminiFallback(geminiKey, {
+                prompt: writePrompt,
+                maxOutputTokens: 4096,
+                thinkingLevel: "high",
+              })
+              if (fallback && !usedFallback) {
+                usedFallback = true
+                safeEnqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
               }
-              usedFallback = true
-              safeEnqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
-              await doCall(FALLBACK_MODEL)
+              draft = parseDraftJson(raw)
+            } catch (err) {
+              // A quota error means the user's Gemini plan is rate-limiting the
+              // batch — every remaining plan will hit it too, so record it and
+              // report it once at end-of-stream rather than silently shipping a
+              // short batch.
+              if (err instanceof GeminiError && err.code === "quota") quotaHit = true
+              skipped++
+              console.warn(`Homepage Hooks: Gemini writer failed for "${plan.specific_topic}":`, err)
+              return
             }
 
             if (!draft || !(draft as DraftHook).hook || typeof (draft as DraftHook).hook !== "string" || ((draft as DraftHook).hook!).trim().length <= 10) {
@@ -619,48 +642,23 @@ ${formatTemplatesForPrompt()}
               return
             }
             const d = draft as DraftHook
-            let hookText = cleanRawHook(d.hook!)
+            const hookText = cleanRawHook(d.hook!)
 
-            const templateIdx = Number.isInteger(d.template_index) ? d.template_index! : 0
-            const isFreeForm = templateIdx < 0
-            const chosenTemplate = isFreeForm ? null : (templates[templateIdx] ?? templates[0])
-            const chosenTemplateText = chosenTemplate ? templateText(chosenTemplate) : "free-form (ללא תבנית)"
-
-            // Programmatic check — deterministic, cheap.
-            let issues = validateHookLocally(hookText, plan.specific_topic)
-
-            // Judge (Opus) — always. Catches curiosity-gap + logic failures code can't.
-            const judgeResult = await judgeHook(client, {
-              hook: hookText,
-              template: chosenTemplateText,
-              specificTopic: plan.specific_topic,
-              targetPainOrDesire: plan.target_pain_or_desire,
-              programmaticIssues: issues,
-              addressGender: audienceAddress,
-            })
-
-            const judgeRewrote = !judgeResult.valid
-            if (judgeRewrote) {
-              console.log(`Homepage Hooks: judge rewrote "${hookText.slice(0, 40)}..." — issues: ${judgeResult.issues.join("; ")}`)
-              hookText = judgeResult.rewritten
-              issues = validateHookLocally(hookText, plan.specific_topic)
-              if (issues.length > 0) {
-                skipped++
-                console.warn(`Homepage Hooks: skipping "${plan.specific_topic}" — judge rewrite still failed: ${issues.join(", ")}`)
-                return
-              }
+            // The Opus judge and the Sonnet Hebrew polish used to run here.
+            // Both are gone: what Gemini writes is what ships, so we can read
+            // its unassisted Hebrew before deciding whether either is still
+            // earning its keep.
+            //
+            // The programmatic check survives — it costs nothing and it's code,
+            // not a model. It no longer drops hooks though: it only logs, so a
+            // batch that trips it still shows us exactly what Gemini produced
+            // instead of quietly shrinking.
+            const issues = validateHookLocally(hookText, plan.specific_topic)
+            if (issues.length > 0) {
+              console.log(`Homepage Hooks: [gemini-raw] "${hookText}" would have been flagged: ${issues.join(", ")}`)
             }
 
             if (hookText.length <= 10) { skipped++; return }
-
-            // Polish only if judge accepted the original. When judge rewrote,
-            // the Opus output is already clean natural Hebrew — running the
-            // Sonnet polish on top is redundant and occasionally re-edits
-            // something Opus got right.
-            if (!judgeRewrote) {
-              hookText = await polishHookForHebrew(client, hookText, PRIMARY_MODEL, audienceAddress)
-              if (hookText.length <= 10) { skipped++; return }
-            }
 
             // Pre-generate the id so retries are idempotent: if attempt 1
             // committed but the response was lost, attempt 2 fails with a
@@ -761,6 +759,13 @@ ${formatTemplatesForPrompt()}
           if (saveFailures > 0) {
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ save_failures: saveFailures })}\n\n`))
           }
+          // Deliberately NOT sent as `error`: the client treats any `error`
+          // frame as fatal and skips the success path (cache clear + done
+          // listeners). A quota hit is partial — the hooks that did make it
+          // through are real and must land normally.
+          if (quotaHit) {
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ gemini_quota_warning: true })}\n\n`))
+          }
           safeEnqueue(encoder.encode("data: [DONE]\n\n"))
           safeClose()
         } catch (err) {
@@ -768,7 +773,9 @@ ${formatTemplatesForPrompt()}
           console.error(`Homepage Hooks: generation failed at hook ${hookCount} —`, msg)
           const isCredits = /credit|billing|insufficient_quota|payment|402/i.test(msg)
           const isOverloaded = /overloaded|529|503/i.test(msg)
-          const errCode = isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : msg
+          const errCode =
+            geminiErrorCode(err) ||
+            (isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : msg)
           safeEnqueue(encoder.encode(`data: ${JSON.stringify({ error: errCode })}\n\n`))
           safeClose()
         }

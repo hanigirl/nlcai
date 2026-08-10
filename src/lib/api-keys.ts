@@ -1,12 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
-export type KeyName = "heygen_api_key" | "anthropic_api_key" | "apify_api_key" | "openai_api_key"
+export type KeyName = "heygen_api_key" | "anthropic_api_key" | "apify_api_key" | "openai_api_key" | "gemini_api_key"
 
 const NOT_CONNECTED_CODE: Record<KeyName, string> = {
   heygen_api_key: "heygen_not_connected",
   anthropic_api_key: "anthropic_not_connected",
   apify_api_key: "apify_not_connected",
   openai_api_key: "openai_not_connected",
+  gemini_api_key: "gemini_not_connected",
 }
 
 // Cheap synchronous gate so we catch obvious paste-into-wrong-field
@@ -34,6 +35,17 @@ export function validateApiKeyFormat(keyName: KeyName, value: string): string | 
     }
     if (!v.startsWith("sk-")) {
       return "מפתח OpenAI תקין מתחיל ב-sk-. ודאי שלא הדבקת מפתח של ספק אחר בשדה הזה."
+    }
+    if (v.length < 30) return "המפתח קצר מדי. ודאי שהעתקת אותו במלואו."
+  } else if (keyName === "gemini_api_key") {
+    // Google AI Studio keys are "AIza" + 35 chars. The overlap worth catching
+    // explicitly is the sk- family (Anthropic/OpenAI), since all three fields
+    // sit next to each other on the connections screen.
+    if (v.startsWith("sk-")) {
+      return "זה מפתח של Anthropic או OpenAI (מתחיל ב-sk-), לא של Gemini. מפתח Gemini מתחיל ב-AIza."
+    }
+    if (!v.startsWith("AIza")) {
+      return "מפתח Gemini תקין מתחיל ב-AIza. ודאי שהעתקת אותו מ-aistudio.google.com → API keys."
     }
     if (v.length < 30) return "המפתח קצר מדי. ודאי שהעתקת אותו במלואו."
   }

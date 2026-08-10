@@ -105,6 +105,28 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  if (keyName === "gemini_api_key") {
+    // Listing models is the cheapest authenticated GET — 200 for a valid key,
+    // 400/403 for a bad one. No tokens are spent.
+    try {
+      const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models", {
+        headers: { "x-goog-api-key": value },
+        signal: AbortSignal.timeout(8000),
+      })
+      if (res.ok) return NextResponse.json({ ok: true } satisfies Verdict)
+      if (res.status === 400 || res.status === 401 || res.status === 403) {
+        return NextResponse.json({ ok: false, code: "invalid", message: "המפתח של Gemini לא תקף. ודאו שהעתקתם אותו מ-aistudio.google.com → API keys, ושה-API מופעל בפרויקט." } satisfies Verdict)
+      }
+      if (res.status === 429) {
+        return NextResponse.json({ ok: false, code: "credits", message: "חשבון ה-Gemini שלכם חרג מהמכסה. היכנסו ל-aistudio.google.com לבדוק את המגבלות של התוכנית." } satisfies Verdict)
+      }
+      return NextResponse.json({ ok: false, code: "network", message: `Gemini החזיר ${res.status}` } satisfies Verdict)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return NextResponse.json({ ok: false, code: "network", message: `לא הצלחנו לאמת את המפתח: ${msg}` } satisfies Verdict)
+    }
+  }
+
   if (keyName === "heygen_api_key") {
     // remaining_quota is the cheapest authenticated GET — 200 for a valid
     // token, 401 otherwise. No credits are spent.

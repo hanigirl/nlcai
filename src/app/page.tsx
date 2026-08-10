@@ -223,6 +223,8 @@ function HomeContent() {
           const errData = await res.json().catch(() => ({}))
           if (errData.error === "audience_missing") {
             setNicheError("לא הצלחנו לקרוא את ניתוח קהל היעד. יש לעדכן את הקובץ בהגדרות.")
+          } else if (errData.error === "gemini_not_connected") {
+            setNicheError("לא חובר מפתח Gemini. צריך לחבר אותו בהגדרות כדי לייצר הוקים.")
           }
           setHooksLoading(false)
           return
@@ -440,7 +442,10 @@ function HomeContent() {
       {modelFallback && (
         <div dir="rtl" className="fixed top-4 right-1/2 translate-x-1/2 z-50 max-w-md mx-auto rounded-xl border border-yellow-50 bg-yellow-95 px-4 py-2 shadow-sm">
           <p className="text-small text-text-primary-default text-center">
-            ⚡ עברנו זמנית למודל קל יותר בגלל עומס. האיכות עשויה להיות מעט נמוכה
+            {/* Shared by the ideas stream (Claude overload) and the hooks
+                stream (a free Gemini key has no Pro access at all), so the
+                wording can't claim a single cause. */}
+            ⚡ עברנו למודל קל יותר. האיכות עשויה להיות מעט נמוכה
           </p>
         </div>
       )}

@@ -54,6 +54,24 @@ export function useHookGeneration(): HookGenContextValue {
 const TOTAL_HOOKS = 6
 const TOAST_ID = "hook-generation-status"
 
+// The route streams raw error codes. Without this map the user sees English
+// snake_case in a toast — most of these are new since hooks moved to Gemini.
+const ERROR_MESSAGES: Record<string, string> = {
+  audience_missing: "לא הצלחנו לקרוא את ניתוח קהל היעד. יש לעדכן את הקובץ בהגדרות.",
+  gemini_not_connected: "לא חובר מפתח Gemini. צריך לחבר אותו בהגדרות כדי לייצר הוקים.",
+  gemini_key_invalid: "מפתח ה-Gemini לא תקף. צריך לחבר אותו מחדש בהגדרות.",
+  gemini_quota_exceeded: "חרגתם מהמכסה של Gemini. בדקו את המגבלות בחשבון או נסו שוב מאוחר יותר.",
+  gemini_overloaded: "השרתים של Gemini עמוסים כרגע. נסו שוב בעוד דקה.",
+  anthropic_not_connected: "לא חובר מפתח Anthropic. צריך לחבר אותו בהגדרות.",
+  anthropic_overloaded: "השרתים של Anthropic עמוסים כרגע. נסו שוב בעוד דקה.",
+  credits_exhausted: "נגמרו הקרדיטים של Anthropic.",
+}
+
+function hookErrorMessage(code: unknown): string {
+  if (typeof code !== "string" || !code) return "שגיאה ביצירת הוקים"
+  return ERROR_MESSAGES[code] ?? code
+}
+
 export function HookGenerationProvider({ children }: { children: React.ReactNode }) {
   const [isGenerating, setIsGenerating] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -135,10 +153,9 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        const msg = data.error || "שגיאה ביצירת הוקים"
-        setError(msg)
+        setError(data.error || "שגיאה ביצירת הוקים")
         setIsGenerating(false)
-        toast.error(msg, { id: TOAST_ID, duration: 6000 })
+        toast.error(hookErrorMessage(data.error), { id: TOAST_ID, duration: 6000 })
         return
       }
 
@@ -171,10 +188,16 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
             if (parsed.error) {
               errorSeen = true
               setError(parsed.error)
-              toast.error(parsed.error === "audience_missing"
-                ? "לא הצלחנו לקרוא את ניתוח קהל היעד. יש לעדכן את הקובץ בהגדרות."
-                : (parsed.error || "שגיאה ביצירת הוקים"),
-                { id: TOAST_ID, duration: 6000 },
+              toast.error(hookErrorMessage(parsed.error), { id: TOAST_ID, duration: 6000 })
+              continue
+            }
+            // Partial failure, not fatal — some hooks got through before the
+            // user's Gemini plan started rate-limiting. Warn, but let the
+            // success path below run for the hooks that did land.
+            if (parsed.gemini_quota_warning) {
+              toast.error(
+                "חלק מההוקים לא נוצרו כי חרגתם מהמכסה של Gemini. נסו שוב בעוד דקה.",
+                { duration: 8000 },
               )
               continue
             }

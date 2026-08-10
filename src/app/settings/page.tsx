@@ -40,7 +40,7 @@ const GOOGLE_FONTS = [
   "Plus Jakarta Sans", "Figtree", "Geist", "Satoshi",
 ]
 
-type KeyName = "anthropic_api_key" | "heygen_api_key" | "apify_api_key" | "openai_api_key"
+type KeyName = "anthropic_api_key" | "heygen_api_key" | "apify_api_key" | "openai_api_key" | "gemini_api_key"
 type SettingsTab = "connections" | "business" | "products" | "creators" | "media"
 
 interface KeyConfig {
@@ -79,6 +79,13 @@ const KEYS: KeyConfig[] = [
     placeholder: "sk-...",
     helpUrl: "https://platform.openai.com/api-keys",
     helpLabel: "platform.openai.com",
+  },
+  {
+    key: "gemini_api_key",
+    label: "Gemini API Key",
+    placeholder: "AIza...",
+    helpUrl: "https://aistudio.google.com/apikey",
+    helpLabel: "aistudio.google.com",
   },
 ]
 
@@ -190,6 +197,7 @@ const SUB_SECTIONS: Record<SettingsTab, { id: string; label: string; icon: typeo
     { id: "heygen", label: "HeyGen", icon: Link2 },
     { id: "apify", label: "Apify", icon: Link2 },
     { id: "openai", label: "OpenAI", icon: Link2 },
+    { id: "gemini", label: "Gemini", icon: Link2 },
   ],
   business: [
     { id: "about", label: "על העסק", icon: Type },
@@ -253,12 +261,14 @@ function SettingsPageInner() {
     heygen_api_key: null,
     apify_api_key: null,
     openai_api_key: null,
+    gemini_api_key: null,
   })
   const [inputValues, setInputValues] = useState<Record<KeyName, string>>({
     anthropic_api_key: "",
     heygen_api_key: "",
     apify_api_key: "",
     openai_api_key: "",
+    gemini_api_key: "",
   })
 
   // Business tab state
@@ -336,7 +346,7 @@ function SettingsPageInner() {
       // Fire all queries in parallel; await each individually to keep their distinct Supabase types intact.
       const userRowPromise = supabase
         .from("users")
-        .select("anthropic_api_key, heygen_api_key, apify_api_key, openai_api_key, brand_style")
+        .select("anthropic_api_key, heygen_api_key, apify_api_key, openai_api_key, gemini_api_key, brand_style")
         .eq("id", user.id)
         .single()
       const coreIdPromise = supabase
@@ -378,6 +388,7 @@ function SettingsPageInner() {
           heygen_api_key: (row.heygen_api_key as string) ?? null,
           apify_api_key: (row.apify_api_key as string) ?? null,
           openai_api_key: (row.openai_api_key as string) ?? null,
+          gemini_api_key: (row.gemini_api_key as string) ?? null,
         })
         if (row.brand_style) setStyleAnalyzed(true)
       }
@@ -1153,6 +1164,7 @@ function SettingsPageInner() {
                     if (activeSubSection === "heygen") return cfg.key === "heygen_api_key"
                     if (activeSubSection === "apify") return cfg.key === "apify_api_key"
                     if (activeSubSection === "openai") return cfg.key === "openai_api_key"
+                    if (activeSubSection === "gemini") return cfg.key === "gemini_api_key"
                     return false
                   }).map((cfg) => {
                     const stored = storedKeys[cfg.key]

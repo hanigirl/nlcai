@@ -188,7 +188,10 @@ function ProjectPageInner() {
   const [selectedHook, setSelectedHook] = useState<number | null>(null)
   const [hooksLoading, setHooksLoading] = useState(false)
   const [error, setError] = useState("")
-  const [apiNotConnected, setApiNotConnected] = useState(false)
+  // Which provider is still unconnected — hooks run on Gemini, the core post
+  // still runs on Claude, so the banner has to name the one that's actually
+  // missing instead of always saying "Claude".
+  const [apiNotConnected, setApiNotConnected] = useState<"Claude" | "Gemini" | null>(null)
   const [response, setResponse] = useState("")
   const [corePost, setCorePost] = useState("")
   const [postLoading, setPostLoading] = useState(false)
@@ -1349,8 +1352,10 @@ function ProjectPageInner() {
     })
       .then((res) => res.json())
       .then((data) => {
-        if (data.error === "anthropic_not_connected") {
-          setApiNotConnected(true)
+        if (data.error === "gemini_not_connected") {
+          setApiNotConnected("Gemini")
+        } else if (data.error === "anthropic_not_connected") {
+          setApiNotConnected("Claude")
         } else if (data.error) {
           setError(data.error)
         } else if (data.hooks) {
@@ -1481,7 +1486,7 @@ function ProjectPageInner() {
       })
       const data = await res.json()
       if (data.error === "anthropic_not_connected") {
-        setApiNotConnected(true)
+        setApiNotConnected("Claude")
       } else if (data.error) {
         setPostError(data.error)
       } else if (data.post) {
@@ -1768,7 +1773,7 @@ function ProjectPageInner() {
         {apiNotConnected && (
           <div dir="rtl" className="mx-6 mt-6 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4 flex items-center justify-between">
             <p className="text-small text-text-neutral-default">
-              חברו את חשבון Claude שלכם כדי ליצור תוכן
+              חברו את חשבון {apiNotConnected} שלכם כדי ליצור תוכן
             </p>
             <Link href="/settings" className="text-small font-semibold text-text-primary-default hover:underline">
               עבור להגדרות
@@ -1854,13 +1859,33 @@ function ProjectPageInner() {
 
                 {error && !hooksLoading && (
                   <div className="px-6 flex flex-col gap-2 items-center">
-                    {error === "anthropic_overloaded" ? (
+                    {error === "anthropic_overloaded" || error === "gemini_overloaded" || error === "no_hooks_generated" ? (
                       <>
-                        <span className="text-small text-text-primary-default">השרתים של Anthropic עמוסים כרגע. נסו שוב בעוד דקה</span>
+                        <span className="text-small text-text-primary-default">
+                          {error === "no_hooks_generated"
+                            ? "לא הצלחנו לייצר הוקים הפעם. נסו שוב"
+                            : error === "gemini_overloaded"
+                              ? "השרתים של Gemini עמוסים כרגע. נסו שוב בעוד דקה"
+                              : "השרתים של Anthropic עמוסים כרגע. נסו שוב בעוד דקה"}
+                        </span>
                         <Button size="sm" onClick={() => { setError(""); handleGenerateHooks() }} className="gap-1.5">
                           <Sparkles className="size-3.5" />
                           נסו שוב
                         </Button>
+                      </>
+                    ) : error === "gemini_quota_exceeded" ? (
+                      <>
+                        <span className="text-small text-text-primary-default">חרגתם מהמכסה של Gemini</span>
+                        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-small-bold text-text-primary-default hover:underline">
+                          לבדיקת המכסה →
+                        </a>
+                      </>
+                    ) : error === "gemini_key_invalid" ? (
+                      <>
+                        <span className="text-small text-text-primary-default">מפתח ה-Gemini לא תקף יותר. צריך לחבר אותו מחדש</span>
+                        <Link href="/settings?tab=connections&sub=gemini" className="text-small-bold text-text-primary-default hover:underline">
+                          לעמוד ההגדרות →
+                        </Link>
                       </>
                     ) : error === "credits_exhausted" ? (
                       <>
