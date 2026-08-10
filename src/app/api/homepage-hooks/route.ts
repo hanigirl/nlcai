@@ -610,20 +610,26 @@ ${formatTemplatesForPrompt()}
 - \`hook\` = ההוק המלא, בדיוק כפי שיוצג לקורא. **זה השדה היחיד שמשנה לקורא — ההוק עצמו חייב לעמוד בשלוש העמודות, גם אם בחרת free-form.**`
 
             // Write the hook — Gemini Pro with a Flash overload fallback.
-            // 4096 output tokens, not 600: the thinking pass draws from the
-            // same budget, and a starved budget returns a completed call with
-            // no text at all.
+            //
+            // 16384, not 4096: Pro's thinking is billed against this same
+            // budget, so a tight cap doesn't shorten the hook, it truncates
+            // the JSON mid-object and the whole plan gets dropped. At 4096
+            // roughly half of every batch was disappearing this way. The hook
+            // itself is one sentence — the headroom is entirely for thinking,
+            // and unused budget costs nothing.
             let draft: DraftHook | null = null
+            let rawText = ""
             try {
               const { text: raw, fallback } = await generateWithGeminiFallback(geminiKey, {
                 prompt: writePrompt,
-                maxOutputTokens: 4096,
+                maxOutputTokens: 16384,
                 thinkingLevel: "high",
               })
               if (fallback && !usedFallback) {
                 usedFallback = true
                 safeEnqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
               }
+              rawText = raw
               draft = parseDraftJson(raw)
             } catch (err) {
               // A quota error means the user's Gemini plan is rate-limiting the
@@ -638,7 +644,15 @@ ${formatTemplatesForPrompt()}
 
             if (!draft || !(draft as DraftHook).hook || typeof (draft as DraftHook).hook !== "string" || ((draft as DraftHook).hook!).trim().length <= 10) {
               skipped++
-              console.warn(`Homepage Hooks: writer returned no usable hook for "${plan.specific_topic}" — skipping`)
+              // Log the raw response, not just "no usable hook". Half a batch
+              // was vanishing here with no way to tell truncated JSON apart
+              // from a model that answered in prose — the tail of the text is
+              // what distinguishes them (a cut-off object ends mid-string).
+              const tail = rawText.slice(-200).replace(/\s+/g, " ").trim()
+              console.warn(
+                `Homepage Hooks: writer returned no usable hook for "${plan.specific_topic}" — ` +
+                `${rawText.length} chars, parsed=${draft ? "yes" : "no"}. Tail: …${tail}`,
+              )
               return
             }
             const d = draft as DraftHook

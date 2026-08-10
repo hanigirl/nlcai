@@ -205,10 +205,13 @@ export async function POST(req: NextRequest) {
     // One Gemini call, the exact same prompt the Claude writer received. No
     // judge, no Hebrew polish — whatever Gemini returns is what the user sees,
     // which is the point of the switch: we want to read its unassisted Hebrew.
-    // The token budget has to cover thinking as well as the hooks themselves.
+    //
+    // The budget covers thinking AND the hooks. Sized generously on purpose:
+    // running out mid-response truncates the list and silently costs the user
+    // hooks, while unused budget costs nothing.
     const { text: rawText, fallback: modelFallback } = await generateWithGeminiFallback(geminiKey, {
       prompt,
-      maxOutputTokens: count > 5 ? 8192 : 4096,
+      maxOutputTokens: count > 5 ? 24576 : 16384,
       thinkingLevel: "high",
     })
 
