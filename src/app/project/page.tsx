@@ -1772,10 +1772,12 @@ function ProjectPageInner() {
 
       <InfiniteCanvas>
         {/* Shown before the user even tries to generate, rather than letting
-            them hit "gemini_not_connected" and only then find out. Renders
-            nothing once a key is connected. */}
-        <div className="mx-6 mt-6 empty:hidden">
-          <GeminiConnectNotice />
+            them hit "gemini_not_connected" and only then find out. Wears the
+            flow-card chrome so it belongs on this canvas, and sits on the same
+            right margin as the flow row. Renders nothing once a key is
+            connected. */}
+        <div className="pt-24 pr-24 empty:hidden" dir="rtl">
+          <GeminiConnectNotice variant="card" />
         </div>
         {apiNotConnected && (
           <div dir="rtl" className="mx-6 mt-6 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4 flex items-center justify-between">

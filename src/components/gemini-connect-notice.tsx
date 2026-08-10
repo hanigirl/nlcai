@@ -18,7 +18,11 @@ import { usesGeminiHooks } from "@/lib/owner"
  * Renders nothing once a key is connected, so it costs connected users
  * nothing and disappears by itself the moment the problem is solved.
  */
-export function GeminiConnectNotice() {
+export function GeminiConnectNotice({
+  variant = "banner",
+}: {
+  variant?: "banner" | "card"
+}) {
   // Starts false so nothing renders until we know — the banner must never
   // flash at users who already have a key.
   const [visible, setVisible] = useState(false)
@@ -64,7 +68,7 @@ export function GeminiConnectNotice() {
 
   if (!visible) return null
 
-  return <GeminiConnectNoticeCard />
+  return <GeminiConnectNoticeCard variant={variant} />
 }
 
 /**
@@ -72,19 +76,11 @@ export function GeminiConnectNotice() {
  * (e.g. /test/gemini-notice) to review the copy without holding an account
  * that is in the cohort and missing a key.
  */
-export function GeminiConnectNoticeCard() {
-  return (
-    <div
-      dir="rtl"
-      className="rounded-[18px] border border-border-neutral-default bg-bg-surface px-6 py-5 flex flex-col gap-3"
-    >
-      <div className="flex items-center gap-2">
-        <GeminiIcon className="size-4 shrink-0" id="connect-notice" />
-        <span className="text-p-bold text-text-primary-default">
-          ההוקים עברו למנוע חדש — צריך לחבר מפתח Gemini
-        </span>
-      </div>
+const NOTICE_TITLE = "ההוקים עברו למנוע חדש — צריך לחבר מפתח Gemini"
 
+function NoticeBody() {
+  return (
+    <>
       <p className="text-small text-text-primary-default">
         מהיום ההוקים נכתבים על ידי Gemini של גוגל. כדי לייצר הוקים צריך לחבר מפתח
         משלכם, פעם אחת. <span className="font-semibold">החיבור עצמו חינמי</span> —
@@ -96,6 +92,49 @@ export function GeminiConnectNoticeCard() {
           <Link href="/settings?tab=connections&sub=gemini">לחיבור המפתח</Link>
         </Button>
       </div>
+    </>
+  )
+}
+
+/**
+ * `banner` — the standalone strip from the Figma, for full-width page tops.
+ * `card`   — the same message wearing the /project flow-card chrome (20px
+ *            radius, tinted header strip, 567px to line up with the hook
+ *            card). On that canvas everything is a card, so a full-width
+ *            banner reads as something that fell in from another screen.
+ */
+export function GeminiConnectNoticeCard({
+  variant = "banner",
+}: {
+  variant?: "banner" | "card"
+}) {
+  if (variant === "card") {
+    return (
+      <div
+        dir="rtl"
+        className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[567px] shrink-0"
+      >
+        <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface">
+          <GeminiIcon className="size-4 shrink-0" id="project-notice" />
+          <span className="text-p-bold text-text-primary-default">{NOTICE_TITLE}</span>
+        </div>
+        <div className="px-6 flex flex-col gap-3">
+          <NoticeBody />
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      dir="rtl"
+      className="rounded-[18px] border border-border-neutral-default bg-bg-surface px-6 py-5 flex flex-col gap-3"
+    >
+      <div className="flex items-center gap-2">
+        <GeminiIcon className="size-4 shrink-0" id="connect-notice" />
+        <span className="text-p-bold text-text-primary-default">{NOTICE_TITLE}</span>
+      </div>
+      <NoticeBody />
     </div>
   )
 }
