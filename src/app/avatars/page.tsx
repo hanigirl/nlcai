@@ -10,6 +10,8 @@ interface Avatar {
   avatar_name: string;
   preview_image_url: string;
   preview_video_url: string;
+  /** Video avatar vs photo avatar — HeyGen needs a different character shape. */
+  type?: "avatar" | "talking_photo";
 }
 
 type Step = "select" | "record" | "generating" | "done";
@@ -163,6 +165,7 @@ export default function AvatarsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           avatar_id: selectedAvatar.avatar_id,
+          avatar_type: selectedAvatar.type,
           audio_url: uploadData.url,
         }),
       });

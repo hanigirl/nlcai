@@ -12,13 +12,24 @@ export interface Avatar {
   avatar_name: string
   preview_image_url: string
   preview_video_url: string
+  /**
+   * Which HeyGen character shape this id belongs to. Must reach
+   * /api/videos/generate — a photo avatar sent as a video avatar is rejected.
+   * Optional so older cached shapes still typecheck; the route defaults to
+   * "avatar".
+   */
+  type?: "avatar" | "talking_photo"
 }
 
 interface AvatarPickerProps {
   onSelect: (avatar: Avatar) => void
 }
 
-const CACHE_KEY = "heygen_avatars_cache"
+// _v2 on purpose: the key is versioned so a shape change or a fix to what the
+// route returns invalidates every stale list already sitting in a browser.
+// Without that bump, users kept seeing a day-old snapshot and no amount of
+// server-side fixing reached them.
+const CACHE_KEY = "heygen_avatars_cache_v2"
 const CACHE_TTL = 24 * 60 * 60 * 1000 // 24 hours
 
 // Per-user cache. Avatars come from the user's own HeyGen API key, so two
@@ -57,11 +68,15 @@ export function AvatarPicker({ onSelect }: AvatarPickerProps) {
         return
       }
 
+      // Stale-while-revalidate. The cache used to be a hard 24h stop: it
+      // returned and never re-fetched, so an avatar recorded in HeyGen was
+      // invisible here for up to a day with no way to force a refresh. Now the
+      // cached list paints immediately (no spinner) and a fetch still runs
+      // underneath to correct it.
       const cached = readCachedAvatars(user.id)
       if (cached) {
         setAvatars(cached)
         setLoading(false)
-        return
       }
 
       try {
@@ -69,9 +84,9 @@ export function AvatarPicker({ onSelect }: AvatarPickerProps) {
         const data = await res.json()
         if (cancelled) return
         if (data.error === "heygen_not_connected") {
-          setNotConnected(true)
+          if (!cached) setNotConnected(true)
         } else if (data.error) {
-          setError(data.error)
+          if (!cached) setError(data.error)
         } else {
           setAvatars(data.avatars)
           try {
@@ -84,7 +99,9 @@ export function AvatarPicker({ onSelect }: AvatarPickerProps) {
           }
         }
       } catch {
-        if (!cancelled) setError("Failed to load avatars")
+        // A failed background refresh must not blank out a list that is
+        // already on screen — keep showing the cached one.
+        if (!cancelled && !cached) setError("Failed to load avatars")
       } finally {
         if (!cancelled) setLoading(false)
       }

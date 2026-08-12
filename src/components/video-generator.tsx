@@ -75,6 +75,7 @@ export function VideoGenerator({ avatar, audioBlob, onStartOver }: VideoGenerato
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           avatar_id: avatar.avatar_id,
+          avatar_type: avatar.type,
           audio_url: uploadData.url,
         }),
       })
