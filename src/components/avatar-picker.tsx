@@ -12,6 +12,13 @@ export interface Avatar {
   avatar_name: string
   preview_image_url: string
   preview_video_url: string
+  /**
+   * Which HeyGen character shape this id belongs to. Must reach
+   * /api/videos/generate — a photo avatar sent as a video avatar is rejected.
+   * Optional so older cached shapes still typecheck; the route defaults to
+   * "avatar".
+   */
+  type?: "avatar" | "talking_photo"
 }
 
 interface AvatarPickerProps {

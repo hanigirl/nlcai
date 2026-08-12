@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: msg }, { status: 401 });
   }
 
-  const { avatar_id, audio_url } = await request.json();
+  const { avatar_id, audio_url, avatar_type } = await request.json();
 
   if (!avatar_id || !audio_url) {
     return NextResponse.json(
@@ -24,6 +24,17 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+
+  // HeyGen addresses the two kinds of avatar differently: a video avatar is
+  // {type:"avatar", avatar_id}, a photo avatar is
+  // {type:"talking_photo", talking_photo_id}. Sending a photo avatar's id
+  // under "avatar" is rejected. Defaults to "avatar" so older clients that
+  // don't send the field keep working — every avatar they could pick before
+  // this change was a video one.
+  const character =
+    avatar_type === "talking_photo"
+      ? { type: "talking_photo", talking_photo_id: avatar_id }
+      : { type: "avatar", avatar_id };
 
   const res = await fetch("https://api.heygen.com/v2/video/generate", {
     method: "POST",
@@ -34,10 +45,7 @@ export async function POST(request: Request) {
     body: JSON.stringify({
       video_inputs: [
         {
-          character: {
-            type: "avatar",
-            avatar_id,
-          },
+          character,
           voice: {
             type: "audio",
             audio_url,

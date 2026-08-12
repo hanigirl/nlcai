@@ -648,7 +648,7 @@ function TalkingHeadFlow({
       const genRes = await fetch("/api/videos/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ avatar_id: avatar.avatar_id, audio_url: uploadData.url }),
+        body: JSON.stringify({ avatar_id: avatar.avatar_id, avatar_type: avatar.type, audio_url: uploadData.url }),
       })
       const genData = await genRes.json()
       if (genData.error) {
