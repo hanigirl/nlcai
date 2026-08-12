@@ -52,14 +52,15 @@ export async function GET() {
 }
 
 /**
- * Every avatar the user actually owns — video avatars AND photo avatars.
+ * The user's own recorded video avatars.
  *
- * Asks HeyGen directly which groups belong to this account
- * (`include_public=false`) instead of guessing from the shape of an id. The
- * previous approach read only `/v2/avatars` and kept ids matching a 32-char
- * hex pattern, which silently dropped every photo avatar: those live in a
- * separate `talking_photos` array on that response, mixed in with ~7,300
- * stock ones, so there was no way to tell the user's own from HeyGen's.
+ * Asks HeyGen which groups belong to this account (`include_public=false`)
+ * and reads each group's looks, instead of guessing ownership from the shape
+ * of an id. The old approach kept ids matching /^[0-9a-f]{32}$/ off
+ * `/v2/avatars`; verified across all 12 connected accounts, that heuristic
+ * happened to select exactly the same video avatars this does — but it was a
+ * guess about id formatting, and it would go wrong the day HeyGen mints an id
+ * that doesn't look like a UUID. This asks the question directly.
  */
 async function fetchOwnedAvatars(headers: Record<string, string>): Promise<OwnedAvatar[]> {
   let groups: AvatarGroup[] = [];
@@ -88,13 +89,19 @@ async function fetchOwnedAvatars(headers: Record<string, string>): Promise<Owned
     }),
   );
 
-  // Dedupe by id — a look can surface under more than one group.
+  // Video avatars only (Hani, 2026-08-12). This screen is "דיבור למצלמה" —
+  // she wants the avatars she recorded herself on video, not the ones
+  // generated from a photo or a look. Photo avatars are still normalized and
+  // typed above, so surfacing them later is a matter of dropping this filter.
   const seen = new Set<string>();
-  return perGroup.flat().filter((a) => {
-    if (!a.avatar_id || seen.has(a.avatar_id)) return false;
-    seen.add(a.avatar_id);
-    return true;
-  });
+  return perGroup
+    .flat()
+    .filter((a) => a.type === "avatar")
+    .filter((a) => {
+      if (!a.avatar_id || seen.has(a.avatar_id)) return false;
+      seen.add(a.avatar_id);
+      return true;
+    });
 }
 
 /**
