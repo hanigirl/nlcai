@@ -235,7 +235,6 @@ function ProjectPageInner() {
   // Talking head state (lifted for panel persistence)
   const [thAvatar, setThAvatar] = useState<Avatar | null>(null)
   const [thAudioBlob, setThAudioBlob] = useState<Blob | null>(null)
-  const [thTranscript, setThTranscript] = useState("")
   const [thVideoUrl, setThVideoUrl] = useState<string | null>(null)
   const [thSourceMode, setThSourceMode] = useState<"choose" | "upload" | "avatar">("choose")
   const [thCoverImage, setThCoverImage] = useState<string | null>(null)
@@ -521,7 +520,6 @@ function ProjectPageInner() {
       if (saved.formatPosts && typeof saved.formatPosts === "object") setFormatPosts(saved.formatPosts)
       if (typeof saved.editableHook === "string") setEditableHook(saved.editableHook)
       if (typeof saved.coverText === "string") setCoverText(saved.coverText)
-      if (typeof saved.thTranscript === "string") setThTranscript(saved.thTranscript)
       if (saved.thSourceMode === "choose" || saved.thSourceMode === "upload" || saved.thSourceMode === "avatar") setThSourceMode(saved.thSourceMode)
       if (typeof saved.savedHookText === "string") setSavedHookText(saved.savedHookText)
       if (Array.isArray(saved.originalHooks)) setOriginalHooks(saved.originalHooks)
@@ -550,7 +548,7 @@ function ProjectPageInner() {
           sessionKey,
           idea, hooks, hookIds, selectedHook, response, corePost,
           showFormats, selectedFormats, duplicatedFormats, formatPosts,
-          editableHook, coverText, thTranscript, thSourceMode,
+          editableHook, coverText, thSourceMode,
           savedHookText, originalHooks, originalCorePost,
           selectedProductId, triggerWord,
           // Learning-capture baselines (see aiCorePostRef) — read from refs so
@@ -566,7 +564,7 @@ function ProjectPageInner() {
       } catch (err) { console.error("[project][canvas-save]", err) }
     }, 300)
     return () => clearTimeout(t)
-  }, [sessionKey, idea, hooks, hookIds, selectedHook, response, corePost, showFormats, selectedFormats, duplicatedFormats, formatPosts, editableHook, coverText, thTranscript, thSourceMode, savedHookText, originalHooks, originalCorePost, selectedProductId, triggerWord, savedPostId, userId])
+  }, [sessionKey, idea, hooks, hookIds, selectedHook, response, corePost, showFormats, selectedFormats, duplicatedFormats, formatPosts, editableHook, coverText, thSourceMode, savedHookText, originalHooks, originalCorePost, selectedProductId, triggerWord, savedPostId, userId])
 
   // Extract a frame from a video URL as a data URL
   const extractVideoFrame = (videoSrc: string): Promise<string | null> => {
@@ -1679,12 +1677,10 @@ function ProjectPageInner() {
         postId={savedPostId}
         thAvatar={thAvatar}
         thAudioBlob={thAudioBlob}
-        thTranscript={thTranscript}
         thVideoUrl={thVideoUrl}
         thSourceMode={thSourceMode}
         onThAvatarChange={setThAvatar}
         onThAudioBlobChange={setThAudioBlob}
-        onThTranscriptChange={setThTranscript}
         onThVideoUrlChange={setThVideoUrl}
         onThSourceModeChange={setThSourceMode}
         thCoverImage={thCoverImage}
@@ -2332,7 +2328,6 @@ function ProjectPageInner() {
                           thVideoCardRef={thVideoCardRef}
                           onThReRecord={() => {
                             setThAudioBlob(null)
-                            setThTranscript("")
                             setSelectedFormatCard("talking_head")
                           }}
                           onThDelete={() => setPendingVideoDelete(true)}
@@ -2476,7 +2471,6 @@ function ProjectPageInner() {
           }
           setThVideoUrl(null)
           setThAudioBlob(null)
-          setThTranscript("")
           setThCoverImage(null)
 
           toast("הסרטון נמחק", {

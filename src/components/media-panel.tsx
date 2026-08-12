@@ -87,12 +87,10 @@ interface MediaPanelProps {
   // Talking head state (lifted)
   thAvatar: Avatar | null
   thAudioBlob: Blob | null
-  thTranscript: string
   thVideoUrl: string | null
   thSourceMode: "choose" | "upload" | "avatar"
   onThAvatarChange: (avatar: Avatar | null) => void
   onThAudioBlobChange: (blob: Blob | null) => void
-  onThTranscriptChange: (text: string) => void
   onThVideoUrlChange: (url: string | null) => void
   onThSourceModeChange: (mode: "choose" | "upload" | "avatar") => void
   thCoverImage: string | null
@@ -174,12 +172,10 @@ export function MediaPanel({
   postId,
   thAvatar,
   thAudioBlob,
-  thTranscript,
   thVideoUrl,
   thSourceMode,
   onThAvatarChange,
   onThAudioBlobChange,
-  onThTranscriptChange,
   onThVideoUrlChange,
   onThSourceModeChange,
   thCoverImage,
@@ -267,12 +263,10 @@ export function MediaPanel({
           <TalkingHeadFlow
             avatar={thAvatar}
             audioBlob={thAudioBlob}
-            transcript={thTranscript}
             videoUrl={thVideoUrl}
             sourceMode={thSourceMode}
             onAvatarChange={onThAvatarChange}
             onAudioBlobChange={onThAudioBlobChange}
-            onTranscriptChange={onThTranscriptChange}
             onVideoUrlChange={onThVideoUrlChange}
             onSourceModeChange={onThSourceModeChange}
             coverImage={thCoverImage}
@@ -342,12 +336,10 @@ export function MediaPanel({
 function TalkingHeadFlow({
   avatar,
   audioBlob,
-  transcript,
   videoUrl: liftedVideoUrl,
   sourceMode,
   onAvatarChange,
   onAudioBlobChange,
-  onTranscriptChange,
   onVideoUrlChange,
   onSourceModeChange,
   coverImage,
@@ -359,12 +351,10 @@ function TalkingHeadFlow({
 }: {
   avatar: Avatar | null
   audioBlob: Blob | null
-  transcript: string
   videoUrl: string | null
   sourceMode: "choose" | "upload" | "avatar"
   onAvatarChange: (a: Avatar | null) => void
   onAudioBlobChange: (b: Blob | null) => void
-  onTranscriptChange: (t: string) => void
   onVideoUrlChange: (url: string | null) => void
   onSourceModeChange: (mode: "choose" | "upload" | "avatar") => void
   coverImage: string | null
@@ -393,7 +383,6 @@ function TalkingHeadFlow({
   const [isRecording, setIsRecording] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
-  const [transcribing, setTranscribing] = useState(false)
   const [recError, setRecError] = useState<string | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
@@ -486,32 +475,12 @@ function TalkingHeadFlow({
         onAudioBlobChange(blob)
         stream.getTracks().forEach((t) => t.stop())
 
-        // Transcribe.
-        //
-        // NOTE: /api/transcribe does not currently exist — there is no
-        // `src/app/api/transcribe` route. The 404 returns HTML, `res.json()`
-        // throws, and this used to be swallowed into a console.error: the
-        // "מתמלל..." label vanished and the transcript box stayed empty with no
-        // explanation. Until the route is built, say so and let the user type
-        // the script themselves — the recording itself is fine and saved.
-        setTranscribing(true)
-        try {
-          const formData = new FormData()
-          formData.append("audio", blob, "recording.webm")
-          const res = await fetch("/api/transcribe", { method: "POST", body: formData })
-          if (!res.ok) throw new Error(`status ${res.status}`)
-          const data = await res.json()
-          if (data.text) {
-            onTranscriptChange(data.text)
-          } else {
-            setRecError("לא הצלחנו לתמלל את ההקלטה. אפשר להקליד את הסקריפט ידנית.")
-          }
-        } catch (err) {
-          console.error("[media-panel][transcribe]", err)
-          setRecError("התמלול נכשל. ההקלטה נשמרה — אפשר להקליד את הסקריפט ידנית.")
-        } finally {
-          setTranscribing(false)
-        }
+        // No transcription step. The recording goes to HeyGen as audio and the
+        // avatar speaks from it directly — the transcript never fed the video.
+        // It only ever populated a read-back box duplicating the script that is
+        // already on screen, and a cover-title fallback behind hookText. The
+        // /api/transcribe route it called was never built, so every recording
+        // surfaced a failure for a step that produced nothing (Hani, 2026-08-12).
       }
 
       mediaRecorder.start()
@@ -521,7 +490,6 @@ function TalkingHeadFlow({
       if (audioUrl) URL.revokeObjectURL(audioUrl)
       setAudioUrl(null)
       onAudioBlobChange(null)
-      onTranscriptChange("")
 
       timerRef.current = setInterval(() => {
         setRecordingTime((t) => t + 1)
@@ -674,7 +642,7 @@ function TalkingHeadFlow({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           thumbnail_url: thumbnailUrl || undefined,
-          title: customTitle || hookText || transcript || "ריל חדש",
+          title: customTitle || hookText || "ריל חדש",
           pill_color: color ?? pillColor,
         }),
       })
@@ -707,7 +675,6 @@ function TalkingHeadFlow({
   const handleStartOver = () => {
     onAvatarChange(null)
     onAudioBlobChange(null)
-    onTranscriptChange("")
     setAudioUrl(null)
     setVideoPhase("idle")
     onVideoUrlChange(null)
@@ -721,7 +688,6 @@ function TalkingHeadFlow({
     // raises this flag (the two generateCover paths) lowers both; so must this.
     onCoverLoadingChange?.(false)
     setDriveLoading(false)
-    setTranscribing(false)
     onSourceModeChange("choose")
     setDriveLink("")
     setDriveError(null)
@@ -822,7 +788,7 @@ function TalkingHeadFlow({
       // handing it the thumbnail URL works exactly like a data URL frame.
       const fileId = extractDriveFileId(link)
       const posterUrl = fileId ? driveThumbnailUrl(fileId) : undefined
-      const coverTitle = hookText || transcript || "ריל חדש"
+      const coverTitle = hookText || "ריל חדש"
       setCoverLoading(true)
       onCoverLoadingChange?.(true)
       try {
@@ -1237,22 +1203,6 @@ function TalkingHeadFlow({
         </div>
       )}
 
-      {/* Transcription */}
-      {transcribing && (
-        <div className="flex items-center gap-2 text-sm text-text-neutral-default">
-          <Loader2 className="size-4 animate-spin" />
-          מתמלל...
-        </div>
-      )}
-
-      {transcript && !transcribing && (
-        <div className="rounded-lg border border-border-neutral-default bg-bg-surface p-3">
-          <p className="text-xs text-text-neutral-default mb-1">תמלול</p>
-          <p className="text-small text-text-primary-default leading-relaxed whitespace-pre-wrap">
-            {transcript}
-          </p>
-        </div>
-      )}
 
       {/* Video generation section */}
       {audioBlob && !isRecording && videoPhase === "idle" && (
