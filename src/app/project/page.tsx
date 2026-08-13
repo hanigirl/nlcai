@@ -196,6 +196,10 @@ function ProjectPageInner() {
   // Read at page level, not inside the notice, so the canvas can reserve room
   // for the pinned card instead of letting it land on the first flow card.
   const geminiNoticeVisible = useGeminiNoticeVisible()
+  // The notice carries a close control on its LEFT edge (RTL end). Closing
+  // clears it for this visit only; it returns on the next one, because the
+  // key is still missing and hooks still cannot run without it.
+  const [noticeDismissed, setNoticeDismissed] = useState(false)
   const [response, setResponse] = useState("")
   const [corePost, setCorePost] = useState("")
   const [postLoading, setPostLoading] = useState(false)
@@ -1780,7 +1784,12 @@ function ProjectPageInner() {
           zoomed along with the cards instead of staying put. As a sibling it
           is a true overlay: the canvas moves underneath it, untouched.
           Renders nothing once a key is connected. */}
-      {geminiNoticeVisible && <GeminiConnectNoticeCard variant="floating" />}
+      {geminiNoticeVisible && !noticeDismissed && (
+        <GeminiConnectNoticeCard
+          variant="floating"
+          onDismiss={() => setNoticeDismissed(true)}
+        />
+      )}
 
       <InfiniteCanvas>
         {apiNotConnected && (

@@ -87,7 +87,7 @@ export function FileUploadCard({
         {status === "idle" && (
           <button
             onClick={() => inputRef.current?.click()}
-            className="w-full flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-border-neutral-default hover:border-yellow-50 p-8 transition-colors cursor-pointer"
+            className="w-full flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-border-neutral-default hover:border-gray-80 p-8 transition-colors cursor-pointer"
           >
             <Upload className="size-8 text-text-neutral-default" />
             <span className="text-small text-text-neutral-default">

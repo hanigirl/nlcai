@@ -204,7 +204,7 @@ function FormatCard({
       }}
       title={publishedTitle}
       aria-label={`${formatLabel} מתוזמן: ${hook}`}
-      className={`group/chip relative w-full min-w-0 flex flex-col gap-1.5 rounded-lg border border-border-neutral-default bg-white dark:bg-gray-10 p-1.5 cursor-grab active:cursor-grabbing transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+      className={`group/chip relative w-full min-w-0 flex flex-col gap-1.5 rounded-lg border border-border-neutral-default bg-white dark:bg-gray-10 p-1.5 cursor-grab active:cursor-grabbing transition-all hover:bg-bg-surface-hover hover:border-gray-80 hover:ring-2 hover:ring-gray-80/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
         isPublished ? "opacity-60" : ""
       }`}
     >
@@ -919,7 +919,7 @@ export default function CalendarPage() {
                     onDrop={(e) => handleDrop(e, day, dayKey)}
                     aria-label={`${WEEKDAY_LABELS[dayOfWeek]} ${day.getDate()}${isToday ? " — היום" : ""}${past ? " — תאריך שעבר" : ""}`}
                     className={`relative overflow-y-auto scrollbar-subtle min-w-0 transition-colors ${isLastCol ? "" : "border-l"} border-border-neutral-default ${dayBg} ${
-                      isDragOver ? "ring-2 ring-inset ring-yellow-50 bg-bg-surface-hover z-10" : ""
+                      isDragOver ? "ring-2 ring-inset ring-yellow-50 bg-bg-surface-primary-default z-10" : ""
                     } ${past ? "opacity-60 cursor-not-allowed" : ""}`}
                   >
                     {/* Cards stack from the top. `min-h-full` keeps the whole

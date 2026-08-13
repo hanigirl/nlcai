@@ -131,7 +131,7 @@ export default function ScheduleFormatPickerTestPage() {
               key={scenario.id}
               type="button"
               onClick={() => setActiveScenario(scenario)}
-              className="flex flex-col items-start gap-1 rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 px-4 py-3 text-right transition-all hover:border-yellow-50 hover:bg-bg-surface-primary-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+              className="flex flex-col items-start gap-1 rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 px-4 py-3 text-right transition-all hover:border-gray-80 hover:bg-bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
             >
               <span className="text-p-bold text-text-primary-default">
                 {scenario.label}
