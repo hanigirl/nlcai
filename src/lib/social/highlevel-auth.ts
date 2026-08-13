@@ -45,6 +45,30 @@ type TokenResponse = {
   locationId?: string
 }
 
+/**
+ * The standalone token for sub-account management, plus the agency it belongs to.
+ *
+ * Deliberately separate from the OAuth app below. Verified live against the
+ * real credentials (2026-08-13):
+ *   - this token answers 200 on /locations/search
+ *   - and 401 "The token is not authorized for this scope." on the social
+ *     planner
+ * The OAuth app is the mirror image. So the split is not a preference, it is
+ * what the provider enforces, and collapsing them would break one side.
+ */
+export function locationsToken(): { token: string; companyId: string } {
+  const token = process.env.HIGHLEVEL_PIT
+  const companyId = process.env.HIGHLEVEL_COMPANY_ID
+  if (!token || !companyId) {
+    throw new SocialPublishError(
+      "HIGHLEVEL_PIT / HIGHLEVEL_COMPANY_ID are not configured",
+      "provider_error",
+      false,
+    )
+  }
+  return { token, companyId }
+}
+
 function credentials(): { clientId: string; clientSecret: string } {
   const clientId = process.env.HIGHLEVEL_CLIENT_ID
   const clientSecret = process.env.HIGHLEVEL_CLIENT_SECRET

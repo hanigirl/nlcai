@@ -29,7 +29,7 @@ import type {
   SocialPlatform,
 } from "@/lib/supabase/types"
 import { MAX_CAPTION_CHARS, MAX_CAROUSEL_ITEMS } from "./media-spec"
-import { getAgencyToken, getLocationToken } from "./highlevel-auth"
+import { getLocationToken, locationsToken } from "./highlevel-auth"
 import {
   SocialPublishError,
   type ConnectHandoff,
@@ -216,10 +216,12 @@ export class HighLevelPublisher implements SocialPublisher {
 
     if (existing) return
 
-    // The agency id comes from the install itself rather than a second env
-    // var — one less thing to keep in sync, and it cannot disagree with the
-    // credentials it is used alongside.
-    const { token, companyId } = await getAgencyToken()
+    // Creating a sub-account uses the standalone locations token, NOT the
+    // OAuth app. Verified live (2026-08-13): the OAuth app carries only
+    // socialplanner scopes, and the locations token is refused by the social
+    // planner with "The token is not authorized for this scope." Two
+    // credentials, two jobs — neither substitutes for the other.
+    const { token, companyId } = locationsToken()
 
     const { data: userRow } = await this.db
       .from("users")
