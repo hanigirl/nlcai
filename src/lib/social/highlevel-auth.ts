@@ -175,6 +175,24 @@ export async function completeInstall(code: string): Promise<{ companyId: string
   return { companyId: token.companyId }
 }
 
+/**
+ * Has the agency install been completed?
+ *
+ * Checked BEFORE anything with a side effect. Without this gate, a user who
+ * clicks connect on a half-configured deploy gets a real sub-account created
+ * for her — an actual record in the provider's account — and only then hits a
+ * wall at the attach step. That leaves litter behind and reads to her as a
+ * broken product rather than a feature that isn't switched on yet.
+ */
+export async function isProviderInstalled(): Promise<boolean> {
+  const { data } = await createAdminClient()
+    .from("social_provider_credentials")
+    .select("provider")
+    .eq("provider", "highlevel")
+    .maybeSingle()
+  return !!data
+}
+
 async function loadCredentials(): Promise<CredentialsRow> {
   const { data } = await createAdminClient()
     .from("social_provider_credentials")

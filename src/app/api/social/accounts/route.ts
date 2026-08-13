@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
 import { getSocialPublisher, SocialPublishError } from "@/lib/social"
+import { isProviderInstalled } from "@/lib/social/highlevel-auth"
 
 /**
  * The connected-accounts list, and the two ways it changes.
@@ -34,8 +35,13 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   try {
-    const accounts = await getSocialPublisher(supabase).listAccounts(user.id)
-    return NextResponse.json({ accounts })
+    const [accounts, ready] = await Promise.all([
+      getSocialPublisher(supabase).listAccounts(user.id),
+      isProviderInstalled(),
+    ])
+    // `ready` lets the UI say "not switched on yet" instead of offering a
+    // button that cannot work.
+    return NextResponse.json({ accounts, ready })
   } catch (err) {
     return fail(err, "GET")
   }

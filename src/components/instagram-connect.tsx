@@ -66,6 +66,9 @@ export function InstagramConnect() {
   const [accounts, setAccounts] = useState<SocialAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  // Null until the first load answers. The connect button stays hidden while
+  // unknown rather than flashing in and out.
+  const [ready, setReady] = useState<boolean | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   // Held so the message listener can close the popup once it has answered.
@@ -75,7 +78,10 @@ export function InstagramConnect() {
     try {
       const res = await fetch("/api/social/accounts")
       const json = await res.json()
-      if (res.ok) setAccounts(json.accounts ?? [])
+      if (res.ok) {
+        setAccounts(json.accounts ?? [])
+        setReady(json.ready !== false)
+      }
     } catch {
       // A failed refresh is not worth an error banner — the list simply stays
       // as it was, and the next action retries.
@@ -199,6 +205,12 @@ export function InstagramConnect() {
 
       {loading ? (
         <Loader2 className="size-4 animate-spin text-text-neutral-default" />
+      ) : ready === false && accounts.length === 0 ? (
+        // Deployed but the agency install isn't finished. Saying so plainly
+        // beats a button that fails after doing half the work.
+        <p className="text-xs-body text-text-neutral-default">
+          החיבור לאינסטגרם ייפתח בקרוב. נעדכן ברגע שיהיה זמין.
+        </p>
       ) : accounts.length > 0 ? (
         <div className="flex flex-col gap-3">
           {accounts.map((account) => (

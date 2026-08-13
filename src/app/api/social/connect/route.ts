@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
 import { getSocialPublisher, SocialPublishError } from "@/lib/social"
+import { isProviderInstalled } from "@/lib/social/highlevel-auth"
 
 /**
  * Begin connecting an Instagram account.
@@ -27,6 +28,16 @@ export async function POST() {
   const user = await getAuthUser(supabase)
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  // Checked before `startConnect`, which provisions a sub-account as a side
+  // effect. On a deploy where the agency install hasn't been completed yet,
+  // going ahead would create a real record for her and then fail at attach.
+  if (!(await isProviderInstalled())) {
+    return NextResponse.json(
+      { error: "not_installed", message: "החיבור לאינסטגרם עדיין לא זמין. נעדכן ברגע שיהיה." },
+      { status: 503 },
+    )
   }
 
   try {
