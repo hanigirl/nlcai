@@ -4,6 +4,9 @@ import { useState, useEffect, useRef, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
+import { CaptionControls } from "@/components/image-caption-block"
+import { useCarouselCaption } from "@/lib/carousel-caption"
+import { useStillCaption } from "@/lib/still-caption"
 import { toast } from "sonner"
 import { AppShell } from "@/components/app-shell"
 import { GeminiConnectNoticeCard, useGeminiNoticeVisible } from "@/components/gemini-connect-notice"
@@ -2366,6 +2369,13 @@ function ProjectPageInner() {
                           userId={userId}
                           carouselImages={carouselImages}
                           carouselCardRef={carouselCardRef}
+                          // The caption control lives ON the carousel's card
+                          // (Hani, 2026-08-13), so the card needs what it takes
+                          // to redraw the slides: which post they belong to,
+                          // the links they came from, and the way back.
+                          savedPostId={savedPostId}
+                          carouselDriveLinks={carouselDriveLinks}
+                          onCarouselImagesChange={setCarouselImages}
                           // Opening the media panel must NOT throw the current
                           // carousel away (Hani, 2026-07-28): the old handler
                           // cleared images+slides on click, so pressing what
@@ -2378,6 +2388,7 @@ function ProjectPageInner() {
                           imagePostUrl={imagePostUrl}
                           imagePostCardRef={imagePostCardRef}
                           onImagePostEdit={() => setSelectedFormatCard("image_post")}
+                          onImagePostUrlChange={setImagePostUrl}
                           storyImages={storyImages}
                           storyCardRef={storyCardRef}
                           onStoryEdit={() => setSelectedFormatCard("story")}
@@ -2385,6 +2396,7 @@ function ProjectPageInner() {
                           bRollUrl={bRollUrl}
                           bRollCardRef={bRollCardRef}
                           onBRollEdit={() => setSelectedFormatCard("b_roll")}
+                          onBRollUrlChange={setBRollUrl}
                         />
                       </div>
                     </div>
@@ -2523,6 +2535,9 @@ function ProjectPageInner() {
 }
 
 function FormatTree({
+  savedPostId,
+  carouselDriveLinks,
+  onCarouselImagesChange,
   formats,
   formatPosts,
   onPostChange,
@@ -2555,6 +2570,7 @@ function FormatTree({
   imagePostUrl,
   imagePostCardRef,
   onImagePostEdit,
+  onImagePostUrlChange,
   storyImages,
   storyCardRef,
   onStoryEdit,
@@ -2562,6 +2578,7 @@ function FormatTree({
   bRollUrl,
   bRollCardRef,
   onBRollEdit,
+  onBRollUrlChange,
 }: {
   formats: string[]
   formatPosts: Record<string, string>
@@ -2591,17 +2608,22 @@ function FormatTree({
   onLivePillPreview: (color: string | null) => void
   thVideoFrameDataUrl: string | null
   userId: string | null
+  savedPostId: string | null
+  carouselDriveLinks: string[] | null
+  onCarouselImagesChange: (imgs: string[]) => void
   carouselImages: string[] | null
   carouselCardRef: React.RefObject<HTMLDivElement | null>
   onCarouselEdit: () => void
   imagePostUrl: string | null
   imagePostCardRef: React.RefObject<HTMLDivElement | null>
   onImagePostEdit: () => void
+  onImagePostUrlChange: (url: string) => void
   storyImages: string[] | null
   storyCardRef: React.RefObject<HTMLDivElement | null>
   onStoryEdit: () => void
   storyVideoUrl: string | null
   bRollUrl: string | null
+  onBRollUrlChange: (url: string) => void
   bRollCardRef: React.RefObject<HTMLDivElement | null>
   onBRollEdit: () => void
 }) {
@@ -2993,6 +3015,9 @@ function FormatTree({
                   images={carouselImages}
                   cardRef={carouselCardRef}
                   onEdit={onCarouselEdit}
+                  postId={savedPostId}
+                  driveLinks={carouselDriveLinks}
+                  onImagesChange={onCarouselImagesChange}
                 />
               )}
 
@@ -3026,6 +3051,16 @@ function FormatTree({
               {/* The generated b-roll clip, as its own card under the b-roll
                   script — the same shape story and talking_head use, so every
                   format's finished media reads the same way on the canvas. */}
+              {/* The b-roll's card. A b-roll starts life as a STILL — the
+                  picture she brought, with the post's words drawn on it —
+                  and only becomes a clip once that still is animated and the
+                  caption burned in. The card follows that: it shows the
+                  still, with the caption settings on it, from the moment the
+                  still exists, and swaps to the player once there is a clip.
+
+                  Before this the card rendered `bRollUrl` in a <video> no
+                  matter what it was, so a still hydrated from storage came
+                  back as an empty player (Hani, 2026-08-13). */}
               {fid === "b_roll" && bRollUrl && (
                 <>
                   <div className="w-[2px] h-7 bg-gray-80" />
@@ -3041,19 +3076,44 @@ function FormatTree({
                     <div className="px-6 flex flex-col gap-4">
                       <div className="flex justify-center">
                         <div className="w-[200px] aspect-[9/16] overflow-hidden rounded-xl border border-border-neutral-default bg-bg-surface">
-                          <video
-                            src={`${bRollUrl}#t=0.001`}
-                            controls
-                            playsInline
-                            muted
-                            // Metadata only — the card sits on the canvas
-                            // whether or not she plays it.
-                            preload="metadata"
-                            className="w-full h-full object-cover"
-                            onMouseDown={(e) => e.stopPropagation()}
-                          />
+                          {isStillUrl(bRollUrl) ? (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img
+                              src={bRollUrl}
+                              alt="הסטיל של הבי-רול"
+                              className="w-full h-full object-cover"
+                              onMouseDown={(e) => e.stopPropagation()}
+                            />
+                          ) : (
+                            <video
+                              src={`${bRollUrl}#t=0.001`}
+                              controls
+                              playsInline
+                              muted
+                              // Metadata only — the card sits on the canvas
+                              // whether or not she plays it.
+                              preload="metadata"
+                              className="w-full h-full object-cover"
+                              onMouseDown={(e) => e.stopPropagation()}
+                            />
+                          )}
                         </div>
                       </div>
+
+                      {/* Only on the still. Once the clip is burned the words
+                          are inside the video, and moving them is an ffmpeg
+                          re-burn rather than the still render this drives —
+                          so offering it here would be a control acting on
+                          something that is no longer on screen. */}
+                      {isStillUrl(bRollUrl) && (
+                        <StillCaptionSettings
+                          postId={savedPostId}
+                          format="b_roll"
+                          url={bRollUrl}
+                          onUrlChange={onBRollUrlChange}
+                        />
+                      )}
+
                       <Button variant="outline" className="w-full" onClick={onBRollEdit}>
                         עריכת בי-רול
                       </Button>
@@ -3089,6 +3149,13 @@ function FormatTree({
                           />
                         </div>
                       </div>
+                      <StillCaptionSettings
+                        postId={savedPostId}
+                        format="image_post"
+                        url={imagePostUrl}
+                        onUrlChange={onImagePostUrlChange}
+                      />
+
                       <div className="flex gap-3 w-full items-center">
                         <Button variant="outline" className="flex-1" onClick={onImagePostEdit}>
                           עריכת תמונה
@@ -3140,18 +3207,93 @@ function FormatTree({
 /*  Carousel Result Card — shows generated slides below carousel card  */
 /* ------------------------------------------------------------------ */
 
+/**
+ * A still's caption settings, on that still's own card.
+ *
+ * Exactly what the carousel card shows, because it is exactly the same
+ * decision (Hani, 2026-08-13): include the text or not, and where it sits.
+ * Its own component only because the hook cannot be called conditionally and
+ * the cards render inline.
+ */
+/**
+ * Is this URL a picture rather than a clip?
+ *
+ * Same extension test the talking-head hydration already uses. `formatMedia`
+ * hands back one URL per format and prefers a video when both exist, so an
+ * image here means there is no clip yet.
+ */
+function isStillUrl(url: string) {
+  return /\.(png|jpe?g|webp)(\?|$)/i.test(url)
+}
+
+function StillCaptionSettings({
+  postId,
+  format,
+  url,
+  onUrlChange,
+}: {
+  postId: string | null
+  format: "image_post" | "b_roll"
+  url: string | null
+  onUrlChange: (url: string) => void
+}) {
+  const caption = useStillCaption({ postId, format, url, onUrlChange })
+  if (!caption.available) return null
+  return (
+    <div className="w-full" onMouseDown={(e) => e.stopPropagation()}>
+      <CaptionControls
+        captionOn={caption.captionOn}
+        onCaptionOnChange={caption.setCaptionOn}
+        position={caption.position}
+        onPositionChange={caption.setPosition}
+        busy={caption.busy}
+        progress={
+          <p
+            className="flex items-center gap-1.5 text-xs text-text-neutral-default"
+            role="status"
+          >
+            <Loader2 className="size-3.5 animate-spin text-yellow-50" />
+            {caption.progress || "מעדכנים את התמונה..."}
+          </p>
+        }
+      />
+    </div>
+  )
+}
+
 function CarouselResultCard({
   images,
   cardRef,
   onEdit,
+  postId,
+  driveLinks,
+  onImagesChange,
 }: {
   images: string[]
   cardRef: React.RefObject<HTMLDivElement | null>
   /** Opens the media panel. Non-destructive — see `onCarouselEdit`. */
   onEdit: () => void
+  postId: string | null
+  /** The per-slide Drive links, so the originals can be re-pulled. */
+  driveLinks: string[] | null
+  onImagesChange: (imgs: string[]) => void
 }) {
   const [currentSlide, setCurrentSlide] = useState(0)
   const [downloading, setDownloading] = useState(false)
+
+  // The caption on slides the user brought: on or off, and where it sits.
+  // It belongs on THIS card and not in the media panel (Hani, 2026-08-13) —
+  // placement is judged by looking at the finished carousel, so the control
+  // sits with the slides. `currentSlide` is handed over so the slide on
+  // screen is the first one redrawn.
+  const caption = useCarouselCaption({
+    postId,
+    images,
+    onImagesChange,
+    driveLinks,
+    focusIndex: currentSlide,
+  })
+  const shownSlides = caption.slides.length > 0 ? caption.slides : images
 
   const handleDownloadAll = async () => {
     setDownloading(true)
@@ -3197,7 +3339,10 @@ function CarouselResultCard({
               // depended on the page decoding every slide from storage on
               // load — an async step that fails silently and left the canvas
               // with no carousel card at all (Hani, 2026-07-29).
-              src={storyFrameSrc(images[currentSlide])}
+              // `caption.slides` is the post's set, except while a caption
+              // redraw is running — then it is the half-redrawn one, so the
+              // slide on screen updates as each render lands.
+              src={storyFrameSrc(shownSlides[currentSlide])}
               alt={`סלייד ${currentSlide + 1}`}
               className="w-full h-auto"
               onMouseDown={(e) => e.stopPropagation()}
@@ -3226,6 +3371,30 @@ function CarouselResultCard({
               <ChevronLeft className="size-4 text-text-primary-default" />
             </button>
           </div>
+
+          {/* The caption control — only on a carousel the user brought; a
+              template-generated one draws its own text into the design, so
+              there is nothing here to switch off or move. */}
+          {caption.available && (
+            <div className="w-full" onMouseDown={(e) => e.stopPropagation()}>
+              <CaptionControls
+                captionOn={caption.captionOn}
+                onCaptionOnChange={caption.setCaptionOn}
+                position={caption.position}
+                onPositionChange={caption.setPosition}
+                busy={caption.busy}
+                progress={
+                  <p
+                    className="flex items-center gap-1.5 text-xs text-text-neutral-default"
+                    role="status"
+                  >
+                    <Loader2 className="size-3.5 animate-spin text-yellow-50" />
+                    {caption.progress || "מעדכנים את השקופיות..."}
+                  </p>
+                }
+              />
+            </div>
+          )}
 
           {/* Actions */}
           <div className="flex gap-3 w-full">
