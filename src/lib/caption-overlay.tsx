@@ -19,6 +19,55 @@ import { BROLL_VIDEO_CTA } from "@/lib/broll-copy"
 export const CAPTION_CANVAS_WIDTH = 1080
 export const CAPTION_CANVAS_HEIGHT = 1920
 
+/**
+ * Where the caption block sits on the canvas.
+ *
+ * The 9:16 surfaces (story / b-roll) were born bottom-anchored and stay that
+ * way by default — the Instagram reply bar and the profile header carve the
+ * safe zone out of the top and bottom, so "bottom" there means "above the
+ * reply bar", not "at the edge".
+ */
+export type CaptionPosition = "top" | "center" | "bottom"
+
+export interface CaptionCanvas {
+  width: number
+  height: number
+  /** Clear space above the caption block when it is top-anchored. */
+  padTop: number
+  /** Clear space below the caption block when it is bottom-anchored. */
+  padBottom: number
+  /** Side gutters. */
+  padX: number
+}
+
+/**
+ * 9:16 vertical — story and b-roll. The generous bottom padding is the
+ * Instagram reply bar (~24% of the height); the top one clears the profile
+ * header (~14%).
+ */
+export const CANVAS_9_16: CaptionCanvas = {
+  width: 1080,
+  height: 1920,
+  padTop: 300,
+  padBottom: 520,
+  padX: 90,
+}
+
+/**
+ * 4:5 portrait — the Instagram FEED image post. Nothing overlays a feed
+ * image, so the safe zone is only a designer's margin rather than a UI
+ * cut-out: the caption can sit far closer to the edge than it can on a story,
+ * and the canvas is 570px shorter, so borrowing the story's 520px bottom
+ * padding would push the text into the middle of the picture.
+ */
+export const CANVAS_4_5: CaptionCanvas = {
+  width: 1080,
+  height: 1350,
+  padTop: 120,
+  padBottom: 120,
+  padX: 80,
+}
+
 // ---- Hebrew font ----
 // Rubik, NOT Heebo: the local Heebo-*.ttf files are ~23KB Latin-only subsets
 // with NO Hebrew glyphs (satori renders tofu boxes with them). The full
@@ -97,6 +146,26 @@ export function trimBodyForOverlay(body: string): string {
 }
 
 /**
+ * Which image format a base64 blob actually is, read off its magic bytes.
+ *
+ * The background used to be hardcoded as `data:image/png` because the only
+ * caller was gpt-image-2, which returns PNG. The moment a user's own picture
+ * became a valid background that stopped being true — a Drive photo is
+ * virtually always JPEG, and a JPEG announced as a PNG decodes to nothing, so
+ * the caption rendered over a flat black rectangle. Sniffing here rather than
+ * threading a mime through every caller means the next background source
+ * can't reintroduce it.
+ */
+function imageMimeFromBase64(base64: string): string {
+  if (base64.startsWith("/9j/")) return "image/jpeg"
+  if (base64.startsWith("iVBOR")) return "image/png"
+  if (base64.startsWith("R0lGOD")) return "image/gif"
+  if (base64.startsWith("UklGR")) return "image/webp"
+  // Unknown → PNG, which is what every in-house renderer produces.
+  return "image/png"
+}
+
+/**
  * The caption layout, optionally over a background image.
  *
  * `backgroundBase64` present → a finished 9:16 image (the b-roll generator:
@@ -108,8 +177,12 @@ async function renderCaption(
   hook: string | undefined,
   body: string | undefined,
   backgroundBase64?: string,
+  canvas: CaptionCanvas = CANVAS_9_16,
+  position: CaptionPosition = "bottom",
 ): Promise<Buffer> {
   const { extraBold, bold } = await loadRubik()
+  const W = canvas.width
+  const H = canvas.height
   const hookSize = hook ? fontSizeForHook(hook) : 0
   const bodyText = body ? trimBodyForOverlay(body) : ""
   // With no headline above it, the body IS the frame's type and gets sized on
@@ -125,14 +198,25 @@ async function renderCaption(
     display: "flex" as const,
     backgroundColor: "#000000",
     borderRadius: 24,
-    maxWidth: CAPTION_CANVAS_WIDTH - 180,
+    maxWidth: W - canvas.padX * 2,
   }
+
+  // One flex column carries all three placements. Only the anchor padding
+  // changes with the position, so the pill itself is identical wherever it
+  // lands — a caption that restyled itself per position would read as three
+  // different captions.
+  const justifyContent =
+    position === "top"
+      ? ("flex-start" as const)
+      : position === "center"
+        ? ("center" as const)
+        : ("flex-end" as const)
 
   const svg = await satori(
     <div
       style={{
-        width: CAPTION_CANVAS_WIDTH,
-        height: CAPTION_CANVAS_HEIGHT,
+        width: W,
+        height: H,
         display: "flex",
         position: "relative",
       }}
@@ -140,32 +224,34 @@ async function renderCaption(
       {backgroundBase64 && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={`data:image/png;base64,${backgroundBase64}`}
-          width={CAPTION_CANVAS_WIDTH}
-          height={CAPTION_CANVAS_HEIGHT}
+          src={`data:${imageMimeFromBase64(backgroundBase64)};base64,${backgroundBase64}`}
+          width={W}
+          height={H}
           style={{
             position: "absolute",
             top: 0,
             left: 0,
-            width: CAPTION_CANVAS_WIDTH,
-            height: CAPTION_CANVAS_HEIGHT,
+            width: W,
+            height: H,
             objectFit: "cover",
           }}
         />
       )}
       <div
         style={{
-          width: CAPTION_CANVAS_WIDTH,
-          height: CAPTION_CANVAS_HEIGHT,
+          width: W,
+          height: H,
           display: "flex",
           flexDirection: "column",
-          justifyContent: "flex-end",
+          justifyContent,
           alignItems: "center",
-          // Keep the text inside the IG safe zone: clear of the reply bar
-          // (bottom ~24%) and the profile header (top ~14%).
-          paddingBottom: 520,
-          paddingLeft: 90,
-          paddingRight: 90,
+          // The safe zone belongs to the CANVAS, not to this function: a
+          // story has to clear Instagram's reply bar and profile header, a
+          // feed image has nothing over it at all.
+          paddingTop: position === "top" ? canvas.padTop : 0,
+          paddingBottom: position === "bottom" ? canvas.padBottom : 0,
+          paddingLeft: canvas.padX,
+          paddingRight: canvas.padX,
           // The gap IS the separation between hook and body.
           gap: 20,
         }}
@@ -208,8 +294,8 @@ async function renderCaption(
       </div>
     </div>,
     {
-      width: CAPTION_CANVAS_WIDTH,
-      height: CAPTION_CANVAS_HEIGHT,
+      width: W,
+      height: H,
       fonts: [
         { name: "Rubik", data: extraBold, weight: 800, style: "normal" },
         { name: "Rubik", data: bold, weight: 700, style: "normal" },
@@ -234,13 +320,21 @@ export function renderCaptionOverlayPng(
   return renderCaption(hook, body)
 }
 
-/** A finished 9:16 image: the given background with the caption over it. */
+/**
+ * A finished image: the given background with the caption over it.
+ *
+ * Defaults to the 9:16 story/b-roll canvas so the existing callers are
+ * unchanged; the feed image post passes CANVAS_4_5 and, in the variant that
+ * offers it, a position other than "bottom".
+ */
 export function renderCaptionOverImagePng(
   backgroundBase64: string,
   hook: string | undefined,
   body?: string,
+  canvas: CaptionCanvas = CANVAS_9_16,
+  position: CaptionPosition = "bottom",
 ): Promise<Buffer> {
-  return renderCaption(hook, body, backgroundBase64)
+  return renderCaption(hook, body, backgroundBase64, canvas, position)
 }
 
 /**
