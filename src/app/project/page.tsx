@@ -3190,8 +3190,6 @@ function ImagePostCaptionSettings({
   return (
     <div className="w-full" onMouseDown={(e) => e.stopPropagation()}>
       <CaptionControls
-        layout="settings"
-        label="כיתוב על התמונה"
         captionOn={caption.captionOn}
         onCaptionOnChange={caption.setCaptionOn}
         position={caption.position}
@@ -3328,8 +3326,6 @@ function CarouselResultCard({
           {caption.available && (
             <div className="w-full" onMouseDown={(e) => e.stopPropagation()}>
               <CaptionControls
-                layout="settings"
-                label="כיתוב על השקופיות"
                 captionOn={caption.captionOn}
                 onCaptionOnChange={caption.setCaptionOn}
                 position={caption.position}
