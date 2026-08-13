@@ -622,7 +622,7 @@ export function QueuePanel({
                   tabIndex={0}
                   aria-label={`גררו לתזמון: ${formatLabel} — ${card.hook}`}
                   style={{ animationDelay }}
-                  className={`group animate-in fade-in slide-in-from-top-2 fill-mode-both duration-300 ease-out flex flex-col gap-3 rounded-[12px] border border-border-neutral-default bg-white dark:bg-gray-10 p-4 text-right cursor-grab active:cursor-grabbing transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+                  className={`group animate-in fade-in slide-in-from-top-2 fill-mode-both duration-300 ease-out flex flex-col gap-3 rounded-[12px] border border-border-neutral-default bg-white dark:bg-gray-10 p-4 text-right cursor-grab active:cursor-grabbing transition-all hover:bg-bg-surface-hover hover:border-gray-80 hover:ring-2 hover:ring-gray-80/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
                     isDragging ? "opacity-50 cursor-grabbing" : ""
                   }`}
                 >
@@ -654,14 +654,14 @@ export function QueuePanel({
                         the /core_posts card. A single chip because this card IS
                         one format; "ready" (yellow) because every rail card has
                         passed the schedulable bar (script + media/Drive).
-                        `group-hover:border-yellow-30` mirrors the /core_posts
+                        `group-hover:border-gray-80` mirrors the /core_posts
                         card so the chip stands out on the card's yellow hover. */}
                     <div className="mt-auto flex">
                       <FormatStatusChip
                         format={card.format}
                         state="ready"
                         size="sm"
-                        className="group-hover:border-yellow-30"
+                        className="group-hover:border-gray-80"
                       />
                     </div>
                   </div>

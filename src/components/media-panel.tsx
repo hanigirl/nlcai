@@ -1971,7 +1971,7 @@ function CarouselFlow({
                 className={`relative flex flex-col gap-1 rounded-xl border p-1 pb-1.5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
                   isSelected
                     ? "border-yellow-50 ring-1 ring-yellow-50"
-                    : "border-border-neutral-default hover:border-yellow-50"
+                    : "border-border-neutral-default hover:border-gray-80"
                 }`}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -3978,7 +3978,7 @@ function MediaUploadFlow({
                   key={`story-set-${i}`}
                   type="button"
                   onClick={() => setStoryLightbox({ set, index: 0 })}
-                  className="relative aspect-[9/16] w-[72px] shrink-0 overflow-hidden rounded-lg border border-border-neutral-default transition-colors hover:border-yellow-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+                  className="relative aspect-[9/16] w-[72px] shrink-0 overflow-hidden rounded-lg border border-border-neutral-default transition-colors hover:border-gray-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
                   aria-label={`סטורי ${i + 1} — להגדלה ושמירה`}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}

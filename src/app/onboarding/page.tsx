@@ -3,7 +3,7 @@
 import { Suspense, useState, useRef, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Image from "next/image"
-import { ArrowLeft, Paperclip, Loader2, Link2 } from "lucide-react"
+import { ArrowLeft, Paperclip, Loader2, Link2, AlertCircle } from "lucide-react"
 import logoNew from "../../../images/logo-new.png"
 import onboardingHero from "../../../images/art-onboarding.png"
 import { createClient } from "@/lib/supabase/client"
@@ -153,6 +153,27 @@ function buildAudienceIdentityFromResponse(
   }
 }
 
+
+type ApiKeyName =
+  | "anthropic_api_key"
+  | "heygen_api_key"
+  | "apify_api_key"
+  | "openai_api_key"
+  | "gemini_api_key"
+
+function FieldError({ id, message }: { id: string; message: string }) {
+  return (
+    <div
+      id={id}
+      role="alert"
+      className="flex items-start gap-2 rounded-xl border border-red-90 bg-red-95 px-3 py-2.5 dark:border-red-90/25 dark:bg-red-95/10"
+    >
+      <AlertCircle className="size-4 shrink-0 mt-0.5 text-button-danger-default" aria-hidden="true" />
+      <p className="text-xs-body text-text-primary-default leading-relaxed">{message}</p>
+    </div>
+  )
+}
+
 export default function OnboardingPage() {
   return (
     <Suspense fallback={null}>
@@ -197,6 +218,16 @@ function OnboardingPageInner() {
   // hook engine runs on this key. Everyone else still writes hooks with Claude
   // and never sees the field, so it must not gate their `canProceed`.
   const [geminiKey, setGeminiKey] = useState("")
+  // A rejected key needs its message pinned under the field it belongs to.
+  // With five key fields on one step, a toast forces the user to remember
+  // which provider it was talking about.
+  const [keyErrors, setKeyErrors] = useState<Record<ApiKeyName, string | null>>({
+    anthropic_api_key: null,
+    gemini_api_key: null,
+    heygen_api_key: null,
+    apify_api_key: null,
+    openai_api_key: null,
+  })
   const [showGeminiField, setShowGeminiField] = useState(false)
   // OPTIONAL on purpose. Without it the app still works end to end — the user
   // just can't one-click generate media, and the media panel shows
@@ -545,23 +576,32 @@ function OnboardingPageInner() {
           // Validate every entered key against its provider before persisting.
           // Catches the recurring "pasted into wrong field" bug + dead keys.
           // Each entry runs format + live check via the same endpoint Settings uses.
-          const entries: Array<["anthropic_api_key" | "heygen_api_key" | "apify_api_key" | "openai_api_key" | "gemini_api_key", string, string]> = []
-          if (anthropicKey.trim()) entries.push(["anthropic_api_key", anthropicKey.trim(), "Anthropic"])
-          if (geminiKey.trim()) entries.push(["gemini_api_key", geminiKey.trim(), "Gemini"])
-          if (heygenKey.trim()) entries.push(["heygen_api_key", heygenKey.trim(), "HeyGen"])
-          if (apifyKey.trim()) entries.push(["apify_api_key", apifyKey.trim(), "Apify"])
+          setKeyErrors({
+            anthropic_api_key: null,
+            gemini_api_key: null,
+            heygen_api_key: null,
+            apify_api_key: null,
+            openai_api_key: null,
+          })
+          const entries: Array<[ApiKeyName, string]> = []
+          if (anthropicKey.trim()) entries.push(["anthropic_api_key", anthropicKey.trim()])
+          if (geminiKey.trim()) entries.push(["gemini_api_key", geminiKey.trim()])
+          if (heygenKey.trim()) entries.push(["heygen_api_key", heygenKey.trim()])
+          if (apifyKey.trim()) entries.push(["apify_api_key", apifyKey.trim()])
           // Only validated if actually typed — an empty OpenAI field is a
           // legitimate choice, not a missing field.
-          if (openaiKey.trim()) entries.push(["openai_api_key", openaiKey.trim(), "OpenAI"])
+          if (openaiKey.trim()) entries.push(["openai_api_key", openaiKey.trim()])
 
-          for (const [keyName, value, label] of entries) {
+          for (const [keyName, value] of entries) {
             const v = await fetch("/api/validate-api-key", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ keyName, value }),
             }).then((r) => r.json()).catch(() => ({ ok: false, message: "תקלת רשת" }))
             if (!v.ok) {
-              toast.error(`${label}: ${v.message ?? "המפתח לא עבר ולידציה"}`, { duration: 12000 })
+              // Pinned under the field it belongs to, not thrown as a toast
+              // that names a provider and then disappears.
+              setKeyErrors((prev) => ({ ...prev, [keyName]: v.message ?? "המפתח לא עבר ולידציה" }))
               return
             }
           }
@@ -1215,8 +1255,14 @@ function OnboardingPageInner() {
                   dir="ltr"
                   placeholder="sk-ant-..."
                   value={anthropicKey}
-                  onChange={(e) => setAnthropicKey(e.target.value)}
+                  onChange={(e) => {
+                    setAnthropicKey(e.target.value)
+                    setKeyErrors((prev) => (prev.anthropic_api_key ? { ...prev, anthropic_api_key: null } : prev))
+                  }}
+                  aria-invalid={keyErrors.anthropic_api_key ? true : undefined}
+                  aria-describedby={keyErrors.anthropic_api_key ? "anthropic_api_key-error" : undefined}
                 />
+                {keyErrors.anthropic_api_key && <FieldError id="anthropic_api_key-error" message={keyErrors.anthropic_api_key} />}
                 <p className="text-xs-body text-text-neutral-default">
                   מצאו את ה-API key שלכם ב-{" "}
                   <a
@@ -1243,10 +1289,16 @@ function OnboardingPageInner() {
                 </label>
                 <Input
                   dir="ltr"
-                  placeholder="AIza..."
+                  placeholder="AQ.... / AIza..."
                   value={geminiKey}
-                  onChange={(e) => setGeminiKey(e.target.value)}
+                  onChange={(e) => {
+                    setGeminiKey(e.target.value)
+                    setKeyErrors((prev) => (prev.gemini_api_key ? { ...prev, gemini_api_key: null } : prev))
+                  }}
+                  aria-invalid={keyErrors.gemini_api_key ? true : undefined}
+                  aria-describedby={keyErrors.gemini_api_key ? "gemini_api_key-error" : undefined}
                 />
+                {keyErrors.gemini_api_key && <FieldError id="gemini_api_key-error" message={keyErrors.gemini_api_key} />}
                 <p className="text-xs-body text-text-neutral-default">
                   מצאו את ה-API key שלכם ב-{" "}
                   <a
@@ -1271,8 +1323,14 @@ function OnboardingPageInner() {
                   dir="ltr"
                   placeholder="apify_api_..."
                   value={apifyKey}
-                  onChange={(e) => setApifyKey(e.target.value)}
+                  onChange={(e) => {
+                    setApifyKey(e.target.value)
+                    setKeyErrors((prev) => (prev.apify_api_key ? { ...prev, apify_api_key: null } : prev))
+                  }}
+                  aria-invalid={keyErrors.apify_api_key ? true : undefined}
+                  aria-describedby={keyErrors.apify_api_key ? "apify_api_key-error" : undefined}
                 />
+                {keyErrors.apify_api_key && <FieldError id="apify_api_key-error" message={keyErrors.apify_api_key} />}
                 <p className="text-xs-body text-text-neutral-default">
                   מצאו את ה-API key שלכם ב-{" "}
                   <a
@@ -1301,8 +1359,14 @@ function OnboardingPageInner() {
                   dir="ltr"
                   placeholder="sk-..."
                   value={openaiKey}
-                  onChange={(e) => setOpenaiKey(e.target.value)}
+                  onChange={(e) => {
+                    setOpenaiKey(e.target.value)
+                    setKeyErrors((prev) => (prev.openai_api_key ? { ...prev, openai_api_key: null } : prev))
+                  }}
+                  aria-invalid={keyErrors.openai_api_key ? true : undefined}
+                  aria-describedby={keyErrors.openai_api_key ? "openai_api_key-error" : undefined}
                 />
+                {keyErrors.openai_api_key && <FieldError id="openai_api_key-error" message={keyErrors.openai_api_key} />}
                 <p className="text-xs-body text-text-neutral-default">
                   מצאו את ה-API key שלכם ב-{" "}
                   <a
@@ -1327,8 +1391,14 @@ function OnboardingPageInner() {
                 <Input
                   dir="ltr"
                   value={heygenKey}
-                  onChange={(e) => setHeygenKey(e.target.value)}
+                  onChange={(e) => {
+                    setHeygenKey(e.target.value)
+                    setKeyErrors((prev) => (prev.heygen_api_key ? { ...prev, heygen_api_key: null } : prev))
+                  }}
+                  aria-invalid={keyErrors.heygen_api_key ? true : undefined}
+                  aria-describedby={keyErrors.heygen_api_key ? "heygen_api_key-error" : undefined}
                 />
+                {keyErrors.heygen_api_key && <FieldError id="heygen_api_key-error" message={keyErrors.heygen_api_key} />}
                 <p className="text-xs-body text-text-neutral-default">
                   מצאו את ה-API key שלכם ב-{" "}
                   <a

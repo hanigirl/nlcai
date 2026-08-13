@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
+import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { GeminiIcon } from "@/components/gemini-icon"
 import { createClient } from "@/lib/supabase/client"
@@ -115,10 +116,39 @@ function NoticeBody() {
  *              off-screen with it stops being a notice. Sits below the sticky
  *              header and clear of the collapsed right sidebar.
  */
+/**
+ * The dismiss control, shared by both close directions so they can't drift
+ * apart visually. Deliberately identical to the close button on the
+ * "עריכת פוסט ליבה" chat panel — they are two floating panels on the same
+ * canvas, and a second close treatment there would read as a second system.
+ *
+ * Placement is the caller's job: it is the last child of an RTL flex row with
+ * `ms-auto`, which lands it on the LEFT edge of the card as the brief asks.
+ */
+function NoticeDismissButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="סגירה"
+      className="ms-auto -me-1 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-text-neutral-default transition-colors hover:bg-bg-surface-hover hover:text-text-primary-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+    >
+      <X className="size-4" />
+    </button>
+  )
+}
+
 export function GeminiConnectNoticeCard({
   variant = "banner",
+  onDismiss,
 }: {
   variant?: "banner" | "floating"
+  /**
+   * When supplied, the card grows a close control. Left unset on the home page
+   * and /hooks on purpose — the brief asks for a dismissible notice on the
+   * post-editing screen only, where the card floats over the work surface.
+   */
+  onDismiss?: () => void
 }) {
   if (variant === "floating") {
     return (
@@ -131,7 +161,8 @@ export function GeminiConnectNoticeCard({
       >
         <div className="flex items-start gap-2">
           <GeminiIcon className="size-4 shrink-0 mt-0.5" id="project-notice" />
-          <span className="text-p-bold text-text-primary-default">{NOTICE_TITLE}</span>
+          <span className="min-w-0 flex-1 text-p-bold text-text-primary-default">{NOTICE_TITLE}</span>
+          {onDismiss && <NoticeDismissButton onClick={onDismiss} />}
         </div>
         <NoticeBody />
       </div>
@@ -145,7 +176,8 @@ export function GeminiConnectNoticeCard({
     >
       <div className="flex items-center gap-2">
         <GeminiIcon className="size-4 shrink-0" id="connect-notice" />
-        <span className="text-p-bold text-text-primary-default">{NOTICE_TITLE}</span>
+        <span className="min-w-0 flex-1 text-p-bold text-text-primary-default">{NOTICE_TITLE}</span>
+        {onDismiss && <NoticeDismissButton onClick={onDismiss} />}
       </div>
       <NoticeBody />
     </div>

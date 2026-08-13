@@ -398,7 +398,7 @@ function PickerRow({
         // Visual states — note: NO selected-state visual on the row itself.
         // The Checkbox component owns both "checked" and "focused".
         isReady
-          ? "border-border-neutral-default bg-white dark:bg-gray-10 cursor-pointer hover:border-yellow-50 hover:bg-bg-surface"
+          ? "border-border-neutral-default bg-white dark:bg-gray-10 cursor-pointer hover:border-gray-80 hover:bg-bg-surface"
           : // Disabled: muted surface, no hover, no focus ring.
             "border-border-neutral-default bg-bg-surface opacity-60 cursor-not-allowed",
       ].join(" ")}

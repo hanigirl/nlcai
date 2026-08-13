@@ -513,7 +513,7 @@ export default function IdeasPage() {
       <div
         key={`${idea.text.slice(0, 20)}-${originalIndex}`}
         onClick={() => router.push(`/project?idea=${encodeURIComponent(idea.text)}`)}
-        className="flex items-start gap-4 rounded-xl bg-bg-surface-hover hover:bg-bg-surface-primary-default-80 p-4 cursor-pointer transition-colors group"
+        className="flex items-start gap-4 rounded-xl bg-bg-surface-primary-default hover:bg-bg-surface-hover p-4 cursor-pointer transition-colors group"
       >
         <div className="flex-1 min-w-0" dir="rtl">
           <p className="text-small text-text-primary-default line-clamp-2">{displayText}</p>

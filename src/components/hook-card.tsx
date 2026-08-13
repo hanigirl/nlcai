@@ -76,7 +76,7 @@ export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onTog
       className={`group gap-4 rounded-[16px] border-border-neutral-default bg-white dark:bg-gray-10 p-4 py-4 shadow-none transition-all ${
         used
           ? "opacity-60"
-          : "hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30"
+          : "hover:bg-bg-surface-hover hover:border-gray-80 hover:ring-2 hover:ring-gray-80/30"
       }`}
     >
       <CardContent className="flex flex-col gap-2 p-0">
@@ -198,7 +198,7 @@ export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onTog
                 type="button"
                 onClick={onNavigate}
                 aria-label="יצירת פוסט"
-                className="flex items-center justify-center size-8 shrink-0 rounded-lg bg-bg-surface group-hover:bg-bg-surface-primary-default-80 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+                className="flex items-center justify-center size-8 shrink-0 rounded-lg bg-bg-surface group-hover:bg-bg-surface-hover transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
               >
                 <ArrowLeft className="size-4 text-text-primary-default" />
               </button>
