@@ -15,8 +15,10 @@ import { Skeleton } from "@/components/ui/skeleton"
  * photo (Hani, 2026-08-13).
  *
  * The caption is generated on upload and stays something you place: on/off
- * and three positions. The mental model is "the app gave me a caption I can
- * put where I want".
+ * and three positions. This block is the PICTURE — the controls that place
+ * the caption live on the format's card on the canvas, next to the media
+ * they act on (Hani, 2026-08-13), and no media format carries them in this
+ * panel.
  *
  * It always carries the post's FULL text (Hani, 2026-08-13) — there is no
  * headline-only mode. Half a caption is not a placement decision, it is a
@@ -184,19 +186,14 @@ export interface ImageCaptionBlockProps {
   captionedUrl: string | null
   /** The picture exactly as the user brought it. */
   originalUrl: string | null
-  /** Whether the captioned version is the one the post uses. */
-  captionOn: boolean
-  onCaptionOnChange: (on: boolean) => void
-  position?: CaptionPosition
-  onPositionChange?: (p: CaptionPosition) => void
   /**
-   * Whether the switch and the placements are shown HERE.
+   * Whether the captioned version is the one the post uses — which of the two
+   * pictures this block shows.
    *
-   * False for the image post: its controls moved to the post's own card on
-   * the canvas, next to the picture they act on (Hani, 2026-08-13). The
-   * b-roll still has no card of its own, so it keeps them.
+   * Read only. Switching it, and placing the caption, are done on the
+   * format's card on the canvas (Hani, 2026-08-13) — never in this panel.
    */
-  showControls?: boolean
+  captionOn: boolean
   onRetry?: () => void
   /** Opens the picture full size. */
   onOpenLightbox?: (src: string) => void
@@ -209,10 +206,6 @@ export function ImageCaptionBlock({
   captionedUrl,
   originalUrl,
   captionOn,
-  onCaptionOnChange,
-  position = "bottom",
-  onPositionChange,
-  showControls = true,
   onRetry,
   onOpenLightbox,
 }: ImageCaptionBlockProps) {
@@ -236,18 +229,6 @@ export function ImageCaptionBlock({
       {/* The caption is a layer you place, so its controls come BEFORE the
           picture: you read what you can change, then watch the picture
           answer. */}
-      {showControls && (
-        <div className="w-full max-w-[280px]">
-          <CaptionControls
-            captionOn={captionOn}
-            onCaptionOnChange={onCaptionOnChange}
-            position={position}
-            onPositionChange={(v) => onPositionChange?.(v)}
-            busy={busy}
-          />
-        </div>
-      )}
-
       {/* The picture itself. */}
       <div className={`relative ${frameWidth} ${frameAspect}`}>
         {shown ? (

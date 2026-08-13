@@ -2359,12 +2359,23 @@ function MediaUploadFlow({
     if (!postId || typeof window === "undefined") return "bottom"
     return getFormatMeta(postId, format as FormatId).captionPosition ?? "bottom"
   })
-  // The b-roll still keeps its controls in the panel, so its choices have to
-  // be written down the same way the card writes the image post's.
-  const handleCaptionPositionChange = (p: CaptionPosition) => {
-    setCaptionPosition(p)
-    if (postId) setFormatMeta(postId, format as FormatId, { captionPosition: p })
-  }
+  // Both settings are owned by the format's card on the canvas. The panel
+  // reads them — an upload has to be captioned the way she last chose — and
+  // follows along while it is open, since timing-storage fires a synthetic
+  // `storage` event on every write. It never writes them, and never re-renders
+  // a picture because one changed: that is the card's job, and doing it here
+  // too would draw the same caption twice.
+  useEffect(() => {
+    if (!postId) return
+    const sync = () => {
+      const meta = getFormatMeta(postId, format as FormatId)
+      setCaptionOn(meta.captionOn ?? true)
+      setCaptionPosition(meta.captionPosition ?? "bottom")
+    }
+    sync()
+    window.addEventListener("storage", sync)
+    return () => window.removeEventListener("storage", sync)
+  }, [postId, format])
   // Every AI path in this panel (image post, story, b-roll) draws through the
   // user's own OpenAI key. `null` while we're still asking; `false` swaps the
   // generate card for MediaCreditsCard.
@@ -3080,51 +3091,6 @@ function MediaUploadFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [captionEnabled, format, captionedImage])
 
-  /**
-   * Re-render when the user moves the caption. Skipped on the first pass —
-   * the attach already fired one render with these very defaults, and firing
-   * again here would double every upload.
-   */
-  const captionSettingsRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (!captionEnabled || !captionOn) return
-    const source = captionOriginalUrl
-    if (!source) return
-    const key = `${source}|${captionPosition}`
-    if (captionSettingsRef.current === null) {
-      captionSettingsRef.current = key
-      return
-    }
-    if (captionSettingsRef.current === key) return
-    captionSettingsRef.current = key
-    runImageCaption(source)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [captionEnabled, captionOn, captionPosition, captionOriginalUrl])
-
-  /**
-   * Which picture the POST uses. Switching to "בלי כיתוב" has to write the
-   * original back into the format's slot — otherwise the toggle only changes
-   * what the panel shows and the post still publishes the captioned one.
-   */
-  const handleCaptionOnChange = async (on: boolean) => {
-    setCaptionOn(on)
-    if (postId) setFormatMeta(postId, format as FormatId, { captionOn: on })
-    const next = on ? (captionedImage?.url ?? null) : captionOriginalUrl
-    if (!next || !postId) return
-    setPreviewUrl(next)
-    setPreviewKind("image")
-    if (format === "image_post") onImagePostUrlChange?.(next)
-    if (format === "b_roll") onBRollUrlChange?.(next)
-    try {
-      await fetch(`/api/core-posts/${postId}/media`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ format, url: next, assetType: "image" }),
-      })
-    } catch (err) {
-      console.error("[media-panel][caption-toggle]", err)
-    }
-  }
   const bRollAttemptRef = useRef(0)
 
   // Whether the b-roll link field is open. Closed at rest behind the Drive
@@ -3820,12 +3786,6 @@ function MediaUploadFlow({
               captionedUrl={captionedImage?.url ?? null}
               originalUrl={captionOriginalUrl ?? previewUrl}
               captionOn={captionOn}
-              onCaptionOnChange={handleCaptionOnChange}
-              position={captionPosition}
-              onPositionChange={handleCaptionPositionChange}
-              /* The image post's controls live on its card on the canvas
-                  now, so the panel shows the picture only. */
-              showControls={false}
               onRetry={() => {
                 clearImageCaptionError(postId)
                 const source = captionOriginalUrl ?? previewUrl
@@ -4380,12 +4340,6 @@ function MediaUploadFlow({
                 captionedUrl={captionedImage?.url ?? null}
                 originalUrl={captionOriginalUrl ?? previewUrl}
                 captionOn={captionOn}
-                onCaptionOnChange={handleCaptionOnChange}
-                position={captionPosition}
-                onPositionChange={handleCaptionPositionChange}
-                // The b-roll has no card of its own on the canvas, so its
-                // controls stay here.
-                showControls
                 onRetry={() => {
                   clearImageCaptionError(postId)
                   const source = captionOriginalUrl ?? previewUrl
