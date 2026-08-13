@@ -16,7 +16,6 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipLabel } from "@/components/ui/tooltip"
 import { MediaPanel } from "@/components/media-panel"
-import { ImageCaptionReview } from "@/components/image-caption-review"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { CorePostCelebration } from "@/components/core-post-celebration"
 import { ScheduleInCalendarBar } from "@/components/schedule-in-calendar-bar"
@@ -177,23 +176,6 @@ function ProjectPageInner() {
   const hookParam = searchParams.get("hook") ?? ""
   const hookIdParam = searchParams.get("hook_id") ?? ""
   const postId = searchParams.get("post_id") ?? ""
-
-  /**
-   * Design-review gate for the two "caption on the picture you brought"
-   * directions (Joey, 2026-08-13). With no param this page is exactly what
-   * it was — the caption is not rendered, not offered and not burned. With
-   * `?imgcap=a` or `?imgcap=b` the review rail mounts on top, landing
-   * straight on the component instead of making the reviewer walk the flow.
-   *
-   * `?imgcap_fmt=b_roll` reviews the same block on a b-roll still. Not
-   * `variant` — that name is already taken by the home page's onboarding
-   * banner, and reusing it would make the two features fight over the URL.
-   */
-  const imgCapParam = searchParams.get("imgcap")
-  const imgCapVariant: "a" | "b" | null =
-    imgCapParam === "a" ? "a" : imgCapParam === "b" ? "b" : null
-  const imgCapFormat =
-    searchParams.get("imgcap_fmt") === "b_roll" ? "b_roll" : "image_post"
 
   const flow: Flow = postId ? "saved" : hookParam ? "hook" : "idea"
 
@@ -1694,19 +1676,8 @@ function ProjectPageInner() {
 
   return (
     <AppShell idea={shortenTitle(idea || hookParam || (postId ? "עריכת פוסט" : ""))}>
-      {/* Design-review rail. Present only when ?imgcap is in the URL, and it
-          replaces nothing — the real panel below is untouched, so removing
-          this block and the param is all it takes to unship the harness. */}
-      {imgCapVariant && (
-        <ImageCaptionReview
-          variant={imgCapVariant}
-          format={imgCapFormat}
-          onClose={() => router.push("/project")}
-        />
-      )}
       {/* Media Panel — sibling to InfiniteCanvas, slides from left */}
       <MediaPanel
-        imgCapVariant={imgCapVariant}
         formatId={selectedFormatCard}
         onClose={() => setSelectedFormatCard(null)}
         postId={savedPostId}

@@ -14,36 +14,23 @@ import { Skeleton } from "@/components/ui/skeleton"
  * brought themselves — now carrying the post's caption instead of a bare
  * photo (Hani, 2026-08-13).
  *
- * ONE component serves both design directions and both surfaces (the real
- * panel and the ?imgcap review links). The parts that are not in question —
- * the image frame, the loading state, the error state, the fall-back-to-the-
- * original affordance — are written once here; only the CONTROLS differ by
- * variant, which is exactly the difference being reviewed.
+ * The caption is generated on upload and stays something you place: on/off
+ * and three positions. The mental model is "the app gave me a caption I can
+ * put where I want".
  *
- *   variant "a" · מוכן מיד — the caption is burned in on upload and the
- *     finished picture is what you see. One binary control underneath: keep
- *     the caption, or go back to the picture you brought. The mental model
- *     is "the app finished my image".
- *
- *   variant "b" · שכבת כיתוב — the caption is also generated on upload, but
- *     it stays something you place: on/off, three positions, and how much of
- *     the post's text it carries. The mental model is "the app gave me a
- *     caption I can put where I want".
+ * It always carries the post's FULL text (Hani, 2026-08-13) — there is no
+ * headline-only mode. Half a caption is not a placement decision, it is a
+ * different post, and the words on the picture have to match the words in
+ * the post everywhere else in the product.
  */
 
 export type CaptionPosition = "top" | "center" | "bottom"
-export type CaptionContent = "hook" | "hook_body"
 export type CaptionState = "idle" | "captioning" | "error"
 
 const POSITION_OPTIONS: Array<{ id: CaptionPosition; label: string }> = [
   { id: "top", label: "למעלה" },
   { id: "center", label: "באמצע" },
   { id: "bottom", label: "למטה" },
-]
-
-const CONTENT_OPTIONS: Array<{ id: CaptionContent; label: string }> = [
-  { id: "hook", label: "הכותרת בלבד" },
-  { id: "hook_body", label: "כותרת + טקסט" },
 ]
 
 /**
@@ -84,7 +71,7 @@ function SegmentedPicker<T extends string>({
               className={`flex-1 rounded-[10px] border px-2 py-1.5 text-xs transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 disabled:cursor-not-allowed disabled:opacity-50 ${
                 isSelected
                   ? "border-yellow-50 ring-1 ring-yellow-50 bg-bg-surface-primary-default text-text-primary-default"
-                  : "border-border-neutral-default bg-white text-text-neutral-default hover:border-yellow-50 dark:bg-transparent dark:border-gray-30"
+                  : "border-border-neutral-default bg-white text-text-neutral-default hover:border-gray-80 dark:bg-transparent dark:border-gray-30"
               }`}
             >
               {o.label}
@@ -97,7 +84,6 @@ function SegmentedPicker<T extends string>({
 }
 
 export interface ImageCaptionBlockProps {
-  variant: "a" | "b"
   /** "4/5" for a feed image post, "9/16" for a b-roll still. */
   aspect: "4/5" | "9/16"
   state: CaptionState
@@ -109,18 +95,14 @@ export interface ImageCaptionBlockProps {
   /** Whether the captioned version is the one the post uses. */
   captionOn: boolean
   onCaptionOnChange: (on: boolean) => void
-  /** Variant B only. */
   position?: CaptionPosition
   onPositionChange?: (p: CaptionPosition) => void
-  content?: CaptionContent
-  onContentChange?: (c: CaptionContent) => void
   onRetry?: () => void
   /** Opens the picture full size. */
   onOpenLightbox?: (src: string) => void
 }
 
 export function ImageCaptionBlock({
-  variant,
   aspect,
   state,
   errorMessage,
@@ -130,16 +112,13 @@ export function ImageCaptionBlock({
   onCaptionOnChange,
   position = "bottom",
   onPositionChange,
-  content = "hook_body",
-  onContentChange,
   onRetry,
   onOpenLightbox,
 }: ImageCaptionBlockProps) {
   const busy = state === "captioning"
   // While a re-render is in flight the PREVIOUS picture stays on screen under
-  // a spinner. Blanking it would make every control change in variant B
-  // flash the panel empty, which reads as "I broke it" rather than
-  // "it's redrawing".
+  // a spinner. Blanking it would make every control change flash the panel
+  // empty, which reads as "I broke it" rather than "it's redrawing".
   const shown = captionOn ? (captionedUrl ?? originalUrl) : originalUrl
   const frameWidth = aspect === "4/5" ? "w-[200px]" : "w-[160px]"
   const frameAspect = aspect === "4/5" ? "aspect-[4/5]" : "aspect-[9/16]"
@@ -153,11 +132,10 @@ export function ImageCaptionBlock({
         התמונה שלך
       </p>
 
-      {/* VARIANT B — the caption is a layer you place, so its controls come
-          BEFORE the picture: you read what you can change, then watch the
-          picture answer. In variant A there is nothing to set up, so the
-          picture leads and its one control follows. */}
-      {variant === "b" && (
+      {/* The caption is a layer you place, so its controls come BEFORE the
+          picture: you read what you can change, then watch the picture
+          answer. */}
+      {(
         <div className="flex w-full max-w-[280px] flex-col gap-3 rounded-[14px] border border-border-neutral-default bg-white px-3.5 py-3 dark:bg-gray-10 dark:border-gray-30">
           <div className="flex items-center justify-between gap-2">
             <span className="text-small-bold text-text-primary-default">
@@ -192,13 +170,6 @@ export function ImageCaptionBlock({
             options={POSITION_OPTIONS}
             value={position}
             onChange={(v) => onPositionChange?.(v)}
-            disabled={!captionOn || busy}
-          />
-          <SegmentedPicker
-            label="מה מופיע"
-            options={CONTENT_OPTIONS}
-            value={content}
-            onChange={(v) => onContentChange?.(v)}
             disabled={!captionOn || busy}
           />
         </div>
@@ -280,22 +251,6 @@ export function ImageCaptionBlock({
         </div>
       )}
 
-      {/* VARIANT A — one binary choice, under the picture: the finished
-          version or the one you brought. Nothing to configure. */}
-      {variant === "a" && state !== "error" && (
-        <div className="w-full max-w-[280px]">
-          <SegmentedPicker
-            label="גרסה שנשמרת לפוסט"
-            options={[
-              { id: "on" as const, label: "עם כיתוב" },
-              { id: "off" as const, label: "בלי כיתוב" },
-            ]}
-            value={captionOn ? "on" : "off"}
-            onChange={(v) => onCaptionOnChange(v === "on")}
-            disabled={busy || !captionedUrl}
-          />
-        </div>
-      )}
     </div>
   )
 }

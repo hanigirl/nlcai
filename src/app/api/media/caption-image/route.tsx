@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server"
 import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
 import { fetchDriveFile } from "@/lib/drive-fetch"
 import { frameCaption } from "@/lib/story-text-split"
+import { parseTextToSlides } from "@/lib/carousel-slides"
 import { parseImagePostBody } from "@/lib/image-post-text"
 import { BROLL_VIDEO_CTA } from "@/lib/broll-copy"
 import {
@@ -40,20 +41,20 @@ export const maxDuration = 120
  *   - b_roll / story → the hook plus this frame's slice of the script, which
  *     is what the video path burns in.
  *
- * `preview: true` is the review harness's door in: it renders from text and
- * bytes supplied in the request, touches no table and writes no file, and
- * returns base64. Used only by the ?imgcap review links.
+ * The caption always carries the post's FULL text (Hani, 2026-08-13): the
+ * hook plus the body. There is no headline-only mode — the words on the
+ * picture have to match the words in the post.
  */
 
-type CaptionFormat = "image_post" | "b_roll" | "story"
-
-/** How much of the post's text the caption carries. */
-type CaptionContent = "hook" | "hook_body"
+type CaptionFormat = "image_post" | "b_roll" | "story" | "carousel"
 
 const CANVAS_FOR: Record<CaptionFormat, typeof CANVAS_4_5> = {
   image_post: CANVAS_4_5,
   b_roll: CANVAS_9_16,
   story: CANVAS_9_16,
+  // The carousel renders at 1080x1350, the same portrait frame as a feed
+  // image post, so a slide the user brought gets the same safe zone.
+  carousel: CANVAS_4_5,
 }
 
 function isPosition(v: unknown): v is CaptionPosition {
@@ -93,22 +94,14 @@ export async function POST(req: NextRequest) {
       format?: string
       sourceUrl?: string
       position?: string
-      content?: string
       persist?: boolean
-      /** Review-harness mode — see the header comment. */
-      preview?: boolean
-      imageBase64?: string
       /**
-       * Name of a sample shipped in /public/images/review, read off disk
-       * here instead of being fetched by the browser. `/images/*` sits
-       * BEHIND the auth middleware (only `_next/*` and `/api` are exempt),
-       * so a client-side fetch of a sample returns the login page's HTML —
-       * which then gets captioned as if it were a photo. Reading it server
-       * side sidesteps that entirely and saves the round trip.
+       * Carousel only. The slides arrive as bytes rather than a URL — the
+       * import already pulled them out of Drive — and each one takes its own
+       * slide's words, so the caller says which slide this is.
        */
-      sample?: string
-      hook?: string
-      bodyText?: string
+      imageBase64?: string
+      slideIndex?: number
     }
 
     const format: CaptionFormat =
@@ -116,57 +109,15 @@ export async function POST(req: NextRequest) {
         ? "b_roll"
         : body.format === "story"
           ? "story"
-          : "image_post"
+          : body.format === "carousel"
+            ? "carousel"
+            : "image_post"
     const canvas = CANVAS_FOR[format]
     const position: CaptionPosition = isPosition(body.position)
       ? body.position
       : format === "image_post"
         ? "bottom"
         : "bottom"
-    const content: CaptionContent =
-      body.content === "hook" ? "hook" : "hook_body"
-
-    /* --------------------------- preview mode --------------------------- */
-    // Renders from what the caller sent and returns base64. No DB read, no
-    // DB write, no Storage write, no paid API — the review links can be
-    // opened as many times as anyone likes.
-    if (body.preview) {
-      let sourceBase64 = body.imageBase64
-      if (!sourceBase64 && body.sample) {
-        // Whitelisted by name, never by path — this reads from the
-        // filesystem, and an unfiltered name would be a directory traversal.
-        const allowed = ["sample-photo.jpg", "sample-light.jpg"]
-        if (!allowed.includes(body.sample)) {
-          return NextResponse.json({ error: "unknown sample" }, { status: 400 })
-        }
-        const fs = await import("fs/promises")
-        const path = await import("path")
-        const buf = await fs.readFile(
-          path.join(process.cwd(), "public", "images", "review", body.sample),
-        )
-        sourceBase64 = buf.toString("base64")
-      }
-      if (!sourceBase64) {
-        return NextResponse.json(
-          { error: "imageBase64 or sample is required in preview mode" },
-          { status: 400 },
-        )
-      }
-      const png = await renderCaptionOverImagePng(
-        sourceBase64,
-        body.hook?.trim() || undefined,
-        content === "hook" ? undefined : body.bodyText?.trim() || undefined,
-        canvas,
-        position,
-      )
-      return NextResponse.json({
-        image: png.toString("base64"),
-        // The untouched picture comes back too, so the harness can show
-        // "בלי כיתוב" without needing to load the asset itself.
-        original: body.sample ? sourceBase64 : undefined,
-      })
-    }
-
     /* ---------------------------- real mode ----------------------------- */
     const postId = body.postId
     if (!postId) {
@@ -213,10 +164,16 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Carousel slides arrive as bytes — the Drive import already pulled them
+    // down, so re-fetching by URL would be a second round trip for something
+    // the caller is holding.
+    const inlineBase64 =
+      format === "carousel" ? body.imageBase64?.trim() || undefined : undefined
+
     // The image to caption: an explicit source wins, otherwise the format's
     // stored image slot.
     let sourceUrl = body.sourceUrl?.trim() || undefined
-    if (!sourceUrl) {
+    if (!sourceUrl && !inlineBase64) {
       const { data: assetRow } = await supabase
         .from("media_assets")
         .select("url")
@@ -225,7 +182,7 @@ export async function POST(req: NextRequest) {
         .maybeSingle()
       sourceUrl = (assetRow as { url: string } | null)?.url
     }
-    if (!sourceUrl) {
+    if (!sourceUrl && !inlineBase64) {
       return NextResponse.json(
         {
           error: "no_source_image",
@@ -240,7 +197,20 @@ export async function POST(req: NextRequest) {
     let overlayHook: string | undefined
     let overlayBody: string | undefined
 
-    if (format === "image_post") {
+    if (format === "carousel") {
+      // A slide carries its own title and body — the same split the panel
+      // shows, so the words burned into the picture are the words the user
+      // read next to it.
+      const slides = variant.body ? parseTextToSlides(variant.body) : []
+      const slide = slides[body.slideIndex ?? 0]
+      overlayHook = slide?.title?.trim() || undefined
+      overlayBody = slide?.body?.trim() || undefined
+      // A cover slide with no body still needs its headline; falling back to
+      // the post's hook keeps slide 1 from coming out bare.
+      if (!overlayHook && !overlayBody) {
+        overlayHook = post.hook_text?.trim() || post.title?.trim() || undefined
+      }
+    } else if (format === "image_post") {
       // The lines gpt-image-2 would have drawn — same post, same words,
       // whichever way the picture was made.
       const texts = variant.body ? parseImagePostBody(variant.body) : null
@@ -250,12 +220,10 @@ export async function POST(req: NextRequest) {
         post.title?.trim() ||
         undefined
       overlayBody =
-        content === "hook"
-          ? undefined
-          : [texts?.subheadline, texts?.bottom]
-              .filter((v) => !!v?.trim())
-              .join("\n")
-              .trim() || undefined
+        [texts?.subheadline, texts?.bottom]
+          .filter((v) => !!v?.trim())
+          .join("\n")
+          .trim() || undefined
     } else {
       const hook =
         post.hook_text?.trim() ||
@@ -266,11 +234,11 @@ export async function POST(req: NextRequest) {
         ? frameCaption(variant.body, 0, 1)
         : { headline: hook, body: undefined as string | undefined }
       overlayHook = caption.headline ?? hook
-      overlayBody = content === "hook" ? undefined : caption.body
+      overlayBody = caption.body
       // Every b-roll carries the follow-up line. On a clip it arrives on its
       // own beat as a second layer; a still has no timeline, so it joins the
       // body block instead of being dropped.
-      if (format === "b_roll" && content !== "hook") {
+      if (format === "b_roll") {
         overlayBody = [overlayBody, BROLL_VIDEO_CTA].filter(Boolean).join("\n")
       }
     }
@@ -286,18 +254,33 @@ export async function POST(req: NextRequest) {
     }
 
     /* ----------------------------- render ------------------------------ */
-    const src = await fetchImageBase64(sourceUrl)
-    if ("error" in src) {
-      return NextResponse.json(src, { status: 400 })
+    let sourceBase64: string
+    if (inlineBase64) {
+      sourceBase64 = inlineBase64
+    } else {
+      const src = await fetchImageBase64(sourceUrl!)
+      if ("error" in src) {
+        return NextResponse.json(src, { status: 400 })
+      }
+      sourceBase64 = src.base64
     }
 
     const png = await renderCaptionOverImagePng(
-      src.base64,
+      sourceBase64,
       overlayHook,
       overlayBody,
       canvas,
       position,
     )
+
+    // A carousel slide goes back as bytes: the panel holds the whole set and
+    // saves it in one go, exactly as it does for an uncaptioned import.
+    // Uploading each slide here would leave orphans behind every re-import,
+    // and deleting the format's image asset — what the single-image path does
+    // below — would wipe the other slides.
+    if (format === "carousel") {
+      return NextResponse.json({ image: png.toString("base64") })
+    }
 
     // "captioned-" marks a text-baked output, the same way "burned-" does for
     // video. The client reads it off the URL to know an image already carries

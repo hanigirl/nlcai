@@ -33,7 +33,6 @@ import {
 } from "@/lib/broll-generation-store"
 import {
   ImageCaptionBlock,
-  type CaptionContent,
   type CaptionPosition,
 } from "@/components/image-caption-block"
 import { StoryPlayer } from "@/components/story-player"
@@ -61,6 +60,7 @@ import {
 } from "@/lib/story-generation-store"
 import type { SlideData } from "@/lib/carousel-templates"
 import { CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
+import { parseTextToSlides } from "@/lib/carousel-slides"
 import {
   getFormatMeta,
   setFormatMeta,
@@ -173,13 +173,6 @@ interface MediaPanelProps {
    * (null).
    */
   onStoryVideoUrlChange?: (url: string | null) => void
-  /**
-   * Which caption-on-your-own-image direction to render — the ?imgcap review
-   * gate (see project/page.tsx). `null` in production: with no variant the
-   * panel is byte-identical to what it was before this exploration, and the
-   * caption is not burned at all.
-   */
-  imgCapVariant?: "a" | "b" | null
 }
 
 export function MediaPanel({
@@ -220,7 +213,6 @@ export function MediaPanel({
   onImagePostUrlChange,
   onStoryImagesChange,
   onStoryVideoUrlChange,
-  imgCapVariant = null,
 }: MediaPanelProps) {
   const isOpen = formatId !== null
   const meta = formatId ? FORMAT_META[formatId] : null
@@ -343,7 +335,6 @@ export function MediaPanel({
             initialMediaUrl={formatId ? initialFormatMedia?.[formatId] : undefined}
             initialStoryFrames={initialStoryFrames}
             postLoaded={postLoaded}
-            imgCapVariant={imgCapVariant}
           />
         )}
       </div>
@@ -1365,82 +1356,6 @@ function condenseSlides(slides: SlideData[], max: number): SlideData[] {
   return [first, ...merged, last].map((sl, i) => ({ ...sl, slide: i + 1 }))
 }
 
-// Parse carousel text ("שקופית N" blocks) into slides
-function parseTextToSlides(text: string): SlideData[] {
-  const slideHeaderRegex = /^\s*(?:שקופית\s*\d+|\[.*?\])\s*:?\s*$/
-  const rawLines = text.split("\n")
-  // When the text is headed ("שקופית N" / "[...]"), those headers are the
-  // ONLY slide boundary. Blank lines inside a slide belong to that slide's
-  // body — splitting on them turned a 7-slide carousel into 15 and tripped
-  // the AI-template cap (Hani 2026-07-27).
-  const hasHeaders = rawLines.some((l) => slideHeaderRegex.test(l))
-
-  // One entry per slide, each holding that slide's raw lines.
-  const blocks: string[][] = []
-  if (hasHeaders) {
-    let current: string[] | null = null
-    for (const line of rawLines) {
-      if (slideHeaderRegex.test(line)) {
-        current = []
-        blocks.push(current)
-        continue
-      }
-      // Text before the first header (a stray preamble) still becomes a
-      // block, so nothing the user wrote is silently dropped.
-      if (!current) {
-        if (!line.trim()) continue
-        current = []
-        blocks.push(current)
-      }
-      current.push(line)
-    }
-  } else {
-    // Unheaded text: a blank line is the only boundary available.
-    for (const block of text.split(/\n\s*\n+/)) {
-      const lines = block.split("\n")
-      if (lines.some((l) => l.trim())) blocks.push(lines)
-    }
-  }
-
-  const parsed: SlideData[] = []
-  let slideNum = 1
-
-  for (const block of blocks) {
-    // Trim the block's edges but keep the blank lines between its
-    // paragraphs — they're the slide's own line breaks.
-    const lines = block.map((l) => l.trim())
-    while (lines.length && !lines[0]) lines.shift()
-    while (lines.length && !lines[lines.length - 1]) lines.pop()
-    if (lines.length === 0) continue
-
-    const legacyTitleLine = lines.find((l) => l.startsWith("כותרת:"))
-    let title: string
-    let body: string
-
-    if (legacyTitleLine) {
-      title = legacyTitleLine.replace("כותרת:", "").trim()
-      body = lines.filter((l) => l !== legacyTitleLine).join("\n").trim()
-    } else {
-      title = lines[0]
-      body = lines.slice(1).join("\n").trim()
-    }
-
-    // Collapse runs of blank lines so a stray double break doesn't blow up
-    // the slide's layout.
-    body = body.replace(/\n{3,}/g, "\n\n")
-
-    parsed.push({ slide: slideNum, type: "content", title, body })
-    slideNum++
-  }
-
-  if (parsed.length > 0) {
-    parsed[0].type = "cover"
-    parsed[parsed.length - 1].type = "cta"
-  }
-
-  return parsed
-}
-
 // Sample cover shown in template-tile previews when the post has no
 // carousel text yet.
 const SAMPLE_COVER: SlideData = {
@@ -1860,7 +1775,37 @@ function CarouselFlow({
           )
           return
         }
-        slides.push(data.base64 as string)
+        // Lay this slide's own words over the picture, the same way a feed
+        // image post and a b-roll still already do. A carousel the user
+        // brought was the last surface still coming out bare (Hani,
+        // 2026-08-13). A slide that fails to caption keeps the picture the
+        // user brought rather than failing the whole import — a bare slide
+        // is recoverable, a dead import is not.
+        const bare = data.base64 as string
+        setDriveImportProgress(
+          `מטמיעים כיתוב בשקופית ${i + 1} מתוך ${links.length}...`,
+        )
+        let finished = bare
+        if (postId) {
+          try {
+            const capRes = await fetch("/api/media/caption-image", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                postId,
+                format: "carousel",
+                imageBase64: bare,
+                slideIndex: i,
+                persist: false,
+              }),
+            })
+            const capData = await capRes.json()
+            if (capRes.ok && capData.image) finished = capData.image as string
+          } catch {
+            // Same fall-back as a non-OK response: keep the bare slide.
+          }
+        }
+        slides.push(finished)
       }
       // Make it the post's carousel (same base64 shape as generation → the
       // parent's autosave persists it as media_assets rows).
@@ -2360,7 +2305,6 @@ function MediaUploadFlow({
   initialMediaUrl,
   initialStoryFrames,
   postLoaded,
-  imgCapVariant = null,
 }: {
   format: string
   postId: string | null
@@ -2376,21 +2320,19 @@ function MediaUploadFlow({
   initialMediaUrl?: string
   initialStoryFrames?: string[] | null
   postLoaded?: boolean
-  imgCapVariant?: "a" | "b" | null
 }) {
   // Read once, before any narrowing. Inside the burn-button condition TS has
   // already pinned `format` to "story", so a literal check for b-roll there
   // reads as unreachable code.
   const isBRoll = format === "b_roll"
 
-  /* ---- caption on the user's own still (?imgcap gate) ---------------- */
+  /* ---- caption on the user's own still -------------------------------- */
   //
   // Every other media surface already lays the post's words over the
-  // picture; a still the user brought was the one that came out bare. Off
-  // entirely without the param, so production behaviour is untouched while
-  // this is being reviewed.
-  const captionEnabled =
-    !!imgCapVariant && (format === "image_post" || format === "b_roll")
+  // picture; a still the user brought was the one that came out bare. It no
+  // longer is — for a feed image post and for a b-roll still alike, since the
+  // gap was never about the format, only about which file type was uploaded.
+  const captionEnabled = format === "image_post" || format === "b_roll"
   // The picture as it arrived, kept alongside the captioned one so "בלי
   // כיתוב" is a real choice and not a second render.
   const [captionOriginalUrl, setCaptionOriginalUrl] = useState<string | null>(
@@ -2399,8 +2341,6 @@ function MediaUploadFlow({
   const [captionOn, setCaptionOn] = useState(true)
   const [captionPosition, setCaptionPosition] =
     useState<CaptionPosition>("bottom")
-  const [captionContent, setCaptionContent] =
-    useState<CaptionContent>("hook_body")
   // Every AI path in this panel (image post, story, b-roll) draws through the
   // user's own OpenAI key. `null` while we're still asking; `false` swaps the
   // generate card for MediaCreditsCard.
@@ -3079,14 +3019,11 @@ function MediaUploadFlow({
       setCaptionOriginalUrl(sourceUrl)
       startImageCaption(postId, format, {
         sourceUrl,
-        // Variant A has no placement controls, so it always renders the
-        // default; only B sends what the user picked.
-        position: imgCapVariant === "b" ? captionPosition : undefined,
-        content: imgCapVariant === "b" ? captionContent : undefined,
+        position: captionPosition,
         quiet: true,
       })
     },
-    [postId, captionEnabled, format, imgCapVariant, captionPosition, captionContent],
+    [postId, captionEnabled, format, captionPosition],
   )
 
   // Pick up a caption render that finished — including one that landed while
@@ -3108,17 +3045,16 @@ function MediaUploadFlow({
   }, [captionEnabled, format, captionedImage])
 
   /**
-   * Variant B re-renders when the user moves the caption or changes how much
-   * it says. Skipped on the first pass — the attach already fired one render
-   * with these very defaults, and firing again here would double every
-   * upload.
+   * Re-render when the user moves the caption. Skipped on the first pass —
+   * the attach already fired one render with these very defaults, and firing
+   * again here would double every upload.
    */
   const captionSettingsRef = useRef<string | null>(null)
   useEffect(() => {
-    if (imgCapVariant !== "b" || !captionEnabled || !captionOn) return
+    if (!captionEnabled || !captionOn) return
     const source = captionOriginalUrl
     if (!source) return
-    const key = `${source}|${captionPosition}|${captionContent}`
+    const key = `${source}|${captionPosition}`
     if (captionSettingsRef.current === null) {
       captionSettingsRef.current = key
       return
@@ -3127,7 +3063,7 @@ function MediaUploadFlow({
     captionSettingsRef.current = key
     runImageCaption(source)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imgCapVariant, captionEnabled, captionOn, captionPosition, captionContent, captionOriginalUrl])
+  }, [captionEnabled, captionOn, captionPosition, captionOriginalUrl])
 
   /**
    * Which picture the POST uses. Switching to "בלי כיתוב" has to write the
@@ -3834,7 +3770,6 @@ function MediaUploadFlow({
               the caption's own states and controls. */}
           {!hydrating && captionEnabled && (previewUrl || captioningImage) && (
             <ImageCaptionBlock
-              variant={imgCapVariant as "a" | "b"}
               aspect="4/5"
               state={
                 captioningImage
@@ -3850,8 +3785,6 @@ function MediaUploadFlow({
               onCaptionOnChange={handleCaptionOnChange}
               position={captionPosition}
               onPositionChange={setCaptionPosition}
-              content={captionContent}
-              onContentChange={setCaptionContent}
               onRetry={() => {
                 clearImageCaptionError(postId)
                 const source = captionOriginalUrl ?? previewUrl
@@ -4394,7 +4327,6 @@ function MediaUploadFlow({
             previewKind === "image" &&
             (previewUrl || captioningImage) && (
               <ImageCaptionBlock
-                variant={imgCapVariant as "a" | "b"}
                 aspect="9/16"
                 state={
                   captioningImage
@@ -4410,8 +4342,6 @@ function MediaUploadFlow({
                 onCaptionOnChange={handleCaptionOnChange}
                 position={captionPosition}
                 onPositionChange={setCaptionPosition}
-                content={captionContent}
-                onContentChange={setCaptionContent}
                 onRetry={() => {
                   clearImageCaptionError(postId)
                   const source = captionOriginalUrl ?? previewUrl

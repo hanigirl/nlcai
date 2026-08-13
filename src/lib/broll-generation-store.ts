@@ -215,9 +215,8 @@ export function startCaptionBurn(postId: string, format: string): void {
  * render), but "quick" is not "instant" on a 50MB Drive photo, and a spinner
  * that dies with its panel is worse than no spinner.
  *
- * `position` and `content` are only ever passed by variant B, whose panel
- * lets the user move the caption and choose how much of the script it
- * carries. Variant A calls this with neither and gets the defaults.
+ * `position` is what the user picked in the panel; the caption always
+ * carries the post's full text.
  */
 export function startImageCaption(
   postId: string,
@@ -225,7 +224,6 @@ export function startImageCaption(
   opts?: {
     sourceUrl?: string
     position?: "top" | "center" | "bottom"
-    content?: "hook" | "hook_body"
     /** Suppress the toast when the caller already shows inline progress. */
     quiet?: boolean
   },
@@ -254,7 +252,6 @@ export function startImageCaption(
           format,
           sourceUrl: opts?.sourceUrl,
           position: opts?.position,
-          content: opts?.content,
         }),
       })
       const data = (await res.json().catch(() => ({}))) as {
