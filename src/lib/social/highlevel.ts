@@ -29,6 +29,7 @@ import type {
   SocialPlatform,
 } from "@/lib/supabase/types"
 import { MAX_CAPTION_CHARS, MAX_CAROUSEL_ITEMS } from "./media-spec"
+import { getAgencyToken, getLocationToken } from "./highlevel-auth"
 import {
   SocialPublishError,
   type ConnectHandoff,
@@ -69,22 +70,19 @@ type GhlFetchOptions = {
   method?: "GET" | "POST" | "PUT" | "DELETE"
   body?: unknown
   query?: Record<string, string | undefined>
+  /**
+   * The bearer to send.
+   *
+   * Agency-level calls (creating a sub-account) use the agency token; social
+   * planner calls are sub-account-scoped and take a token minted for that
+   * specific sub-account. Passing it in rather than resolving it inside keeps
+   * the choice visible at every call site, because getting it wrong fails in a
+   * way that reads like a permissions bug.
+   */
+  token: string
 }
 
-function agencyToken(): string {
-  const token = process.env.HIGHLEVEL_API_TOKEN
-  if (!token) {
-    // Ours to fix, not hers — never surface this to a user.
-    throw new SocialPublishError(
-      "HIGHLEVEL_API_TOKEN is not configured",
-      "provider_error",
-      false
-    )
-  }
-  return token
-}
-
-async function ghlFetch<T>(path: string, opts: GhlFetchOptions = {}): Promise<T> {
+async function ghlFetch<T>(path: string, opts: GhlFetchOptions): Promise<T> {
   const url = new URL(`${API_BASE}${path}`)
   for (const [k, v] of Object.entries(opts.query ?? {})) {
     if (v !== undefined) url.searchParams.set(k, v)
@@ -93,7 +91,7 @@ async function ghlFetch<T>(path: string, opts: GhlFetchOptions = {}): Promise<T>
   const res = await fetch(url, {
     method: opts.method ?? "GET",
     headers: {
-      Authorization: `Bearer ${agencyToken()}`,
+      Authorization: `Bearer ${opts.token}`,
       Version: API_VERSION,
       Accept: "application/json",
       ...(opts.body ? { "Content-Type": "application/json" } : {}),
@@ -218,14 +216,10 @@ export class HighLevelPublisher implements SocialPublisher {
 
     if (existing) return
 
-    const companyId = process.env.HIGHLEVEL_COMPANY_ID
-    if (!companyId) {
-      throw new SocialPublishError(
-        "HIGHLEVEL_COMPANY_ID is not configured",
-        "provider_error",
-        false
-      )
-    }
+    // The agency id comes from the install itself rather than a second env
+    // var — one less thing to keep in sync, and it cannot disagree with the
+    // credentials it is used alongside.
+    const { token, companyId } = await getAgencyToken()
 
     const { data: userRow } = await this.db
       .from("users")
@@ -236,6 +230,9 @@ export class HighLevelPublisher implements SocialPublisher {
 
     const created = await ghlFetch<{ id: string }>("/locations/", {
       method: "POST",
+      // Agency-scoped: creating a sub-account is not something a sub-account
+      // token can do.
+      token,
       body: {
         companyId,
         // The sub-account is plumbing the user never sees; naming it after her
@@ -313,7 +310,7 @@ export class HighLevelPublisher implements SocialPublisher {
       `/social-media-posting/oauth/${locationId}/${platform}/accounts/${encodeURIComponent(
         externalAccountId
       )}`,
-      { method: "POST" }
+      { method: "POST", token: await getLocationToken(locationId) }
     )
 
     const { data, error } = await this.db
@@ -401,7 +398,11 @@ export class HighLevelPublisher implements SocialPublisher {
 
     const created = await ghlFetch<{ id?: string; _id?: string }>(
       `/social-media-posting/${locationId}/posts`,
-      { method: "POST", body: buildPostBody(input, account.external_account_id) }
+      {
+        method: "POST",
+        body: buildPostBody(input, account.external_account_id),
+        token: await getLocationToken(locationId),
+      }
     )
 
     const providerPostId = created.id ?? created._id
@@ -427,6 +428,7 @@ export class HighLevelPublisher implements SocialPublisher {
     await ghlFetch(`/social-media-posting/${locationId}/posts/${providerPostId}`, {
       method: "PUT",
       body: { scheduleDate: publishAt.toISOString() },
+      token: await getLocationToken(locationId),
     })
   }
 
@@ -434,6 +436,7 @@ export class HighLevelPublisher implements SocialPublisher {
     const locationId = await this.tenantId(userId)
     await ghlFetch(`/social-media-posting/${locationId}/posts/${providerPostId}`, {
       method: "DELETE",
+      token: await getLocationToken(locationId),
     })
   }
 }
