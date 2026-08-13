@@ -14,6 +14,7 @@ import { parseCreatorInput } from "@/lib/creator-url"
 import { CreatorsList } from "@/components/creators-list"
 import { ProductsList, type ProductEntry } from "@/components/products-list"
 import { BusinessSourcesPanel } from "@/components/business-sources-panel"
+import { InstagramConnect } from "@/components/instagram-connect"
 import { toast } from "sonner"
 import { validateIdentityFile } from "@/lib/validate-identity-file"
 import { isLegacyGeminiKey } from "@/lib/api-keys"
@@ -202,6 +203,10 @@ const SUB_SECTIONS: Record<SettingsTab, { id: string; label: string; icon: typeo
     { id: "apify", label: "Apify", icon: Link2 },
     { id: "openai", label: "OpenAI", icon: Link2 },
     { id: "gemini", label: "Gemini", icon: Link2 },
+    // Appended rather than placed first on purpose: the tab's initial
+    // sub-section is whichever entry leads this list, so promoting Instagram
+    // would quietly change which panel every existing user lands on.
+    { id: "instagram", label: "אינסטגרם", icon: Link2 },
   ],
   business: [
     { id: "about", label: "על העסק", icon: Type },
@@ -1174,6 +1179,9 @@ function SettingsPageInner() {
               <div className="flex gap-8">
                 <SubNav sections={SUB_SECTIONS.connections} active={activeSubSection} onChange={setActiveSubSection} />
                 <div className="flex-1 min-w-0 max-w-lg">
+                  {/* Instagram is an OAuth connection, not a pasted key, so it
+                      owns its whole panel instead of joining the KEYS list. */}
+                  {activeSubSection === "instagram" && <InstagramConnect />}
                   {KEYS.filter((cfg) => {
                     if (activeSubSection === "claude") return cfg.key === "anthropic_api_key"
                     if (activeSubSection === "heygen") return cfg.key === "heygen_api_key"
