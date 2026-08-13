@@ -1520,6 +1520,35 @@ function CarouselFlow({
   const selectedConfig = CAROUSEL_TEMPLATES.find((t) => t.id === selectedTemplate)
   const isAiTemplate = selectedConfig?.kind === "ai"
 
+  /**
+   * True when the post's current carousel is slides the user brought herself:
+   * there are slides, and no template made them. Replacing THAT is the case
+   * worth stopping for — replacing one generated carousel with another costs
+   * her nothing she made.
+   */
+  const carouselIsHerOwn =
+    !!images?.length && !savedTemplateId && (driveLinks?.length ?? 0) > 0
+
+  const [pendingGenerate, setPendingGenerate] = useState(false)
+
+  /**
+   * Generate entry point. Asks first when there is an imported carousel to
+   * lose.
+   *
+   * The ask has to live HERE and not at the approve step: generating is
+   * choosing (see below), so the post's carousel is replaced the moment the
+   * render lands, and the approve button is already hidden by then. Asking
+   * first also means an AI template does not spend her OpenAI credits on a
+   * carousel she is about to be told will overwrite her own slides.
+   */
+  const requestGenerate = () => {
+    if (carouselIsHerOwn) {
+      setPendingGenerate(true)
+      return
+    }
+    void handleGenerate()
+  }
+
   const handleGenerate = async () => {
     if (!carouselText.trim()) return
     setGenerating(true)
@@ -1663,8 +1692,7 @@ function CarouselFlow({
     setPreviewIndex(0)
   }
 
-  const handleApprove = () => {
-    if (!dialogSlides || !dialogFor) return
+  const applyApprove = (dialogSlides: string[], dialogFor: string) => {
     onImagesChange(dialogSlides)
     // Remember which template made the post's carousel — its tile is the
     // selected one next time the panel opens. DRIVE_IMPORT_KEY is a
@@ -1676,6 +1704,15 @@ function CarouselFlow({
     }
     setSavedTemplateId(templateId)
     setDialogFor(null)
+  }
+
+  const handleApprove = () => {
+    if (!dialogSlides || !dialogFor) return
+    // No guard here on purpose. Generating replaces the post's carousel the
+    // moment the render lands, which also hides this button — so the ask
+    // belongs at requestGenerate, and a second one here would only fire in a
+    // state the user cannot reach.
+    applyApprove(dialogSlides, dialogFor)
   }
 
   // --- Removing the post's carousel ----------------------------------------
@@ -1741,6 +1778,22 @@ function CarouselFlow({
   // links. A carousel generated from a template is attributed to that
   // template (`savedTemplateId`), and dragging rows must not reshuffle it.
   const slidesFollowRowOrder = !savedTemplateId
+
+  // A re-import replaces every slide in the post's carousel. Held here so the
+  // confirm's "yes" runs the very same rows the user submitted.
+  const [pendingDriveReimport, setPendingDriveReimport] = useState<string[] | null>(null)
+
+  /**
+   * Import entry point. Asks first when there is already a carousel to lose;
+   * a first import has nothing to overwrite and goes straight through.
+   */
+  const requestDriveImport = (rows: string[]) => {
+    if (images?.length) {
+      setPendingDriveReimport(rows)
+      return
+    }
+    void handleDriveImport(rows)
+  }
 
   // The caption's on/off and placement are set on the carousel's own card, on
   // the canvas — the import just reads whatever is currently chosen, so a set
@@ -1969,7 +2022,7 @@ function CarouselFlow({
         <MediaCreditsCard />
       ) : (
         <Button
-          onClick={handleGenerate}
+          onClick={requestGenerate}
           disabled={generating || !carouselText.trim()}
           className="w-full gap-2"
         >
@@ -2121,8 +2174,30 @@ function CarouselFlow({
         title="למחוק את הקרוסלה מהפוסט?"
         description="השקופיות יימחקו מהפוסט. הטקסט של הקרוסלה והקישורים מהדרייב יישארו, כך שאפשר יהיה ליצור קרוסלה חדשה או לטעון שוב מהדרייב."
         confirmLabel="כן, למחוק"
-        cancelLabel="לא, להשאיר"
+        cancelLabel="לא, בטל"
         onConfirm={handleDeleteCarousel}
+      />
+
+      <ConfirmModal
+        open={pendingGenerate}
+        onOpenChange={(open) => { if (!open) setPendingGenerate(false) }}
+        title="יצירה מחדש תמחק את השקופיות שהבאת. להמשיך?"
+        description="השקופיות שהעליתם יוחלפו בקרוסלה החדשה ולא נשמרות. הקישורים מהדרייב יישארו, כך שאפשר יהיה לטעון אותן שוב."
+        confirmLabel="כן, למחוק"
+        cancelLabel="לא, בטל"
+        onConfirm={() => { void handleGenerate() }}
+      />
+
+      <ConfirmModal
+        open={!!pendingDriveReimport}
+        onOpenChange={(open) => { if (!open) setPendingDriveReimport(null) }}
+        title="טעינה מחדש תמחק את הקרוסלה הנוכחית. להמשיך?"
+        description="השקופיות שבפוסט כרגע יוחלפו בשקופיות מהקישורים שלמעלה, ואינן נשמרות."
+        confirmLabel="כן, למחוק"
+        cancelLabel="לא, בטל"
+        onConfirm={async () => {
+          if (pendingDriveReimport) await handleDriveImport(pendingDriveReimport)
+        }}
       />
 
       {/* Divider between "generate here" and "bring a ready-made carousel" */}
@@ -2144,7 +2219,7 @@ function CarouselFlow({
           items={images}
           pairItems={slidesFollowRowOrder}
           onItemsReorder={onImagesChange}
-          onImport={handleDriveImport}
+          onImport={requestDriveImport}
           importing={driveImporting}
           importProgress={driveImportProgress}
           importError={driveImportError}
