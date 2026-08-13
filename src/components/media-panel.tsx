@@ -1648,13 +1648,33 @@ function CarouselFlow({
   // Preview dialog (mirrors the image_post lightbox): holds WHOSE slides
   // are being previewed. The post's carousel changes only when the user
   // approves in the dialog.
+  // Where the caption sits on the slides — ONE choice for the whole carousel,
+  // not one per slide (Hani, 2026-08-13). A carousel is read as a single
+  // object; a caption that wandered between slides would look like a mistake,
+  // not a choice. Same three positions as a feed image post, same control.
+  const [captionPosition, setCaptionPosition] = useState<CaptionPosition>(
+    () => {
+      if (!postId || typeof window === "undefined") return "bottom"
+      return getFormatMeta(postId, "carousel").captionPosition ?? "bottom"
+    },
+  )
+  // Re-rendering the saved slides after the user moves the caption. Separate
+  // from `driveImporting` so the progress line can say what is actually
+  // happening — nothing is being fetched, the slides are being redrawn.
+  const [recaptioning, setRecaptioning] = useState(false)
+  const [recaptionProgress, setRecaptionProgress] = useState("")
+
   const [dialogFor, setDialogFor] = useState<string | null>(null)
   const dialogSlides = dialogFor
     ? (generatedByTemplate[dialogFor] ?? null)
     : null
   // Approving what's already the post's carousel is meaningless (the saved
   // set is seeded by reference, so identity comparison is enough).
-  const dialogCanApprove = !!dialogFor && dialogSlides !== images
+  // Mid-redraw the viewer is deliberately a step ahead of the post, so the
+  // identity test briefly reads as "a different set". It isn't one — it's the
+  // same carousel with its caption moving — so the approve button stays away.
+  const dialogCanApprove =
+    !!dialogFor && dialogSlides !== images && !recaptioning
 
   // Any template dialog that actually opened counts as "seen" — so the
   // auto-open-on-mount effect never re-shows a result the user already saw.
@@ -1741,21 +1761,6 @@ function CarouselFlow({
   const [driveImportProgress, setDriveImportProgress] = useState("")
   const [driveImportError, setDriveImportError] = useState<string | null>(null)
 
-  // Where the caption sits on the slides — ONE choice for the whole carousel,
-  // not one per slide (Hani, 2026-08-13). A carousel is read as a single
-  // object; a caption that wandered between slides would look like a mistake,
-  // not a choice. Same three positions as a feed image post, same control.
-  const [captionPosition, setCaptionPosition] = useState<CaptionPosition>(
-    () => {
-      if (!postId || typeof window === "undefined") return "bottom"
-      return getFormatMeta(postId, "carousel").captionPosition ?? "bottom"
-    },
-  )
-  // Re-rendering the saved slides after the user moves the caption. Separate
-  // from `driveImporting` so the progress line can say what is actually
-  // happening — nothing is being fetched, the slides are being redrawn.
-  const [recaptioning, setRecaptioning] = useState(false)
-  const [recaptionProgress, setRecaptionProgress] = useState("")
 
   // Row order controls slide order only when the slides came from these
   // links. A carousel generated from a template is attributed to that
@@ -1921,16 +1926,32 @@ function CarouselFlow({
     setRecaptioning(true)
     setDriveImportError(null)
     try {
-      const redrawn: string[] = []
-      for (let i = 0; i < bares.length; i++) {
+      // The slide she is LOOKING at is redrawn first, and each slide lands in
+      // the viewer the moment it finishes. Rendering in index order and
+      // committing once at the end would mean staring at the old caption
+      // through every other slide's render before the one in front of her
+      // moved — which is the whole thing she asked for.
+      const order = [
+        previewIndex,
+        ...bares.map((_, i) => i).filter((i) => i !== previewIndex),
+      ].filter((i) => i >= 0 && i < bares.length)
+
+      const redrawn = [...images]
+      let done = 0
+      for (const i of order) {
         setRecaptionProgress(
-          `מזיזים את הכיתוב בשקופית ${i + 1} מתוך ${bares.length}...`,
+          `מזיזים את הכיתוב — ${++done} מתוך ${bares.length} שקופיות...`,
         )
-        redrawn.push(await captionSlide(bares[i], i, next))
+        redrawn[i] = await captionSlide(bares[i], i, next)
+        // A copy per step: the viewer reads this set, and mutating the array
+        // it already holds would not re-render.
+        const soFar = [...redrawn]
+        setGeneratedByTemplate((p) => ({ ...p, [DRIVE_IMPORT_KEY]: soFar }))
       }
-      // The post's carousel AND the set behind the preview dialog, together:
-      // leaving the dialog pointing at the old renders would show the caption
-      // back where it was the moment she opened the slides to check.
+      // Only now does the POST change. Saving per slide would autosave the
+      // whole carousel once per render. The viewer and the post are handed
+      // the same array so they stay identical by reference — that identity is
+      // what tells the dialog this is already the post's carousel.
       onImagesChange(redrawn)
       setGeneratedByTemplate((p) => ({ ...p, [DRIVE_IMPORT_KEY]: redrawn }))
       toast.success("הכיתוב הוזז בכל השקופיות")
@@ -1942,6 +1963,49 @@ function CarouselFlow({
       setRecaptionProgress("")
     }
   }
+
+  /**
+   * The placement control, shown WITH the finished carousel rather than with
+   * the import (Hani, 2026-08-13).
+   *
+   * Placement is a judgement you make by looking: you decide the caption sits
+   * too low once you can see it sitting too low. Asking for it up in the
+   * import block meant choosing blind, before a single slide existed. So it
+   * lives next to the slides, in both places they are shown — the panel's
+   * grey band and the slide viewer — sharing one choice and one handler.
+   *
+   * Only for a carousel the user brought: a template-generated one draws its
+   * own text into the design, so there is no overlay on it to place.
+   */
+  const captionPlacement =
+    !savedTemplateId && images && images.length > 0 ? (
+      <div className="flex w-full max-w-[280px] flex-col gap-3 rounded-[14px] border border-border-neutral-default bg-white px-3.5 py-3 dark:bg-gray-10 dark:border-gray-30">
+        <div className="flex flex-col gap-1">
+          <span className="text-small-bold text-text-primary-default">
+            כיתוב על השקופיות
+          </span>
+          <span className="text-xs-body text-text-neutral-default">
+            המיקום חל על כל השקופיות בקרוסלה.
+          </span>
+        </div>
+        <CaptionPositionPicker
+          value={captionPosition}
+          onChange={handleCaptionPositionChange}
+          disabled={driveImporting || recaptioning}
+        />
+        {/* Named progress, not a bare spinner: she moved the caption and the
+            whole set is being redrawn, which takes a beat per slide. */}
+        {recaptioning && (
+          <p
+            className="flex items-center gap-1.5 text-xs text-text-neutral-default"
+            role="status"
+          >
+            <Loader2 className="size-3.5 animate-spin text-yellow-50" />
+            {recaptionProgress || "מזיזים את הכיתוב..."}
+          </p>
+        )}
+      </div>
+    ) : null
 
   const handleDownloadAll = async () => {
     if (!dialogSlides) return
@@ -2144,6 +2208,12 @@ function CarouselFlow({
                 />
               </div>
 
+              {/* Placing the caption belongs HERE most of all: this is the
+                  only surface that shows a slide big enough to judge where
+                  the words sit, and the only one that shows slides past the
+                  first. Moving it redraws the set under the picture. */}
+              {dialogFor === DRIVE_IMPORT_KEY && captionPlacement}
+
               {dialogSlides.length > 1 && (
                 <div className="flex items-center gap-3">
                   <button
@@ -2255,45 +2325,6 @@ function CarouselFlow({
           reorderHint="גררו שורה כדי לשנות את סדר השקופיות בקרוסלה."
           beforeRows={
             <>
-        {/* Where the caption sits. The same control the feed image post has —
-            literally the same component — because a slide the user brought is
-            captioned by the same renderer, so "where do the words sit" has to
-            be the same decision wherever it is asked.
-
-            ONE choice for the whole carousel, not one per slide (Hani,
-            2026-08-13): a carousel is read as a single object, and a caption
-            that wandered between slides would look like a mistake rather than
-            a choice. It sits here, inside the import block, because that is
-            what it governs — the words are burned into the pictures as they
-            come in, so this is a property of the import, not of the panel. */}
-        <div className="flex w-full flex-col gap-3 rounded-[14px] border border-border-neutral-default bg-white px-3.5 py-3 dark:bg-gray-10 dark:border-gray-30">
-          <div className="flex flex-col gap-1">
-            <span className="text-small-bold text-text-primary-default">
-              כיתוב על השקופיות
-            </span>
-            <span className="text-xs-body text-text-neutral-default">
-              הטקסט של כל שקופית מוטמע בתמונה שהבאתם. המיקום חל על כל השקופיות
-              בקרוסלה.
-            </span>
-          </div>
-          <CaptionPositionPicker
-            value={captionPosition}
-            onChange={handleCaptionPositionChange}
-            disabled={driveImporting || recaptioning}
-          />
-          {/* Named progress, not a bare spinner: she moved a caption and the
-              whole set has to be redrawn, which takes a beat per slide. */}
-          {recaptioning && (
-            <p
-              className="flex items-center gap-1.5 text-xs text-text-neutral-default"
-              role="status"
-            >
-              <Loader2 className="size-3.5 animate-spin text-yellow-50" />
-              {recaptionProgress || "מזיזים את הכיתוב..."}
-            </p>
-          )}
-        </div>
-
         {/* The post's carousel, when it was imported rather than generated.
             It sits HERE and not under the template grid because this is where
             it came from (Hani, 2026-07-28) — and it uses the template tile's
@@ -2340,6 +2371,12 @@ function CarouselFlow({
           <p className="text-center text-xs text-text-neutral-default">
             הקרוסלה שלך
           </p>
+
+          {/* Controls before the picture, the same order the image post's
+              grey band uses: you read what you can change, then watch the
+              slides answer. */}
+          {captionPlacement}
+
           <button
             type="button"
             onClick={() => openDialog(savedTemplateId ?? DRIVE_IMPORT_KEY)}
