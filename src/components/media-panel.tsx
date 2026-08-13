@@ -61,6 +61,13 @@ import {
 import type { SlideData } from "@/lib/carousel-templates"
 import { CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import { parseTextToSlides } from "@/lib/carousel-slides"
+import {
+  carouselBareSlides,
+  carouselCaptionedSlides,
+  captionCarouselSlide,
+  forgetCarouselSlides,
+  readCarouselCaptionSettings,
+} from "@/lib/carousel-caption"
 import { MAX_CAROUSEL_SLIDES } from "@/lib/carousel-limits"
 import {
   getFormatMeta,
@@ -1703,6 +1710,7 @@ function CarouselFlow({
       // well want to re-import them.
       setFormatMeta(postId, "carousel", { templateId: undefined })
       carouselGenCache.delete(postId)
+      forgetCarouselSlides(postId)
     }
     setSavedTemplateId(undefined)
     onImagesChange(null)
@@ -1728,12 +1736,17 @@ function CarouselFlow({
   const [driveImportProgress, setDriveImportProgress] = useState("")
   const [driveImportError, setDriveImportError] = useState<string | null>(null)
 
+
   // Row order controls slide order only when the slides came from these
   // links. A carousel generated from a template is attributed to that
   // template (`savedTemplateId`), and dragging rows must not reshuffle it.
   const slidesFollowRowOrder = !savedTemplateId
 
+  // The caption's on/off and placement are set on the carousel's own card, on
+  // the canvas — the import just reads whatever is currently chosen, so a set
+  // brought in now matches the one brought in an hour ago.
   const handleDriveImport = async (rows: string[]) => {
+    const { captionOn: caption, position } = readCarouselCaptionSettings(postId)
     // Every carousel slide comes from a link, so blank rows are just empty
     // form scaffolding here.
     const links = rows.filter(Boolean)
@@ -1758,6 +1771,9 @@ function CarouselFlow({
     }
     try {
       const slides: string[] = []
+      // The pictures as they arrived, kept so moving the caption later is a
+      // redraw rather than a second download of every file.
+      const bares: string[] = []
       for (let i = 0; i < links.length; i++) {
         setDriveImportProgress(`טוען שקופית ${i + 1} מתוך ${links.length}...`)
         const res = await fetch("/api/media/from-drive", {
@@ -1779,30 +1795,26 @@ function CarouselFlow({
         // user brought rather than failing the whole import — a bare slide
         // is recoverable, a dead import is not.
         const bare = data.base64 as string
-        setDriveImportProgress(
-          `מטמיעים כיתוב בשקופית ${i + 1} מתוך ${links.length}...`,
-        )
-        let finished = bare
-        if (postId) {
-          try {
-            const capRes = await fetch("/api/media/caption-image", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                postId,
-                format: "carousel",
-                imageBase64: bare,
-                slideIndex: i,
-                persist: false,
-              }),
-            })
-            const capData = await capRes.json()
-            if (capRes.ok && capData.image) finished = capData.image as string
-          } catch {
-            // Same fall-back as a non-OK response: keep the bare slide.
-          }
+        bares.push(bare)
+        if (caption) {
+          setDriveImportProgress(
+            `מטמיעים כיתוב בשקופית ${i + 1} מתוך ${links.length}...`,
+          )
+          slides.push(
+            postId
+              ? await captionCarouselSlide(postId, bare, i, position)
+              : bare,
+          )
+        } else {
+          slides.push(bare)
         }
-        slides.push(finished)
+      }
+      if (postId) {
+        carouselBareSlides.set(postId, bares)
+        // With the caption off there is no captioned render to restore, and
+        // any older one was drawn at a position that may since have moved.
+        if (caption) carouselCaptionedSlides.set(postId, slides)
+        else carouselCaptionedSlides.delete(postId)
       }
       // Make it the post's carousel (same base64 shape as generation → the
       // parent's autosave persists it as media_assets rows).
@@ -2191,6 +2203,7 @@ function CarouselFlow({
           <p className="text-center text-xs text-text-neutral-default">
             הקרוסלה שלך
           </p>
+
           <button
             type="button"
             onClick={() => openDialog(savedTemplateId ?? DRIVE_IMPORT_KEY)}
@@ -2335,9 +2348,34 @@ function MediaUploadFlow({
   const [captionOriginalUrl, setCaptionOriginalUrl] = useState<string | null>(
     null,
   )
-  const [captionOn, setCaptionOn] = useState(true)
-  const [captionPosition, setCaptionPosition] =
-    useState<CaptionPosition>("bottom")
+  // Seeded from storage, not from a constant: for an image post these are set
+  // on the post's own card on the canvas, and an upload has to be captioned
+  // the way she last chose rather than back at the default.
+  const [captionOn, setCaptionOn] = useState(() => {
+    if (!postId || typeof window === "undefined") return true
+    return getFormatMeta(postId, format as FormatId).captionOn ?? true
+  })
+  const [captionPosition, setCaptionPosition] = useState<CaptionPosition>(() => {
+    if (!postId || typeof window === "undefined") return "bottom"
+    return getFormatMeta(postId, format as FormatId).captionPosition ?? "bottom"
+  })
+  // Both settings are owned by the format's card on the canvas. The panel
+  // reads them — an upload has to be captioned the way she last chose — and
+  // follows along while it is open, since timing-storage fires a synthetic
+  // `storage` event on every write. It never writes them, and never re-renders
+  // a picture because one changed: that is the card's job, and doing it here
+  // too would draw the same caption twice.
+  useEffect(() => {
+    if (!postId) return
+    const sync = () => {
+      const meta = getFormatMeta(postId, format as FormatId)
+      setCaptionOn(meta.captionOn ?? true)
+      setCaptionPosition(meta.captionPosition ?? "bottom")
+    }
+    sync()
+    window.addEventListener("storage", sync)
+    return () => window.removeEventListener("storage", sync)
+  }, [postId, format])
   // Every AI path in this panel (image post, story, b-roll) draws through the
   // user's own OpenAI key. `null` while we're still asking; `false` swaps the
   // generate card for MediaCreditsCard.
@@ -3032,58 +3070,27 @@ function MediaUploadFlow({
     if (captionedImage.format !== format) return
     if (captionedImage.originalUrl) {
       setCaptionOriginalUrl(captionedImage.originalUrl)
+      // Captioning REPLACES the format's stored image with the captioned
+      // render, so without this nothing remembers what the picture looked
+      // like before — and the control on the card could only ever act in the
+      // session that uploaded it.
+      if (postId) {
+        setFormatMeta(postId, format as FormatId, {
+          captionSourceUrl: captionedImage.originalUrl,
+        })
+      }
     }
     if (captionOn) {
       setPreviewUrl(captionedImage.url)
       setPreviewKind("image")
+      // Both stills have a card on the canvas now, and the card is where the
+      // caption is switched and placed — so it has to be told what landed.
       if (format === "image_post") onImagePostUrlChange?.(captionedImage.url)
+      if (format === "b_roll") onBRollUrlChange?.(captionedImage.url)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [captionEnabled, format, captionedImage])
 
-  /**
-   * Re-render when the user moves the caption. Skipped on the first pass —
-   * the attach already fired one render with these very defaults, and firing
-   * again here would double every upload.
-   */
-  const captionSettingsRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (!captionEnabled || !captionOn) return
-    const source = captionOriginalUrl
-    if (!source) return
-    const key = `${source}|${captionPosition}`
-    if (captionSettingsRef.current === null) {
-      captionSettingsRef.current = key
-      return
-    }
-    if (captionSettingsRef.current === key) return
-    captionSettingsRef.current = key
-    runImageCaption(source)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [captionEnabled, captionOn, captionPosition, captionOriginalUrl])
-
-  /**
-   * Which picture the POST uses. Switching to "בלי כיתוב" has to write the
-   * original back into the format's slot — otherwise the toggle only changes
-   * what the panel shows and the post still publishes the captioned one.
-   */
-  const handleCaptionOnChange = async (on: boolean) => {
-    setCaptionOn(on)
-    const next = on ? (captionedImage?.url ?? null) : captionOriginalUrl
-    if (!next || !postId) return
-    setPreviewUrl(next)
-    setPreviewKind("image")
-    if (format === "image_post") onImagePostUrlChange?.(next)
-    try {
-      await fetch(`/api/core-posts/${postId}/media`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ format, url: next, assetType: "image" }),
-      })
-    } catch (err) {
-      console.error("[media-panel][caption-toggle]", err)
-    }
-  }
   const bRollAttemptRef = useRef(0)
 
   // Whether the b-roll link field is open. Closed at rest behind the Drive
@@ -3779,9 +3786,6 @@ function MediaUploadFlow({
               captionedUrl={captionedImage?.url ?? null}
               originalUrl={captionOriginalUrl ?? previewUrl}
               captionOn={captionOn}
-              onCaptionOnChange={handleCaptionOnChange}
-              position={captionPosition}
-              onPositionChange={setCaptionPosition}
               onRetry={() => {
                 clearImageCaptionError(postId)
                 const source = captionOriginalUrl ?? previewUrl
@@ -4336,9 +4340,6 @@ function MediaUploadFlow({
                 captionedUrl={captionedImage?.url ?? null}
                 originalUrl={captionOriginalUrl ?? previewUrl}
                 captionOn={captionOn}
-                onCaptionOnChange={handleCaptionOnChange}
-                position={captionPosition}
-                onPositionChange={setCaptionPosition}
                 onRetry={() => {
                   clearImageCaptionError(postId)
                   const source = captionOriginalUrl ?? previewUrl
