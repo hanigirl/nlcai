@@ -61,6 +61,7 @@ import {
 import type { SlideData } from "@/lib/carousel-templates"
 import { CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import { parseTextToSlides } from "@/lib/carousel-slides"
+import { MAX_CAROUSEL_SLIDES } from "@/lib/carousel-limits"
 import {
   getFormatMeta,
   setFormatMeta,
@@ -1298,14 +1299,6 @@ function TalkingHeadFlow({
 /* ------------------------------------------------------------------ */
 
 /**
- * A carousel never runs past this many slides (Hani, 2026-07-29). Not a
- * truncation — a ceiling that forces condensing, because a 9-slide carousel
- * is both worse to read and, on an AI template, nine paid image renders
- * (one generation measured at 7 minutes).
- */
-const MAX_CAROUSEL_SLIDES = 6
-
-/**
  * Fold a long slide list down to `max` by merging ADJACENT slides, keeping
  * order. The first slide (the hook) and the last (the CTA) are preserved on
  * their own wherever possible — the same shape the story split uses — so
@@ -1531,6 +1524,10 @@ function CarouselFlow({
       setGenerating(false)
       return
     }
+    // Backstop only. The writer is told the ceiling and condenses with an
+    // understanding of the words; this merge is mechanical and has none, so
+    // it should fire rarely — when it does, the text itself is over the
+    // ceiling and worth re-generating rather than living with.
     const parsedSlides = condenseSlides(allSlides, MAX_CAROUSEL_SLIDES)
     if (allSlides.length > parsedSlides.length) {
       toast.info(
