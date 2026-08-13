@@ -1656,8 +1656,25 @@ function CarouselFlow({
     setPreviewIndex(0)
   }
 
-  const handleApprove = () => {
-    if (!dialogSlides || !dialogFor) return
+  /**
+   * True when the post's current carousel is slides the user brought herself:
+   * there are slides, and no template made them. Replacing THAT is the case
+   * worth stopping for — replacing one generated carousel with another costs
+   * her nothing she made.
+   */
+  const carouselIsHerOwn =
+    !!images?.length && !savedTemplateId && (driveLinks?.length ?? 0) > 0
+
+  // Holds what the confirm agreed to. The confirm closes the viewer, which
+  // clears dialogFor/dialogSlides — so the pending set has to be captured
+  // here rather than read back off the dialog when "yes" lands.
+  const [pendingTemplateReplace, setPendingTemplateReplace] = useState<
+    { slides: string[]; templateKey: string } | null
+  >(null)
+
+  const applyApprove = (slidesToUse: string[], templateKey: string) => {
+    const dialogSlides = slidesToUse
+    const dialogFor = templateKey
     onImagesChange(dialogSlides)
     // Remember which template made the post's carousel — its tile is the
     // selected one next time the panel opens. DRIVE_IMPORT_KEY is a
@@ -1669,6 +1686,23 @@ function CarouselFlow({
     }
     setSavedTemplateId(templateId)
     setDialogFor(null)
+  }
+
+  const handleApprove = () => {
+    if (!dialogSlides || !dialogFor) return
+    // Only the import case asks. A generated carousel replacing a generated
+    // carousel is not a loss, and a confirm there would train her to click
+    // through the one that matters.
+    if (carouselIsHerOwn && dialogFor !== DRIVE_IMPORT_KEY) {
+      // Close the viewer first — stacking a confirm on an open Dialog makes
+      // the two fight over the focus trap, the same reason delete does it.
+      const slides = dialogSlides
+      const templateKey = dialogFor
+      setDialogFor(null)
+      setPendingTemplateReplace({ slides, templateKey })
+      return
+    }
+    applyApprove(dialogSlides, dialogFor)
   }
 
   // --- Removing the post's carousel ----------------------------------------
@@ -1732,6 +1766,22 @@ function CarouselFlow({
   // links. A carousel generated from a template is attributed to that
   // template (`savedTemplateId`), and dragging rows must not reshuffle it.
   const slidesFollowRowOrder = !savedTemplateId
+
+  // A re-import replaces every slide in the post's carousel. Held here so the
+  // confirm's "yes" runs the very same rows the user submitted.
+  const [pendingDriveReimport, setPendingDriveReimport] = useState<string[] | null>(null)
+
+  /**
+   * Import entry point. Asks first when there is already a carousel to lose;
+   * a first import has nothing to overwrite and goes straight through.
+   */
+  const requestDriveImport = (rows: string[]) => {
+    if (images?.length) {
+      setPendingDriveReimport(rows)
+      return
+    }
+    void handleDriveImport(rows)
+  }
 
   const handleDriveImport = async (rows: string[]) => {
     // Every carousel slide comes from a link, so blank rows are just empty
@@ -2109,8 +2159,37 @@ function CarouselFlow({
         title="למחוק את הקרוסלה מהפוסט?"
         description="השקופיות יימחקו מהפוסט. הטקסט של הקרוסלה והקישורים מהדרייב יישארו, כך שאפשר יהיה ליצור קרוסלה חדשה או לטעון שוב מהדרייב."
         confirmLabel="כן, למחוק"
-        cancelLabel="לא, להשאיר"
+        cancelLabel="לא, בטל"
         onConfirm={handleDeleteCarousel}
+      />
+
+      <ConfirmModal
+        open={!!pendingTemplateReplace}
+        onOpenChange={(open) => { if (!open) setPendingTemplateReplace(null) }}
+        title="יצירה מחדש תמחק את השקופיות שהבאת. להמשיך?"
+        description="השקופיות שהעליתם יוחלפו בקרוסלה החדשה ולא נשמרות. הקישורים מהדרייב יישארו, כך שאפשר יהיה לטעון אותן שוב."
+        confirmLabel="כן, למחוק"
+        cancelLabel="לא, בטל"
+        onConfirm={() => {
+          if (pendingTemplateReplace) {
+            applyApprove(
+              pendingTemplateReplace.slides,
+              pendingTemplateReplace.templateKey,
+            )
+          }
+        }}
+      />
+
+      <ConfirmModal
+        open={!!pendingDriveReimport}
+        onOpenChange={(open) => { if (!open) setPendingDriveReimport(null) }}
+        title="טעינה מחדש תמחק את הקרוסלה הנוכחית. להמשיך?"
+        description="השקופיות שבפוסט כרגע יוחלפו בשקופיות מהקישורים שלמעלה, ואינן נשמרות."
+        confirmLabel="כן, למחוק"
+        cancelLabel="לא, בטל"
+        onConfirm={async () => {
+          if (pendingDriveReimport) await handleDriveImport(pendingDriveReimport)
+        }}
       />
 
       {/* Divider between "generate here" and "bring a ready-made carousel" */}
@@ -2132,7 +2211,7 @@ function CarouselFlow({
           items={images}
           pairItems={slidesFollowRowOrder}
           onItemsReorder={onImagesChange}
-          onImport={handleDriveImport}
+          onImport={requestDriveImport}
           importing={driveImporting}
           importProgress={driveImportProgress}
           importError={driveImportError}
