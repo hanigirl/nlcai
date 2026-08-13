@@ -6,7 +6,8 @@ import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { AppShell } from "@/components/app-shell"
-import { GeminiConnectNoticeCard, useGeminiNoticeVisible } from "@/components/gemini-connect-notice"
+import { GeminiConnectNoticeCard, GeminiNoticeChip, useGeminiNoticeVisible } from "@/components/gemini-connect-notice"
+import { GeminiNoticeReviewToggle } from "@/components/gemini-notice-review-toggle"
 import { InfiniteCanvas } from "@/components/infinite-canvas"
 import { WorkflowCard } from "@/components/workflow-card"
 import { SelectionCard } from "@/components/selection-card"
@@ -196,6 +197,16 @@ function ProjectPageInner() {
   // Read at page level, not inside the notice, so the canvas can reserve room
   // for the pinned card instead of letting it land on the first flow card.
   const geminiNoticeVisible = useGeminiNoticeVisible()
+  // --- Gemini notice dismiss: design review gate (?close=a|b) -------------
+  // Off by default, so with no param this page renders exactly what it renders
+  // in production. Both directions put the close control on the LEFT edge of
+  // the card (RTL end); they differ in what closing leaves behind:
+  //   a — the card goes away for this visit and returns on the next one
+  //   b — the card collapses into a pinned chip that reopens it
+  const closeParam = searchParams.get("close")
+  const noticeCloseVariant: "a" | "b" | null =
+    closeParam === "a" || closeParam === "b" ? closeParam : null
+  const [noticeDismissed, setNoticeDismissed] = useState(false)
   const [response, setResponse] = useState("")
   const [corePost, setCorePost] = useState("")
   const [postLoading, setPostLoading] = useState(false)
@@ -1780,7 +1791,29 @@ function ProjectPageInner() {
           zoomed along with the cards instead of staying put. As a sibling it
           is a true overlay: the canvas moves underneath it, untouched.
           Renders nothing once a key is connected. */}
-      {geminiNoticeVisible && <GeminiConnectNoticeCard variant="floating" />}
+      {geminiNoticeVisible &&
+        (noticeCloseVariant === null ? (
+          <GeminiConnectNoticeCard variant="floating" />
+        ) : noticeDismissed ? (
+          noticeCloseVariant === "b" ? (
+            <GeminiNoticeChip onExpand={() => setNoticeDismissed(false)} />
+          ) : null
+        ) : (
+          <GeminiConnectNoticeCard
+            variant="floating"
+            onDismiss={() => setNoticeDismissed(true)}
+          />
+        ))}
+
+      {/* REVIEW SCAFFOLDING — remove with the ?close gate once a direction is
+          picked. Never renders without the param. */}
+      {noticeCloseVariant && (
+        <GeminiNoticeReviewToggle
+          variant={noticeCloseVariant}
+          dismissed={noticeDismissed}
+          onChange={setNoticeDismissed}
+        />
+      )}
 
       <InfiniteCanvas>
         {apiNotConnected && (
