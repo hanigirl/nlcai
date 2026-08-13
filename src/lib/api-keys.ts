@@ -50,6 +50,13 @@ const MIN_LENGTH: Partial<Record<KeyName, number>> = {
   gemini_api_key: 30,
 }
 
+// Wraps a Latin run in a bidi isolate (FSI…PDI) so neutral characters next to
+// it — commas, periods, parentheses — stay on the side the reader expects when
+// the run sits inside a Hebrew sentence.
+function isolate(text: string): string {
+  return `\u2068${text}\u2069`
+}
+
 // Cheap synchronous gate so we catch obvious paste-into-wrong-field mistakes
 // before spending an API call. Real example: user pasted an apify_api_ token
 // into the Anthropic field and only discovered it when the whole app started
@@ -63,7 +70,12 @@ export function validateApiKeyFormat(keyName: KeyName, value: string): string | 
 
   const signature = PROVIDER_SIGNATURES.find((s) => s.matches(v))
   if (signature && signature.owner !== keyName) {
-    return `זה נראה כמו מפתח של ${PROVIDER_LABEL[signature.owner]}, לא של ${PROVIDER_LABEL[keyName]}. בדקו שהעתקתם את המפתח מהספק הנכון והדבקתם אותו בשדה הנכון.`
+    // Same bidi trap the Gemini prefixes hit: a Latin provider name inside a
+    // Hebrew sentence drags the following comma/period to the wrong side, so
+    // "Claude (Anthropic)," renders as ",(Claude (Anthropic". Isolate each
+    // label at the interpolation site — the labels themselves stay clean for
+    // any other caller.
+    return `זה נראה כמו מפתח של ${isolate(PROVIDER_LABEL[signature.owner])}, לא של ${isolate(PROVIDER_LABEL[keyName])}. בדקו שהעתקתם את המפתח מהספק הנכון והדבקתם אותו בשדה הנכון.`
   }
 
   const min = MIN_LENGTH[keyName]
@@ -107,11 +119,25 @@ export async function getUserApiKey(
 // the far side of the run and the user reads ".AQ" instead of "AQ.". Wrapping
 // the token in an isolate (FSI…PDI) keeps the dot attached to the token.
 // These constants are for plain strings; in JSX use <bdi>AQ.</bdi>.
-export const GEMINI_NEW_KEY_PREFIX = "\u2068AQ.\u2069"
-export const GEMINI_LEGACY_KEY_PREFIX = "\u2068AIza\u2069"
-// Same isolate, applied to the whole breadcrumb so the arrow keeps pointing
-// the way it does in AI Studio instead of being flipped by the Hebrew flow.
-export const AI_STUDIO_PATH = "\u2068aistudio.google.com \u2192 API keys\u2069"
+export const GEMINI_NEW_KEY_PREFIX = isolate("AQ.")
+export const GEMINI_LEGACY_KEY_PREFIX = isolate("AIza")
+
+// Same isolate, applied to whole breadcrumbs so the arrows keep pointing the
+// way they do in each provider's own console instead of being flipped by the
+// Hebrew flow, and so the sentence's final period stays at the end.
+//
+// Every console path a user-facing message can send someone to lives here.
+// They were previously inlined per provider, which is how the Gemini one got
+// fixed while the other four kept rendering ".console.anthropic.com" and
+// "API keys ← platform.openai.com".
+export const AI_STUDIO_PATH = isolate("aistudio.google.com \u2192 API keys")
+export const AI_STUDIO_HOST = isolate("aistudio.google.com")
+export const ANTHROPIC_CONSOLE_HOST = isolate("console.anthropic.com")
+export const ANTHROPIC_BILLING_PATH = isolate("console.anthropic.com \u2192 Billing")
+export const APIFY_CONSOLE_HOST = isolate("console.apify.com")
+export const OPENAI_KEYS_PATH = isolate("platform.openai.com \u2192 API keys")
+export const OPENAI_BILLING_PATH = isolate("platform.openai.com \u2192 Billing")
+export const HEYGEN_API_PATH = isolate("app.heygen.com \u2192 Settings \u2192 API")
 
 // True for the legacy Google "standard" key format. Google began refusing
 // unrestricted standard keys in June 2026 and retires the format entirely in

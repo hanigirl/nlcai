@@ -7,6 +7,13 @@ import {
   GEMINI_NEW_KEY_PREFIX,
   GEMINI_LEGACY_KEY_PREFIX,
   AI_STUDIO_PATH,
+  AI_STUDIO_HOST,
+  ANTHROPIC_CONSOLE_HOST,
+  ANTHROPIC_BILLING_PATH,
+  APIFY_CONSOLE_HOST,
+  OPENAI_KEYS_PATH,
+  OPENAI_BILLING_PATH,
+  HEYGEN_API_PATH,
   type KeyName,
 } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
@@ -63,10 +70,10 @@ export async function POST(req: NextRequest) {
       const status = (err as { status?: number })?.status
       const msg = err instanceof Error ? err.message : String(err)
       if (status === 401) {
-        return NextResponse.json({ ok: false, code: "invalid", message: "המפתח לא תקף. ודאי שהעתקת אותו נכון מ-console.anthropic.com." } satisfies Verdict)
+        return NextResponse.json({ ok: false, code: "invalid", message: `המפתח לא תקף. ודאי שהעתקת אותו נכון מ-${ANTHROPIC_CONSOLE_HOST}.` } satisfies Verdict)
       }
       if (status === 402 || /credit|insufficient/i.test(msg)) {
-        return NextResponse.json({ ok: false, code: "credits", message: "אין יתרת קרדיטים בחשבון Anthropic שלך. תיכנסי ל-console.anthropic.com → Billing להוסיף יתרה." } satisfies Verdict)
+        return NextResponse.json({ ok: false, code: "credits", message: `אין יתרת קרדיטים בחשבון Anthropic שלך. תיכנסי ל-${ANTHROPIC_BILLING_PATH} להוסיף יתרה.` } satisfies Verdict)
       }
       return NextResponse.json({ ok: false, code: "network", message: `לא הצלחנו לאמת את המפתח: ${msg}` } satisfies Verdict)
     }
@@ -81,7 +88,7 @@ export async function POST(req: NextRequest) {
       })
       if (res.ok) return NextResponse.json({ ok: true } satisfies Verdict)
       if (res.status === 401) {
-        return NextResponse.json({ ok: false, code: "invalid", message: "המפתח של Apify לא תקף. ודאי שהעתקת אותו מ-console.apify.com." } satisfies Verdict)
+        return NextResponse.json({ ok: false, code: "invalid", message: `המפתח של Apify לא תקף. ודאי שהעתקת אותו מ-${APIFY_CONSOLE_HOST}.` } satisfies Verdict)
       }
       return NextResponse.json({ ok: false, code: "network", message: `Apify החזיר ${res.status}` } satisfies Verdict)
     } catch (err) {
@@ -100,10 +107,10 @@ export async function POST(req: NextRequest) {
       })
       if (res.ok) return NextResponse.json({ ok: true } satisfies Verdict)
       if (res.status === 401) {
-        return NextResponse.json({ ok: false, code: "invalid", message: "המפתח של OpenAI לא תקף. ודאו שהעתקתם אותו נכון מ-platform.openai.com → API keys." } satisfies Verdict)
+        return NextResponse.json({ ok: false, code: "invalid", message: `המפתח של OpenAI לא תקף. ודאו שהעתקתם אותו נכון מ-${OPENAI_KEYS_PATH}.` } satisfies Verdict)
       }
       if (res.status === 429) {
-        return NextResponse.json({ ok: false, code: "credits", message: "חשבון ה-OpenAI שלכם חרג מהמכסה או שאין בו יתרה. היכנסו ל-platform.openai.com → Billing." } satisfies Verdict)
+        return NextResponse.json({ ok: false, code: "credits", message: `חשבון ה-OpenAI שלכם חרג מהמכסה או שאין בו יתרה. היכנסו ל-${OPENAI_BILLING_PATH}.` } satisfies Verdict)
       }
       return NextResponse.json({ ok: false, code: "network", message: `OpenAI החזיר ${res.status}` } satisfies Verdict)
     } catch (err) {
@@ -122,7 +129,7 @@ export async function POST(req: NextRequest) {
       })
       if (res.ok) return NextResponse.json({ ok: true } satisfies Verdict)
       if (res.status === 429) {
-        return NextResponse.json({ ok: false, code: "credits", message: "חשבון ה-Gemini שלכם חרג מהמכסה. היכנסו ל-aistudio.google.com לבדוק את המגבלות של התוכנית." } satisfies Verdict)
+        return NextResponse.json({ ok: false, code: "credits", message: `חשבון ה-Gemini שלכם חרג מהמכסה. היכנסו ל-${AI_STUDIO_HOST} לבדוק את המגבלות של התוכנית.` } satisfies Verdict)
       }
       if (res.status === 400 || res.status === 401 || res.status === 403) {
         // Google is retiring the legacy "AIza" standard keys: unrestricted
@@ -160,7 +167,7 @@ export async function POST(req: NextRequest) {
       })
       if (res.ok) return NextResponse.json({ ok: true } satisfies Verdict)
       if (res.status === 401 || res.status === 403) {
-        return NextResponse.json({ ok: false, code: "invalid", message: "המפתח של HeyGen לא תקף. ודאי שהעתקת אותו מ-app.heygen.com → Settings → API." } satisfies Verdict)
+        return NextResponse.json({ ok: false, code: "invalid", message: `המפתח של HeyGen לא תקף. ודאי שהעתקת אותו מ-${HEYGEN_API_PATH}.` } satisfies Verdict)
       }
       return NextResponse.json({ ok: false, code: "network", message: `HeyGen החזיר ${res.status}` } satisfies Verdict)
     } catch (err) {
