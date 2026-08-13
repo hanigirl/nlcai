@@ -6,7 +6,7 @@ import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
 import { CaptionControls } from "@/components/image-caption-block"
 import { useCarouselCaption } from "@/lib/carousel-caption"
-import { useImagePostCaption } from "@/lib/image-post-caption"
+import { useStillCaption } from "@/lib/still-caption"
 import { toast } from "sonner"
 import { AppShell } from "@/components/app-shell"
 import { GeminiConnectNoticeCard, useGeminiNoticeVisible } from "@/components/gemini-connect-notice"
@@ -2396,6 +2396,7 @@ function ProjectPageInner() {
                           bRollUrl={bRollUrl}
                           bRollCardRef={bRollCardRef}
                           onBRollEdit={() => setSelectedFormatCard("b_roll")}
+                          onBRollUrlChange={setBRollUrl}
                         />
                       </div>
                     </div>
@@ -2577,6 +2578,7 @@ function FormatTree({
   bRollUrl,
   bRollCardRef,
   onBRollEdit,
+  onBRollUrlChange,
 }: {
   formats: string[]
   formatPosts: Record<string, string>
@@ -2621,6 +2623,7 @@ function FormatTree({
   onStoryEdit: () => void
   storyVideoUrl: string | null
   bRollUrl: string | null
+  onBRollUrlChange: (url: string) => void
   bRollCardRef: React.RefObject<HTMLDivElement | null>
   onBRollEdit: () => void
 }) {
@@ -3048,6 +3051,16 @@ function FormatTree({
               {/* The generated b-roll clip, as its own card under the b-roll
                   script — the same shape story and talking_head use, so every
                   format's finished media reads the same way on the canvas. */}
+              {/* The b-roll's card. A b-roll starts life as a STILL — the
+                  picture she brought, with the post's words drawn on it —
+                  and only becomes a clip once that still is animated and the
+                  caption burned in. The card follows that: it shows the
+                  still, with the caption settings on it, from the moment the
+                  still exists, and swaps to the player once there is a clip.
+
+                  Before this the card rendered `bRollUrl` in a <video> no
+                  matter what it was, so a still hydrated from storage came
+                  back as an empty player (Hani, 2026-08-13). */}
               {fid === "b_roll" && bRollUrl && (
                 <>
                   <div className="w-[2px] h-7 bg-gray-80" />
@@ -3063,19 +3076,44 @@ function FormatTree({
                     <div className="px-6 flex flex-col gap-4">
                       <div className="flex justify-center">
                         <div className="w-[200px] aspect-[9/16] overflow-hidden rounded-xl border border-border-neutral-default bg-bg-surface">
-                          <video
-                            src={`${bRollUrl}#t=0.001`}
-                            controls
-                            playsInline
-                            muted
-                            // Metadata only — the card sits on the canvas
-                            // whether or not she plays it.
-                            preload="metadata"
-                            className="w-full h-full object-cover"
-                            onMouseDown={(e) => e.stopPropagation()}
-                          />
+                          {isStillUrl(bRollUrl) ? (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img
+                              src={bRollUrl}
+                              alt="הסטיל של הבי-רול"
+                              className="w-full h-full object-cover"
+                              onMouseDown={(e) => e.stopPropagation()}
+                            />
+                          ) : (
+                            <video
+                              src={`${bRollUrl}#t=0.001`}
+                              controls
+                              playsInline
+                              muted
+                              // Metadata only — the card sits on the canvas
+                              // whether or not she plays it.
+                              preload="metadata"
+                              className="w-full h-full object-cover"
+                              onMouseDown={(e) => e.stopPropagation()}
+                            />
+                          )}
                         </div>
                       </div>
+
+                      {/* Only on the still. Once the clip is burned the words
+                          are inside the video, and moving them is an ffmpeg
+                          re-burn rather than the still render this drives —
+                          so offering it here would be a control acting on
+                          something that is no longer on screen. */}
+                      {isStillUrl(bRollUrl) && (
+                        <StillCaptionSettings
+                          postId={savedPostId}
+                          format="b_roll"
+                          url={bRollUrl}
+                          onUrlChange={onBRollUrlChange}
+                        />
+                      )}
+
                       <Button variant="outline" className="w-full" onClick={onBRollEdit}>
                         עריכת בי-רול
                       </Button>
@@ -3111,8 +3149,9 @@ function FormatTree({
                           />
                         </div>
                       </div>
-                      <ImagePostCaptionSettings
+                      <StillCaptionSettings
                         postId={savedPostId}
+                        format="image_post"
                         url={imagePostUrl}
                         onUrlChange={onImagePostUrlChange}
                       />
@@ -3169,23 +3208,36 @@ function FormatTree({
 /* ------------------------------------------------------------------ */
 
 /**
- * The image post's caption settings, on the image post's own card.
+ * A still's caption settings, on that still's own card.
  *
  * Exactly what the carousel card shows, because it is exactly the same
  * decision (Hani, 2026-08-13): include the text or not, and where it sits.
  * Its own component only because the hook cannot be called conditionally and
- * the card renders inline.
+ * the cards render inline.
  */
-function ImagePostCaptionSettings({
+/**
+ * Is this URL a picture rather than a clip?
+ *
+ * Same extension test the talking-head hydration already uses. `formatMedia`
+ * hands back one URL per format and prefers a video when both exist, so an
+ * image here means there is no clip yet.
+ */
+function isStillUrl(url: string) {
+  return /\.(png|jpe?g|webp)(\?|$)/i.test(url)
+}
+
+function StillCaptionSettings({
   postId,
+  format,
   url,
   onUrlChange,
 }: {
   postId: string | null
+  format: "image_post" | "b_roll"
   url: string | null
   onUrlChange: (url: string) => void
 }) {
-  const caption = useImagePostCaption({ postId, url, onUrlChange })
+  const caption = useStillCaption({ postId, format, url, onUrlChange })
   if (!caption.available) return null
   return (
     <div className="w-full" onMouseDown={(e) => e.stopPropagation()}>

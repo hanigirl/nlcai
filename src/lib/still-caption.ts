@@ -5,19 +5,28 @@ import { getFormatMeta, setFormatMeta } from "@/lib/timing-storage"
 import type { CaptionPosition } from "@/components/image-caption-block"
 
 /**
- * The caption on a feed image the user brought — the engine behind the
- * control on the image post's card.
+ * The caption on a STILL the user brought — the engine behind the control on
+ * the image post's card and on the b-roll's.
  *
  * The carousel's sibling (`lib/carousel-caption`), and deliberately separate:
- * a carousel is a set of base64 slides the panel holds in memory, an image
- * post is ONE file that lives in storage and whose captioned render replaces
- * it there. Same decision for the user, different plumbing underneath.
+ * a carousel is a set of base64 slides the panel holds in memory, a still is
+ * ONE file that lives in storage and whose captioned render replaces it
+ * there. Same decision for the user, different plumbing underneath.
+ *
+ * A b-roll still is the same shape as a feed image — one file, one render,
+ * one storage slot — and only differs in the canvas it is drawn on (9:16
+ * rather than 4:5) and which format's words go on it. Both are handled by the
+ * caption route, so both are handled here.
  */
 
-/** The captioned render, so switching back on doesn't redraw it. */
+/** The captioned render per (post, format), so switching back on doesn't redraw it. */
 const captionedImages = new Map<string, string>()
+const cacheKey = (postId: string, format: StillCaptionFormat) =>
+  `${postId}:${format}`
 
-export type ImagePostCaptionControls = {
+export type StillCaptionFormat = "image_post" | "b_roll"
+
+export type StillCaptionControls = {
   available: boolean
   captionOn: boolean
   position: CaptionPosition
@@ -27,27 +36,29 @@ export type ImagePostCaptionControls = {
   progress: string
 }
 
-export function useImagePostCaption({
+export function useStillCaption({
   postId,
+  format,
   url,
   onUrlChange,
 }: {
   postId: string | null
-  /** The picture the post currently uses. */
+  format: StillCaptionFormat
+  /** The picture the post currently uses for this format. */
   url: string | null
   onUrlChange: (url: string) => void
-}): ImagePostCaptionControls {
+}): StillCaptionControls {
   const read = useCallback(() => {
     if (!postId || typeof window === "undefined") {
       return { captionOn: true, position: "bottom" as CaptionPosition, source: undefined }
     }
-    const meta = getFormatMeta(postId, "image_post")
+    const meta = getFormatMeta(postId, format)
     return {
       captionOn: meta.captionOn ?? true,
       position: meta.captionPosition ?? "bottom",
       source: meta.captionSourceUrl,
     }
-  }, [postId])
+  }, [postId, format])
 
   const [settings, setSettings] = useState(read)
   const [busy, setBusy] = useState(false)
@@ -75,16 +86,16 @@ export function useImagePostCaption({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            format: "image_post",
+            format,
             url: next,
             assetType: "image",
           }),
         })
       } catch (err) {
-        console.error("[image-post-caption][apply]", err)
+        console.error("[still-caption][apply]", err)
       }
     },
-    [postId, onUrlChange],
+    [postId, format, onUrlChange],
   )
 
   /** Draw the post's words over the original at `position`. */
@@ -101,23 +112,23 @@ export function useImagePostCaption({
           // first caption IS the captioned one, and that would stack.
           body: JSON.stringify({
             postId,
-            format: "image_post",
+            format,
             sourceUrl: source,
             position,
           }),
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok || !data.url) return null
-        captionedImages.set(postId, data.url as string)
+        captionedImages.set(cacheKey(postId, format), data.url as string)
         return data.url as string
       } catch (err) {
-        console.error("[image-post-caption][render]", err)
+        console.error("[still-caption][render]", err)
         return null
       } finally {
         setProgress("")
       }
     },
-    [postId],
+    [postId, format],
   )
 
   const setPosition = useCallback(
@@ -125,11 +136,11 @@ export function useImagePostCaption({
       if (!postId || busy || next === settings.position) return
       const previous = settings.position
       setSettings((s) => ({ ...s, position: next }))
-      setFormatMeta(postId, "image_post", { captionPosition: next })
+      setFormatMeta(postId, format, { captionPosition: next })
       if (!settings.source) return
       if (!settings.captionOn) {
         // The stored render is no longer the one this position asks for.
-        captionedImages.delete(postId)
+        captionedImages.delete(cacheKey(postId, format))
         return
       }
       setBusy(true)
@@ -141,20 +152,20 @@ export function useImagePostCaption({
         if (drawn) await applyUrl(drawn)
         else {
           setSettings((s) => ({ ...s, position: previous }))
-          setFormatMeta(postId, "image_post", { captionPosition: previous })
+          setFormatMeta(postId, format, { captionPosition: previous })
         }
       } finally {
         setBusy(false)
       }
     },
-    [postId, busy, settings, render, applyUrl],
+    [postId, format, busy, settings, render, applyUrl],
   )
 
   const setCaptionOn = useCallback(
     async (on: boolean) => {
       if (!postId || busy || on === settings.captionOn) return
       setSettings((s) => ({ ...s, captionOn: on }))
-      setFormatMeta(postId, "image_post", { captionOn: on })
+      setFormatMeta(postId, format, { captionOn: on })
       const source = settings.source
       if (!source) return
       setBusy(true)
@@ -164,7 +175,7 @@ export function useImagePostCaption({
           await applyUrl(source)
           return
         }
-        const cached = captionedImages.get(postId)
+        const cached = captionedImages.get(cacheKey(postId, format))
         if (cached) {
           await applyUrl(cached)
           return
@@ -173,13 +184,13 @@ export function useImagePostCaption({
         if (drawn) await applyUrl(drawn)
         else {
           setSettings((s) => ({ ...s, captionOn: false }))
-          setFormatMeta(postId, "image_post", { captionOn: false })
+          setFormatMeta(postId, format, { captionOn: false })
         }
       } finally {
         setBusy(false)
       }
     },
-    [postId, busy, settings, render, applyUrl],
+    [postId, format, busy, settings, render, applyUrl],
   )
 
   return {

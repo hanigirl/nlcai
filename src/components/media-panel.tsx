@@ -3072,7 +3072,10 @@ function MediaUploadFlow({
     if (captionOn) {
       setPreviewUrl(captionedImage.url)
       setPreviewKind("image")
+      // Both stills have a card on the canvas now, and the card is where the
+      // caption is switched and placed — so it has to be told what landed.
       if (format === "image_post") onImagePostUrlChange?.(captionedImage.url)
+      if (format === "b_roll") onBRollUrlChange?.(captionedImage.url)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [captionEnabled, format, captionedImage])
@@ -3111,6 +3114,7 @@ function MediaUploadFlow({
     setPreviewUrl(next)
     setPreviewKind("image")
     if (format === "image_post") onImagePostUrlChange?.(next)
+    if (format === "b_roll") onBRollUrlChange?.(next)
     try {
       await fetch(`/api/core-posts/${postId}/media`, {
         method: "POST",
