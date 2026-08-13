@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
-import { Loader2, Link2, Unlink, Plus, Trash2, Upload, X, Sparkles, Check, Type, Image as ImageIcon, Search, Download } from "lucide-react"
+import { Loader2, Link2, Unlink, Plus, Trash2, Upload, X, Sparkles, Check, Type, Image as ImageIcon, Search, Download, AlertCircle, AlertTriangle } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { ComingSoon } from "@/components/coming-soon"
 import { Input } from "@/components/ui/input"
@@ -16,6 +16,7 @@ import { ProductsList, type ProductEntry } from "@/components/products-list"
 import { BusinessSourcesPanel } from "@/components/business-sources-panel"
 import { toast } from "sonner"
 import { validateIdentityFile } from "@/lib/validate-identity-file"
+import { isLegacyGeminiKey } from "@/lib/api-keys"
 import {
   EMPTY_CORE_IDENTITY,
   type CoreIdentityValues,
@@ -83,7 +84,10 @@ const KEYS: KeyConfig[] = [
   {
     key: "gemini_api_key",
     label: "Gemini API Key",
-    placeholder: "AIza...",
+    // AI Studio issues "AQ." auth keys today; "AIza" is the legacy format
+    // still in circulation until Google retires it. Show both so neither
+    // looks wrong.
+    placeholder: "AQ.... / AIza...",
     helpUrl: "https://aistudio.google.com/apikey",
     helpLabel: "aistudio.google.com",
   },
@@ -270,6 +274,16 @@ function SettingsPageInner() {
     openai_api_key: "",
     gemini_api_key: "",
   })
+  // A rejected key needs a message that stays on screen next to the field —
+  // it tells the user where to go and what to copy, which is more than a
+  // 12-second toast can carry. Cleared as soon as she edits the field.
+  const [keyErrors, setKeyErrors] = useState<Record<KeyName, string | null>>({
+    anthropic_api_key: null,
+    heygen_api_key: null,
+    apify_api_key: null,
+    openai_api_key: null,
+    gemini_api_key: null,
+  })
 
   // Business tab state
   const [businessName, setBusinessName] = useState("")
@@ -452,6 +466,7 @@ function SettingsPageInner() {
     const value = inputValues[keyName].trim()
     if (!value) return
     setSaving(keyName)
+    setKeyErrors((prev) => ({ ...prev, [keyName]: null }))
     try {
       // Validate format + live against the provider before persisting.
       // Catches: keys pasted into wrong field, typos, expired keys, 0 credits.
@@ -462,7 +477,7 @@ function SettingsPageInner() {
       }).then((r) => r.json()).catch(() => ({ ok: false, code: "network", message: "תקלת רשת" }))
 
       if (!validation.ok) {
-        toast.error(validation.message ?? "המפתח לא עבר ולידציה", { duration: 12000 })
+        setKeyErrors((prev) => ({ ...prev, [keyName]: validation.message ?? "המפתח לא עבר ולידציה" }))
         return
       }
 
@@ -1169,6 +1184,9 @@ function SettingsPageInner() {
                   }).map((cfg) => {
                     const stored = storedKeys[cfg.key]
                     const isSaving = saving === cfg.key
+                    const error = keyErrors[cfg.key]
+                    const errorId = `${cfg.key}-error`
+                    const showLegacyGeminiWarning = cfg.key === "gemini_api_key" && isLegacyGeminiKey(stored)
                     return (
                       <div key={cfg.key} className="flex flex-col gap-3 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 p-6">
                         <div className="flex items-center justify-between">
@@ -1176,19 +1194,54 @@ function SettingsPageInner() {
                           {stored && <span className="text-xs-body text-text-neutral-default font-mono">{maskKey(stored)}</span>}
                         </div>
                         {stored ? (
-                          <Button size="sm" variant="outline" onClick={() => handleDisconnect(cfg.key)} disabled={isSaving} className="w-fit gap-2 border-button-destructive-default text-button-destructive-default hover:bg-red-95">
-                            {isSaving ? <Loader2 className="size-4 animate-spin" /> : <Unlink className="size-4" />}
-                            {isSaving ? "מנתק..." : "נתק"}
-                          </Button>
+                          <div className="flex flex-col gap-3">
+                            <Button size="sm" variant="outline" onClick={() => handleDisconnect(cfg.key)} disabled={isSaving} className="w-fit gap-2 border-button-destructive-default text-button-destructive-default hover:bg-red-95">
+                              {isSaving ? <Loader2 className="size-4 animate-spin" /> : <Unlink className="size-4" />}
+                              {isSaving ? "מנתק..." : "נתק"}
+                            </Button>
+                            {/* Google retires the legacy "AIza" key format in
+                                September 2026. Warn now, while she can
+                                replace it calmly, instead of letting hook
+                                generation die mid-flow later. */}
+                            {showLegacyGeminiWarning && (
+                              <div className="flex items-start gap-2 rounded-xl border border-yellow-80 bg-bg-surface-primary-default px-3 py-2.5 dark:border-yellow-30">
+                                <AlertTriangle className="size-4 shrink-0 mt-0.5 text-yellow-30 dark:text-yellow-80" aria-hidden="true" />
+                                <p className="text-xs-body text-text-primary-default leading-relaxed">
+                                  המפתח המחובר הוא מהסוג הישן של Google (מתחיל ב-<bdi>AIza</bdi>), שיפסיק לעבוד בספטמבר 2026.
+                                  היכנסו ל-{" "}
+                                  <a href={cfg.helpUrl} target="_blank" rel="noopener noreferrer" className="font-semibold hover:underline">{cfg.helpLabel}</a>
+                                  , צרו מפתח חדש (מתחיל ב-<bdi>AQ.</bdi>) והחליפו אותו כאן.
+                                </p>
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           <div className="flex flex-col gap-2">
                             <div className="flex gap-2">
-                              <Input dir="ltr" placeholder={cfg.placeholder} value={inputValues[cfg.key]} onChange={(e) => setInputValues((prev) => ({ ...prev, [cfg.key]: e.target.value }))} className="flex-1" />
+                              <Input
+                                dir="ltr"
+                                placeholder={cfg.placeholder}
+                                value={inputValues[cfg.key]}
+                                onChange={(e) => {
+                                  const next = e.target.value
+                                  setInputValues((prev) => ({ ...prev, [cfg.key]: next }))
+                                  setKeyErrors((prev) => (prev[cfg.key] ? { ...prev, [cfg.key]: null } : prev))
+                                }}
+                                aria-invalid={error ? true : undefined}
+                                aria-describedby={error ? errorId : undefined}
+                                className="flex-1"
+                              />
                               <Button size="sm" onClick={() => handleConnect(cfg.key)} disabled={!inputValues[cfg.key].trim() || isSaving} className="gap-2">
                                 {isSaving ? <Loader2 className="size-4 animate-spin" /> : <Link2 className="size-4" />}
                                 {isSaving ? "מתחבר..." : "חבר"}
                               </Button>
                             </div>
+                            {error && (
+                              <div id={errorId} role="alert" className="flex items-start gap-2 rounded-xl border border-red-90 bg-red-95 px-3 py-2.5 dark:border-red-90/25 dark:bg-red-95/10">
+                                <AlertCircle className="size-4 shrink-0 mt-0.5 text-button-danger-default" aria-hidden="true" />
+                                <p className="text-xs-body text-text-primary-default leading-relaxed">{error}</p>
+                              </div>
+                            )}
                             <p className="text-xs-body text-text-neutral-default">
                               מצאו את ה-API key שלכם ב-{" "}
                               <a href={cfg.helpUrl} target="_blank" rel="noopener noreferrer" className="text-text-primary-default font-semibold hover:underline">{cfg.helpLabel}</a>

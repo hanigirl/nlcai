@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
-import { validateApiKeyFormat, type KeyName } from "@/lib/api-keys"
+import {
+  validateApiKeyFormat,
+  isLegacyGeminiKey,
+  GEMINI_NEW_KEY_PREFIX,
+  GEMINI_LEGACY_KEY_PREFIX,
+  AI_STUDIO_PATH,
+  type KeyName,
+} from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
 
 // 10s is plenty — each live check is one tiny GET/POST. If a provider
@@ -114,13 +121,29 @@ export async function POST(req: NextRequest) {
         signal: AbortSignal.timeout(8000),
       })
       if (res.ok) return NextResponse.json({ ok: true } satisfies Verdict)
-      if (res.status === 400 || res.status === 401 || res.status === 403) {
-        return NextResponse.json({ ok: false, code: "invalid", message: "המפתח של Gemini לא תקף. ודאו שהעתקתם אותו מ-aistudio.google.com → API keys, ושה-API מופעל בפרויקט." } satisfies Verdict)
-      }
       if (res.status === 429) {
         return NextResponse.json({ ok: false, code: "credits", message: "חשבון ה-Gemini שלכם חרג מהמכסה. היכנסו ל-aistudio.google.com לבדוק את המגבלות של התוכנית." } satisfies Verdict)
       }
-      return NextResponse.json({ ok: false, code: "network", message: `Gemini החזיר ${res.status}` } satisfies Verdict)
+      if (res.status === 400 || res.status === 401 || res.status === 403) {
+        // Google is retiring the legacy "AIza" standard keys: unrestricted
+        // ones have been refused since June 2026, and the whole format goes
+        // away in September 2026. Telling a user holding one to "copy it
+        // again from AI Studio" sends her to re-fetch the very key that will
+        // never work — so name the real cause and the real next step.
+        if (isLegacyGeminiKey(value)) {
+          return NextResponse.json({
+            ok: false,
+            code: "invalid",
+            message: `Google דחתה את המפתח. מפתחות שמתחילים ב-${GEMINI_LEGACY_KEY_PREFIX} הם מהסוג הישן שגוגל מוציאה משימוש. היכנסו ל-${AI_STUDIO_PATH}, צרו מפתח חדש (הוא מתחיל ב-${GEMINI_NEW_KEY_PREFIX}) והדביקו אותו כאן.`,
+          } satisfies Verdict)
+        }
+        return NextResponse.json({
+          ok: false,
+          code: "invalid",
+          message: `Google דחתה את המפתח. היכנסו ל-${AI_STUDIO_PATH}, ודאו שהמפתח פעיל ושה-Gemini API מופעל בפרויקט, ואז העתיקו אותו שוב במלואו.`,
+        } satisfies Verdict)
+      }
+      return NextResponse.json({ ok: false, code: "network", message: `Gemini החזיר ${res.status}. נסו שוב בעוד רגע.` } satisfies Verdict)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       return NextResponse.json({ ok: false, code: "network", message: `לא הצלחנו לאמת את המפתח: ${msg}` } satisfies Verdict)
