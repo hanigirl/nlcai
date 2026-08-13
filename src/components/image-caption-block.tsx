@@ -41,7 +41,7 @@ const POSITION_OPTIONS: Array<{ id: CaptionPosition; label: string }> = [
  * The selected treatment here is the same yellow ring the carousel template
  * tiles already use, so a selection reads the same everywhere in the panel.
  */
-function SegmentedPicker<T extends string>({
+function SegmentedOptions<T extends string>({
   label,
   options,
   value,
@@ -55,9 +55,7 @@ function SegmentedPicker<T extends string>({
   disabled?: boolean
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <p className="text-xs text-text-neutral-default">{label}</p>
-      <div role="radiogroup" aria-label={label} className="flex gap-1.5">
+      <div role="radiogroup" aria-label={label} className="flex flex-1 gap-1.5">
         {options.map((o) => {
           const isSelected = value === o.id
           return (
@@ -79,7 +77,58 @@ function SegmentedPicker<T extends string>({
           )
         })}
       </div>
+  )
+}
+
+function SegmentedPicker<T extends string>({
+  label,
+  ...rest
+}: {
+  label: string
+  options: Array<{ id: T; label: string }>
+  value: T
+  onChange: (v: T) => void
+  disabled?: boolean
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="text-xs text-text-neutral-default">{label}</p>
+      <SegmentedOptions label={label} {...rest} />
     </div>
+  )
+}
+
+/** The with / without switch, shared by both layouts. */
+function CaptionSwitch({
+  ariaLabel,
+  on,
+  onChange,
+}: {
+  ariaLabel: string
+  on: boolean
+  onChange: (on: boolean) => void
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={ariaLabel}
+      onClick={() => onChange(!on)}
+      className={`relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+        on ? "bg-button-primary-default" : "bg-gray-90 dark:bg-gray-30"
+      }`}
+    >
+      <span
+        aria-hidden
+        // RTL: the knob rests at the START (the right edge) when off and
+        // travels away from it when on. `start-*`, never `left-*` — every
+        // surface this appears on is mirrored.
+        className={`absolute top-[3px] size-4 rounded-full bg-white transition-all ${
+          on ? "start-[19px]" : "start-[3px]"
+        }`}
+      />
+    </button>
   )
 }
 
@@ -102,8 +151,9 @@ export function CaptionControls({
   onPositionChange,
   busy,
   progress,
+  layout = "card",
 }: {
-  /** Names what carries the caption — "כיתוב על התמונה" / "...על השקופיות". */
+  /** Card layout only — names what carries the caption. */
   label: string
   captionOn: boolean
   onCaptionOnChange: (on: boolean) => void
@@ -113,33 +163,64 @@ export function CaptionControls({
   busy?: boolean
   /** Named progress, shown under the controls while `busy`. */
   progress?: React.ReactNode
+  /**
+   * "settings" is the layout Hani drew for the carousel's card (2026-08-13):
+   * a "הגדרות" heading, then one row per control with the name on the right
+   * and the control filling the width to its left. No box — it sits directly
+   * on the card it belongs to, between the slides and the buttons.
+   *
+   * "card" is the bordered block the image post's grey band still uses, kept
+   * until that surface moves over too.
+   */
+  layout?: "card" | "settings"
 }) {
+  if (layout === "settings") {
+    return (
+      <div dir="rtl" className="flex w-full flex-col gap-2.5">
+        <span className="text-small-bold text-text-primary-default">
+          הגדרות
+        </span>
+
+        <div className="flex items-center gap-3">
+          <span className="w-12 shrink-0 text-small text-text-primary-default">
+            כיתוב
+          </span>
+          <CaptionSwitch
+            ariaLabel="כיתוב"
+            on={captionOn}
+            onChange={onCaptionOnChange}
+          />
+        </div>
+
+        <div className="flex items-center gap-3">
+          <span className="w-12 shrink-0 text-small text-text-primary-default">
+            מיקום
+          </span>
+          <SegmentedOptions
+            label="מיקום"
+            options={POSITION_OPTIONS}
+            value={position}
+            onChange={onPositionChange}
+            disabled={!captionOn || busy}
+          />
+        </div>
+
+        {busy && progress}
+      </div>
+    )
+  }
+
   return (
     <div className="flex w-full max-w-[280px] flex-col gap-3 rounded-[14px] border border-border-neutral-default bg-white px-3.5 py-3 dark:bg-gray-10 dark:border-gray-30">
       <div className="flex items-center justify-between gap-2">
         <span className="text-small-bold text-text-primary-default">
           {label}
         </span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={captionOn}
-          aria-label={label}
-          onClick={() => onCaptionOnChange(!captionOn)}
-          className={`relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
-            captionOn ? "bg-button-primary-default" : "bg-gray-90 dark:bg-gray-30"
-          }`}
-        >
-          <span
-            aria-hidden
-            // RTL: the knob rests at the START (the right edge) when off and
-            // travels away from it when on. `start-*`, never `left-*` — this
-            // panel is mirrored.
-            className={`absolute top-[3px] size-4 rounded-full bg-white transition-all ${
-              captionOn ? "start-[19px]" : "start-[3px]"
-            }`}
-          />
-        </button>
+        <CaptionSwitch
+          ariaLabel={label}
+          on={captionOn}
+          onChange={onCaptionOnChange}
+        />
       </div>
 
       <SegmentedPicker

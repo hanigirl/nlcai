@@ -3273,8 +3273,9 @@ function CarouselResultCard({
               template-generated one draws its own text into the design, so
               there is nothing here to switch off or move. */}
           {caption.available && (
-            <div onMouseDown={(e) => e.stopPropagation()}>
+            <div className="w-full" onMouseDown={(e) => e.stopPropagation()}>
               <CaptionControls
+                layout="settings"
                 label="כיתוב על השקופיות"
                 captionOn={caption.captionOn}
                 onCaptionOnChange={caption.setCaptionOn}
