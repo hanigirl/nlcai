@@ -6,6 +6,7 @@ import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
 import { CaptionControls } from "@/components/image-caption-block"
 import { useCarouselCaption } from "@/lib/carousel-caption"
+import { useImagePostCaption } from "@/lib/image-post-caption"
 import { toast } from "sonner"
 import { AppShell } from "@/components/app-shell"
 import { GeminiConnectNoticeCard, useGeminiNoticeVisible } from "@/components/gemini-connect-notice"
@@ -2387,6 +2388,7 @@ function ProjectPageInner() {
                           imagePostUrl={imagePostUrl}
                           imagePostCardRef={imagePostCardRef}
                           onImagePostEdit={() => setSelectedFormatCard("image_post")}
+                          onImagePostUrlChange={setImagePostUrl}
                           storyImages={storyImages}
                           storyCardRef={storyCardRef}
                           onStoryEdit={() => setSelectedFormatCard("story")}
@@ -2567,6 +2569,7 @@ function FormatTree({
   imagePostUrl,
   imagePostCardRef,
   onImagePostEdit,
+  onImagePostUrlChange,
   storyImages,
   storyCardRef,
   onStoryEdit,
@@ -2612,6 +2615,7 @@ function FormatTree({
   imagePostUrl: string | null
   imagePostCardRef: React.RefObject<HTMLDivElement | null>
   onImagePostEdit: () => void
+  onImagePostUrlChange: (url: string) => void
   storyImages: string[] | null
   storyCardRef: React.RefObject<HTMLDivElement | null>
   onStoryEdit: () => void
@@ -3107,6 +3111,12 @@ function FormatTree({
                           />
                         </div>
                       </div>
+                      <ImagePostCaptionSettings
+                        postId={savedPostId}
+                        url={imagePostUrl}
+                        onUrlChange={onImagePostUrlChange}
+                      />
+
                       <div className="flex gap-3 w-full items-center">
                         <Button variant="outline" className="flex-1" onClick={onImagePostEdit}>
                           עריכת תמונה
@@ -3157,6 +3167,49 @@ function FormatTree({
 /* ------------------------------------------------------------------ */
 /*  Carousel Result Card — shows generated slides below carousel card  */
 /* ------------------------------------------------------------------ */
+
+/**
+ * The image post's caption settings, on the image post's own card.
+ *
+ * Exactly what the carousel card shows, because it is exactly the same
+ * decision (Hani, 2026-08-13): include the text or not, and where it sits.
+ * Its own component only because the hook cannot be called conditionally and
+ * the card renders inline.
+ */
+function ImagePostCaptionSettings({
+  postId,
+  url,
+  onUrlChange,
+}: {
+  postId: string | null
+  url: string | null
+  onUrlChange: (url: string) => void
+}) {
+  const caption = useImagePostCaption({ postId, url, onUrlChange })
+  if (!caption.available) return null
+  return (
+    <div className="w-full" onMouseDown={(e) => e.stopPropagation()}>
+      <CaptionControls
+        layout="settings"
+        label="כיתוב על התמונה"
+        captionOn={caption.captionOn}
+        onCaptionOnChange={caption.setCaptionOn}
+        position={caption.position}
+        onPositionChange={caption.setPosition}
+        busy={caption.busy}
+        progress={
+          <p
+            className="flex items-center gap-1.5 text-xs text-text-neutral-default"
+            role="status"
+          >
+            <Loader2 className="size-3.5 animate-spin text-yellow-50" />
+            {caption.progress || "מעדכנים את התמונה..."}
+          </p>
+        }
+      />
+    </div>
+  )
+}
 
 function CarouselResultCard({
   images,

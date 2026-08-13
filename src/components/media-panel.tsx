@@ -2348,9 +2348,23 @@ function MediaUploadFlow({
   const [captionOriginalUrl, setCaptionOriginalUrl] = useState<string | null>(
     null,
   )
-  const [captionOn, setCaptionOn] = useState(true)
-  const [captionPosition, setCaptionPosition] =
-    useState<CaptionPosition>("bottom")
+  // Seeded from storage, not from a constant: for an image post these are set
+  // on the post's own card on the canvas, and an upload has to be captioned
+  // the way she last chose rather than back at the default.
+  const [captionOn, setCaptionOn] = useState(() => {
+    if (!postId || typeof window === "undefined") return true
+    return getFormatMeta(postId, format as FormatId).captionOn ?? true
+  })
+  const [captionPosition, setCaptionPosition] = useState<CaptionPosition>(() => {
+    if (!postId || typeof window === "undefined") return "bottom"
+    return getFormatMeta(postId, format as FormatId).captionPosition ?? "bottom"
+  })
+  // The b-roll still keeps its controls in the panel, so its choices have to
+  // be written down the same way the card writes the image post's.
+  const handleCaptionPositionChange = (p: CaptionPosition) => {
+    setCaptionPosition(p)
+    if (postId) setFormatMeta(postId, format as FormatId, { captionPosition: p })
+  }
   // Every AI path in this panel (image post, story, b-roll) draws through the
   // user's own OpenAI key. `null` while we're still asking; `false` swaps the
   // generate card for MediaCreditsCard.
@@ -3045,6 +3059,15 @@ function MediaUploadFlow({
     if (captionedImage.format !== format) return
     if (captionedImage.originalUrl) {
       setCaptionOriginalUrl(captionedImage.originalUrl)
+      // Captioning REPLACES the format's stored image with the captioned
+      // render, so without this nothing remembers what the picture looked
+      // like before — and the control on the card could only ever act in the
+      // session that uploaded it.
+      if (postId) {
+        setFormatMeta(postId, format as FormatId, {
+          captionSourceUrl: captionedImage.originalUrl,
+        })
+      }
     }
     if (captionOn) {
       setPreviewUrl(captionedImage.url)
@@ -3082,6 +3105,7 @@ function MediaUploadFlow({
    */
   const handleCaptionOnChange = async (on: boolean) => {
     setCaptionOn(on)
+    if (postId) setFormatMeta(postId, format as FormatId, { captionOn: on })
     const next = on ? (captionedImage?.url ?? null) : captionOriginalUrl
     if (!next || !postId) return
     setPreviewUrl(next)
@@ -3794,7 +3818,10 @@ function MediaUploadFlow({
               captionOn={captionOn}
               onCaptionOnChange={handleCaptionOnChange}
               position={captionPosition}
-              onPositionChange={setCaptionPosition}
+              onPositionChange={handleCaptionPositionChange}
+              /* The image post's controls live on its card on the canvas
+                  now, so the panel shows the picture only. */
+              showControls={false}
               onRetry={() => {
                 clearImageCaptionError(postId)
                 const source = captionOriginalUrl ?? previewUrl
@@ -4351,7 +4378,10 @@ function MediaUploadFlow({
                 captionOn={captionOn}
                 onCaptionOnChange={handleCaptionOnChange}
                 position={captionPosition}
-                onPositionChange={setCaptionPosition}
+                onPositionChange={handleCaptionPositionChange}
+                // The b-roll has no card of its own on the canvas, so its
+                // controls stay here.
+                showControls
                 onRetry={() => {
                   clearImageCaptionError(postId)
                   const source = captionOriginalUrl ?? previewUrl

@@ -121,6 +121,17 @@ export type CorePostFormatMeta = {
    * the panel lying about what the post looks like.
    */
   captionOn?: boolean
+  /**
+   * The picture the caption is drawn OVER — the file as the user brought it,
+   * before any words were burned in.
+   *
+   * Persisted because captioning replaces the format's stored image with the
+   * captioned render, so after a reload nothing else remembers what the
+   * original was. Without it the caption could only ever be moved in the
+   * session that created it, and re-rendering would stack a second caption on
+   * top of the first.
+   */
+  captionSourceUrl?: string
 }
 
 /** Per-post optional metadata captured in the Sheet (task #B). */
@@ -595,6 +606,7 @@ export function getFormatMeta(
     templateId: slice.templateId,
     captionPosition: slice.captionPosition,
     captionOn: slice.captionOn,
+    captionSourceUrl: slice.captionSourceUrl,
   }
 }
 

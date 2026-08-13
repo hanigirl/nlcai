@@ -182,18 +182,18 @@ export function CaptionControls({
         </span>
 
         <div className="flex items-center gap-3">
-          <span className="w-12 shrink-0 text-small text-text-primary-default">
-            כיתוב
+          <span className="w-20 shrink-0 text-small text-text-primary-default">
+            לכלול טקסט
           </span>
           <CaptionSwitch
-            ariaLabel="כיתוב"
+            ariaLabel="לכלול טקסט"
             on={captionOn}
             onChange={onCaptionOnChange}
           />
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="w-12 shrink-0 text-small text-text-primary-default">
+          <span className="w-20 shrink-0 text-small text-text-primary-default">
             מיקום
           </span>
           <SegmentedOptions
@@ -250,6 +250,14 @@ export interface ImageCaptionBlockProps {
   onCaptionOnChange: (on: boolean) => void
   position?: CaptionPosition
   onPositionChange?: (p: CaptionPosition) => void
+  /**
+   * Whether the switch and the placements are shown HERE.
+   *
+   * False for the image post: its controls moved to the post's own card on
+   * the canvas, next to the picture they act on (Hani, 2026-08-13). The
+   * b-roll still has no card of its own, so it keeps them.
+   */
+  showControls?: boolean
   onRetry?: () => void
   /** Opens the picture full size. */
   onOpenLightbox?: (src: string) => void
@@ -265,6 +273,7 @@ export function ImageCaptionBlock({
   onCaptionOnChange,
   position = "bottom",
   onPositionChange,
+  showControls = true,
   onRetry,
   onOpenLightbox,
 }: ImageCaptionBlockProps) {
@@ -288,14 +297,16 @@ export function ImageCaptionBlock({
       {/* The caption is a layer you place, so its controls come BEFORE the
           picture: you read what you can change, then watch the picture
           answer. */}
-      <CaptionControls
-        label="כיתוב על התמונה"
-        captionOn={captionOn}
-        onCaptionOnChange={onCaptionOnChange}
-        position={position}
-        onPositionChange={(v) => onPositionChange?.(v)}
-        busy={busy}
-      />
+      {showControls && (
+        <CaptionControls
+          label="כיתוב על התמונה"
+          captionOn={captionOn}
+          onCaptionOnChange={onCaptionOnChange}
+          position={position}
+          onPositionChange={(v) => onPositionChange?.(v)}
+          busy={busy}
+        />
+      )}
 
       {/* The picture itself. */}
       <div className={`relative ${frameWidth} ${frameAspect}`}>
