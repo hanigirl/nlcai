@@ -1513,6 +1513,35 @@ function CarouselFlow({
   const selectedConfig = CAROUSEL_TEMPLATES.find((t) => t.id === selectedTemplate)
   const isAiTemplate = selectedConfig?.kind === "ai"
 
+  /**
+   * True when the post's current carousel is slides the user brought herself:
+   * there are slides, and no template made them. Replacing THAT is the case
+   * worth stopping for — replacing one generated carousel with another costs
+   * her nothing she made.
+   */
+  const carouselIsHerOwn =
+    !!images?.length && !savedTemplateId && (driveLinks?.length ?? 0) > 0
+
+  const [pendingGenerate, setPendingGenerate] = useState(false)
+
+  /**
+   * Generate entry point. Asks first when there is an imported carousel to
+   * lose.
+   *
+   * The ask has to live HERE and not at the approve step: generating is
+   * choosing (see below), so the post's carousel is replaced the moment the
+   * render lands, and the approve button is already hidden by then. Asking
+   * first also means an AI template does not spend her OpenAI credits on a
+   * carousel she is about to be told will overwrite her own slides.
+   */
+  const requestGenerate = () => {
+    if (carouselIsHerOwn) {
+      setPendingGenerate(true)
+      return
+    }
+    void handleGenerate()
+  }
+
   const handleGenerate = async () => {
     if (!carouselText.trim()) return
     setGenerating(true)
@@ -1656,25 +1685,7 @@ function CarouselFlow({
     setPreviewIndex(0)
   }
 
-  /**
-   * True when the post's current carousel is slides the user brought herself:
-   * there are slides, and no template made them. Replacing THAT is the case
-   * worth stopping for — replacing one generated carousel with another costs
-   * her nothing she made.
-   */
-  const carouselIsHerOwn =
-    !!images?.length && !savedTemplateId && (driveLinks?.length ?? 0) > 0
-
-  // Holds what the confirm agreed to. The confirm closes the viewer, which
-  // clears dialogFor/dialogSlides — so the pending set has to be captured
-  // here rather than read back off the dialog when "yes" lands.
-  const [pendingTemplateReplace, setPendingTemplateReplace] = useState<
-    { slides: string[]; templateKey: string } | null
-  >(null)
-
-  const applyApprove = (slidesToUse: string[], templateKey: string) => {
-    const dialogSlides = slidesToUse
-    const dialogFor = templateKey
+  const applyApprove = (dialogSlides: string[], dialogFor: string) => {
     onImagesChange(dialogSlides)
     // Remember which template made the post's carousel — its tile is the
     // selected one next time the panel opens. DRIVE_IMPORT_KEY is a
@@ -1690,18 +1701,10 @@ function CarouselFlow({
 
   const handleApprove = () => {
     if (!dialogSlides || !dialogFor) return
-    // Only the import case asks. A generated carousel replacing a generated
-    // carousel is not a loss, and a confirm there would train her to click
-    // through the one that matters.
-    if (carouselIsHerOwn && dialogFor !== DRIVE_IMPORT_KEY) {
-      // Close the viewer first — stacking a confirm on an open Dialog makes
-      // the two fight over the focus trap, the same reason delete does it.
-      const slides = dialogSlides
-      const templateKey = dialogFor
-      setDialogFor(null)
-      setPendingTemplateReplace({ slides, templateKey })
-      return
-    }
+    // No guard here on purpose. Generating replaces the post's carousel the
+    // moment the render lands, which also hides this button — so the ask
+    // belongs at requestGenerate, and a second one here would only fire in a
+    // state the user cannot reach.
     applyApprove(dialogSlides, dialogFor)
   }
 
@@ -2007,7 +2010,7 @@ function CarouselFlow({
         <MediaCreditsCard />
       ) : (
         <Button
-          onClick={handleGenerate}
+          onClick={requestGenerate}
           disabled={generating || !carouselText.trim()}
           className="w-full gap-2"
         >
@@ -2164,20 +2167,13 @@ function CarouselFlow({
       />
 
       <ConfirmModal
-        open={!!pendingTemplateReplace}
-        onOpenChange={(open) => { if (!open) setPendingTemplateReplace(null) }}
+        open={pendingGenerate}
+        onOpenChange={(open) => { if (!open) setPendingGenerate(false) }}
         title="יצירה מחדש תמחק את השקופיות שהבאת. להמשיך?"
         description="השקופיות שהעליתם יוחלפו בקרוסלה החדשה ולא נשמרות. הקישורים מהדרייב יישארו, כך שאפשר יהיה לטעון אותן שוב."
         confirmLabel="כן, למחוק"
         cancelLabel="לא, בטל"
-        onConfirm={() => {
-          if (pendingTemplateReplace) {
-            applyApprove(
-              pendingTemplateReplace.slides,
-              pendingTemplateReplace.templateKey,
-            )
-          }
-        }}
+        onConfirm={() => { void handleGenerate() }}
       />
 
       <ConfirmModal
