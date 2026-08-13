@@ -1,5 +1,4 @@
 import { GeminiConnectNoticeCard } from "@/components/gemini-connect-notice"
-import { FloatingNoticePreview } from "./floating-preview"
 
 /**
  * Preview of the Gemini connect notice, exactly as a pilot user without a key
@@ -14,9 +13,9 @@ import { FloatingNoticePreview } from "./floating-preview"
 export default async function GeminiNoticePreviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ v?: string; close?: string; state?: string }>
+  searchParams: Promise<{ v?: string }>
 }) {
-  const { v, close, state } = await searchParams
+  const { v } = await searchParams
 
   if (v === "floating") {
     return (
@@ -34,7 +33,7 @@ export default async function GeminiNoticePreviewPage({
             backgroundSize: "16px 16px",
           }}
         />
-        <FloatingNoticePreview close={close} state={state} />
+        <GeminiConnectNoticeCard variant="floating" />
       </div>
     )
   }

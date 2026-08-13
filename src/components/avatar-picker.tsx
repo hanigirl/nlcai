@@ -145,7 +145,7 @@ export function AvatarPicker({ onSelect }: AvatarPickerProps) {
       {avatars.map((avatar) => (
         <div
           key={avatar.avatar_id}
-          className="relative aspect-[9/16] rounded-xl overflow-hidden cursor-pointer transition-all hover:ring-2 hover:ring-yellow-50"
+          className="relative aspect-[9/16] rounded-xl overflow-hidden cursor-pointer transition-all hover:ring-2 hover:ring-gray-80"
           onClick={() => onSelect(avatar)}
           onMouseEnter={() => setHoveredId(avatar.avatar_id)}
           onMouseLeave={() => setHoveredId(null)}

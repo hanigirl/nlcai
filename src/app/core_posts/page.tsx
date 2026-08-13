@@ -631,7 +631,7 @@ function CorePostCard({
           onClick()
         }
       }}
-      className="group relative gap-3 rounded-[12px] border-border-neutral-default bg-white dark:bg-gray-10 p-4 text-right transition-all hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30 shadow-none cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+      className="group relative gap-3 rounded-[12px] border-border-neutral-default bg-white dark:bg-gray-10 p-4 text-right transition-all hover:bg-bg-surface-hover hover:border-gray-80 hover:ring-2 hover:ring-gray-80/30 shadow-none cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
     >
       {/* MEDIA — first asset the user attached to any of this post's formats
           (video first-frame or image), scaled to fill a PORTRAIT slot
@@ -721,8 +721,8 @@ function CorePostCard({
             const hoverTintClass = isSetState
               ? undefined
               : state === "ready"
-                ? "group-hover:bg-yellow-90 group-hover:text-yellow-30 group-hover:border-yellow-30"
-                : "group-hover:bg-yellow-90 group-hover:text-yellow-30"
+                ? "group-hover:bg-gray-95 group-hover:text-text-primary-default group-hover:border-gray-80"
+                : "group-hover:bg-gray-95 group-hover:text-text-primary-default"
             return (
               <FormatStatusChipLink
                 key={format}

@@ -40,15 +40,7 @@ export function useGeminiNoticeVisible(): boolean {
       // disconnecting a working key. Same idea as the ?variant= gates used
       // elsewhere for design review. Read inside the async body, not in the
       // effect body, so this isn't a synchronous setState during an effect.
-      const params = new URLSearchParams(window.location.search)
-      // `?close=a|b` is the design-review gate for the dismiss directions. It
-      // implies the preview force, so a review link is a single param.
-      const closeGate = params.get("close")
-      if (
-        params.get("preview") === "gemini-notice" ||
-        closeGate === "a" ||
-        closeGate === "b"
-      ) {
+      if (new URLSearchParams(window.location.search).get("preview") === "gemini-notice") {
         setVisible(true)
         return
       }
@@ -142,30 +134,6 @@ function NoticeDismissButton({ onClick }: { onClick: () => void }) {
       className="ms-auto -me-1 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-text-neutral-default transition-colors hover:bg-bg-surface-hover hover:text-text-primary-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
     >
       <X className="size-4" />
-    </button>
-  )
-}
-
-/**
- * Collapsed form of the floating notice (direction B). Sits on exactly the
- * same anchor the full card uses, so closing reads as "this shrank into the
- * corner" rather than "something vanished and something else appeared".
- *
- * The yellow dot is the whole point: the setup step is still open. A chip
- * without it would look like a shortcut rather than an unfinished task.
- */
-export function GeminiNoticeChip({ onExpand }: { onExpand: () => void }) {
-  return (
-    <button
-      type="button"
-      dir="rtl"
-      onClick={onExpand}
-      aria-expanded={false}
-      className="fixed top-[4.5rem] right-[4.5rem] z-40 inline-flex h-9 items-center gap-2 rounded-full border border-border-neutral-default bg-white dark:bg-gray-10 px-3 shadow-lg transition-colors hover:bg-bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-    >
-      <GeminiIcon className="size-4 shrink-0" id="project-notice-chip" />
-      <span className="text-small text-text-primary-default">חיבור מפתח Gemini</span>
-      <span className="size-1.5 shrink-0 rounded-full bg-yellow-40" aria-hidden />
     </button>
   )
 }
