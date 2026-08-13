@@ -513,7 +513,7 @@ function PreviewMediaSlot({
       type="button"
       onClick={onAction}
       aria-label={emptyAria}
-      className="aspect-square rounded-xl bg-bg-surface border border-dashed border-border-neutral-default flex flex-col items-center justify-center gap-2 px-3 text-center cursor-pointer hover:border-yellow-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+      className="aspect-square rounded-xl bg-bg-surface border border-dashed border-border-neutral-default flex flex-col items-center justify-center gap-2 px-3 text-center cursor-pointer hover:border-gray-80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
     >
       <ImageIcon
         className="size-5 text-text-neutral-default"

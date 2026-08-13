@@ -144,7 +144,10 @@
   --sem-bg-surface: #FAFAFA;
   --sem-bg-surface-primary: #FFF9E5;
   --sem-bg-surface-primary-80: #FFE799;
-  --sem-bg-surface-hover: #FFF3CC;
+  /* Hover is always our gray, never a yellow tint. The yellow surfaces
+     (--sem-bg-surface-primary*) are for resting brand fills; a hover that
+     tints toward brand reads as "selected", which is what it kept doing. */
+  --sem-bg-surface-hover: #F2F2F2;
   --sem-bg-surface-success: #2E7D32;
   --sem-text-success: #FFFFFF;
   --sem-border-neutral: #E6E6E6;
@@ -234,7 +237,7 @@
   --sem-bg-surface: #1A1A1A;
   --sem-bg-surface-primary: #332700;
   --sem-bg-surface-primary-80: #664E00;
-  --sem-bg-surface-hover: #664E00;
+  --sem-bg-surface-hover: #333333;
   --sem-border-neutral: #333333;
 
   /* Canvas (dark) */

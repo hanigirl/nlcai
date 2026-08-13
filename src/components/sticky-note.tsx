@@ -44,7 +44,7 @@ export function StickyNote({
           onClick={onClick}
           title={text}
           className={cn(
-            "w-full h-full bg-bg-surface-hover hover:bg-bg-surface-primary-default-80 dark:bg-yellow-10 dark:hover:bg-yellow-20 rounded-lg p-5 flex flex-col justify-between cursor-pointer transition-[background-color,box-shadow] shadow-[0_2px_5px_rgba(0,0,0,0.08)] hover:shadow-[0_6px_14px_rgba(0,0,0,0.12)]",
+            "w-full h-full bg-bg-surface-primary-default hover:bg-bg-surface-primary-default-80 dark:bg-yellow-10 dark:hover:bg-yellow-20 rounded-lg p-5 flex flex-col justify-between cursor-pointer transition-[background-color,box-shadow] shadow-[0_2px_5px_rgba(0,0,0,0.08)] hover:shadow-[0_6px_14px_rgba(0,0,0,0.12)]",
             className
           )}
         >
