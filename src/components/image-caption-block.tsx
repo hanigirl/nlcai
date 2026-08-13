@@ -83,6 +83,37 @@ function SegmentedPicker<T extends string>({
   )
 }
 
+/**
+ * The caption's top / middle / bottom control, on its own.
+ *
+ * Exported because the carousel needs the SAME control, not a second one that
+ * looks like it (Hani, 2026-08-13). A carousel slide the user brought is
+ * captioned by the same renderer as a feed image, so "where do the words sit"
+ * has to be the same decision, worded and drawn the same way, wherever it is
+ * asked.
+ */
+export function CaptionPositionPicker({
+  value,
+  onChange,
+  disabled,
+  label = "מיקום",
+}: {
+  value: CaptionPosition
+  onChange: (v: CaptionPosition) => void
+  disabled?: boolean
+  label?: string
+}) {
+  return (
+    <SegmentedPicker
+      label={label}
+      options={POSITION_OPTIONS}
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
+    />
+  )
+}
+
 export interface ImageCaptionBlockProps {
   /** "4/5" for a feed image post, "9/16" for a b-roll still. */
   aspect: "4/5" | "9/16"
@@ -165,9 +196,7 @@ export function ImageCaptionBlock({
             </button>
           </div>
 
-          <SegmentedPicker
-            label="מיקום"
-            options={POSITION_OPTIONS}
+          <CaptionPositionPicker
             value={position}
             onChange={(v) => onPositionChange?.(v)}
             disabled={!captionOn || busy}

@@ -104,6 +104,16 @@ export type CorePostFormatMeta = {
    * panel tells "made here" from "brought in" and decides where to show it.
    */
   templateId?: string
+  /**
+   * Carousel only: where the caption sits on a slide the user brought —
+   * "top" | "center" | "bottom", one choice for the whole carousel.
+   *
+   * Persisted (unlike the image post's, which is component state) because
+   * the slides themselves are saved: a picker that reset to "bottom" while
+   * the stored slides carried the caption at the top would be the panel
+   * lying about what the post looks like.
+   */
+  captionPosition?: "top" | "center" | "bottom"
 }
 
 /** Per-post optional metadata captured in the Sheet (task #B). */
@@ -576,6 +586,7 @@ export function getFormatMeta(
     driveUrl: slice.driveUrl ?? meta.driveUrl,
     triggerWord: slice.triggerWord ?? meta.triggerWord,
     templateId: slice.templateId,
+    captionPosition: slice.captionPosition,
   }
 }
 
@@ -598,13 +609,17 @@ export function setFormatMeta(
   const nextSlice: CorePostFormatMeta = { ...currentSlice }
 
   // Apply patch: undefined means "clear this key, fall back to post-level".
-  for (const [key, val] of Object.entries(patch) as Array<
-    [keyof CorePostFormatMeta, CorePostFormatMeta[keyof CorePostFormatMeta]]
-  >) {
+  for (const key of Object.keys(patch) as Array<keyof CorePostFormatMeta>) {
+    const val = patch[key]
     if (val === undefined) {
       delete nextSlice[key]
     } else {
-      nextSlice[key] = val
+      // The value came off the SAME key of `patch`, so it is the right type
+      // by construction — TS just can't carry that through a union-typed key
+      // once the fields stop all being plain strings (`captionPosition` is a
+      // literal union). Assigning per-key keeps that provable at every call
+      // site, which a widened field type would not.
+      Object.assign(nextSlice, { [key]: val })
     }
   }
 
