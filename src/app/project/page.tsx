@@ -4,6 +4,8 @@ import { useState, useEffect, useRef, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
+import { CaptionControls } from "@/components/image-caption-block"
+import { useCarouselCaption } from "@/lib/carousel-caption"
 import { toast } from "sonner"
 import { AppShell } from "@/components/app-shell"
 import { GeminiConnectNoticeCard, useGeminiNoticeVisible } from "@/components/gemini-connect-notice"
@@ -2366,6 +2368,13 @@ function ProjectPageInner() {
                           userId={userId}
                           carouselImages={carouselImages}
                           carouselCardRef={carouselCardRef}
+                          // The caption control lives ON the carousel's card
+                          // (Hani, 2026-08-13), so the card needs what it takes
+                          // to redraw the slides: which post they belong to,
+                          // the links they came from, and the way back.
+                          savedPostId={savedPostId}
+                          carouselDriveLinks={carouselDriveLinks}
+                          onCarouselImagesChange={setCarouselImages}
                           // Opening the media panel must NOT throw the current
                           // carousel away (Hani, 2026-07-28): the old handler
                           // cleared images+slides on click, so pressing what
@@ -2523,6 +2532,9 @@ function ProjectPageInner() {
 }
 
 function FormatTree({
+  savedPostId,
+  carouselDriveLinks,
+  onCarouselImagesChange,
   formats,
   formatPosts,
   onPostChange,
@@ -2591,6 +2603,9 @@ function FormatTree({
   onLivePillPreview: (color: string | null) => void
   thVideoFrameDataUrl: string | null
   userId: string | null
+  savedPostId: string | null
+  carouselDriveLinks: string[] | null
+  onCarouselImagesChange: (imgs: string[]) => void
   carouselImages: string[] | null
   carouselCardRef: React.RefObject<HTMLDivElement | null>
   onCarouselEdit: () => void
@@ -2993,6 +3008,9 @@ function FormatTree({
                   images={carouselImages}
                   cardRef={carouselCardRef}
                   onEdit={onCarouselEdit}
+                  postId={savedPostId}
+                  driveLinks={carouselDriveLinks}
+                  onImagesChange={onCarouselImagesChange}
                 />
               )}
 
@@ -3144,14 +3162,35 @@ function CarouselResultCard({
   images,
   cardRef,
   onEdit,
+  postId,
+  driveLinks,
+  onImagesChange,
 }: {
   images: string[]
   cardRef: React.RefObject<HTMLDivElement | null>
   /** Opens the media panel. Non-destructive — see `onCarouselEdit`. */
   onEdit: () => void
+  postId: string | null
+  /** The per-slide Drive links, so the originals can be re-pulled. */
+  driveLinks: string[] | null
+  onImagesChange: (imgs: string[]) => void
 }) {
   const [currentSlide, setCurrentSlide] = useState(0)
   const [downloading, setDownloading] = useState(false)
+
+  // The caption on slides the user brought: on or off, and where it sits.
+  // It belongs on THIS card and not in the media panel (Hani, 2026-08-13) —
+  // placement is judged by looking at the finished carousel, so the control
+  // sits with the slides. `currentSlide` is handed over so the slide on
+  // screen is the first one redrawn.
+  const caption = useCarouselCaption({
+    postId,
+    images,
+    onImagesChange,
+    driveLinks,
+    focusIndex: currentSlide,
+  })
+  const shownSlides = caption.slides.length > 0 ? caption.slides : images
 
   const handleDownloadAll = async () => {
     setDownloading(true)
@@ -3197,7 +3236,10 @@ function CarouselResultCard({
               // depended on the page decoding every slide from storage on
               // load — an async step that fails silently and left the canvas
               // with no carousel card at all (Hani, 2026-07-29).
-              src={storyFrameSrc(images[currentSlide])}
+              // `caption.slides` is the post's set, except while a caption
+              // redraw is running — then it is the half-redrawn one, so the
+              // slide on screen updates as each render lands.
+              src={storyFrameSrc(shownSlides[currentSlide])}
               alt={`סלייד ${currentSlide + 1}`}
               className="w-full h-auto"
               onMouseDown={(e) => e.stopPropagation()}
@@ -3226,6 +3268,31 @@ function CarouselResultCard({
               <ChevronLeft className="size-4 text-text-primary-default" />
             </button>
           </div>
+
+          {/* The caption control — only on a carousel the user brought; a
+              template-generated one draws its own text into the design, so
+              there is nothing here to switch off or move. */}
+          {caption.available && (
+            <div onMouseDown={(e) => e.stopPropagation()}>
+              <CaptionControls
+                label="כיתוב על השקופיות"
+                captionOn={caption.captionOn}
+                onCaptionOnChange={caption.setCaptionOn}
+                position={caption.position}
+                onPositionChange={caption.setPosition}
+                busy={caption.busy}
+                progress={
+                  <p
+                    className="flex items-center gap-1.5 text-xs text-text-neutral-default"
+                    role="status"
+                  >
+                    <Loader2 className="size-3.5 animate-spin text-yellow-50" />
+                    {caption.progress || "מעדכנים את השקופיות..."}
+                  </p>
+                }
+              />
+            </div>
+          )}
 
           {/* Actions */}
           <div className="flex gap-3 w-full">
