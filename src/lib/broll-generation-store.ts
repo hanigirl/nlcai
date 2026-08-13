@@ -36,6 +36,20 @@ type BRollState = {
   storyError: string | null
   /** The frame set it produced, for whoever mounts next. */
   storyFrames: string[] | null
+  /** How many STILL-image caption renders are running for this post. */
+  captioningImage: number
+  /**
+   * The most recent captioned still, its untouched original, and which
+   * format it belongs to. Both URLs are kept because the panel offers the
+   * user a way back to the picture they brought.
+   */
+  captionedImage: {
+    url: string
+    originalUrl: string
+    format: string
+  } | null
+  /** Why the last still-caption attempt failed, in Hebrew. */
+  captionImageError: string | null
 }
 
 const EMPTY: BRollState = {
@@ -47,6 +61,9 @@ const EMPTY: BRollState = {
   storyProgress: "",
   storyError: null,
   storyFrames: null,
+  captioningImage: 0,
+  captionedImage: null,
+  captionImageError: null,
 }
 
 const states = new Map<string, BRollState>()
@@ -186,6 +203,101 @@ export function startCaptionBurn(postId: string, format: string): void {
       update(postId, (s) => ({ ...s, burning: Math.max(0, s.burning - 1) }))
     }
   })()
+}
+
+/**
+ * Lay the post's caption over a STILL the user brought — the image sibling of
+ * `startCaptionBurn`.
+ *
+ * Lives in the store for the same reason the video burn does: it fires on its
+ * own the moment an image is attached, and the panel that started it is often
+ * closed before it lands. Unlike the video burn this one is quick (one satori
+ * render), but "quick" is not "instant" on a 50MB Drive photo, and a spinner
+ * that dies with its panel is worse than no spinner.
+ *
+ * `position` and `content` are only ever passed by variant B, whose panel
+ * lets the user move the caption and choose how much of the script it
+ * carries. Variant A calls this with neither and gets the defaults.
+ */
+export function startImageCaption(
+  postId: string,
+  format: string,
+  opts?: {
+    sourceUrl?: string
+    position?: "top" | "center" | "bottom"
+    content?: "hook" | "hook_body"
+    /** Suppress the toast when the caller already shows inline progress. */
+    quiet?: boolean
+  },
+): void {
+  if (!postId) return
+  update(postId, (s) => ({
+    ...s,
+    captioningImage: s.captioningImage + 1,
+    captionImageError: null,
+  }))
+  const toastId = `image-caption-${++toastSeq}`
+  if (!opts?.quiet) {
+    toast.loading("מטמיעים את הכיתוב בתמונה...", {
+      id: toastId,
+      duration: Infinity,
+    })
+  }
+
+  void (async () => {
+    try {
+      const res = await fetch("/api/media/caption-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          postId,
+          format,
+          sourceUrl: opts?.sourceUrl,
+          position: opts?.position,
+          content: opts?.content,
+        }),
+      })
+      const data = (await res.json().catch(() => ({}))) as {
+        url?: string
+        originalUrl?: string
+        error?: string
+        message?: string
+      }
+      if (!res.ok || !data.url) {
+        const msg = data.message ?? data.error ?? "הטמעת הכיתוב בתמונה נכשלה"
+        update(postId, (s) => ({ ...s, captionImageError: msg }))
+        if (!opts?.quiet) toast.error(msg, { id: toastId, duration: 10000 })
+        return
+      }
+      update(postId, (s) => ({
+        ...s,
+        captionedImage: {
+          url: data.url as string,
+          originalUrl: data.originalUrl ?? opts?.sourceUrl ?? "",
+          format,
+        },
+      }))
+      if (!opts?.quiet) {
+        toast.success("הכיתוב הוטמע בתמונה", { id: toastId, duration: 4000 })
+      }
+    } catch (err) {
+      const msg = `הטמעת הכיתוב בתמונה נכשלה: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+      update(postId, (s) => ({ ...s, captionImageError: msg }))
+      if (!opts?.quiet) toast.error(msg, { id: toastId, duration: 10000 })
+    } finally {
+      update(postId, (s) => ({
+        ...s,
+        captioningImage: Math.max(0, s.captioningImage - 1),
+      }))
+    }
+  })()
+}
+
+export function clearImageCaptionError(postId: string | null): void {
+  if (!postId) return
+  update(postId, (s) => ({ ...s, captionImageError: null }))
 }
 
 /** Mirrors the cap the panel's link rows enforce. */

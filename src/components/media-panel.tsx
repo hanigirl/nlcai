@@ -26,9 +26,16 @@ import {
   getBRollGenerationSnapshot,
   startBRollGeneration,
   startCaptionBurn,
+  startImageCaption,
+  clearImageCaptionError,
   startStoryDriveImport,
   clearStoryImportError,
 } from "@/lib/broll-generation-store"
+import {
+  ImageCaptionBlock,
+  type CaptionContent,
+  type CaptionPosition,
+} from "@/components/image-caption-block"
 import { StoryPlayer } from "@/components/story-player"
 import { DriveMediaLinks } from "@/components/drive-media-links"
 import {
@@ -166,6 +173,13 @@ interface MediaPanelProps {
    * (null).
    */
   onStoryVideoUrlChange?: (url: string | null) => void
+  /**
+   * Which caption-on-your-own-image direction to render — the ?imgcap review
+   * gate (see project/page.tsx). `null` in production: with no variant the
+   * panel is byte-identical to what it was before this exploration, and the
+   * caption is not burned at all.
+   */
+  imgCapVariant?: "a" | "b" | null
 }
 
 export function MediaPanel({
@@ -206,6 +220,7 @@ export function MediaPanel({
   onImagePostUrlChange,
   onStoryImagesChange,
   onStoryVideoUrlChange,
+  imgCapVariant = null,
 }: MediaPanelProps) {
   const isOpen = formatId !== null
   const meta = formatId ? FORMAT_META[formatId] : null
@@ -328,6 +343,7 @@ export function MediaPanel({
             initialMediaUrl={formatId ? initialFormatMedia?.[formatId] : undefined}
             initialStoryFrames={initialStoryFrames}
             postLoaded={postLoaded}
+            imgCapVariant={imgCapVariant}
           />
         )}
       </div>
@@ -2344,6 +2360,7 @@ function MediaUploadFlow({
   initialMediaUrl,
   initialStoryFrames,
   postLoaded,
+  imgCapVariant = null,
 }: {
   format: string
   postId: string | null
@@ -2359,11 +2376,31 @@ function MediaUploadFlow({
   initialMediaUrl?: string
   initialStoryFrames?: string[] | null
   postLoaded?: boolean
+  imgCapVariant?: "a" | "b" | null
 }) {
   // Read once, before any narrowing. Inside the burn-button condition TS has
   // already pinned `format` to "story", so a literal check for b-roll there
   // reads as unreachable code.
   const isBRoll = format === "b_roll"
+
+  /* ---- caption on the user's own still (?imgcap gate) ---------------- */
+  //
+  // Every other media surface already lays the post's words over the
+  // picture; a still the user brought was the one that came out bare. Off
+  // entirely without the param, so production behaviour is untouched while
+  // this is being reviewed.
+  const captionEnabled =
+    !!imgCapVariant && (format === "image_post" || format === "b_roll")
+  // The picture as it arrived, kept alongside the captioned one so "בלי
+  // כיתוב" is a real choice and not a second render.
+  const [captionOriginalUrl, setCaptionOriginalUrl] = useState<string | null>(
+    null,
+  )
+  const [captionOn, setCaptionOn] = useState(true)
+  const [captionPosition, setCaptionPosition] =
+    useState<CaptionPosition>("bottom")
+  const [captionContent, setCaptionContent] =
+    useState<CaptionContent>("hook_body")
   // Every AI path in this panel (image post, story, b-roll) draws through the
   // user's own OpenAI key. `null` while we're still asking; `false` swaps the
   // generate card for MediaCreditsCard.
@@ -2804,6 +2841,12 @@ function MediaUploadFlow({
       if (format === "image_post" && !isVideo) {
         onImagePostUrlChange?.(publicUrl)
       }
+      // Same rule as the Drive path: an image that lands here gets the
+      // post's caption laid over it. Where the file came from is not a
+      // reason for the result to look different.
+      if (!isVideo && (format === "image_post" || format === "b_roll")) {
+        runImageCaption(publicUrl)
+      }
       toast.success("מדיה נשמרה", { id: uploadToast, duration: 3000 })
     } catch (err) {
       console.error("[media-upload-flow] unexpected error:", err)
@@ -3017,6 +3060,97 @@ function MediaUploadFlow({
   // image_post and story already use.
   const bRollGenerating = bRollState.inFlight > 0
   const burningText = bRollState.burning > 0
+
+  /* ---- still-image caption: fire, pick up, redo ---------------------- */
+
+  const captioningImage = bRollState.captioningImage > 0
+  const captionImageError = bRollState.captionImageError
+
+  /**
+   * Ask the server to lay the post's caption over `sourceUrl`.
+   *
+   * Attaching an image IS the instruction to caption it — the same contract
+   * b-roll already has for a clip (Hani, 2026-07-29). No extra button: the
+   * user pasted a link because they want a finished post, not a bare photo.
+   */
+  const runImageCaption = useCallback(
+    (sourceUrl: string) => {
+      if (!postId || !captionEnabled) return
+      setCaptionOriginalUrl(sourceUrl)
+      startImageCaption(postId, format, {
+        sourceUrl,
+        // Variant A has no placement controls, so it always renders the
+        // default; only B sends what the user picked.
+        position: imgCapVariant === "b" ? captionPosition : undefined,
+        content: imgCapVariant === "b" ? captionContent : undefined,
+        quiet: true,
+      })
+    },
+    [postId, captionEnabled, format, imgCapVariant, captionPosition, captionContent],
+  )
+
+  // Pick up a caption render that finished — including one that landed while
+  // this panel was closed, which is the whole reason the work lives in the
+  // module store.
+  const captionedImage = bRollState.captionedImage
+  useEffect(() => {
+    if (!captionEnabled || !captionedImage) return
+    if (captionedImage.format !== format) return
+    if (captionedImage.originalUrl) {
+      setCaptionOriginalUrl(captionedImage.originalUrl)
+    }
+    if (captionOn) {
+      setPreviewUrl(captionedImage.url)
+      setPreviewKind("image")
+      if (format === "image_post") onImagePostUrlChange?.(captionedImage.url)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captionEnabled, format, captionedImage])
+
+  /**
+   * Variant B re-renders when the user moves the caption or changes how much
+   * it says. Skipped on the first pass — the attach already fired one render
+   * with these very defaults, and firing again here would double every
+   * upload.
+   */
+  const captionSettingsRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (imgCapVariant !== "b" || !captionEnabled || !captionOn) return
+    const source = captionOriginalUrl
+    if (!source) return
+    const key = `${source}|${captionPosition}|${captionContent}`
+    if (captionSettingsRef.current === null) {
+      captionSettingsRef.current = key
+      return
+    }
+    if (captionSettingsRef.current === key) return
+    captionSettingsRef.current = key
+    runImageCaption(source)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imgCapVariant, captionEnabled, captionOn, captionPosition, captionContent, captionOriginalUrl])
+
+  /**
+   * Which picture the POST uses. Switching to "בלי כיתוב" has to write the
+   * original back into the format's slot — otherwise the toggle only changes
+   * what the panel shows and the post still publishes the captioned one.
+   */
+  const handleCaptionOnChange = async (on: boolean) => {
+    setCaptionOn(on)
+    const next = on ? (captionedImage?.url ?? null) : captionOriginalUrl
+    if (!next || !postId) return
+    setPreviewUrl(next)
+    setPreviewKind("image")
+    if (format === "image_post") onImagePostUrlChange?.(next)
+    try {
+      await fetch(`/api/core-posts/${postId}/media`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ format, url: next, assetType: "image" }),
+      })
+    } catch (err) {
+      console.error("[media-panel][caption-toggle]", err)
+    }
+  }
   const bRollAttemptRef = useRef(0)
 
   // Whether the b-roll link field is open. Closed at rest behind the Drive
@@ -3411,6 +3545,17 @@ function MediaUploadFlow({
       if (targetFormat === "b_roll" && kind === "video") {
         void handleBurnText()
       }
+      // ...and a b-roll STILL gets the same treatment from the image
+      // renderer. Before this, "העלו מדיה משלכם" produced a captioned clip
+      // for a video and a bare photo for an image — the same action, two
+      // different outcomes, decided by a file type the user never chose
+      // deliberately.
+      if (
+        kind === "image" &&
+        (targetFormat === "image_post" || targetFormat === "b_roll")
+      ) {
+        runImageCaption(mediaUrl)
+      }
       if (targetFormat === "story") {
         // The single-link field and the per-frame list are the SAME story
         // (Hani, 2026-07-28): a link pasted up there is frame 1 down here, and
@@ -3682,8 +3827,40 @@ function MediaUploadFlow({
 
           {/* The post's image, in the same grey band every other format ends
               with (Hani, 2026-07-29). Additive — the AI section and the
-              thumbnail row above are untouched. */}
-          {!hydrating && previewUrl && (
+              thumbnail row above are untouched.
+
+              Under the ?imgcap gate the band is replaced by the caption
+              block, which owns the same slot: same grey, same frame, plus
+              the caption's own states and controls. */}
+          {!hydrating && captionEnabled && (previewUrl || captioningImage) && (
+            <ImageCaptionBlock
+              variant={imgCapVariant as "a" | "b"}
+              aspect="4/5"
+              state={
+                captioningImage
+                  ? "captioning"
+                  : captionImageError
+                    ? "error"
+                    : "idle"
+              }
+              errorMessage={captionImageError}
+              captionedUrl={captionedImage?.url ?? null}
+              originalUrl={captionOriginalUrl ?? previewUrl}
+              captionOn={captionOn}
+              onCaptionOnChange={handleCaptionOnChange}
+              position={captionPosition}
+              onPositionChange={setCaptionPosition}
+              content={captionContent}
+              onContentChange={setCaptionContent}
+              onRetry={() => {
+                clearImageCaptionError(postId)
+                const source = captionOriginalUrl ?? previewUrl
+                if (source) runImageCaption(source)
+              }}
+              onOpenLightbox={setLightboxSrc}
+            />
+          )}
+          {!hydrating && !captionEnabled && previewUrl && (
             <div className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-5 bg-gray-95 px-6 py-5 dark:bg-gray-10">
               <p className="text-center text-xs text-text-neutral-default">
                 התמונה שלך
@@ -4207,7 +4384,46 @@ function MediaUploadFlow({
               render shows here rather than as a line of text somewhere else.
               Delete is the hover icon on the clip, matching every other
               media surface in the app. */}
-          {isBRoll && (previewUrl || burningText || bRollGenerating) && (
+          {/* A b-roll STILL the user brought — under the ?imgcap gate it gets
+              the same caption block the image post does, so "בדוק שזה עובד
+              טוב בבי-רול" is answered by the same component rather than by a
+              second implementation that drifts. A CLIP still runs through the
+              ffmpeg burn below; only a still lands here. */}
+          {isBRoll &&
+            captionEnabled &&
+            previewKind === "image" &&
+            (previewUrl || captioningImage) && (
+              <ImageCaptionBlock
+                variant={imgCapVariant as "a" | "b"}
+                aspect="9/16"
+                state={
+                  captioningImage
+                    ? "captioning"
+                    : captionImageError
+                      ? "error"
+                      : "idle"
+                }
+                errorMessage={captionImageError}
+                captionedUrl={captionedImage?.url ?? null}
+                originalUrl={captionOriginalUrl ?? previewUrl}
+                captionOn={captionOn}
+                onCaptionOnChange={handleCaptionOnChange}
+                position={captionPosition}
+                onPositionChange={setCaptionPosition}
+                content={captionContent}
+                onContentChange={setCaptionContent}
+                onRetry={() => {
+                  clearImageCaptionError(postId)
+                  const source = captionOriginalUrl ?? previewUrl
+                  if (source) runImageCaption(source)
+                }}
+                onOpenLightbox={setLightboxSrc}
+              />
+            )}
+
+          {isBRoll &&
+            !(captionEnabled && previewKind === "image") &&
+            (previewUrl || burningText || bRollGenerating) && (
             <div className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-5 bg-gray-95 px-6 py-5 dark:bg-gray-10">
               <p className="text-center text-xs text-text-neutral-default">
                 {bRollGenerating

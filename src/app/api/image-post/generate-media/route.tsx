@@ -3,6 +3,7 @@ import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
+import { parseImagePostBody, type ImagePostTexts } from "@/lib/image-post-text"
 
 // gpt-image-2 generation can take 60-120s; leave headroom for the normalize pass.
 export const maxDuration = 300
@@ -34,47 +35,6 @@ const IMAGE_HEIGHT = 1350
  * anything. The client reuses the existing upload path (Storage +
  * POST /api/core-posts/{id}/media) so persistence stays in one place.
  */
-
-interface ImagePostTexts {
-  headline: string
-  subheadline?: string
-  bottom?: string
-}
-
-/**
- * Parse the image_post variant body. Canonical shape (from
- * buildImagePostPrompt) is labeled blocks:
- *
- *   [כותרת]\n...\n\n[תת-כותרת]\n...\n\n[טקסט תחתון]\n...
- *
- * Users can freely edit the variant text, so if the labels are gone we
- * fall back to: first non-empty line = headline, the rest = subheadline.
- */
-function parseImagePostBody(body: string): ImagePostTexts | null {
-  const grab = (tag: string): string => {
-    const m = body.match(new RegExp(`\\[${tag}\\]\\s*\\n?([\\s\\S]*?)(?=\\n\\[|$)`))
-    return m?.[1]?.trim() ?? ""
-  }
-
-  const headline = grab("כותרת")
-  if (headline) {
-    return {
-      headline,
-      subheadline: grab("תת-כותרת") || undefined,
-      bottom: grab("טקסט תחתון") || undefined,
-    }
-  }
-
-  const lines = body
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-  if (lines.length === 0) return null
-  return {
-    headline: lines[0],
-    subheadline: lines.slice(1).join(" ") || undefined,
-  }
-}
 
 /**
  * Distinct visual directions, rotated by the per-post generation index so
