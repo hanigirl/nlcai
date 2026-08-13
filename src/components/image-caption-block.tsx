@@ -84,33 +84,74 @@ function SegmentedPicker<T extends string>({
 }
 
 /**
- * The caption's top / middle / bottom control, on its own.
+ * The whole caption control, and deliberately the whole of it: a switch for
+ * with / without, then the word "מיקום", then the three placements. Nothing
+ * else (Hani, 2026-08-13) — no explainer, no heading beyond its own name.
  *
- * Exported because the carousel needs the SAME control, not a second one that
- * looks like it (Hani, 2026-08-13). A carousel slide the user brought is
- * captioned by the same renderer as a feed image, so "where do the words sit"
- * has to be the same decision, worded and drawn the same way, wherever it is
- * asked.
+ * Exported because the carousel needs the SAME card, not a second one that
+ * resembles it. A slide the user brought is captioned by the same renderer as
+ * a feed image, so "is there a caption, and where does it sit" has to be one
+ * decision, worded and drawn identically wherever it is asked. Two copies
+ * would drift the first time either was touched.
  */
-export function CaptionPositionPicker({
-  value,
-  onChange,
-  disabled,
-  label = "מיקום",
+export function CaptionControls({
+  label,
+  captionOn,
+  onCaptionOnChange,
+  position,
+  onPositionChange,
+  busy,
+  progress,
 }: {
-  value: CaptionPosition
-  onChange: (v: CaptionPosition) => void
-  disabled?: boolean
-  label?: string
+  /** Names what carries the caption — "כיתוב על התמונה" / "...על השקופיות". */
+  label: string
+  captionOn: boolean
+  onCaptionOnChange: (on: boolean) => void
+  position: CaptionPosition
+  onPositionChange: (p: CaptionPosition) => void
+  /** A render is in flight: the controls lock, nothing is hidden. */
+  busy?: boolean
+  /** Named progress, shown under the controls while `busy`. */
+  progress?: React.ReactNode
 }) {
   return (
-    <SegmentedPicker
-      label={label}
-      options={POSITION_OPTIONS}
-      value={value}
-      onChange={onChange}
-      disabled={disabled}
-    />
+    <div className="flex w-full max-w-[280px] flex-col gap-3 rounded-[14px] border border-border-neutral-default bg-white px-3.5 py-3 dark:bg-gray-10 dark:border-gray-30">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-small-bold text-text-primary-default">
+          {label}
+        </span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={captionOn}
+          aria-label={label}
+          onClick={() => onCaptionOnChange(!captionOn)}
+          className={`relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+            captionOn ? "bg-button-primary-default" : "bg-gray-90 dark:bg-gray-30"
+          }`}
+        >
+          <span
+            aria-hidden
+            // RTL: the knob rests at the START (the right edge) when off and
+            // travels away from it when on. `start-*`, never `left-*` — this
+            // panel is mirrored.
+            className={`absolute top-[3px] size-4 rounded-full bg-white transition-all ${
+              captionOn ? "start-[19px]" : "start-[3px]"
+            }`}
+          />
+        </button>
+      </div>
+
+      <SegmentedPicker
+        label="מיקום"
+        options={POSITION_OPTIONS}
+        value={position}
+        onChange={onPositionChange}
+        disabled={!captionOn || busy}
+      />
+
+      {busy && progress}
+    </div>
   )
 }
 
@@ -166,43 +207,14 @@ export function ImageCaptionBlock({
       {/* The caption is a layer you place, so its controls come BEFORE the
           picture: you read what you can change, then watch the picture
           answer. */}
-      {(
-        <div className="flex w-full max-w-[280px] flex-col gap-3 rounded-[14px] border border-border-neutral-default bg-white px-3.5 py-3 dark:bg-gray-10 dark:border-gray-30">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-small-bold text-text-primary-default">
-              כיתוב על התמונה
-            </span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={captionOn}
-              aria-label="כיתוב על התמונה"
-              onClick={() => onCaptionOnChange(!captionOn)}
-              className={`relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
-                captionOn
-                  ? "bg-button-primary-default"
-                  : "bg-gray-90 dark:bg-gray-30"
-              }`}
-            >
-              <span
-                aria-hidden
-                // RTL: the knob rests at the START (the right edge) when off
-                // and travels away from it when on. `start-*`, never `left-*`
-                // — this panel is mirrored.
-                className={`absolute top-[3px] size-4 rounded-full bg-white transition-all ${
-                  captionOn ? "start-[19px]" : "start-[3px]"
-                }`}
-              />
-            </button>
-          </div>
-
-          <CaptionPositionPicker
-            value={position}
-            onChange={(v) => onPositionChange?.(v)}
-            disabled={!captionOn || busy}
-          />
-        </div>
-      )}
+      <CaptionControls
+        label="כיתוב על התמונה"
+        captionOn={captionOn}
+        onCaptionOnChange={onCaptionOnChange}
+        position={position}
+        onPositionChange={(v) => onPositionChange?.(v)}
+        busy={busy}
+      />
 
       {/* The picture itself. */}
       <div className={`relative ${frameWidth} ${frameAspect}`}>

@@ -114,6 +114,13 @@ export type CorePostFormatMeta = {
    * lying about what the post looks like.
    */
   captionPosition?: "top" | "center" | "bottom"
+  /**
+   * Carousel only: whether the slides the user brought carry the caption at
+   * all. Persisted for the same reason as the position — the slides are
+   * saved, so a control that reset to "on" over stored bare slides would be
+   * the panel lying about what the post looks like.
+   */
+  captionOn?: boolean
 }
 
 /** Per-post optional metadata captured in the Sheet (task #B). */
@@ -587,6 +594,7 @@ export function getFormatMeta(
     triggerWord: slice.triggerWord ?? meta.triggerWord,
     templateId: slice.templateId,
     captionPosition: slice.captionPosition,
+    captionOn: slice.captionOn,
   }
 }
 

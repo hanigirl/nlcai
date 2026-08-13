@@ -33,7 +33,7 @@ import {
 } from "@/lib/broll-generation-store"
 import {
   ImageCaptionBlock,
-  CaptionPositionPicker,
+  CaptionControls,
   type CaptionPosition,
 } from "@/components/image-caption-block"
 import { StoryPlayer } from "@/components/story-player"
@@ -1382,6 +1382,12 @@ const carouselResultSeen = new Set<string>()
 // from the saved links, which is the same work the first import did.
 const carouselBareSlides = new Map<string, string[]>()
 
+// The captioned render of the same slides. Held alongside the originals so
+// "with caption / without" is a switch between two sets we already have,
+// never a re-render — the same reason the image post keeps the original URL
+// next to the captioned one.
+const carouselCaptionedSlides = new Map<string, string[]>()
+
 // Pseudo-"template" key for a carousel imported from per-slide Drive links.
 // It isn't a real template — it only lets a Drive-imported set reuse the
 // shared preview dialog (`generatedByTemplate[DRIVE_IMPORT_KEY]`). The
@@ -1658,6 +1664,13 @@ function CarouselFlow({
       return getFormatMeta(postId, "carousel").captionPosition ?? "bottom"
     },
   )
+  // Whether the slides carry the caption at all. Defaults to on: attaching a
+  // picture IS the instruction to caption it, which is the contract every
+  // other media surface already has.
+  const [captionOn, setCaptionOn] = useState<boolean>(() => {
+    if (!postId || typeof window === "undefined") return true
+    return getFormatMeta(postId, "carousel").captionOn ?? true
+  })
   // Re-rendering the saved slides after the user moves the caption. Separate
   // from `driveImporting` so the progress line can say what is actually
   // happening — nothing is being fetched, the slides are being redrawn.
@@ -1736,6 +1749,7 @@ function CarouselFlow({
       setFormatMeta(postId, "carousel", { templateId: undefined })
       carouselGenCache.delete(postId)
       carouselBareSlides.delete(postId)
+      carouselCaptionedSlides.delete(postId)
     }
     setSavedTemplateId(undefined)
     onImagesChange(null)
@@ -1809,6 +1823,7 @@ function CarouselFlow({
   const handleDriveImport = async (
     rows: string[],
     position: CaptionPosition = captionPosition,
+    caption: boolean = captionOn,
   ) => {
     // Every carousel slide comes from a link, so blank rows are just empty
     // form scaffolding here.
@@ -1858,13 +1873,23 @@ function CarouselFlow({
         // user brought rather than failing the whole import — a bare slide
         // is recoverable, a dead import is not.
         const bare = data.base64 as string
-        setDriveImportProgress(
-          `מטמיעים כיתוב בשקופית ${i + 1} מתוך ${links.length}...`,
-        )
         bares.push(bare)
-        slides.push(await captionSlide(bare, i, position))
+        if (caption) {
+          setDriveImportProgress(
+            `מטמיעים כיתוב בשקופית ${i + 1} מתוך ${links.length}...`,
+          )
+          slides.push(await captionSlide(bare, i, position))
+        } else {
+          slides.push(bare)
+        }
       }
-      if (postId) carouselBareSlides.set(postId, bares)
+      if (postId) {
+        carouselBareSlides.set(postId, bares)
+        // With the caption off there is no captioned render to restore, and
+        // any older one was drawn at a position that may since have moved.
+        if (caption) carouselCaptionedSlides.set(postId, slides)
+        else carouselCaptionedSlides.delete(postId)
+      }
       // Make it the post's carousel (same base64 shape as generation → the
       // parent's autosave persists it as media_assets rows).
       onImagesChange(slides)
@@ -1894,6 +1919,56 @@ function CarouselFlow({
     }
   }
 
+  /** Hand the same array to the post AND to the viewer behind it. The shared
+   *  reference is what tells the dialog these slides ARE the post's carousel
+   *  rather than a preview waiting to be approved. */
+  const applySlides = (next: string[]) => {
+    onImagesChange(next)
+    setGeneratedByTemplate((p) => ({ ...p, [DRIVE_IMPORT_KEY]: next }))
+  }
+
+  /**
+   * Redraw the whole set with the caption at `position`, from the originals.
+   *
+   * The slide she is LOOKING at goes first, and each slide lands in the
+   * viewer the moment it finishes. Rendering in index order and committing
+   * once at the end would mean staring at the old caption through every other
+   * slide's render before the one in front of her moved.
+   */
+  const redrawCaption = async (bares: string[], position: CaptionPosition) => {
+    setRecaptioning(true)
+    setDriveImportError(null)
+    try {
+      const order = [
+        previewIndex,
+        ...bares.map((_, i) => i).filter((i) => i !== previewIndex),
+      ].filter((i) => i >= 0 && i < bares.length)
+
+      const redrawn = [...bares]
+      let done = 0
+      for (const i of order) {
+        setRecaptionProgress(
+          `מזיזים את הכיתוב — ${++done} מתוך ${bares.length} שקופיות...`,
+        )
+        redrawn[i] = await captionSlide(bares[i], i, position)
+        // A copy per step: the viewer reads this set, and mutating the array
+        // it already holds would not re-render.
+        const soFar = [...redrawn]
+        setGeneratedByTemplate((p) => ({ ...p, [DRIVE_IMPORT_KEY]: soFar }))
+      }
+      // Only now does the POST change. Committing per slide would autosave
+      // the entire carousel once per render.
+      if (postId) carouselCaptionedSlides.set(postId, redrawn)
+      applySlides(redrawn)
+    } catch (err) {
+      console.error("[media-panel][carousel-recaption]", err)
+      setDriveImportError("שגיאת רשת בהזזת הכיתוב. נסו שוב.")
+    } finally {
+      setRecaptioning(false)
+      setRecaptionProgress("")
+    }
+  }
+
   /**
    * Move the caption on every slide at once.
    *
@@ -1911,6 +1986,13 @@ function CarouselFlow({
     // carousel generated from a template draws its own text into the design,
     // so there is no overlay on it to place.
     if (!postId || savedTemplateId || !images || images.length === 0) return
+    // The picker is disabled while the caption is off, so this is belt and
+    // braces: the stored render is no longer the one this position asks for,
+    // and switching back on has to draw a fresh one rather than restore it.
+    if (!captionOn) {
+      carouselCaptionedSlides.delete(postId)
+      return
+    }
 
     const bares = carouselBareSlides.get(postId)
     if (!bares || bares.length !== images.length) {
@@ -1919,92 +2001,82 @@ function CarouselFlow({
       // did, rather than telling the user to press the import button again.
       const links = (driveLinks ?? []).filter(Boolean)
       if (links.length === 0) return
-      await handleDriveImport(links, next)
+      await handleDriveImport(links, next, true)
       return
     }
-
-    setRecaptioning(true)
-    setDriveImportError(null)
-    try {
-      // The slide she is LOOKING at is redrawn first, and each slide lands in
-      // the viewer the moment it finishes. Rendering in index order and
-      // committing once at the end would mean staring at the old caption
-      // through every other slide's render before the one in front of her
-      // moved — which is the whole thing she asked for.
-      const order = [
-        previewIndex,
-        ...bares.map((_, i) => i).filter((i) => i !== previewIndex),
-      ].filter((i) => i >= 0 && i < bares.length)
-
-      const redrawn = [...images]
-      let done = 0
-      for (const i of order) {
-        setRecaptionProgress(
-          `מזיזים את הכיתוב — ${++done} מתוך ${bares.length} שקופיות...`,
-        )
-        redrawn[i] = await captionSlide(bares[i], i, next)
-        // A copy per step: the viewer reads this set, and mutating the array
-        // it already holds would not re-render.
-        const soFar = [...redrawn]
-        setGeneratedByTemplate((p) => ({ ...p, [DRIVE_IMPORT_KEY]: soFar }))
-      }
-      // Only now does the POST change. Saving per slide would autosave the
-      // whole carousel once per render. The viewer and the post are handed
-      // the same array so they stay identical by reference — that identity is
-      // what tells the dialog this is already the post's carousel.
-      onImagesChange(redrawn)
-      setGeneratedByTemplate((p) => ({ ...p, [DRIVE_IMPORT_KEY]: redrawn }))
-      toast.success("הכיתוב הוזז בכל השקופיות")
-    } catch (err) {
-      console.error("[media-panel][carousel-recaption]", err)
-      setDriveImportError("שגיאת רשת בהזזת הכיתוב. נסו שוב.")
-    } finally {
-      setRecaptioning(false)
-      setRecaptionProgress("")
-    }
+    await redrawCaption(bares, next)
   }
 
   /**
-   * The placement control, shown WITH the finished carousel rather than with
-   * the import (Hani, 2026-08-13).
+   * Caption on the slides, or the pictures exactly as they arrived.
    *
-   * Placement is a judgement you make by looking: you decide the caption sits
-   * too low once you can see it sitting too low. Asking for it up in the
-   * import block meant choosing blind, before a single slide existed. So it
-   * lives next to the slides, in both places they are shown — the panel's
-   * grey band and the slide viewer — sharing one choice and one handler.
+   * Both sets are kept, so this is a switch between two things we already
+   * have rather than a re-render — the same contract the image post's toggle
+   * has. Only the cases where a set is genuinely missing (a page reload since
+   * the import, or a position changed while the caption was off) cost work.
+   */
+  const handleCaptionOnChange = async (on: boolean) => {
+    if (on === captionOn || recaptioning || driveImporting) return
+    setCaptionOn(on)
+    if (postId) setFormatMeta(postId, "carousel", { captionOn: on })
+    if (!postId || savedTemplateId || !images || images.length === 0) return
+
+    const bares = carouselBareSlides.get(postId)
+    const captioned = carouselCaptionedSlides.get(postId)
+    const links = (driveLinks ?? []).filter(Boolean)
+
+    if (!on) {
+      if (bares && bares.length === images.length) {
+        applySlides(bares)
+        return
+      }
+      if (links.length > 0) await handleDriveImport(links, captionPosition, false)
+      return
+    }
+
+    if (captioned && captioned.length === images.length) {
+      applySlides(captioned)
+      return
+    }
+    if (bares && bares.length === images.length) {
+      await redrawCaption(bares, captionPosition)
+      return
+    }
+    if (links.length > 0) await handleDriveImport(links, captionPosition, true)
+  }
+
+  /**
+   * The caption control, shown with the finished carousel and NOWHERE else
+   * (Hani, 2026-08-13).
+   *
+   * It is the same card the image post has — switch, then "מיקום", then the
+   * three placements, and nothing more. It lives in the panel's grey band,
+   * above the slides, which is exactly where the image post's sits: the media
+   * card is where you look at what you made, so it is where you adjust it.
    *
    * Only for a carousel the user brought: a template-generated one draws its
-   * own text into the design, so there is no overlay on it to place.
+   * own text into the design, so there is no caption on it to switch off or
+   * move.
    */
-  const captionPlacement =
+  const captionControls =
     !savedTemplateId && images && images.length > 0 ? (
-      <div className="flex w-full max-w-[280px] flex-col gap-3 rounded-[14px] border border-border-neutral-default bg-white px-3.5 py-3 dark:bg-gray-10 dark:border-gray-30">
-        <div className="flex flex-col gap-1">
-          <span className="text-small-bold text-text-primary-default">
-            כיתוב על השקופיות
-          </span>
-          <span className="text-xs-body text-text-neutral-default">
-            המיקום חל על כל השקופיות בקרוסלה.
-          </span>
-        </div>
-        <CaptionPositionPicker
-          value={captionPosition}
-          onChange={handleCaptionPositionChange}
-          disabled={driveImporting || recaptioning}
-        />
-        {/* Named progress, not a bare spinner: she moved the caption and the
-            whole set is being redrawn, which takes a beat per slide. */}
-        {recaptioning && (
+      <CaptionControls
+        label="כיתוב על השקופיות"
+        captionOn={captionOn}
+        onCaptionOnChange={handleCaptionOnChange}
+        position={captionPosition}
+        onPositionChange={handleCaptionPositionChange}
+        busy={recaptioning || driveImporting}
+        progress={
           <p
             className="flex items-center gap-1.5 text-xs text-text-neutral-default"
             role="status"
           >
             <Loader2 className="size-3.5 animate-spin text-yellow-50" />
-            {recaptionProgress || "מזיזים את הכיתוב..."}
+            {recaptionProgress || driveImportProgress || "מעדכנים את השקופיות..."}
           </p>
-        )}
-      </div>
+        }
+      />
     ) : null
 
   const handleDownloadAll = async () => {
@@ -2208,12 +2280,6 @@ function CarouselFlow({
                 />
               </div>
 
-              {/* Placing the caption belongs HERE most of all: this is the
-                  only surface that shows a slide big enough to judge where
-                  the words sit, and the only one that shows slides past the
-                  first. Moving it redraws the set under the picture. */}
-              {dialogFor === DRIVE_IMPORT_KEY && captionPlacement}
-
               {dialogSlides.length > 1 && (
                 <div className="flex items-center gap-3">
                   <button
@@ -2375,7 +2441,7 @@ function CarouselFlow({
           {/* Controls before the picture, the same order the image post's
               grey band uses: you read what you can change, then watch the
               slides answer. */}
-          {captionPlacement}
+          {captionControls}
 
           <button
             type="button"
