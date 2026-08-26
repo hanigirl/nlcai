@@ -72,8 +72,9 @@ export function buildHookGeneratorPrompt({
   learningInsights,
   trendContext,
   hasFavorites,
-  addressGender,
   previousHooks,
+  // addressGender is deliberately absent: the addressing rule moved into
+  // buildHookGeneratorSystem with the rest of the instructions.
 }: HookGeneratorInput): string {
   // The batch the user just threw away, spelled out. A soft "don't repeat
   // yourself" does nothing when the model can't see what it already wrote —

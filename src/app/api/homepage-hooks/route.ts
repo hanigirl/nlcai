@@ -8,7 +8,6 @@ import { judgeHook, validateHookLocally } from "@/lib/agents/hook-judge"
 import { findNearDuplicate } from "@/lib/agents/hook-similarity"
 import { classifyHooksByProduct } from "@/lib/agents/hook-product-classifier"
 import { GeminiError, generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
-import { usesGeminiHooks } from "@/lib/owner"
 
 interface PlanItem {
   category: TemplateCategory
@@ -128,21 +127,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: msg }, { status: 500 })
     }
 
-    // Only the cohort needs a Gemini key; everyone else never reaches Gemini
-    // and must not be blocked on a key they were never asked for.
-    const geminiCohort = usesGeminiHooks(user.email)
+    // Engine selection, by capability rather than by an allowlist.
+    //
+    // Gemini is live for every user who has connected a Gemini key: one call,
+    // no judge, no polish. Everyone who has not keeps the Claude chain exactly
+    // as before. It has to work this way round — when this rolled out only 3
+    // of 77 users had a Gemini key, so a flag flipped to "Gemini for everyone"
+    // would have returned gemini_not_connected to the other 74 and taken hook
+    // generation down for the whole cohort.
+    //
+    // A missing key is therefore NOT an error here, it is the Claude path. A
+    // key that exists but fails to load IS an error worth seeing, so it is
+    // logged before falling back.
     let geminiKey = ""
-    if (geminiCohort) {
-      try {
-        geminiKey = await getUserApiKey(supabase, "gemini_api_key")
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        if (msg === "gemini_not_connected") {
-          return NextResponse.json({ error: "gemini_not_connected" }, { status: 400 })
-        }
-        return NextResponse.json({ error: msg }, { status: 500 })
+    try {
+      geminiKey = await getUserApiKey(supabase, "gemini_api_key")
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg !== "gemini_not_connected") {
+        console.error("[hooks] gemini key present but unreadable — falling back to Claude:", msg)
       }
     }
+    const geminiCohort = !!geminiKey
 
     const identitySection = `
 ## Core Identity של המשתמש

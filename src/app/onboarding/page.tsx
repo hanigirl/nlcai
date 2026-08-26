@@ -7,7 +7,7 @@ import { ArrowLeft, Paperclip, Loader2, Link2, AlertCircle } from "lucide-react"
 import logoNew from "../../../images/logo-new.png"
 import onboardingHero from "../../../images/art-onboarding.png"
 import { createClient } from "@/lib/supabase/client"
-import { canPreviewMediaCredits, usesGeminiHooks } from "@/lib/owner"
+import { canPreviewMediaCredits } from "@/lib/owner"
 import { parseCreatorInput, validateCreatorInput } from "@/lib/creator-url"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -304,8 +304,11 @@ function OnboardingPageInner() {
         }
 
         if (!cancelled) setShowOpenaiField(canPreviewMediaCredits(user.email))
-        const geminiCohort = usesGeminiHooks(user.email)
-        if (!cancelled) setShowGeminiField(geminiCohort)
+        // Offered to everyone now, not a pilot cohort. A Gemini key switches
+        // hook generation from a twelve-call Claude chain to a single call, so
+        // every student should get the chance to connect one. Optional: the
+        // Claude path still runs for anyone who skips it.
+        if (!cancelled) setShowGeminiField(true)
 
         const [usersRes, coreRes, audRes, creatorsRes, productsRes] =
           await Promise.all([
@@ -378,10 +381,14 @@ function OnboardingPageInner() {
 
         // Step completeness — same rules the middleware and
         // /api/onboarding/complete use, so all three agree on "done".
+        // The Gemini key is offered to everyone but required of no one — it
+        // buys the cheaper hook engine, and a student who skips it still has
+        // the full Claude path. Requiring it here would also have put this
+        // page out of step with the middleware and /api/onboarding/complete,
+        // neither of which has ever looked at it.
         const step0Done =
           hasText(usersRow?.anthropic_api_key) &&
-          hasText(usersRow?.apify_api_key) &&
-          (!geminiCohort || hasText(usersRow?.gemini_api_key))
+          hasText(usersRow?.apify_api_key)
         const step1Done =
           !!coreRow &&
           [coreRow.who_i_am, coreRow.niche, coreRow.how_i_sound].every(hasText)

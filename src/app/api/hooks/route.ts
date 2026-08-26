@@ -10,12 +10,11 @@ import { fetchLearningInsights } from "@/lib/learning-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
 import { generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
 import { detectAddressGender, detectAddressGenderFromText } from "@/lib/detect-addressing"
-import { usesGeminiHooks } from "@/lib/owner"
 import { getAuthUser } from "@/lib/auth-user"
 
-// Two engines live here, picked per user by usesGeminiHooks (see owner.ts):
-//   cohort  — one Gemini call, no judge, no Hebrew polish
-//   default — the original Sonnet writer → Opus judge → Sonnet polish chain
+// Two engines live here, picked by whether the user has a Gemini key:
+//   has one — one Gemini call, no judge
+//   has none — the Sonnet writer → Opus judge chain
 // Either way this is well past Vercel's 10s default. 300s is the Pro plan
 // ceiling; on Hobby it caps silently to 60s.
 export const maxDuration = 300
@@ -133,25 +132,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "audience_missing" }, { status: 400 })
     }
 
-    const geminiCohort = usesGeminiHooks(user.email)
-
-    // In the cohort Gemini writes the hooks, so its key is the hard
-    // requirement and Anthropic is optional — its only remaining job is the
-    // Haiku fallback inside addressing detection, which already degrades to a
-    // code-only pass. Outside the cohort nothing changed: Anthropic is
-    // required and Gemini is never touched.
+    // Engine selection, by capability rather than by an allowlist.
+    //
+    // Gemini is live for every user who has connected a Gemini key: one call,
+    // no judge, no polish. Everyone who has not keeps the Claude chain exactly
+    // as before. It has to work this way round — when this rolled out only 3
+    // of 77 users had a Gemini key, so a flag flipped to "Gemini for everyone"
+    // would have returned gemini_not_connected to the other 74 and taken hook
+    // generation down for the whole cohort.
+    //
+    // A missing key is therefore NOT an error here, it is the Claude path. A
+    // key that exists but fails to load IS an error worth seeing, so it is
+    // logged before falling back.
     let geminiKey = ""
-    if (geminiCohort) {
-      try {
-        geminiKey = await getUserApiKey(supabase, "gemini_api_key")
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        if (msg === "gemini_not_connected") {
-          return NextResponse.json({ error: "gemini_not_connected" }, { status: 400 })
-        }
-        return NextResponse.json({ error: msg }, { status: 500 })
+    try {
+      geminiKey = await getUserApiKey(supabase, "gemini_api_key")
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg !== "gemini_not_connected") {
+        console.error("[hooks] gemini key present but unreadable — falling back to Claude:", msg)
       }
     }
+    const geminiCohort = !!geminiKey
 
     let anthropicKey = ""
     try {
