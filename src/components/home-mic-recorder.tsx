@@ -22,6 +22,7 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import { Mic, Square, X, ChevronDown } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { startDictation, type DictationHandle } from "@/lib/speech-dictation"
 import {
   Dialog,
   DialogContent,
@@ -42,7 +43,7 @@ export function HomeMicRecorder({ value, onChange }: HomeMicRecorderProps) {
   const [isRecording, setIsRecording] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const recognitionRef = useRef<SpeechRecognition | null>(null)
+  const dictationRef = useRef<DictationHandle | null>(null)
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   // Keep the latest textarea value available inside async recognition
   // callbacks without re-registering them on every keystroke.
@@ -71,65 +72,45 @@ export function HomeMicRecorder({ value, onChange }: HomeMicRecorderProps) {
 
   useEffect(() => {
     return () => {
-      recognitionRef.current?.stop()
+      dictationRef.current?.stop()
       if (timerRef.current) clearInterval(timerRef.current)
     }
   }, [])
 
-  const startRecording = () => {
-    const SpeechRecognitionCtor =
-      window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognitionCtor) {
-      setError("הדפדפן לא תומך בזיהוי דיבור. נסו בכרום או ב-Edge.")
-      return
-    }
-    setError(null)
-
-    const recognition = new SpeechRecognitionCtor()
-    recognition.lang = "he-IL"
-    recognition.continuous = true
-    recognition.interimResults = true
-
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let finalTranscript = ""
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          finalTranscript += event.results[i][0].transcript
-        }
-      }
-      if (finalTranscript) {
-        const base = valueRef.current
-        const separator = base && !base.endsWith(" ") ? " " : ""
-        onChange(base + separator + finalTranscript.trim())
-      }
-    }
-    recognition.onerror = () => stopRecording()
-    recognition.onend = () => {
-      // Auto-restart while the user still wants to record (browsers cut the
-      // session after a pause).
-      if (recognitionRef.current) {
-        try {
-          recognition.start()
-        } catch {
-          stopRecording()
-        }
-      }
-    }
-
-    recognition.start()
-    recognitionRef.current = recognition
-    setIsRecording(true)
-    setRecordingTime(0)
-    timerRef.current = setInterval(() => setRecordingTime((t) => t + 1), 1000)
-  }
-
   const stopRecording = () => {
-    recognitionRef.current = null
+    // Actually stops the microphone. The old version only dropped the ref,
+    // which blocked the auto-restart but left the live session running until
+    // the browser happened to end it.
+    dictationRef.current?.stop()
+    dictationRef.current = null
     setIsRecording(false)
     if (timerRef.current) {
       clearInterval(timerRef.current)
       timerRef.current = null
     }
+  }
+
+  const startRecording = () => {
+    setError(null)
+    const handle = startDictation({
+      onFinalText: (text) => {
+        const base = valueRef.current
+        const separator = base && !base.endsWith(" ") ? " " : ""
+        onChange(base + separator + text)
+      },
+      onFatalError: (message) => {
+        stopRecording()
+        setError(message)
+      },
+    })
+    if (!handle) {
+      setError("הדפדפן לא תומך בזיהוי דיבור. נסו בכרום או ב-Edge.")
+      return
+    }
+    dictationRef.current = handle
+    setIsRecording(true)
+    setRecordingTime(0)
+    timerRef.current = setInterval(() => setRecordingTime((t) => t + 1), 1000)
   }
 
   const formatTime = (seconds: number) => {

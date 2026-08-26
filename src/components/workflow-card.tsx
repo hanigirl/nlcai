@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import { Mic, MicOff, Square } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { startDictation, type DictationHandle } from "@/lib/speech-dictation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
@@ -58,8 +59,15 @@ export function WorkflowCard({
   const [selectedDeviceId, setSelectedDeviceId] = useState("")
   const [isRecording, setIsRecording] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
-  const recognitionRef = useRef<SpeechRecognition | null>(null)
+  const dictationRef = useRef<DictationHandle | null>(null)
   const timerRef = useRef<NodeJS.Timeout | null>(null)
+  // The dictation callbacks are registered once per session, so reading `value`
+  // directly inside them would append every chunk onto whatever the textarea
+  // held when recording STARTED — chunk two silently overwriting chunk one.
+  const valueRef = useRef(value)
+  useEffect(() => {
+    valueRef.current = value
+  }, [value])
 
   const loadDevices = useCallback(async () => {
     try {
@@ -81,69 +89,42 @@ export function WorkflowCard({
     }
   }, [showMicDialog, loadDevices])
 
-  const startRecording = () => {
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognition) {
-      alert("הדפדפן לא תומך בזיהוי דיבור")
-      return
-    }
-
-    const recognition = new SpeechRecognition()
-    recognition.lang = "he-IL"
-    recognition.continuous = true
-    recognition.interimResults = true
-
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let finalTranscript = ""
-      let interimTranscript = ""
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript
-        } else {
-          interimTranscript = transcript
-        }
-      }
-      if (finalTranscript) {
-        const separator = value ? " " : ""
-        onChange?.(value + separator + finalTranscript)
-      }
-    }
-
-    recognition.onerror = () => {
-      stopRecording()
-    }
-
-    recognition.onend = () => {
-      if (isRecording) {
-        // auto-restart if still recording
-        try {
-          recognition.start()
-        } catch {
-          stopRecording()
-        }
-      }
-    }
-
-    recognition.start()
-    recognitionRef.current = recognition
-    setIsRecording(true)
-    setRecordingTime(0)
-    timerRef.current = setInterval(() => {
-      setRecordingTime((t) => t + 1)
-    }, 1000)
-  }
-
-  const stopRecording = () => {
-    recognitionRef.current?.stop()
-    recognitionRef.current = null
+  const stopRecording = useCallback(() => {
+    dictationRef.current?.stop()
+    dictationRef.current = null
     setIsRecording(false)
     if (timerRef.current) {
       clearInterval(timerRef.current)
       timerRef.current = null
     }
     setShowMicDialog(false)
+  }, [])
+
+  // Leaving the page mid-recording must release the microphone.
+  useEffect(() => stopRecording, [stopRecording])
+
+  const startRecording = () => {
+    const handle = startDictation({
+      onFinalText: (text) => {
+        const base = valueRef.current ?? ""
+        const separator = base && !base.endsWith(" ") ? " " : ""
+        onChange?.(base + separator + text)
+      },
+      onFatalError: (message) => {
+        stopRecording()
+        alert(message)
+      },
+    })
+    if (!handle) {
+      alert("הדפדפן לא תומך בזיהוי דיבור. נסו בכרום או ב-Edge.")
+      return
+    }
+    dictationRef.current = handle
+    setIsRecording(true)
+    setRecordingTime(0)
+    timerRef.current = setInterval(() => {
+      setRecordingTime((t) => t + 1)
+    }, 1000)
   }
 
   const formatTime = (seconds: number) => {

@@ -3,6 +3,14 @@ interface SpeechRecognitionEvent extends Event {
   results: SpeechRecognitionResultList
 }
 
+// The `error` code carried by SpeechRecognition's error event. Needed to tell
+// a pause in speech ("no-speech") apart from a denied microphone — treating
+// them alike is what made long dictation die mid-sentence.
+interface SpeechRecognitionErrorEvent extends Event {
+  error: string
+  message?: string
+}
+
 interface SpeechRecognition extends EventTarget {
   lang: string
   continuous: boolean
