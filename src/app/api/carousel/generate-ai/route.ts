@@ -5,13 +5,18 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { getTemplate } from "@/lib/carousel-templates"
 import type { SlideData } from "@/lib/carousel-templates"
 import { getAuthUser } from "@/lib/auth-user"
+import { assertFeedSafeAspect } from "@/lib/social/media-spec"
 
 // gpt-image-2 takes 30-120s per image; several slides run with limited
 // concurrency, so leave generous headroom.
 export const maxDuration = 300
 
+// A carousel is a feed post: Instagram accepts 4:5 to 1.91:1, so 4:5 is the
+// tallest shape allowed here. Asserted below rather than trusted, so this pair
+// can never drift to 9:16 without the generator saying so.
 const IMAGE_WIDTH = 1080
 const IMAGE_HEIGHT = 1350
+assertFeedSafeAspect(IMAGE_WIDTH, IMAGE_HEIGHT, "קרוסלת AI")
 
 // Each slide is one gpt-image-2 call on the user's key — cap so a runaway
 // slide count can't burn through their credit in one click.
