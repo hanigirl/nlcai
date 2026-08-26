@@ -4,8 +4,8 @@ import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { detectAudienceGender } from "@/lib/detect-addressing"
 import { TEMPLATE_LIBRARY, getTemplatesByCategorySorted, templateText, templatePriority, type TemplateCategory, type HookTemplate } from "@/lib/agents/hook-templates"
-import { polishHookForHebrew } from "@/lib/agents/hook-hebrew-polish"
 import { judgeHook, validateHookLocally } from "@/lib/agents/hook-judge"
+import { findNearDuplicate } from "@/lib/agents/hook-similarity"
 import { classifyHooksByProduct } from "@/lib/agents/hook-product-classifier"
 import { GeminiError, generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
 import { usesGeminiHooks } from "@/lib/owner"
@@ -272,6 +272,12 @@ ${audienceIdentity.limiting_beliefs}
     // per hook, so the old reason no longer binds — left at 6 on purpose until
     // we've measured real Gemini latency and per-user rate limits.
     const HOOK_COUNT = 6
+
+    // Flattened once: the per-hook duplicate check below runs inside a
+    // parallel batch and must not re-map this list six times.
+    const existingHookTexts = ((existingHooks as { hook_text: string }[] | null) ?? [])
+      .map((h) => h.hook_text?.trim())
+      .filter((t): t is string => !!t)
 
     const categoriesCatalog = TEMPLATE_LIBRARY
       .map((g) => `- ${g.category} (${g.contentType}, "${g.label}"): ${g.goal}`)
@@ -709,6 +715,12 @@ ${formatTemplatesForPrompt()}
             // a hook, on the Gemini path it only logs, so a cohort batch shows
             // exactly what the model produced instead of quietly shrinking.
             let issues = validateHookLocally(hookText, plan.specific_topic)
+            // The planner is told to avoid the user's existing hooks, but the
+            // writer that produces the sentence never sees them — so a fresh
+            // angle can still land on an old phrasing. Checked here, where the
+            // judge that already runs can act on it for free.
+            const repeated = findNearDuplicate(hookText, existingHookTexts)
+            if (repeated) issues.push(`repeats_existing_hook: "${repeated}"`)
 
             if (geminiCohort) {
               if (issues.length > 0) {
@@ -744,13 +756,11 @@ ${formatTemplatesForPrompt()}
 
               if (hookText.length <= 10) { skipped++; return }
 
-              // Polish only if judge accepted the original. When judge rewrote,
-              // the Opus output is already clean natural Hebrew — running the
-              // Sonnet polish on top is redundant and occasionally re-edits
-              // something Opus got right.
-              if (!judgeRewrote) {
-                hookText = await polishHookForHebrew(client, hookText, PRIMARY_MODEL, audienceAddress)
-              }
+              // No polish pass — same reasoning as /api/hooks. It only ever
+              // ran on hooks the judge ACCEPTED, and acceptance already means
+              // the judge passed question 5, "is this natural, error-free
+              // Hebrew". Re-editing certified text cost a Sonnet call per hook
+              // and occasionally undid something the judge got right.
             }
 
             if (hookText.length <= 10) { skipped++; return }

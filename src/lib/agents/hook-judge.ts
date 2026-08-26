@@ -1,5 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk"
 import { JUDGE_MODEL } from "@/lib/anthropic-fallback"
+import { hookSimilarity } from "@/lib/agents/hook-similarity"
 
 // Judge step — runs AFTER the writer has drafted a hook, BEFORE the polish.
 // Evaluates the hook against the quality bar Hani defined: curiosity gap,
@@ -36,13 +37,33 @@ const ADDRESS_GENDER_LABEL: Record<string, string> = {
   plural: "לשון רבים (אתם/לכם/תעשו)",
 }
 
+/** What one judge call actually cost, so the caller can prove the cache works. */
+export interface JudgeUsage {
+  input: number
+  cacheRead: number
+  cacheWrite: number
+}
+
 export interface JudgeResult {
   valid: boolean
   issues: string[]
   rewritten: string
+  /** Absent when the call never reached the API (parse guard, thrown error). */
+  usage?: JudgeUsage
 }
 
-const judgeInstructions = (
+/**
+ * The static half of the judge: a ~3k-token Hebrew rubric that is byte-for-byte
+ * identical across every hook in a batch. Sent as the cached `system` block so
+ * the ten judge calls in one run pay for it once instead of ten times. The only
+ * thing that varies is addressGender, which is fixed for a whole run — so the
+ * prefix really is stable, which is the entire requirement for a cache hit.
+ *
+ * Nothing hook-specific may move in here. One interpolated hook and every call
+ * has a different prefix, the cache never hits, and the cost silently returns
+ * to what it was with no error to notice.
+ */
+export const judgeInstructions = (
   addressGender?: "masculine" | "feminine" | "plural" | null,
 ) => `אתה עורך/ת ראשי/ת של הוקים לסרטונים קצרים בעברית. **גישת ברירת המחדל: פסול → שכתב.** רק הוק שעובר בבירור את כל 5 שאלות הבדיקה — אתה רשאי לאשר.
 
@@ -105,15 +126,28 @@ export async function judgeHook(
   ctx: JudgeContext,
   model: string = JUDGE_MODEL,
 ): Promise<JudgeResult> {
-  const userPrompt = `${judgeInstructions(ctx.addressGender)}
+  // A repeat is not one of the five questions and the judge will happily pass
+  // a well-built hook that says what last week's hook said. Handing it the
+  // duplicate as a plain "issue" was not enough — it needs the verdict spelled
+  // out, and it needs the duplicated text so the rewrite moves away from that
+  // angle instead of landing on it again.
+  const repeatIssue = ctx.programmaticIssues.find((i) => i.startsWith("repeats_existing_hook"))
+  const repeatRule = repeatIssue
+    ? `
 
-## הקלט הנוכחי
+## ⛔ פסילה אוטומטית — חזרה
+${repeatIssue}
+
+ההוק הזה חוזר על זווית שכבר הוצגה למשתמש. **לא משנה כמה הוא טוב** — סמן \`valid: false\`, והוסף \`"repeat"\` ל-issues. ה-\`rewritten\` חייב לתקוף את הנושא **מזווית אחרת לגמרי** — כאב אחר, הבטחה אחרת, מבנה אחר. ניסוח מחדש של אותו רעיון נחשב כישלון.`
+    : ""
+
+  const userPrompt = `## הקלט הנוכחי
 
 **ההוק:** ${ctx.hook}
 **התבנית:** ${ctx.template}
 **נושא ספציפי:** ${ctx.specificTopic}
 **כאב/רצון:** ${ctx.targetPainOrDesire}
-**בעיות שזוהו אוטומטית:** ${ctx.programmaticIssues.length > 0 ? ctx.programmaticIssues.join(", ") : "אין"}
+**בעיות שזוהו אוטומטית:** ${ctx.programmaticIssues.length > 0 ? ctx.programmaticIssues.join(", ") : "אין"}${repeatRule}
 
 החזר JSON.`
 
@@ -121,15 +155,30 @@ export async function judgeHook(
     const res = await client.messages.create({
       model,
       max_tokens: 1024,
+      system: [
+        {
+          type: "text",
+          text: judgeInstructions(ctx.addressGender),
+          // 1h, not the 5-minute default: a user who regenerates twenty
+          // minutes later still hits it, and that regenerate-again loop is
+          // exactly the behaviour we are paying for.
+          cache_control: { type: "ephemeral", ttl: "1h" },
+        },
+      ],
       messages: [{ role: "user", content: userPrompt }],
     })
+    const usage: JudgeUsage = {
+      input: res.usage.input_tokens,
+      cacheRead: res.usage.cache_read_input_tokens ?? 0,
+      cacheWrite: res.usage.cache_creation_input_tokens ?? 0,
+    }
     const raw = res.content.find((b) => b.type === "text")?.text ?? ""
     const parsed = extractJsonObject(raw)
     if (!parsed) {
       console.error("Hook judge: response not parseable. First 300 chars:", raw.slice(0, 300))
       // Be permissive on parse failure — accept the original hook so the pipeline
       // doesn't collapse. Log it so we can spot systematic issues.
-      return { valid: true, issues: ["judge_parse_failed"], rewritten: ctx.hook }
+      return { valid: true, issues: ["judge_parse_failed"], rewritten: ctx.hook, usage }
     }
     const result = parsed as Partial<JudgeResult> & Record<string, unknown>
     // Defensive: if ANY of the 5 explicit question fields is "fail", treat
@@ -145,15 +194,28 @@ export async function judgeHook(
     const failedQuestions = QUESTION_KEYS.filter((k) => result[k] === "fail")
     const strictValid = result.valid === true && failedQuestions.length === 0
 
+    const finalText = typeof result.rewritten === "string" && result.rewritten.trim().length > 0
+      ? cleanJudgeOutput(result.rewritten)
+      : ctx.hook
+
+    // Did the rewrite actually move? Flipping a flagged repeat to valid:false
+    // and handing back a reworded copy of the same angle is the bug wearing a
+    // different coat, and it would look like a fix in the logs. Say plainly
+    // when the judge did not escape the angle it was told to escape.
+    if (repeatIssue && hookSimilarity(finalText, ctx.hook) > 0.8) {
+      console.warn(
+        `Hook judge: told to escape a repeat but returned the same angle — "${finalText.slice(0, 60)}"`,
+      )
+    }
+
     return {
       valid: strictValid,
       issues: [
         ...(Array.isArray(result.issues) ? result.issues : []),
         ...failedQuestions.map((k) => `${k}=fail`),
       ],
-      rewritten: typeof result.rewritten === "string" && result.rewritten.trim().length > 0
-        ? cleanJudgeOutput(result.rewritten)
-        : ctx.hook,
+      rewritten: finalText,
+      usage,
     }
   } catch (err) {
     console.error("Hook judge failed — accepting original:", err)

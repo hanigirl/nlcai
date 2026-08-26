@@ -1,4 +1,5 @@
 import { GREAT_HOOKS_EXAMPLES } from "./great-hooks"
+import { TEMPLATE_LIBRARY } from "./hook-templates"
 
 interface CoreIdentity {
   who_i_am: string
@@ -47,6 +48,12 @@ interface HookGeneratorInput {
    * derive from the audience (singular), plural only as a last resort.
    */
   addressGender?: "masculine" | "feminine" | "plural" | null
+  /**
+   * Hooks this user has already been shown — the rejected batch for this idea
+   * first, then their other recent hooks. Without it every regenerate ran an
+   * identical prompt and produced identical angles.
+   */
+  previousHooks?: string[]
 }
 
 const ADDRESS_GENDER_LABEL: Record<string, string> = {
@@ -66,7 +73,22 @@ export function buildHookGeneratorPrompt({
   trendContext,
   hasFavorites,
   addressGender,
+  previousHooks,
 }: HookGeneratorInput): string {
+  // The batch the user just threw away, spelled out. A soft "don't repeat
+  // yourself" does nothing when the model can't see what it already wrote —
+  // it has to be shown the actual sentences.
+  const previousSection = previousHooks && previousHooks.length > 0
+    ? `
+## 🚫 הוקים שכבר הצגנו למשתמש — אסור לחזור עליהם
+המשתמש כבר ראה את ההוקים האלה ולא בחר באף אחד מהם. הוא לחץ "תייצר מחדש" כדי לקבל **משהו אחר**, לא ניסוח אחר לאותו דבר.
+
+${previousHooks.map((h, i) => `${i + 1}. ${h}`).join("\n")}
+
+**איך בודקים**: לפני שאתה מחזיר הוק, עבור על הרשימה למעלה. אם ההוק החדש נשען על **אותה זווית**, **אותו כאב**, **אותה הבטחה** או **אותו מבנה משפט** כמו אחד מהם — הוא נחשב חזרה, גם אם המילים שונות לגמרי. תזרוק אותו ותכתוב זווית אחרת.
+`
+    : ""
+
   const identitySection = coreIdentity
     ? `
 ## Core Identity של המשתמש
@@ -155,7 +177,36 @@ ${hasFavorites ? "⚠️ **יש למשתמש רעיונות מועדפים** —
 ${trendContext}
 ` : ""}
 
-## מה הופך הוק לטוב — שלוש העמודות
+${previousSection}${learningInsights || ""}`
+}
+
+/**
+ * The half of the writer prompt that never changes: the quality bar, the
+ * rules, the category list, the template library and the worked examples.
+ * ~10k tokens — the single largest reusable block in the app, and it used to
+ * be re-sent in full on every generate because it sat at the BOTTOM of one
+ * giant string, behind the idea. A prompt cache matches on the prefix, so
+ * anything positioned after a varying idea can never be cached however stable
+ * it is. Living in `system` puts it in front of everything volatile.
+ *
+ * Only `count` and `addressGender` may be interpolated here, and both hold
+ * still across a session. Do NOT add anything per-idea: one interpolated idea
+ * and the cache stops hitting, with no error and no signal but the bill.
+ */
+export function buildHookGeneratorSystem({
+  count = 3,
+  addressGender,
+}: Pick<HookGeneratorInput, "count" | "addressGender">): string {
+  // Derived from the max-2-per-category rule below rather than picked: with
+  // ten hooks and a ceiling of two each, anything under five categories is a
+  // rule the model cannot satisfy, and an impossible instruction gets ignored
+  // wholesale rather than partially obeyed.
+  const minCategories = Math.min(TEMPLATE_LIBRARY.length, Math.max(3, Math.ceil(count / 2)))
+  const categoriesCatalog = TEMPLATE_LIBRARY
+    .map((g) => `- ${g.category} ("${g.label}"): ${g.goal}`)
+    .join("\n")
+
+  return `## מה הופך הוק לטוב — שלוש העמודות
 ההוק חייב להחזיק את כל השלוש. תבניות הן רק כלי עזר; אם יש לך ניסוח חזק יותר שעומד בשלוש העמודות — לך עליו.
 
 ### 1. נוגע בכאב/רצון ספציפי של הקהל
@@ -185,12 +236,16 @@ ${addressGender
   ? `8. **פניה לקהל ב${ADDRESS_GENDER_LABEL[addressGender]} בלבד** — כך המשתמש כתב ברעיון/בתיאור שלו, ואתה לא מתקן אותו, גם אם קהל היעד מרמז על מגדר אחר. גם אם תבנית במאגר או דוגמה כתובה בגוף אחר — המר/י אותה ל${ADDRESS_GENDER_LABEL[addressGender]} בהוק הסופי. אסור לערבב גופים באותו הוק.`
   : `8. **גוף הפנייה לקהל** — גזור מקהל היעד (בסעיף למעלה): קהל נשים → פנייה בלשון **נקבה יחידה** (את/לך/תעשי). קהל גברים → פנייה בלשון **זכר יחיד** (אתה/לך/תעשה). **רק אם** אי אפשר לגזור מהקהל מגדר ברור — כתוב ברבים (אתם/לכם). התבניות והדוגמאות במאגר כתובות ברבים — המר/י אותן לגוף שקבעת. אסור לערבב גופים באותו הוק.`}
 
+9. **גיוון קשיח בין הקטגוריות** — ${count} ההוקים חייבים להתפרס על לפחות **${minCategories} קטגוריות שונות** מהרשימה למטה, ואסור יותר מ-2 הוקים באותה קטגוריה. זה תנאי, לא המלצה: בלי זה כל ההוקים נופלים לאותה זווית מובנת מאליה של הרעיון.
+
+## קטגוריות זוויות זמינות
+${categoriesCatalog}
+
 ## מאגר תבניות לעזר (לא חובה!)
 התבניות למטה הן השראה ומסגרות שעובדות — מותר לבחור מהן, ומותר *לא* לבחור. אם יש לך זווית או ניסוח חזק יותר שמתאים יותר לסיטואציה הזו — כתוב אותו ישירות. **המבחן היחיד הוא שלוש העמודות (כאב + סקרנות + פאנץ׳ נסגר)**. תבנית שלא מצליחה לעמוד בשלוש העמודות לזווית הזו — אל תכופף אליה את ההוק.
 
 ${GREAT_HOOKS_EXAMPLES}
 
-${learningInsights || ""}
 ## פלט
 החזר בדיוק ${count} הוקים, כל אחד בשורה אחת בלבד.
 כל הוק חייב להיות משפט שלם ומוגמר — אסור שהוק ייקטע באמצע.
