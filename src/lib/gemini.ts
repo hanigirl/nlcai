@@ -168,7 +168,18 @@ export async function generateWithGemini(
  */
 export async function generateWithGeminiFallback(
   apiKey: string,
-  opts: Omit<GenerateOptions, "model">,
+  {
+    fallbackTimeoutMs,
+    ...opts
+  }: Omit<GenerateOptions, "model"> & {
+    /**
+     * Cap for the Flash retry only. Pro and Flash aren't the same shape of
+     * call — Pro thinks, Flash barely does — so one shared timeout either cuts
+     * Pro off while it's still working or lets a stuck Flash call run long.
+     * Defaults to the primary's cap, which is the previous behaviour.
+     */
+    fallbackTimeoutMs?: number
+  },
 ): Promise<{ text: string; fallback: boolean; model: string }> {
   try {
     const text = await generateWithGemini(apiKey, { ...opts, model: GEMINI_PRIMARY_MODEL })
@@ -176,7 +187,11 @@ export async function generateWithGeminiFallback(
   } catch (err) {
     const code = err instanceof GeminiError ? err.code : "unknown"
     console.log(`[gemini] ${GEMINI_PRIMARY_MODEL} failed (${code}) — retrying on ${GEMINI_FALLBACK_MODEL}`)
-    const text = await generateWithGemini(apiKey, { ...opts, model: GEMINI_FALLBACK_MODEL })
+    const text = await generateWithGemini(apiKey, {
+      ...opts,
+      model: GEMINI_FALLBACK_MODEL,
+      ...(fallbackTimeoutMs ? { timeoutMs: fallbackTimeoutMs } : {}),
+    })
     return { text, fallback: true, model: GEMINI_FALLBACK_MODEL }
   }
 }

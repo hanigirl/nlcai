@@ -280,10 +280,20 @@ export async function POST(req: NextRequest) {
       // The budget covers thinking AND the hooks. Sized generously on purpose:
       // running out mid-response truncates the list and silently costs the
       // user hooks, while unused budget costs nothing.
+      //
+      // Timeouts, explicitly: the library's 90s default was cutting off calls
+      // that were still working — it was two of the three Gemini failures in
+      // production on 2026-09-01, and the user just saw "השרתים עמוסים" for a
+      // generation that would have landed. Pro thinking through ten hooks
+      // routinely runs past a minute, so it gets 180s; Flash is fast enough
+      // that 60s is already generous. Worst case both fire back to back at
+      // 240s, still inside this route's maxDuration of 300.
       const { text: rawText, fallback } = await generateWithGeminiFallback(geminiKey, {
         prompt: `${systemPrompt}\n\n${prompt}`,
         maxOutputTokens: count > 5 ? 24576 : 16384,
         thinkingLevel: "high",
+        timeoutMs: 180_000,
+        fallbackTimeoutMs: 60_000,
       })
       modelFallback = fallback
       hookTexts = parseHooks(rawText, count)
