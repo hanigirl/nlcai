@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Anchor, Loader2, Sparkles, LayoutGrid, List, Star, Search, ChevronDown, Check } from "lucide-react"
+import { Anchor, Loader2, Sparkles, LayoutGrid, List, Star, Search, ChevronDown, Check, Plus } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { Button } from "@/components/ui/button"
 import {
@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { HookCard } from "@/components/hook-card"
+import { NewHookCard } from "@/components/new-hook-card"
 import { GeneratingStatus } from "@/components/generating-status"
 import { GeminiConnectNotice } from "@/components/gemini-connect-notice"
 import { createClient } from "@/lib/supabase/client"
@@ -72,6 +73,9 @@ export default function HooksPage() {
   const [showFavorites, setShowFavorites] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
+  // Hooks the user is writing by hand. Client-only until saved, so a
+  // discarded draft never touches the DB. Newest first, like the grid.
+  const [drafts, setDrafts] = useState<string[]>([])
 
   const loadHooks = async () => {
     const supabase = createClient()
@@ -152,6 +156,44 @@ export default function HooksPage() {
     // the provider keeps going and the toast persists at the bottom.
     // `product` (from the "לפי מוצר" submenu) focuses + tags the batch.
     startGeneration(product)
+  }
+
+  const handleAddDraft = () => {
+    setDrafts((prev) => [crypto.randomUUID(), ...prev])
+  }
+
+  const handleDiscardDraft = (draftId: string) => {
+    setDrafts((prev) => prev.filter((d) => d !== draftId))
+  }
+
+  const handleSaveDraft = async (draftId: string, text: string, productId: string | null): Promise<boolean> => {
+    const supabase = createClient()
+    const { data: { user } } = await getCurrentUser(supabase)
+    if (!user) {
+      toast.error("צריך להתחבר כדי לשמור הוק")
+      return false
+    }
+    const { data, error } = await withRetry(() =>
+      supabase
+        .from("hooks")
+        .insert({
+          user_id: user.id,
+          hook_text: text,
+          display_order: 0,
+          status: "completed",
+          product_ids: productId ? [productId] : [],
+        } as never)
+        .select("id, hook_text, is_used, is_favorite, created_at, product_ids")
+        .single(),
+    )
+    if (error || !data) {
+      toast.error(`ההוק לא נשמר: ${error?.message ?? "תקלת רשת"}`)
+      return false
+    }
+    setHooks((prev) => [data as HookItem, ...prev])
+    setDrafts((prev) => prev.filter((d) => d !== draftId))
+    toast.success("ההוק נוסף למחסן")
+    return true
   }
 
   const handleDelete = async (id: string) => {
@@ -254,7 +296,7 @@ export default function HooksPage() {
     )
     const groups = new Map<string, HookItem[]>()
     // Ensure today's section appears (with skeletons) even if no hooks exist yet
-    if (skeletonCount > 0) groups.set(todayKey, [])
+    if (skeletonCount > 0 || drafts.length > 0) groups.set(todayKey, [])
     for (const hook of sorted) {
       const key = getDayKey(hook.created_at)
       const existing = groups.get(key)
@@ -299,6 +341,14 @@ export default function HooksPage() {
               </span>
             )}
           </div>
+          <div className="flex items-center gap-2">
+          {/* Manual add — first in DOM so it sits to the RIGHT of the
+              generate button in this RTL row. Users asked to write their
+              own hooks, not only generated ones. */}
+          <Button size="sm" variant="outline" onClick={handleAddDraft} className="gap-1.5">
+            <Plus className="size-3.5" />
+            הוספת הוק
+          </Button>
           {/* Generate button — now a dropdown (chevron variant): pick a
               general batch, or "לפי מוצר" to focus + tag the batch on a
               specific product (sub-menu lists the user's products). */}
@@ -341,6 +391,7 @@ export default function HooksPage() {
               </DropdownMenuSub>
             </DropdownMenuContent>
           </DropdownMenu>
+          </div>
         </div>
 
         {/* Filter bar + view switcher */}
@@ -451,7 +502,7 @@ export default function HooksPage() {
           </div>
         )}
 
-        {!loading && hooks.length === 0 && !generating && (
+        {!loading && hooks.length === 0 && !generating && drafts.length === 0 && (
           <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
             <div className="rounded-2xl bg-bg-surface p-6">
               <Anchor className="size-10 text-text-neutral-default mx-auto mb-3" />
@@ -500,6 +551,17 @@ export default function HooksPage() {
                     {isToday && generating && <GeneratingStatus />}
                   </div>
                   <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" : "flex flex-col gap-2"}>
+                    {/* Hand-written drafts lead today's section. Same bump-in as a
+                        generated hook arriving, so a new card always enters the same way. */}
+                    {isToday && drafts.map((draftId) => (
+                      <div key={draftId} className="animate-hook-bump">
+                        <NewHookCard
+                          products={products}
+                          onSave={(text, productId) => handleSaveDraft(draftId, text, productId)}
+                          onDiscard={() => handleDiscardDraft(draftId)}
+                        />
+                      </div>
+                    ))}
                     {/* Per-slot rendering on today: each slot is either an arrived
                         hook or a skeleton — slot N becomes hook N in place. */}
                     {(isToday && (sessionItems.length > 0 || skeletonCount > 0)) && (
