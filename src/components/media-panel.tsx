@@ -59,6 +59,7 @@ import {
   removeStoryGenerationSet,
 } from "@/lib/story-generation-store"
 import type { SlideData } from "@/lib/carousel-templates"
+import { flushPendingSaves } from "@/lib/pending-saves"
 import { CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import { parseTextToSlides } from "@/lib/carousel-slides"
 import {
@@ -3072,6 +3073,9 @@ function MediaUploadFlow({
   ): Promise<string | null> => {
     if (!postId) return null
     try {
+      // The route reads the story script from the DB; a burn a second after
+      // an edit would otherwise carry the previous text.
+      await flushPendingSaves()
       const res = await fetch("/api/story/generate-video-media", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

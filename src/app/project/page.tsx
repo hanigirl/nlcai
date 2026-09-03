@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, Suspense } from "react"
+import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
@@ -8,6 +8,7 @@ import { CaptionControls } from "@/components/image-caption-block"
 import { useCarouselCaption } from "@/lib/carousel-caption"
 import { useStillCaption } from "@/lib/still-caption"
 import { toast } from "sonner"
+import { registerPendingSaveFlusher } from "@/lib/pending-saves"
 import { AppShell } from "@/components/app-shell"
 import { GeminiConnectNoticeCard, useGeminiNoticeVisible } from "@/components/gemini-connect-notice"
 import { InfiniteCanvas } from "@/components/infinite-canvas"
@@ -118,16 +119,27 @@ function carouselSignature(images: string[] | null): string {
  * `id` on the toast dedupes: a flapping connection retries on every dependency
  * change and would otherwise stack a tower of identical errors.
  */
+type SaveOpts = {
+  /**
+   * Let the request outlive the page. Set when flushing on the way out
+   * (navigation, tab close): a normal fetch is cancelled with the document,
+   * a keepalive one is handed to the browser to finish on its own.
+   */
+  keepalive?: boolean
+}
+
 async function savePatch(
   postId: string,
   body: Record<string, unknown>,
   label: string,
+  opts?: SaveOpts,
 ): Promise<boolean> {
   try {
     const res = await fetch(`/api/core-posts/${postId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      keepalive: opts?.keepalive,
     })
     if (!res.ok) {
       const data = (await res.json().catch(() => ({}))) as { error?: string }
@@ -752,6 +764,7 @@ function ProjectPageInner() {
           // Restore format variants
           const fp = data.post.formatPosts as Record<string, string>
           if (fp && Object.keys(fp).length > 0) {
+            lastSavedFormatsRef.current = { ...fp }
             setFormatPosts(fp)
             setDuplicatedFormats(Object.keys(fp))
             setSelectedFormats(Object.keys(fp))
@@ -1259,6 +1272,39 @@ function ProjectPageInner() {
     return () => clearTimeout(timer)
   }, [savedPostId, response])
 
+  // ---- Pending saves --------------------------------------------------
+  // Both autosaves (core post body, format scripts) park their text here and
+  // send it a moment after the last keystroke. Anything that needs the
+  // server copy sooner calls the matching flush: leaving the page (pagehide,
+  // unmount) and the media generators, which read the script from the DB
+  // (see lib/pending-saves.ts). Refs, not state, so the flush that runs
+  // during unmount sees the latest values.
+  const savedPostIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    savedPostIdRef.current = savedPostId
+  }, [savedPostId])
+
+  const pendingBodyRef = useRef<string | null>(null)
+  const bodyTimerRef = useRef<number | null>(null)
+
+  const flushBodySave = useCallback(async (opts?: SaveOpts) => {
+    const postId = savedPostIdRef.current
+    const text = pendingBodyRef.current
+    if (!postId || text === null) return
+    pendingBodyRef.current = null
+    if (bodyTimerRef.current !== null) {
+      window.clearTimeout(bodyTimerRef.current)
+      bodyTimerRef.current = null
+    }
+    const ok = await savePatch(postId, { body: text }, "הפוסט", opts)
+    if (ok) {
+      setOriginalCorePost(text)
+      setBodySaveStatus("saved")
+    } else {
+      setBodySaveStatus("error")
+    }
+  }, [])
+
   // Auto-save core post body — debounced PATCH whenever the user edits the
   // textarea. Without this, edits live only in local state (+ sessionStorage)
   // and get overwritten by the original DB body on the next /project?post_id
@@ -1269,25 +1315,14 @@ function ProjectPageInner() {
     if (!corePost) return
     if (corePost === originalCorePost) return
 
+    pendingBodyRef.current = corePost
     setBodySaveStatus("saving")
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/core-posts/${savedPostId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ body: corePost }),
-        })
-        if (!res.ok) throw new Error(`save failed: ${res.status}`)
-        setOriginalCorePost(corePost)
-        setBodySaveStatus("saved")
-      } catch (err) {
-        console.error("[project][autosave-body]", err)
-        setBodySaveStatus("error")
-        toast.error("שמירת הפוסט נכשלה")
-      }
-    }, 800)
-    return () => clearTimeout(timer)
-  }, [savedPostId, corePost, originalCorePost])
+    if (bodyTimerRef.current !== null) window.clearTimeout(bodyTimerRef.current)
+    bodyTimerRef.current = window.setTimeout(() => void flushBodySave(), 800)
+    return () => {
+      if (bodyTimerRef.current !== null) window.clearTimeout(bodyTimerRef.current)
+    }
+  }, [savedPostId, corePost, originalCorePost, flushBodySave])
 
   // Learning log: capture a manual edit to the AI's post once the user stops
   // typing. Used to fire only on the "שיכפול לפורמטים" click, which meant an
@@ -1614,6 +1649,7 @@ function ProjectPageInner() {
     // Auto-save the new variants to DB. Not silent: losing these means the
     // format cards render text that exists nowhere but this tab.
     if (savedPostId) {
+      lastSavedFormatsRef.current = { ...lastSavedFormatsRef.current, ...results }
       void savePatch(savedPostId, { formatPosts: results }, "טקסטי הפורמטים")
     }
   }
@@ -1633,6 +1669,34 @@ function ProjectPageInner() {
     Record<string, "saving" | "saved" | "error">
   >({})
   const savedFormatPostsRef = useRef<string>("")
+  // The last text the server confirmed, per format. What an emptied box is
+  // restored to (handleFormatBlur), and seeded from the DB load so opening a
+  // post doesn't count as editing it.
+  const lastSavedFormatsRef = useRef<Record<string, string>>({})
+  const pendingFormatsRef = useRef<Record<string, string> | null>(null)
+  const formatsTimerRef = useRef<number | null>(null)
+
+  const flushFormatSaves = useCallback(async (opts?: SaveOpts) => {
+    const postId = savedPostIdRef.current
+    const payload = pendingFormatsRef.current
+    if (!postId || !payload) return
+    pendingFormatsRef.current = null
+    if (formatsTimerRef.current !== null) {
+      window.clearTimeout(formatsTimerRef.current)
+      formatsTimerRef.current = null
+    }
+    const changed = Object.keys(payload)
+    const ok = await savePatch(postId, { formatPosts: payload }, "טקסטי הפורמטים", opts)
+    if (ok) {
+      lastSavedFormatsRef.current = { ...lastSavedFormatsRef.current, ...payload }
+    }
+    setFormatSaveStatus((prev) => {
+      const next = { ...prev }
+      changed.forEach((fid) => (next[fid] = ok ? "saved" : "error"))
+      return next
+    })
+  }, [])
+
   useEffect(() => {
     if (!savedPostId) return
     const persistable: Record<string, string> = {}
@@ -1642,29 +1706,61 @@ function ProjectPageInner() {
     if (Object.keys(persistable).length === 0) return
     const snapshot = JSON.stringify(persistable)
     if (snapshot === savedFormatPostsRef.current) return
+    savedFormatPostsRef.current = snapshot
 
-    const changed = Object.keys(persistable)
-    const timer = setTimeout(() => {
-      savedFormatPostsRef.current = snapshot
-      setFormatSaveStatus((prev) => {
-        const next = { ...prev }
-        changed.forEach((fid) => (next[fid] = "saving"))
-        return next
-      })
-      void savePatch(
-        savedPostId,
-        { formatPosts: persistable },
-        "טקסטי הפורמטים",
-      ).then((ok) => {
-        setFormatSaveStatus((prev) => {
-          const next = { ...prev }
-          changed.forEach((fid) => (next[fid] = ok ? "saved" : "error"))
-          return next
-        })
-      })
-    }, 1200)
-    return () => clearTimeout(timer)
-  }, [formatPosts, savedPostId])
+    // Only the formats whose text actually differs from the saved copy go
+    // in the request; the rest would be a no-op write.
+    const dirty: Record<string, string> = {}
+    for (const [fid, text] of Object.entries(persistable)) {
+      if (lastSavedFormatsRef.current[fid] !== text) dirty[fid] = text
+    }
+    if (Object.keys(dirty).length === 0) return
+
+    pendingFormatsRef.current = { ...(pendingFormatsRef.current ?? {}), ...dirty }
+    setFormatSaveStatus((prev) => {
+      const next = { ...prev }
+      Object.keys(dirty).forEach((fid) => (next[fid] = "saving"))
+      return next
+    })
+    if (formatsTimerRef.current !== null) window.clearTimeout(formatsTimerRef.current)
+    formatsTimerRef.current = window.setTimeout(() => void flushFormatSaves(), 1200)
+    return () => {
+      if (formatsTimerRef.current !== null) window.clearTimeout(formatsTimerRef.current)
+    }
+  }, [formatPosts, savedPostId, flushFormatSaves])
+
+  // Everything parked, sent now. Registered for the media generators, and
+  // fired on the way out of the page with keepalive so the browser finishes
+  // the request after the document is gone.
+  const flushAllSaves = useCallback(
+    async (opts?: SaveOpts) => {
+      await Promise.all([flushBodySave(opts), flushFormatSaves(opts)])
+    },
+    [flushBodySave, flushFormatSaves],
+  )
+  useEffect(() => {
+    const unregister = registerPendingSaveFlusher(() => flushAllSaves())
+    const onPageHide = () => void flushAllSaves({ keepalive: true })
+    window.addEventListener("pagehide", onPageHide)
+    return () => {
+      unregister()
+      window.removeEventListener("pagehide", onPageHide)
+      void flushAllSaves({ keepalive: true })
+    }
+  }, [flushAllSaves])
+
+  // An empty script is never saved (the server skips it, so a slip of the
+  // keyboard can't wipe a format). Until now the box just looked empty and
+  // the old text quietly came back on reload. Now the rule is visible: on
+  // blur, an emptied box gets its saved text back and says why.
+  const handleFormatBlur = (fid: string) => {
+    const current = formatPosts[fid]
+    if (current === undefined || current.trim().length > 0) return
+    const last = lastSavedFormatsRef.current[fid]
+    if (!last || !last.trim()) return
+    setFormatPosts((prev) => ({ ...prev, [fid]: last }))
+    toast("סקריפט ריק לא נשמר, אז החזרנו את הטקסט הקודם", { id: `empty-format-${fid}` })
+  }
 
   const handleFormatCardClick = (fid: string) => {
     setSelectedFormatCard(selectedFormatCard === fid ? null : fid)
@@ -2333,6 +2429,7 @@ function ProjectPageInner() {
                           formats={duplicatedFormats}
                           formatPosts={formatPosts}
                           onPostChange={(fid, text) => setFormatPosts((prev) => ({ ...prev, [fid]: text }))}
+                          onPostBlur={handleFormatBlur}
                           onRegenerateFormat={(fid) => setPendingFormatRegen(fid)}
                           formatSaveStatus={formatSaveStatus}
                           activeCard={activeCard}
@@ -2542,6 +2639,7 @@ function FormatTree({
   formats,
   formatPosts,
   onPostChange,
+  onPostBlur,
   onRegenerateFormat,
   formatSaveStatus,
   activeCard,
@@ -2584,6 +2682,7 @@ function FormatTree({
   formats: string[]
   formatPosts: Record<string, string>
   onPostChange: (fid: string, text: string) => void
+  onPostBlur?: (fid: string) => void
   /** Arms the confirm dialog for re-running ONE format's agent. */
   onRegenerateFormat: (fid: string) => void
   /** Autosave state per format, shown next to each card's title. */
@@ -2740,6 +2839,7 @@ function FormatTree({
                     <RichBodyEditor
                       value={formatPosts[fid] ?? ""}
                       onChange={(text) => onPostChange(fid, text)}
+                      onBlur={() => onPostBlur?.(fid)}
                       onFocus={() => onActiveChange(`format-${fid}`)}
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}

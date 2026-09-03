@@ -1,4 +1,5 @@
 import { toast } from "sonner"
+import { flushPendingSaves } from "@/lib/pending-saves"
 
 /**
  * Module-level store for story AI generations ("media-to-story").
@@ -113,6 +114,9 @@ export function startStoryGeneration(postId: string): void {
 
   void (async () => {
     try {
+      // The route reads the script from the DB: make sure the DB has what
+      // the user sees before asking for a picture of it.
+      await flushPendingSaves()
       const res = await fetch("/api/story/generate-media", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

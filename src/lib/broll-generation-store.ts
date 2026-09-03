@@ -1,4 +1,5 @@
 import { toast } from "sonner"
+import { flushPendingSaves } from "@/lib/pending-saves"
 
 /**
  * Background b-roll generation, held OUTSIDE React.
@@ -119,6 +120,9 @@ export function startBRollGeneration(
 
   void (async () => {
     try {
+      // The route reads the script from the DB: make sure the DB has what
+      // the user sees before asking for a picture of it.
+      await flushPendingSaves()
       const res = await fetch("/api/b-roll/generate-media", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -170,6 +174,9 @@ export function startCaptionBurn(postId: string, format: string): void {
 
   void (async () => {
     try {
+      // The route reads the script from the DB: make sure the DB has what
+      // the user sees before asking for a picture of it.
+      await flushPendingSaves()
       const res = await fetch("/api/story/generate-video-media", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -244,6 +251,9 @@ export function startImageCaption(
 
   void (async () => {
     try {
+      // The route reads the script from the DB: make sure the DB has what
+      // the user sees before asking for a picture of it.
+      await flushPendingSaves()
       const res = await fetch("/api/media/caption-image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -360,6 +370,9 @@ export function startStoryDriveImport(
     frameCount: number,
   ): Promise<string | null> => {
     try {
+      // The route reads the script from the DB: make sure the DB has what
+      // the user sees before asking for a picture of it.
+      await flushPendingSaves()
       const res = await fetch("/api/story/generate-video-media", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
