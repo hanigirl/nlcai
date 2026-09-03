@@ -25,6 +25,7 @@ import {
   EmptyNoneReadyState,
   QueueErrorState,
 } from "@/components/queue-panel"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 type Variant = {
   id: string
@@ -82,7 +83,7 @@ export default function QueueEmptyStatesTestPage() {
   const [granted, setGranted] = useState<boolean | null>(null)
   useEffect(() => {
     const supabase = createClient()
-    supabase.auth.getUser().then(({ data: { user } }) => {
+    getCurrentUser(supabase).then(({ data: { user } }) => {
       if (isOwner(user?.email)) {
         setGranted(true)
       } else {

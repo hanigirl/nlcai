@@ -15,6 +15,7 @@ import { BugReportModal, pageForPathname } from "@/components/bug-report-modal"
 import { createClient } from "@/lib/supabase/client"
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 interface AppHeaderProps {
   idea?: string
@@ -29,7 +30,7 @@ export function AppHeader({ idea }: AppHeaderProps) {
 
   useEffect(() => {
     const supabase = createClient()
-    supabase.auth.getUser().then(async ({ data }) => {
+    getCurrentUser(supabase).then(async ({ data }) => {
       if (data.user) {
         setUserEmail(data.user.email ?? "")
         const { data: profile } = await supabase

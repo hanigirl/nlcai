@@ -74,6 +74,7 @@ import {
   setFormatMeta,
   type FormatId,
 } from "@/lib/timing-storage"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 // Every format the panel can open MUST have an entry here: the header block
 // (title + close button) is gated on `meta`, so a missing key renders a panel
@@ -2777,7 +2778,7 @@ function MediaUploadFlow({
       const supabase = createClient()
       const {
         data: { user },
-      } = await supabase.auth.getUser()
+      } = await getCurrentUser(supabase)
       const {
         data: { session },
       } = await supabase.auth.getSession()

@@ -5,6 +5,7 @@ import { Paperclip, X, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { Select } from "@/components/ui/select"
 import { createClient } from "@/lib/supabase/client"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 // The app's pages, matching the "עמוד" select options in the Notion DB.
 export const PAGES = [
@@ -101,7 +102,7 @@ export function BugReportModal({ open, onOpenChange, defaultPage = "בית" }: B
     setSubmitting(true)
     try {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = await getCurrentUser(supabase)
       if (!user) {
         toast.error("צריך להיות מחובר כדי לדווח")
         return

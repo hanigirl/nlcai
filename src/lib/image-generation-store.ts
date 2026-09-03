@@ -1,5 +1,6 @@
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 /**
  * Module-level store for image_post AI generations.
@@ -68,7 +69,7 @@ async function uploadCandidate(base64: string): Promise<string> {
   const supabase = createClient()
   const {
     data: { user },
-  } = await supabase.auth.getUser()
+  } = await getCurrentUser(supabase)
   if (!user) throw new Error("not signed in")
   const path = `${user.id}/image-candidates/${crypto.randomUUID()}.png`
   const { error } = await supabase.storage

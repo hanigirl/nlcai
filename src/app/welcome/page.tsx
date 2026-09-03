@@ -7,6 +7,7 @@ import { Check, Loader2 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { userKey } from "@/lib/user-scoped-storage"
 import onboardingHero from "../../../images/onboarding-hero.png"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 // LocalStorage keys — must match the ones the home page reads, so prefetched
 // results land in its cache and it skips its own auto-generation branch.
@@ -167,7 +168,7 @@ function WelcomePageInner() {
       return
     }
     const supabase = createClient()
-    supabase.auth.getUser().then(({ data: { user } }) => {
+    getCurrentUser(supabase).then(({ data: { user } }) => {
       if (!user) {
         router.replace("/login")
         return

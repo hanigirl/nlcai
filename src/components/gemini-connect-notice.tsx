@@ -6,6 +6,7 @@ import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { GeminiIcon } from "@/components/gemini-icon"
 import { createClient } from "@/lib/supabase/client"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 /**
  * In-page notice (deliberately not a toast) telling the user that hook
@@ -44,7 +45,7 @@ export function useGeminiNoticeVisible(): boolean {
         return
       }
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = await getCurrentUser(supabase)
       if (!user) return
       // Shown to every student who has no key yet. This is the only way the
       // cheaper engine reaches anyone: connecting a key is what moves a user

@@ -22,6 +22,7 @@ import {
   makeStages,
   type OnboardingBannerVariant,
 } from "@/components/onboarding-progress-banner"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 interface IdeaNote {
   text: string
@@ -84,7 +85,7 @@ function HomeContent() {
 
   useEffect(() => {
     const supabase = createClient()
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
+    getCurrentUser(supabase).then(async ({ data: { user } }) => {
       if (!user) return
 
       try {
@@ -160,7 +161,7 @@ function HomeContent() {
     hooksInitRef.current = true
 
     const supabase = createClient()
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
+    getCurrentUser(supabase).then(async ({ data: { user } }) => {
       if (!user) return
 
       // Try cache first (fast path). Per-user key: switching accounts on the
@@ -275,7 +276,7 @@ function HomeContent() {
 
   useEffect(() => {
     const supabase = createClient()
-    supabase.auth.getUser().then(async ({ data }) => {
+    getCurrentUser(supabase).then(async ({ data }) => {
       if (data.user) {
         const { data: profile } = await supabase
           .from("users")
@@ -402,7 +403,7 @@ function HomeContent() {
 
   const handleGenerateIdeas = async () => {
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user } } = await getCurrentUser(supabase)
     if (!user) return
     streamIdeas(ideas, user.id)
   }

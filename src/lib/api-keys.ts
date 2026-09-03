@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { getAuthUser } from "@/lib/auth-user"
 
 export type KeyName = "heygen_api_key" | "anthropic_api_key" | "apify_api_key" | "openai_api_key" | "gemini_api_key"
 
@@ -88,9 +89,10 @@ export async function getUserApiKey(
   supabase: SupabaseClient,
   keyName: KeyName
 ): Promise<string> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  // Verified locally, not over the network — every AI route calls this
+  // before doing its real work, and the getUser() round trip it used to
+  // make was 350-500ms of pure wait per request. See lib/auth-user.ts.
+  const user = await getAuthUser(supabase)
 
   if (!user) {
     throw new Error("Unauthorized")
