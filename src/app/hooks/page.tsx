@@ -347,7 +347,7 @@ export default function HooksPage() {
               own hooks, not only generated ones. */}
           <Button size="sm" variant="outline" onClick={handleAddDraft} className="gap-1.5">
             <Plus className="size-3.5" />
-            הוספת הוק
+            הוספת הוק ידנית
           </Button>
           {/* Generate button — now a dropdown (chevron variant): pick a
               general batch, or "לפי מוצר" to focus + tag the batch on a

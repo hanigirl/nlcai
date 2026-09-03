@@ -23,7 +23,7 @@ interface NewHookCardProps {
  *
  * It's a draft until saved: nothing is written to the DB while typing, so
  * discarding it is free. Same footprint as HookCard so it slots into the
- * grid without the layout jumping; the yellow surface says "not saved yet".
+ * grid without the layout jumping; the dashed border says "not saved yet".
  */
 export function NewHookCard({ products, onSave, onDiscard }: NewHookCardProps) {
   const [text, setText] = useState("")
@@ -56,7 +56,7 @@ export function NewHookCard({ products, onSave, onDiscard }: NewHookCardProps) {
   return (
     <Card
       dir="rtl"
-      className="gap-4 rounded-[16px] border-border-neutral-default bg-bg-surface-primary-default p-4 py-4 shadow-none ring-2 ring-yellow-90 dark:ring-yellow-30"
+      className="gap-4 rounded-[16px] border-dashed border-gray-70 dark:border-gray-40 bg-white dark:bg-gray-10 p-4 py-4 shadow-none"
     >
       <CardContent className="flex flex-col gap-3 p-0">
         <textarea
@@ -70,23 +70,7 @@ export function NewHookCard({ products, onSave, onDiscard }: NewHookCardProps) {
           className="text-sm text-text-primary-default placeholder:text-text-neutral-default bg-transparent border-none rounded-lg px-2 py-1.5 resize-none outline-none"
         />
 
-        {products.length > 0 && (
-          <Select
-            selectSize="small"
-            variant="homepage"
-            value={productId}
-            onChange={(e) => setProductId(e.target.value)}
-            aria-label="שיוך למוצר"
-          >
-            <option value="">בלי מוצר (כללי)</option>
-            {products.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </Select>
-        )}
-
+        {/* Bottom line: discard · product relation · save. */}
         <div className="flex items-center gap-2">
           <Tooltip>
             <TooltipTrigger asChild>
@@ -103,9 +87,28 @@ export function NewHookCard({ products, onSave, onDiscard }: NewHookCardProps) {
             <TooltipContent>ביטול</TooltipContent>
           </Tooltip>
 
-          <div className="flex-1" />
+          {products.length > 0 ? (
+            <div className="flex-1 min-w-0">
+              <Select
+                selectSize="small"
+                variant="homepage"
+                value={productId}
+                onChange={(e) => setProductId(e.target.value)}
+                aria-label="שיוך למוצר"
+              >
+                <option value="">בלי מוצר (כללי)</option>
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          ) : (
+            <div className="flex-1" />
+          )}
 
-          <Button size="sm" onClick={handleSave} disabled={!canSave} className="gap-1.5">
+          <Button size="sm" onClick={handleSave} disabled={!canSave} className="gap-1.5 shrink-0">
             {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
             {saving ? "שומר..." : "שמירה"}
           </Button>
