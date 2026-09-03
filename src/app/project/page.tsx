@@ -728,6 +728,15 @@ function ProjectPageInner() {
       .then((res) => res.json())
       .then((data) => {
         if (data.post) {
+          // What the server holds for each format, whichever way the text
+          // itself is restored below (DB or this tab's session cache). The
+          // empty-box restore and the "only send what changed" check both
+          // read this, so it has to be seeded on every load, not only when
+          // restoreText is true.
+          const savedFp = data.post.formatPosts as Record<string, string> | undefined
+          if (savedFp && Object.keys(savedFp).length > 0) {
+            lastSavedFormatsRef.current = { ...savedFp }
+          }
           if (restoreText) {
           setCorePost(data.post.body)
           setOriginalCorePost(data.post.body)
@@ -764,7 +773,6 @@ function ProjectPageInner() {
           // Restore format variants
           const fp = data.post.formatPosts as Record<string, string>
           if (fp && Object.keys(fp).length > 0) {
-            lastSavedFormatsRef.current = { ...fp }
             setFormatPosts(fp)
             setDuplicatedFormats(Object.keys(fp))
             setSelectedFormats(Object.keys(fp))
