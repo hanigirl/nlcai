@@ -65,7 +65,7 @@ export function NewHookCard({ products, onSave, onDiscard }: NewHookCardProps) {
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           rows={2}
-          placeholder="כתוב פה את ההוק שלך"
+          placeholder="פה כותבים את ההוק"
           aria-label="הוק חדש"
           className="text-sm text-text-primary-default placeholder:text-text-neutral-default bg-transparent border-none rounded-lg px-2 py-1.5 resize-none outline-none"
         />
