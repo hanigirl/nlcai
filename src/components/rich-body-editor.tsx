@@ -21,6 +21,56 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;")
 }
 
+/**
+ * The editor's text, read back the way it looks.
+ *
+ * Chrome answers Enter and paste with block elements: a new line becomes
+ * <div>…</div>, an empty line <div><br></div>. `innerText` then counts an
+ * empty block as a line break PLUS the <br> PLUS the next block's break, so
+ * one blank line on screen read back as three newline characters, and every
+ * edit-and-reload cycle widened the gaps (Hani, 2026-09-03: "I don't want
+ * gaps"). This walks the DOM instead: a block is one line, an empty block is
+ * one empty line, <br> is one break, text is text.
+ */
+function domToText(root: HTMLElement): string {
+  const isBlock = (n: Node): n is HTMLElement =>
+    n.nodeType === Node.ELEMENT_NODE && /^(DIV|P)$/.test((n as HTMLElement).tagName)
+  const inline = (n: Node): string => {
+    if (n.nodeType === Node.TEXT_NODE) return n.textContent ?? ""
+    if (n.nodeType !== Node.ELEMENT_NODE) return ""
+    const el = n as HTMLElement
+    if (el.tagName === "BR") return "\n"
+    let out = ""
+    el.childNodes.forEach((c) => {
+      out += isBlock(c) ? block(c) : inline(c)
+    })
+    return out
+  }
+  // A block is its content followed by a line break. The lone <br> Chrome
+  // uses to give an empty block height is not a break of its own.
+  const block = (el: HTMLElement): string => {
+    let inner = ""
+    el.childNodes.forEach((c) => {
+      inner += isBlock(c) ? block(c) : inline(c)
+    })
+    if (inner === "\n") inner = ""
+    return inner.endsWith("\n") ? inner : inner + "\n"
+  }
+  let out = ""
+  root.childNodes.forEach((c) => {
+    if (isBlock(c)) {
+      // A block after inline text starts on its own line.
+      if (out && !out.endsWith("\n")) out += "\n"
+      out += block(c)
+    } else {
+      out += inline(c)
+    }
+  })
+  // The trailing break of the last block, or the <br> Chrome parks at the
+  // end of a line, is layout rather than content.
+  return out.replace(/\n$/, "")
+}
+
 // First line is everything before the first \n (or whole text if no newline).
 // We render it inside <strong> so the hook stays visually emphasized whether
 // the user just generated the post or is reading an old one.
@@ -76,7 +126,7 @@ export function RichBodyEditor({
       isUserEdit.current = false
       return
     }
-    if (el.innerText !== value) {
+    if (domToText(el) !== value) {
       el.innerHTML = buildBodyHtml(value)
     }
   }, [value])
@@ -85,7 +135,7 @@ export function RichBodyEditor({
     const el = ref.current
     if (!el) return
     isUserEdit.current = true
-    onChange(el.innerText)
+    onChange(domToText(el))
   }
 
   const handlePaste = (e: React.ClipboardEvent) => {
@@ -100,7 +150,7 @@ export function RichBodyEditor({
   const handleBlur = () => {
     const el = ref.current
     if (el) {
-      el.innerHTML = buildBodyHtml(el.innerText)
+      el.innerHTML = buildBodyHtml(domToText(el))
     }
     onBlur?.()
   }
