@@ -39,6 +39,7 @@ import { copyToClipboard } from "@/lib/copy-to-clipboard"
 import { userKey } from "@/lib/user-scoped-storage"
 import { logLearningEdit } from "@/lib/learning-capture"
 import { BROLL_SCRIPT_CTA } from "@/lib/broll-copy"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 type Flow = "idea" | "hook" | "saved"
 
@@ -387,7 +388,7 @@ function ProjectPageInner() {
 
   useEffect(() => {
     const supabase = createClient()
-    supabase.auth.getUser().then(({ data: { user } }) => {
+    getCurrentUser(supabase).then(({ data: { user } }) => {
       setUserId(user?.id ?? null)
     })
   }, [])

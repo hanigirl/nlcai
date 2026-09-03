@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 export default function DebugDbPage() {
   const [data, setData] = useState<Record<string, unknown> | null>(null)
@@ -9,7 +10,7 @@ export default function DebugDbPage() {
   useEffect(() => {
     async function load() {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = await getCurrentUser(supabase)
 
       if (!user) {
         setData({ error: "Not logged in" })

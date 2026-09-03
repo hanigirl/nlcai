@@ -5,6 +5,7 @@ import Image from "next/image"
 import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
 import { userKey } from "@/lib/user-scoped-storage"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 
 export interface Avatar {
@@ -61,7 +62,7 @@ export function AvatarPicker({ onSelect }: AvatarPickerProps) {
     let cancelled = false
     ;(async () => {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = await getCurrentUser(supabase)
       if (cancelled) return
       if (!user) {
         setLoading(false)

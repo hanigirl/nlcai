@@ -13,6 +13,7 @@ import { useAutoAnimate } from "@formkit/auto-animate/react"
 import { createClient } from "@/lib/supabase/client"
 import { userKey } from "@/lib/user-scoped-storage"
 import { toast } from "sonner"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 interface IdeaNote {
   text: string
@@ -173,7 +174,7 @@ export default function IdeasPage() {
   useEffect(() => {
     const load = async () => {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = await getCurrentUser(supabase)
       if (!user) {
         setLoading(false)
         return
@@ -258,7 +259,7 @@ export default function IdeasPage() {
     })
 
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user } } = await getCurrentUser(supabase)
     if (!user) {
       setFavorites((prev) => {
         const next = new Set(prev)

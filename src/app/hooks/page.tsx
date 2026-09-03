@@ -25,6 +25,7 @@ import { withRetry } from "@/lib/supabase/retry"
 import { formatPostDate, getDayKey } from "@/lib/format-date"
 import { toast } from "sonner"
 import { useHookGeneration } from "@/components/hook-generation-provider"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 interface HookItem {
   id: string
@@ -74,7 +75,7 @@ export default function HooksPage() {
 
   const loadHooks = async () => {
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user } } = await getCurrentUser(supabase)
     if (!user) return
 
     const [{ data: hooksData }, { data: prodsData }] = await Promise.all([
@@ -195,7 +196,7 @@ export default function HooksPage() {
       return
     }
     if (oldText) {
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = await getCurrentUser(supabase)
       if (user) {
         // Mirror the rename onto any core_posts that reference the old text.
         // Best-effort with retries; failure here is annotated separately so

@@ -31,6 +31,7 @@ import {
 import { ConfirmModal } from "@/components/confirm-modal"
 import { toast } from "sonner"
 import { validateIdentityFile } from "@/lib/validate-identity-file"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 const STEPS = [
   { id: "connections", label: "חיבור חשבונות" },
@@ -297,7 +298,7 @@ function OnboardingPageInner() {
     void (async () => {
       try {
         const supabase = createClient()
-        const { data: { user } } = await supabase.auth.getUser()
+        const { data: { user } } = await getCurrentUser(supabase)
         if (!user) {
           if (!cancelled) setBootChecked(true)
           return
@@ -577,7 +578,7 @@ function OnboardingPageInner() {
     try {
       if (currentStep === 0) {
         const supabase = createClient()
-        const { data: { user } } = await supabase.auth.getUser()
+        const { data: { user } } = await getCurrentUser(supabase)
 
         if (user) {
           // Validate every entered key against its provider before persisting.
@@ -782,7 +783,7 @@ function OnboardingPageInner() {
         }
       } else if (currentStep === 3) {
         const supabase = createClient()
-        const { data: { user } } = await supabase.auth.getUser()
+        const { data: { user } } = await getCurrentUser(supabase)
         if (user) {
           const parsed = creatorsList
             .map((c) => parseCreatorInput(c.url))
@@ -808,7 +809,7 @@ function OnboardingPageInner() {
         await advanceFromStep(3)
       } else {
         const supabase = createClient()
-        const { data: { user } } = await supabase.auth.getUser()
+        const { data: { user } } = await getCurrentUser(supabase)
 
         if (user) {
           await supabase.from("products").delete().eq("user_id", user.id)

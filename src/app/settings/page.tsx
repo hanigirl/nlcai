@@ -31,6 +31,7 @@ import {
   AudienceIdentityGapDialog,
 } from "@/components/identity-gap-dialog"
 import { ConfirmModal } from "@/components/confirm-modal"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 const GOOGLE_FONTS = [
   "Rubik", "Heebo", "Assistant", "Open Sans", "Noto Sans Hebrew", "Secular One",
@@ -359,7 +360,7 @@ function SettingsPageInner() {
 
   useEffect(() => {
     const supabase = createClient()
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
+    getCurrentUser(supabase).then(async ({ data: { user } }) => {
       if (!user) return
 
       // Fire all queries in parallel; await each individually to keep their distinct Supabase types intact.
@@ -487,7 +488,7 @@ function SettingsPageInner() {
       }
 
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = await getCurrentUser(supabase)
       if (!user) return
       const { error } = await supabase.from("users").update({ [keyName]: value } as never).eq("id", user.id)
       if (error) {
@@ -517,7 +518,7 @@ function SettingsPageInner() {
   const handleDisconnect = async (keyName: KeyName) => {
     setSaving(keyName)
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user } } = await getCurrentUser(supabase)
     if (!user) return
     await supabase.from("users").update({ [keyName]: null } as never).eq("id", user.id)
     setStoredKeys((prev) => ({ ...prev, [keyName]: null }))
@@ -531,7 +532,7 @@ function SettingsPageInner() {
     setSavingProductIndex(index)
     try {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = await getCurrentUser(supabase)
       if (!user) return
       const id = p.id ?? (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : "")
       const payload = {
@@ -567,7 +568,7 @@ function SettingsPageInner() {
     if (!p) return
     if (p.id) {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = await getCurrentUser(supabase)
       if (user) {
         await supabase.from("products").delete().eq("id", p.id).eq("user_id", user.id)
       }
@@ -578,7 +579,7 @@ function SettingsPageInner() {
   // --- Media upload helpers ---
   const uploadMediaFile = useCallback(async (file: File, category: "font" | "element" | "cover", metadata: Record<string, unknown> = {}) => {
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user } } = await getCurrentUser(supabase)
     if (!user) return null
     const ext = file.name.split(".").pop() || "bin"
     const storagePath = `${user.id}/${category}/${crypto.randomUUID()}.${ext}`
@@ -670,7 +671,7 @@ function SettingsPageInner() {
   const handleAddGoogleFont = async (fontName: string) => {
     if (fontItems.length >= 5) return
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user } } = await getCurrentUser(supabase)
     if (!user) return
     const { data: row } = await supabase.from("user_media").insert({
       user_id: user.id, category: "font" as const, file_name: `${fontName} (Google Fonts)`,
@@ -684,7 +685,7 @@ function SettingsPageInner() {
     setBusinessSaved(false)
     try {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = await getCurrentUser(supabase)
       if (!user) return
 
       await supabase
@@ -714,7 +715,7 @@ function SettingsPageInner() {
     setSavingCreatorIndex(index)
     try {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = await getCurrentUser(supabase)
       if (!user) return
       const id = c.id ?? (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : "")
       const payload = {
@@ -743,7 +744,7 @@ function SettingsPageInner() {
     if (!c) return
     if (c.id) {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = await getCurrentUser(supabase)
       if (user) {
         await supabase.from("user_top_creators").delete().eq("id", c.id).eq("user_id", user.id)
       }
@@ -753,7 +754,7 @@ function SettingsPageInner() {
 
   const refreshIdentityFile = async (category: "style_file" | "audience_file") => {
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user } } = await getCurrentUser(supabase)
     if (!user) return
     const { data } = await supabase
       .from("user_media")
@@ -784,7 +785,7 @@ function SettingsPageInner() {
 
     void (async () => {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = await getCurrentUser(supabase)
       if (!user) return
 
       const { data } = await supabase

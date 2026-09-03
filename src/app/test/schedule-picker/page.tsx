@@ -25,6 +25,7 @@ import { ScheduleFormatPicker } from "@/components/schedule-format-picker"
 import { createClient } from "@/lib/supabase/client"
 import { isOwner } from "@/lib/owner"
 import type { FormatId, FormatReadiness } from "@/lib/timing-storage"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 type Scenario = {
   id: string
@@ -92,7 +93,7 @@ export default function ScheduleFormatPickerTestPage() {
   const [granted, setGranted] = useState<boolean | null>(null)
   useEffect(() => {
     const supabase = createClient()
-    supabase.auth.getUser().then(({ data: { user } }) => {
+    getCurrentUser(supabase).then(({ data: { user } }) => {
       if (isOwner(user?.email)) {
         setGranted(true)
       } else {

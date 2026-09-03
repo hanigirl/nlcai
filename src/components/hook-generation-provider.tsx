@@ -11,6 +11,7 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState } fro
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { userKey } from "@/lib/user-scoped-storage"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 
 export interface StreamedHook {
   id: string
@@ -132,7 +133,7 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
       // Per-user storage — without scoping, switching accounts surfaces the
       // previous user's cached ideas/hooks.
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const { data: { user } } = await getCurrentUser(supabase)
       const uid = user?.id ?? null
 
       // Collect field ideas from localStorage (structured, for server-side favorite matching).
