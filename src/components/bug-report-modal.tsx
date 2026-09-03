@@ -7,7 +7,7 @@ import { Select } from "@/components/ui/select"
 import { createClient } from "@/lib/supabase/client"
 
 // The app's pages, matching the "עמוד" select options in the Notion DB.
-const PAGES = [
+export const PAGES = [
   "בית",
   "פוסטי ליבה",
   "רעיונות",
@@ -18,6 +18,21 @@ const PAGES = [
   "אחר",
 ] as const
 
+export type BugReportPage = (typeof PAGES)[number]
+
+/** Maps a route to the "עמוד" option it belongs to, so the report
+ *  opens with the current page already selected. */
+export function pageForPathname(pathname: string | null): BugReportPage {
+  if (!pathname || pathname === "/") return "בית"
+  if (pathname.startsWith("/core_posts")) return "פוסטי ליבה"
+  if (pathname.startsWith("/ideas") || pathname.startsWith("/project")) return "רעיונות"
+  if (pathname.startsWith("/hooks")) return "מחסן הוקים"
+  if (pathname.startsWith("/media")) return "מדיה"
+  if (pathname.startsWith("/calendar")) return "תזמון"
+  if (pathname.startsWith("/settings")) return "הגדרות"
+  return "אחר"
+}
+
 const MEDIA_BUCKET = "user-media"
 const MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024 // 10MB
 const MAX_SCREENSHOTS = 5
@@ -26,7 +41,7 @@ interface BugReportModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   /** The page the user is currently on, pre-selected in the dropdown. */
-  defaultPage?: (typeof PAGES)[number]
+  defaultPage?: BugReportPage
 }
 
 export function BugReportModal({ open, onOpenChange, defaultPage = "בית" }: BugReportModalProps) {

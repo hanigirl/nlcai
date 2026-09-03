@@ -1,6 +1,6 @@
 "use client"
 
-import { LogOut, User, ChevronDown, ArrowLeft } from "lucide-react"
+import { LogOut, User, ChevronDown, ArrowLeft, Bug } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
   DropdownMenu,
@@ -10,8 +10,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { Button } from "@/components/ui/button"
+import { BugReportModal, pageForPathname } from "@/components/bug-report-modal"
 import { createClient } from "@/lib/supabase/client"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
 
 interface AppHeaderProps {
@@ -20,6 +22,8 @@ interface AppHeaderProps {
 
 export function AppHeader({ idea }: AppHeaderProps) {
   const router = useRouter()
+  const pathname = usePathname()
+  const [bugModalOpen, setBugModalOpen] = useState(false)
   const [userName, setUserName] = useState("")
   const [userEmail, setUserEmail] = useState("")
 
@@ -84,6 +88,22 @@ export function AppHeader({ idea }: AppHeaderProps) {
 
       {/* Left side (RTL end): theme toggle + avatar + dropdown */}
       <div className="flex items-center gap-2">
+      {/* "Report a bug" — lives in the shared header so it's reachable from
+          every page, and pre-selects the page the user is on. */}
+      <Button
+        variant="outline"
+        size="sm"
+        className="rounded-full gap-2"
+        onClick={() => setBugModalOpen(true)}
+      >
+        <Bug className="size-4" />
+        נתקלת בבאג?
+      </Button>
+      <BugReportModal
+        open={bugModalOpen}
+        onOpenChange={setBugModalOpen}
+        defaultPage={pageForPathname(pathname)}
+      />
       <ThemeToggle />
       <DropdownMenu dir="rtl">
         <DropdownMenuTrigger className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-bg-surface outline-none transition-colors">
