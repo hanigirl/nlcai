@@ -12,6 +12,45 @@ import { NextResponse, type NextRequest } from "next/server";
 // rows from earlier flows), so we always re-check the DB on protected routes.
 // /onboarding, /settings, and /auth are recovery surfaces — incomplete users
 // must be able to reach them to finish their setup.
+// Who is asking, resolved the cheap way. `getUser()` phones the Auth server on
+// every call — measured at 350-500ms on this project (see lib/auth-user.ts),
+// and this middleware runs on every page navigation, so that was the floor
+// on how fast a menu click could possibly feel. `getClaims()` verifies the
+// JWT locally against the project's public keys instead, and still refreshes
+// an expired session through the cookie adapter above. Same trade-off the API
+// layer already made: a revoked-but-unexpired token is trusted until it
+// expires, and RLS on every table means it gets nothing it shouldn't anyway.
+// Falls back to `getUser()` if claims can't be read, so a bad token still
+// gets the authoritative answer rather than a lockout.
+type MiddlewareUser = { id: string; onboardingCompleted: boolean };
+
+async function resolveUser(
+  supabase: ReturnType<typeof createServerClient>,
+): Promise<MiddlewareUser | null> {
+  try {
+    const { data, error } = await supabase.auth.getClaims();
+    const claims = data?.claims as
+      | { sub?: string; user_metadata?: { onboarding_completed?: boolean } }
+      | undefined;
+    if (!error && claims?.sub) {
+      return {
+        id: claims.sub,
+        onboardingCompleted: claims.user_metadata?.onboarding_completed === true,
+      };
+    }
+  } catch {
+    // fall through to the network check
+  }
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+  return {
+    id: user.id,
+    onboardingCompleted: user.user_metadata?.onboarding_completed === true,
+  };
+}
+
 export async function middleware(request: NextRequest) {
   // Domain cutover (Hani 2026-06-09): nextlevelappai.com is the canonical home.
   // Permanently (301) redirect the legacy Vercel alias to it, preserving the
@@ -49,9 +88,7 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await resolveUser(supabase);
 
   const path = request.nextUrl.pathname;
 
@@ -91,7 +128,7 @@ export async function middleware(request: NextRequest) {
   // ends up at /onboarding after one extra redirect.
   if (path.startsWith("/login")) {
     const url = request.nextUrl.clone();
-    url.pathname = user.user_metadata?.onboarding_completed ? "/" : "/onboarding";
+    url.pathname = user.onboardingCompleted ? "/" : "/onboarding";
     return NextResponse.redirect(url);
   }
 
@@ -161,7 +198,7 @@ export async function middleware(request: NextRequest) {
   // skip the DB roundtrip once we add a fast-path optimization. Fire-and-
   // forget — a failed write just means the next request also pays the DB
   // cost, which is fine.
-  if (!user.user_metadata?.onboarding_completed) {
+  if (!user.onboardingCompleted) {
     console.log("[middleware] onboarding flag self-heal", { userId: user.id });
     void supabase.auth.updateUser({
       data: { onboarding_completed: true },
@@ -178,7 +215,11 @@ export const config = {
      * - _next/static, _next/image (Next.js internals)
      * - favicon.ico, sitemap.xml, robots.txt
      * - API routes
+     * - anything with a file extension (images, fonts, videos under /public).
+     *   Before this the auth check ran for every logo and banner PNG on a
+     *   page — a dozen Supabase round trips per screen for files that are
+     *   public anyway.
      */
-    "/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|api).*)",
+    "/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|api|.*\\..*).*)",
   ],
 };
