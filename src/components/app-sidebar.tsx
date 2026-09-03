@@ -3,7 +3,7 @@
 import Link, { useLinkStatus } from "next/link"
 import { usePathname } from "next/navigation"
 import { useEffect } from "react"
-import { Home, FileText, Image, Settings, Anchor, Lightbulb, CalendarDays, Loader2 } from "lucide-react"
+import { Home, FileText, Image, Settings, Anchor, Lightbulb, CalendarDays } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import {
   Sidebar,
@@ -71,21 +71,16 @@ const NAVIGATION_STALL_MS = 8000
  * The inside of a nav link. Lives in its own component because
  * `useLinkStatus` only works underneath the <Link> it reports on.
  *
- * Two jobs, both born from "I click the menu and nothing happens until I
- * refresh" (Hani, 2026-09-03):
+ * Born from "I click the menu and nothing happens until I refresh" (Hani,
+ * 2026-09-03). The feedback for a click is the page-level skeleton in
+ * app/loading.tsx — the icon itself stays put (a first version swapped it for
+ * a spinner; Hani: "the icon just disappears, and I don't like this look").
  *
- * 1. Feedback. Every page here is a client component with no loading.tsx,
- *    so between the click and the server's answer the screen did not change
- *    at all — and that answer sits behind the auth middleware, which on a
- *    cold click is several hundred ms, or longer when Supabase is slow. The
- *    icon becomes a spinner the moment the router starts working, delayed
- *    150ms so a prefetched (instant) navigation never flashes it.
- *
- * 2. Rescue. If the router is still pending after NAVIGATION_STALL_MS the
- *    navigation has effectively hung (a dropped RSC fetch, a stale build after
- *    a tab sat open past skew protection's 12h window, a wedged router). A
- *    refresh is what the user was doing by hand; do it for them, straight to
- *    the page they asked for.
+ * What this component adds is the rescue: if the router is still pending
+ * after NAVIGATION_STALL_MS the navigation has effectively hung (a dropped
+ * RSC fetch, a stale build after a tab sat open past skew protection's 12h
+ * window, a wedged router). A refresh is what the user was doing by hand;
+ * do it for them, straight to the page they asked for.
  */
 function NavLinkBody({ item }: { item: NavItem }) {
   const { pending } = useLinkStatus()
@@ -100,14 +95,7 @@ function NavLinkBody({ item }: { item: NavItem }) {
 
   return (
     <>
-      {pending ? (
-        <Loader2
-          className="size-5 animate-spin opacity-0 animate-in fade-in fill-mode-forwards delay-150 duration-200"
-          aria-label="טוען"
-        />
-      ) : (
-        <item.icon className="size-5" />
-      )}
+      <item.icon className="size-5" />
       <span className="text-small">{item.label}</span>
     </>
   )
