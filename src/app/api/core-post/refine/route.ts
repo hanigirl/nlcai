@@ -6,6 +6,7 @@ import { buildRefinerSystemPrompt } from "@/lib/agents/core-post-refiner"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import { fetchBusinessSourceInsights } from "@/lib/business-source-insights"
 import { getAuthUser } from "@/lib/auth-user"
+import { stripDashes } from "@/lib/strip-dashes"
 
 interface ChatTurn {
   role: "user" | "assistant"
@@ -114,7 +115,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "empty_response" }, { status: 502 })
     }
 
-    return NextResponse.json({ reply, revisedPost })
+    // Same guarantee as the generator: no long dashes reach the post.
+    return NextResponse.json({ reply: stripDashes(reply), revisedPost: stripDashes(revisedPost) })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("Core post refine error:", msg)

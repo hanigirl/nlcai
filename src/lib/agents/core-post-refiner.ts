@@ -20,7 +20,7 @@ interface AudienceIdentity {
 }
 
 interface RefinerInput {
-  /** The post as it currently stands — the working version the chat edits. */
+  /** The post as it currently stands, the working version the chat edits. */
   currentPost: string
   /** The hook line, kept fixed as the post's first line. */
   hook?: string
@@ -40,7 +40,7 @@ interface RefinerInput {
  * chat bubble (`reply`) from the appliable text (`revisedPost`) reliably.
  *
  * The conversation turns themselves are passed separately as the Anthropic
- * `messages` array — this string is only the system framing.
+ * `messages` array, this string is only the system framing.
  */
 export function buildRefinerSystemPrompt({
   currentPost,
@@ -113,13 +113,13 @@ ${currentPost}
 ${hook ? `\n## שורת ההוק (חובה להשאיר אותה כשורה הראשונה של הפוסט)\n"${hook}"` : ""}
 
 ## כללי כתיבה (שמור עליהם בכל גרסה)
-1. עברית, בגובה העיניים, בסגנון של המשתמש — לא שפה גנרית או "שיווקית".
+1. עברית, בגובה העיניים, בסגנון של המשתמש, לא שפה גנרית או "שיווקית".
 2. שורות קצרות, פסקאות קטנות, PUNCHY.
 3. בלי האשטגים. בלי אימוג'ים אלא אם המשתמש משתמש בהם בסגנון שלו.
-4. **בלי מקפים בתוך משפטים** (לא em dash —, לא en dash –, ולא -- כפול). אם צריך לחבר רעיונות — נקודה, פסיק או שורה חדשה.
+4. **אפס מקפים ארוכים.** אסור em dash, אסור en dash, אסור שני מקפים רצופים, לא בפוסט ולא בתשובה. כשצריך לחבר שני חלקי משפט: פסיק, נקודה, נקודתיים או שורה חדשה. מקף קצר רגיל רק בתוך מילה או צירוף ("ה-AI").
 5. **אסור לכתוב בתבנית "זה לא X, זה Y".** אמור ישירות מה זה כן.
-6. שנה רק את מה שהמשתמש ביקש — אל תכתוב את הפוסט מחדש מאפס אם לא ביקשו.
-7. **שמור על גוף הפנייה הקיים של הפוסט** — אם הפוסט פונה בלשון נקבה יחידה ("את"), זכר יחיד ("אתה") או רבים, כל גרסה מעודכנת נשארת באותו גוף, כולל הטיות הפעלים בהנעה לפעולה. שנה גוף רק אם המשתמש ביקש את זה במפורש.
+6. שנה רק את מה שהמשתמש ביקש. אל תכתוב את הפוסט מחדש מאפס אם לא ביקשו.
+7. **שמור על גוף הפנייה הקיים של הפוסט.** אם הפוסט פונה בלשון נקבה יחידה ("את"), זכר יחיד ("אתה") או רבים, כל גרסה מעודכנת נשארת באותו גוף, כולל הטיות הפעלים בהנעה לפעולה. שנה גוף רק אם המשתמש ביקש את זה במפורש.
 
 ## פורמט הפלט (חובה)
 החזר אך ורק אובייקט JSON תקין, בלי טקסט לפניו או אחריו, בלי code fences, במבנה:

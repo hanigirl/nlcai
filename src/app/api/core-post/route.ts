@@ -8,6 +8,7 @@ import { fetchLearningInsights } from "@/lib/learning-insights"
 import { fetchBusinessSourceInsights } from "@/lib/business-source-insights"
 import { detectAddressGender } from "@/lib/detect-addressing"
 import { getAuthUser } from "@/lib/auth-user"
+import { stripDashes } from "@/lib/strip-dashes"
 
 const USE_DUMMY = false
 
@@ -92,7 +93,8 @@ export async function POST(req: NextRequest) {
     })
 
     const textBlock = message.content.find((b) => b.type === "text")
-    const post = textBlock?.text?.trim() ?? ""
+    // Prompt rule 7 asks for no long dashes; this makes sure of it.
+    const post = stripDashes(textBlock?.text?.trim() ?? "")
 
     return NextResponse.json({ post })
   } catch (error) {
