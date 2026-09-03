@@ -68,7 +68,11 @@ export async function fetchLearningInsights(
 
   let block = ""
   if (preferences.length > 0) {
-    block += `\n## העדפות סגנון שלמדנו מעריכות קודמות של המשתמש\n${preferences.join("\n")}\n\nשים לב להעדפות האלה וכתוב בהתאם.\n`
+    // Framed as binding, and placed high in the generation prompt rather than
+    // appended at the end. It used to sit after the writing rules, where a
+    // learned "don't strip the detail when you shorten" was read as a footnote
+    // to six separate instructions demanding brevity — and lost every time.
+    block += `\n## מה שכבר למדנו על הסגנון של המשתמש (מחייב — נגזר מתיקונים שהוא עצמו עשה)\n${preferences.join("\n")}\n\nההעדפות האלה נלמדו מהתיקונים של המשתמש עצמו, ולכן הן גוברות על הנחיות סגנון כלליות. אם אחת מהן מתנגשת עם כלל אחר בפרומפט — היא מנצחת.\n`
   }
   if (rejections.length > 0) {
     block += `\n## מה כבר ניסינו והמשתמש דחה (אל תחזור על זה)\n${rejections.join("\n")}\n`
@@ -120,6 +124,18 @@ function buildInsightPrompt({
 גזור תובנה אחת קצרה בעברית (משפט אחד) על ההעדפה או הסגנון שלו, בעיקר מתוך מה שביקש במילים שלו.`
         : `נתח מה המשתמש שינה ולמה, וגזור תובנה אחת קצרה בעברית (משפט אחד) על ההעדפה או הסגנון שלו.`
 
+  // Without this, extraction skews almost entirely structural — "moved the CTA",
+  // "dropped the bio opener". An audit of the stored insights found the register
+  // signal missing almost completely, even though restoring everyday wording and
+  // re-expanding examples is the most common correction the user makes.
+  const voiceLens = `
+## למה לשים לב במיוחד
+מעבר לשינויי מבנה (מה זז, מה נמחק), בדוק גם את **רובד הניסוח**, שהוא לרוב החשוב יותר:
+- האם המשתמש החזיר מילים יומיומיות או סלנג שה-AI החליף בניסוח מלוטש? אם כן — התובנה צריכה לנקוב במילים עצמן.
+- האם הוא הרחיב דוגמה או סיפור שה-AI כיווץ? זה סימן שהדוגמאות אצלו הן עיקר ולא קישוט.
+- האם הוא פירק משפט "אסוף" לניסוח מדובר יותר?
+עדיף תובנה על ניסוח וקול מאשר תובנה על סדר הפסקאות, כשהשתנו שניהם.`
+
   const instructionSection = instruction
     ? `\n## מה המשתמש ביקש (במילים שלו):\n${instruction}\n`
     : ""
@@ -142,6 +158,7 @@ ${existingList}
 
 ## משימה:
 ${task}
+${voiceLens}
 
 לפני שאתה מחזיר את התובנה, בדוק האם היא כבר קיימת ברשימה למעלה — לא חיפוש מילולי אלא בדיקה מהותית. למשל "מעדיף הוקים קצרים" ו"מקצר את ה-hook" הן אותה תובנה.
 
