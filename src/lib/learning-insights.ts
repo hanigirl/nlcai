@@ -1,19 +1,22 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { SupabaseClient } from "@supabase/supabase-js"
+import { renderLineDiff } from "@/lib/learning-diff"
 
 export type LearningContentType = "hook" | "core_post"
 export type LearningSource = "manual_edit" | "chat_instruction"
 export type LearningOutcome = "accepted" | "rejected"
 
-/** Rows pulled into a generation prompt. Was 30 — see MAX_DEDUP_ROWS. */
-const MAX_PROMPT_ROWS = 60
 /**
- * Rows shown to the dedup check. Deliberately larger than MAX_PROMPT_ROWS:
+ * Rows shown to the dedup check. Deliberately larger than the prompt window:
  * when both were 30, an insight that had aged out of the window came back as
  * "new" on the next edit, so the table slowly filled with re-learned dupes.
  */
 const MAX_DEDUP_ROWS = 200
-/** Per-section cap so one noisy signal type can't crowd out the other. */
+/**
+ * Per-section cap. Each section is queried on its own: a single "newest 60
+ * rows, then split" query starved the rejections — a user with sixty recent
+ * manual edits got zero "don't do this" rules even though they were on file.
+ */
 const MAX_PER_SECTION = 25
 
 interface InsightRow {
@@ -35,36 +38,41 @@ export async function fetchLearningInsights(
   userId: string,
   contentType?: LearningContentType
 ): Promise<string> {
-  const run = async (columns: string) => {
+  const base = (columns: string) => {
     let query = supabase
       .from("learning_logs")
       .select(columns)
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
-      .limit(MAX_PROMPT_ROWS)
-
-    if (contentType) {
-      query = query.eq("content_type", contentType)
-    }
+      .limit(MAX_PER_SECTION)
+    if (contentType) query = query.eq("content_type", contentType)
     return query
   }
 
-  // eslint-disable-next-line prefer-const
-  let { data, error } = await run("insight, outcome")
-  // Pre-migration-025 schema has no `outcome`; fall back so insight injection
-  // keeps working rather than degrading to "no preferences learned".
-  if (error) {
-    ;({ data } = await run("insight"))
-  }
-
-  const rows = ((data ?? []) as unknown as InsightRow[]).filter((r) => r?.insight)
-  if (rows.length === 0) return ""
-
-  const bullet = (r: InsightRow) => `- ${r.insight}`
   // Manual edits (outcome null) are implicit preferences, so they group with
   // the accepted ones; only an explicit revert is a negative signal.
-  const preferences = rows.filter((r) => r.outcome !== "rejected").slice(0, MAX_PER_SECTION).map(bullet)
-  const rejections = rows.filter((r) => r.outcome === "rejected").slice(0, MAX_PER_SECTION).map(bullet)
+  const [prefResult, rejResult] = await Promise.all([
+    base("insight, outcome").or("outcome.is.null,outcome.neq.rejected"),
+    base("insight, outcome").eq("outcome", "rejected"),
+  ])
+
+  let preferenceRows: InsightRow[]
+  let rejectionRows: InsightRow[]
+  if (prefResult.error || rejResult.error) {
+    // Pre-migration-025 schema has no `outcome`; fall back so insight injection
+    // keeps working rather than degrading to "no preferences learned".
+    const { data } = await base("insight")
+    preferenceRows = (data ?? []) as unknown as InsightRow[]
+    rejectionRows = []
+  } else {
+    preferenceRows = (prefResult.data ?? []) as unknown as InsightRow[]
+    rejectionRows = (rejResult.data ?? []) as unknown as InsightRow[]
+  }
+
+  const bullet = (r: InsightRow) => `- ${r.insight}`
+  const preferences = preferenceRows.filter((r) => r?.insight).map(bullet)
+  const rejections = rejectionRows.filter((r) => r?.insight).map(bullet)
+  if (preferences.length === 0 && rejections.length === 0) return ""
 
   let block = ""
   if (preferences.length > 0) {
@@ -140,18 +148,21 @@ function buildInsightPrompt({
     ? `\n## מה המשתמש ביקש (במילים שלו):\n${instruction}\n`
     : ""
 
+  // Only the changed lines go to the model. With two full posts it had to
+  // find a one-word change inside 2,000 characters, and tended to describe
+  // the layout instead of the wording. The "−" side is what was there
+  // before; "+" is what replaced it.
   const labels =
     source === "chat_instruction"
-      ? { before: "הגרסה שהייתה לפני השינוי", after: "הגרסה שה-AI הציע" }
-      : { before: "הטקסט המקורי (שה-AI יצר)", after: "הטקסט אחרי עריכת המשתמש" }
+      ? { before: "הגרסה שהייתה לפני", after: "הגרסה שה-AI הציע" }
+      : { before: "מה שה-AI כתב", after: "מה שהמשתמש כתב במקום" }
 
   return `אתה מנתח משוב שמשתמש נתן על טקסט שנוצר על ידי AI.
 ${instructionSection}
-## ${labels.before}:
-${originalText}
+## השינויים (שורות שלא השתנו הושמטו וסומנו ב-…)
+שורות שמתחילות ב-"−" הן ${labels.before}. שורות שמתחילות ב-"+" הן ${labels.after}. שורות בלי סימן הן הקשר שלא השתנה.
 
-## ${labels.after}:
-${editedText}
+${renderLineDiff(originalText, editedText)}
 
 ## תובנות קיימות שכבר נשמרו על המשתמש הזה:
 ${existingList}

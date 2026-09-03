@@ -14,6 +14,7 @@ import { parseCreatorInput } from "@/lib/creator-url"
 import { CreatorsList } from "@/components/creators-list"
 import { ProductsList, type ProductEntry } from "@/components/products-list"
 import { BusinessSourcesPanel } from "@/components/business-sources-panel"
+import { LearnedInsightsPanel } from "@/components/learned-insights-panel"
 import { InstagramConnect } from "@/components/instagram-connect"
 import { toast } from "sonner"
 import { validateIdentityFile } from "@/lib/validate-identity-file"
@@ -214,6 +215,7 @@ const SUB_SECTIONS: Record<SettingsTab, { id: string; label: string; icon: typeo
     { id: "you", label: "עליך", icon: Type },
     { id: "files", label: "קבצים להעלאה", icon: Upload },
     { id: "sources", label: "מקורות ידע", icon: Link2 },
+    { id: "learned", label: "מה ה-AI למד", icon: Sparkles },
   ],
   products: [
     { id: "list", label: "המוצרים שלכם", icon: Type },
@@ -1453,6 +1455,7 @@ function SettingsPageInner() {
                 )}
 
                 {activeSubSection === "sources" && <BusinessSourcesPanel />}
+                {activeSubSection === "learned" && <LearnedInsightsPanel />}
 
                 {/* Save button for about/you sub-sections */}
                 {activeSubSection !== "files" && activeSubSection !== "sources" && (

@@ -8,6 +8,7 @@ import {
   type LearningSource,
 } from "@/lib/learning-insights"
 import { getAuthUser } from "@/lib/auth-user"
+import { isTrivialEdit } from "@/lib/learning-diff"
 
 const CONTENT_TYPES: LearningContentType[] = ["hook", "core_post"]
 const SOURCES: LearningSource[] = ["manual_edit", "chat_instruction"]
@@ -49,6 +50,12 @@ export async function POST(req: NextRequest) {
     if (originalText.trim() === editedText.trim()) {
       return NextResponse.json({ insight: null })
     }
+    // Same filter the browser applies, in case a caller bypasses it: a comma
+    // or a dropped blank line is not a preference. Chat verdicts are exempt —
+    // the instruction is the signal there, not the size of the diff.
+    if ((source ?? "manual_edit") !== "chat_instruction" && isTrivialEdit(originalText, editedText)) {
+      return NextResponse.json({ insight: null, skipped: "trivial" })
+    }
 
     let apiKey: string
     try {
@@ -73,4 +80,25 @@ export async function POST(req: NextRequest) {
     console.error("Learning log error:", msg)
     return NextResponse.json({ error: msg }, { status: 500 })
   }
+}
+
+/** What the AI has learned about the current user — newest first. */
+export async function GET() {
+  const supabase = await createClient()
+  const user = await getAuthUser(supabase)
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  const { data, error } = await supabase
+    .from("learning_logs")
+    .select("id, insight, content_type, source, outcome, instruction, created_at")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(300)
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  return NextResponse.json({ insights: data ?? [] })
 }

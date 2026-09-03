@@ -6,6 +6,8 @@
  * can avoid double-logging the same pair.
  */
 
+import { isTrivialEdit } from "@/lib/learning-diff"
+
 export type LearningContentType = "hook" | "core_post"
 export type LearningSource = "manual_edit" | "chat_instruction"
 export type LearningOutcome = "accepted" | "rejected"
@@ -31,6 +33,11 @@ export function logLearningEdit({
   const before = originalText?.trim() ?? ""
   const after = editedText?.trim() ?? ""
   if (!before || !after || before === after) return false
+  // Punctuation, whitespace or case only — nothing about voice or structure
+  // to learn, and it used to become a binding "preference" in every prompt.
+  // A chat accept/reject still carries the user's instruction, so only manual
+  // edits are filtered here.
+  if (source !== "chat_instruction" && isTrivialEdit(before, after)) return false
 
   void fetch("/api/learning-log", {
     method: "POST",
