@@ -90,12 +90,22 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("learning_logs")
     .select("id, insight, content_type, source, outcome, instruction, created_at")
     .eq("user_id", user.id)
+    .is("dismissed_at", null)
     .order("created_at", { ascending: false })
     .limit(300)
+
+  // Keep the existing panel available before migration 035 is applied.
+  if (error?.code === "42703" || error?.code === "PGRST204") {
+    const fallback = await supabase.from("learning_logs")
+      .select("id, insight, content_type, source, outcome, instruction, created_at")
+      .eq("user_id", user.id).order("created_at", { ascending: false }).limit(300)
+    data = fallback.data
+    error = fallback.error
+  }
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })

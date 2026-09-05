@@ -26,6 +26,18 @@ export async function DELETE(
   }
 
   const admin = createAdminClient()
+  const { data: target } = await supabase.from("learning_logs").select("source")
+    .eq("id", id).eq("user_id", user.id).maybeSingle()
+  if ((target as { source: string } | null)?.source === "scheduled_post") {
+    // Retain a tombstone so backfill or rescheduling cannot revive a lesson
+    // the user explicitly asked the AI to forget.
+    const { data: forgotten, error } = await admin.from("learning_logs")
+      .update({ dismissed_at: new Date().toISOString() } as never)
+      .eq("id", id).eq("user_id", user.id).select("id")
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (!forgotten?.length) return NextResponse.json({ error: "Not found" }, { status: 404 })
+    return NextResponse.json({ deleted: id })
+  }
   const { data, error } = await admin
     .from("learning_logs")
     .delete()

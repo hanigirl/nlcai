@@ -9,7 +9,7 @@ interface LearnedInsight {
   id: string
   insight: string
   content_type: "hook" | "core_post"
-  source: "manual_edit" | "chat_instruction" | null
+  source: "manual_edit" | "chat_instruction" | "scheduled_post" | null
   outcome: "accepted" | "rejected" | null
   instruction: string | null
   created_at: string
@@ -35,16 +35,43 @@ export function LearnedInsightsPanel() {
   const [insights, setInsights] = useState<LearnedInsight[]>([])
   const [loading, setLoading] = useState(true)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState(false)
 
   useEffect(() => {
     let cancelled = false
+    async function learnExistingScheduledPosts() {
+      try {
+        let remaining = true
+        while (!cancelled && remaining) {
+          const res = await fetch("/api/learning-log/scheduled", { method: "POST" })
+          if (!res.ok) throw new Error("Scheduled learning failed")
+          remaining = (await res.json()).remaining
+          if (cancelled) return
+          const refreshed = await fetch("/api/learning-log")
+          if (!refreshed.ok) throw new Error("Learning refresh failed")
+          const data = await refreshed.json()
+          if (!cancelled) setInsights(data.insights ?? [])
+        }
+      } catch {
+        if (!cancelled) toast.error("לא הצלחנו לעדכן תובנות מפוסטים שתוזמנו")
+      }
+    }
     fetch("/api/learning-log")
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error("Learning load failed")
+        return r.json()
+      })
       .then((data) => {
-        if (!cancelled) setInsights(data.insights ?? [])
+        if (!cancelled) {
+          setInsights(data.insights ?? [])
+          void learnExistingScheduledPosts()
+        }
       })
       .catch(() => {
-        if (!cancelled) toast.error("לא הצלחנו לטעון את מה שה-AI למד")
+        if (!cancelled) {
+          setLoadError(true)
+          toast.error("לא הצלחנו לטעון את מה שה-AI למד")
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -84,21 +111,21 @@ export function LearnedInsightsPanel() {
       <div className="flex flex-col gap-1">
         <h3 className="text-p-bold text-text-primary-default">מה ה-AI למד עליכם</h3>
         <p className="text-small text-text-neutral-default">
-          כל תיקון שאתם עושים לפוסט או להוק הופך לכלל שה-AI מקבל בכל כתיבה הבאה. אם כלל לא נכון או לא חשוב, מחקו אותו וה-AI יפסיק להתחשב בו.
+          תובנות מהתיקונים שלכם, מהשינויים שאישרתם או ביטלתם ומהפוסטים שתזמנתם. אם תובנה לא נכונה או לא חשובה, אפשר למחוק אותה.
         </p>
       </div>
 
-      {insights.length === 0 ? (
+      {loadError ? <p role="alert" className="text-small text-text-primary-default">לא הצלחנו לטעון את ההעדפות. פתחו את המסך מחדש כדי לנסות שוב.</p> : insights.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border-neutral-default p-6 text-center">
           <p className="text-p text-text-neutral-default">
-            עדיין אין כאן כלום. ערכו פוסט ליבה שה-AI כתב, וההעדפות שלכם יתחילו להצטבר כאן.
+            עדיין אין העדפות שנלמדו מתיקונים. ערכו פוסט ליבה או הוק שה-AI כתב כדי ללמד אותו את הסגנון שלכם.
           </p>
         </div>
       ) : (
         <>
           <InsightGroup
-            title="העדפות"
-            hint="נלמדו מתיקונים שעשיתם ומשינויים שאישרתם"
+            title="מה עבד"
+            hint="נלמדו מתיקונים שעשיתם, משינויים שאישרתם ומפוסטים שתזמנתם"
             items={preferences}
             deleting={deleting}
             onDelete={handleDelete}
@@ -163,7 +190,7 @@ function InsightGroup({
                     ) : (
                       <Pencil className="size-3" aria-hidden="true" />
                     )}
-                    {item.source === "chat_instruction" ? "מהצ'אט" : "מעריכה ידנית"}
+                    {item.source === "scheduled_post" ? "מפוסט שתוזמן" : item.source === "chat_instruction" ? "מהצ'אט" : "מעריכה ידנית"}
                   </span>
                   <span aria-hidden="true">·</span>
                   <span>{formatDate(item.created_at)}</span>

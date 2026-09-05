@@ -22,6 +22,7 @@ const MAX_PER_SECTION = 25
 interface InsightRow {
   insight: string
   outcome: LearningOutcome | null
+  approval_weight?: number
 }
 
 /**
@@ -38,13 +39,13 @@ export async function fetchLearningInsights(
   userId: string,
   contentType?: LearningContentType
 ): Promise<string> {
-  const base = (columns: string) => {
+  const base = (columns: string, weighted = true) => {
     let query = supabase
       .from("learning_logs")
       .select(columns)
       .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(MAX_PER_SECTION)
+    if (weighted) query = query.order("approval_weight", { ascending: false }).is("dismissed_at", null)
+    query = query.order("created_at", { ascending: false }).limit(MAX_PER_SECTION)
     if (contentType) query = query.eq("content_type", contentType)
     return query
   }
@@ -52,8 +53,8 @@ export async function fetchLearningInsights(
   // Manual edits (outcome null) are implicit preferences, so they group with
   // the accepted ones; only an explicit revert is a negative signal.
   const [prefResult, rejResult] = await Promise.all([
-    base("insight, outcome").or("outcome.is.null,outcome.neq.rejected"),
-    base("insight, outcome").eq("outcome", "rejected"),
+    base("insight, outcome, approval_weight").or("outcome.is.null,outcome.neq.rejected"),
+    base("insight, outcome, approval_weight").eq("outcome", "rejected"),
   ])
 
   let preferenceRows: InsightRow[]
@@ -61,15 +62,24 @@ export async function fetchLearningInsights(
   if (prefResult.error || rejResult.error) {
     // Pre-migration-025 schema has no `outcome`; fall back so insight injection
     // keeps working rather than degrading to "no preferences learned".
-    const { data } = await base("insight")
-    preferenceRows = (data ?? []) as unknown as InsightRow[]
-    rejectionRows = []
+    const [prefs, rejected] = await Promise.all([
+      base("insight, outcome", false).or("outcome.is.null,outcome.neq.rejected"),
+      base("insight, outcome", false).eq("outcome", "rejected"),
+    ])
+    if (prefs.error || rejected.error) {
+      const { data } = await base("insight", false)
+      preferenceRows = (data ?? []) as unknown as InsightRow[]
+      rejectionRows = []
+    } else {
+      preferenceRows = (prefs.data ?? []) as unknown as InsightRow[]
+      rejectionRows = (rejected.data ?? []) as unknown as InsightRow[]
+    }
   } else {
     preferenceRows = (prefResult.data ?? []) as unknown as InsightRow[]
     rejectionRows = (rejResult.data ?? []) as unknown as InsightRow[]
   }
 
-  const bullet = (r: InsightRow) => `- ${r.insight}`
+  const bullet = (r: InsightRow) => `- ${r.insight}${(r.approval_weight ?? 1) > 1 ? ` (אות אישור מחוזק: ${r.approval_weight} פורמטים שתוזמנו)` : ""}`
   const preferences = preferenceRows.filter((r) => r?.insight).map(bullet)
   const rejections = rejectionRows.filter((r) => r?.insight).map(bullet)
   if (preferences.length === 0 && rejections.length === 0) return ""

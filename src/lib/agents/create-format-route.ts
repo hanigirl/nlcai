@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
+import { fetchLearningInsights } from "@/lib/learning-insights"
 import type { FormatAgentInput } from "./types"
 
 export interface FormatRouteConfig {
@@ -51,12 +52,13 @@ export function createFormatRoute(config: FormatRouteConfig) {
         return NextResponse.json({ error: "corePostText is required" }, { status: 400 })
       }
 
-      const [{ data: coreIdentity }, { data: audienceIdentity }] = await Promise.all([
+      const [{ data: coreIdentity }, { data: audienceIdentity }, learning] = await Promise.all([
         supabase.from("core_identities").select("*").eq("user_id", user.id).single(),
         supabase.from("audience_identities").select("*").eq("user_id", user.id).single(),
+        fetchLearningInsights(supabase, user.id, "core_post"),
       ])
 
-      const prompt = buildPrompt({ corePostText, coreIdentity, audienceIdentity })
+      const prompt = learning + "\n" + buildPrompt({ corePostText, coreIdentity, audienceIdentity })
 
       const client = new Anthropic({ apiKey })
       const message = await client.messages.create({

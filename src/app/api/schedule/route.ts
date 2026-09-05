@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server"
+import { after, NextRequest, NextResponse } from "next/server"
+import { learnFromScheduledPosts } from "@/lib/scheduled-learning"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
 
@@ -144,6 +145,13 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
+  after(async () => {
+    try {
+      await learnFromScheduledPosts(supabase, user.id, [...new Set(parsed.map((r) => r.corePostId))])
+    } catch (error) {
+      console.error("[learning] scheduled insight capture failed", error)
+    }
+  })
   return NextResponse.json({ saved: parsed.length, skipped })
 }
 
