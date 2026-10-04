@@ -82,7 +82,7 @@ export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onTog
       } ${
         used
           ? "opacity-60"
-          : "hover:bg-bg-surface-hover hover:border-gray-80 hover:ring-2 hover:ring-gray-80/30"
+          : "hover:bg-bg-surface-primary-default hover:border-yellow-50 hover:ring-2 hover:ring-yellow-50/30"
       }`}
     >
       <CardContent className="flex flex-col gap-2 p-0">
@@ -133,9 +133,11 @@ export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onTog
             /core_posts cards (matching Hani's spec). Base color is
             yellow regardless of hover state so when the card is
             hovered (revealing them via opacity) they read as a single
-            yellow surface; direct icon hover still flips to the
-            semantic affordance — red for destructive, surface-hover
-            for copy, and the star's own yellow-50 fill when favorited.
+            yellow surface. Inside HookCard a hover is never gray (Hani's
+            exception to the app-wide gray hover): direct icon hover steps
+            one shade darker, yellow-90 → yellow-80, and delete keeps only
+            a red icon tint as its danger cue. The star keeps its own
+            yellow-50 fill when favorited.
           */}
 
           {/* Favorite */}
@@ -146,7 +148,7 @@ export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onTog
                   type="button"
                   onClick={onToggleFavorite}
                   aria-label={isFavorite ? "הסרה ממועדפים" : "הוספה למועדפים"}
-                  className={`flex items-center justify-center size-7 shrink-0 rounded-md bg-yellow-90 text-yellow-30 hover:bg-bg-surface-hover transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+                  className={`flex items-center justify-center size-7 shrink-0 rounded-md bg-yellow-90 text-yellow-30 hover:bg-yellow-80 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
                     isFavorite ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
                   }`}
                 >
@@ -165,7 +167,7 @@ export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onTog
                 type="button"
                 onClick={handleCopy}
                 aria-label={copied ? "הועתק" : "העתקה"}
-                className="flex items-center justify-center size-7 shrink-0 rounded-md bg-yellow-90 text-yellow-30 hover:bg-bg-surface-hover hover:text-text-primary-default opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+                className="flex items-center justify-center size-7 shrink-0 rounded-md bg-yellow-90 text-yellow-30 hover:bg-yellow-80 hover:text-text-primary-default opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
               >
                 {copied ? (
                   <Check className="size-3.5 text-green-600 dark:text-green-400" />
@@ -185,7 +187,7 @@ export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onTog
                   type="button"
                   onClick={onDelete}
                   aria-label="מחיקה"
-                  className="flex items-center justify-center size-7 shrink-0 rounded-md bg-yellow-90 text-yellow-30 hover:bg-red-95 hover:text-red-60 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-button-destructive-default"
+                  className="flex items-center justify-center size-7 shrink-0 rounded-md bg-yellow-90 text-yellow-30 hover:bg-yellow-80 hover:text-red-60 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-button-destructive-default"
                 >
                   <Trash2 className="size-3.5" />
                 </button>
@@ -204,7 +206,7 @@ export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onTog
                 type="button"
                 onClick={onNavigate}
                 aria-label="יצירת פוסט"
-                className="flex items-center justify-center size-8 shrink-0 rounded-lg bg-bg-surface group-hover:bg-bg-surface-hover transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+                className="flex items-center justify-center size-8 shrink-0 rounded-lg bg-bg-surface group-hover:bg-yellow-90 hover:bg-yellow-80 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
               >
                 <ArrowLeft className="size-4 text-text-primary-default" />
               </button>
