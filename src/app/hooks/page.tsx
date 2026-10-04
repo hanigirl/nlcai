@@ -20,6 +20,7 @@ import { ConfirmModal } from "@/components/confirm-modal"
 import { HookCard } from "@/components/hook-card"
 import { NewHookCard } from "@/components/new-hook-card"
 import { ImportHooksDialog } from "@/components/import-hooks-dialog"
+import { dedupeHooks, fetchAllHookTexts } from "@/lib/hook-import"
 import { GeneratingStatus } from "@/components/generating-status"
 import { GeminiConnectNotice } from "@/components/gemini-connect-notice"
 import { createClient } from "@/lib/supabase/client"
@@ -284,10 +285,21 @@ export default function HooksPage() {
         })
         return
       }
-      const texts = body.hooks ?? []
+      const found = body.hooks ?? []
+      // The route already skipped exact duplicates, but the warehouse may
+      // have changed since (another tab, a generation that just landed), so
+      // check again against the DB right before inserting. Exact text only,
+      // see hookKey. Reading is free, so the preview does it too.
+      let texts = found
+      if (found.length > 0) {
+        const supabase = createClient()
+        const { data: { user } } = await getCurrentUser(supabase)
+        if (user) texts = dedupeHooks(found, await fetchAllHookTexts(supabase, user.id))
+      }
+      const skippedExisting = (body.duplicates ?? 0) + (found.length - texts.length)
       if (texts.length === 0) {
         toast.error(
-          body.duplicates
+          skippedExisting
             ? "כל ההוקים בקובץ כבר נמצאים במחסן"
             : "לא מצאנו הוקים בקובץ. כדאי לשים כל הוק בשורה נפרדת.",
         )
@@ -322,8 +334,8 @@ export default function HooksPage() {
       const ids = new Set(rows.map((r) => r.id))
       setHighlightIds(ids)
       setTimeout(() => setHighlightIds(new Set()), 4000)
-      const skipped = body.duplicates
-        ? ` (${body.duplicates} ${body.duplicates === 1 ? "הוק כבר היה" : "הוקים כבר היו"} במחסן)`
+      const skipped = skippedExisting
+        ? ` (${skippedExisting} ${skippedExisting === 1 ? "הוק כבר היה" : "הוקים כבר היו"} במחסן)`
         : ""
       toast.success(
         rows.length === 1 ? `הוק אחד נוסף למחסן${skipped}` : `${rows.length} הוקים נוספו למחסן${skipped}`,
@@ -484,34 +496,8 @@ export default function HooksPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
-          {/* Manual add — first in DOM so it sits to the RIGHT of the
-              generate button in this RTL row. Users asked to write their
-              own hooks, not only generated ones. */}
-          {/* More actions — a kebab, quieter than the two labelled buttons:
-              importing is the occasional bulk action, not the everyday one. */}
-          <DropdownMenu dir="rtl">
-            <DropdownMenuTrigger asChild>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={importing || loading}
-                aria-label={importing ? "ייבוא הוקים מתבצע" : "פעולות נוספות"}
-                className="w-[34px] px-0 disabled:opacity-50"
-              >
-                {importing ? <Loader2 className="size-4 animate-spin" /> : <MoreVertical className="size-4" />}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="min-w-[180px]">
-              <DropdownMenuItem onSelect={openImportDialog} className="gap-2">
-                <FileText className="size-3.5" />
-                הוספת הוקים מקובץ
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button size="sm" variant="outline" onClick={handleAddDraft} className="gap-1.5">
-            <Plus className="size-3.5" />
-            הוספת הוק ידנית
-          </Button>
+          {/* Order on screen, right to left (RTL: first in DOM = rightmost):
+              ייצר לי עוד הוקים (primary) · הוספת הוק ידנית · kebab. */}
           {/* Generate button — now a dropdown (chevron variant): pick a
               general batch, or "לפי מוצר" to focus + tag the batch on a
               specific product (sub-menu lists the user's products). */}
@@ -552,6 +538,35 @@ export default function HooksPage() {
                   )}
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {/* Manual add. Users asked to write their own hooks, not only
+              generated ones. */}
+          <Button size="sm" variant="outline" onClick={handleAddDraft} className="gap-1.5">
+            <Plus className="size-3.5" />
+            הוספת הוק ידנית
+          </Button>
+          {/* More actions — a kebab, quieter than the two labelled buttons:
+              importing is the occasional bulk action, not the everyday one. */}
+          <DropdownMenu dir="rtl">
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={importing || loading}
+                aria-label={importing ? "ייבוא הוקים מתבצע" : "פעולות נוספות"}
+                className="w-[34px] px-0 disabled:opacity-50"
+              >
+                {importing ? <Loader2 className="size-4 animate-spin" /> : <MoreVertical className="size-4" />}
+              </Button>
+            </DropdownMenuTrigger>
+            {/* align end: the kebab is the leftmost control, so the menu
+                opens toward the page (rightwards) instead of off the column. */}
+            <DropdownMenuContent align="end" className="min-w-[180px]">
+              <DropdownMenuItem onSelect={openImportDialog} className="gap-2">
+                <FileText className="size-3.5" />
+                הוספת הוקים מקובץ
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           </div>

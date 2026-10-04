@@ -9,6 +9,7 @@ import { generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
 import {
   buildHookExtractionPrompt,
   dedupeHooks,
+  fetchAllHookTexts,
   parseExtractedHooks,
   parseGoogleDocId,
   splitHookList,
@@ -83,11 +84,7 @@ export async function POST(req: NextRequest) {
 
     // Whatever's already in the warehouse is skipped, so importing the same
     // file twice doesn't double every hook.
-    const { data: existingRows } = await supabase
-      .from("hooks")
-      .select("hook_text")
-      .eq("user_id", user.id)
-    const existing = ((existingRows as { hook_text: string }[] | null) ?? []).map((r) => r.hook_text)
+    const existing = await fetchAllHookTexts(supabase, user.id)
 
     const split = splitHookList(text)
     let found = split.hooks

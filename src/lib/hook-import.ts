@@ -53,14 +53,20 @@ export function splitHookList(text: string): SplitResult {
   return { hooks: dedupeHooks(candidates).slice(0, MAX_IMPORTED_HOOKS), listLike }
 }
 
-const normalize = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase()
+/**
+ * What two hooks are compared on: the exact text, with only whitespace
+ * evened out (trimmed, runs collapsed to one space). No lowercasing, no
+ * punctuation stripping, no similarity — a hook that differs by one word or
+ * one letter is a different hook and gets imported.
+ */
+export const hookKey = (s: string) => s.replace(/\s+/g, " ").trim()
 
-/** Drops repeats inside the list, and anything already in `existing`. */
+/** Drops exact repeats inside the list, and anything exactly in `existing`. */
 export function dedupeHooks(hooks: string[], existing: string[] = []): string[] {
-  const seen = new Set(existing.map(normalize))
+  const seen = new Set(existing.map(hookKey))
   const out: string[] = []
   for (const h of hooks) {
-    const key = normalize(h)
+    const key = hookKey(h)
     if (!key || seen.has(key)) continue
     seen.add(key)
     out.push(h)
@@ -108,4 +114,30 @@ export function parseGoogleDocId(raw: string): string | null {
   if (url.protocol !== "https:" || url.hostname !== "docs.google.com") return null
   const match = url.pathname.match(/^\/document\/(?:u\/\d+\/)?d\/([a-zA-Z0-9_-]{10,})/)
   return match ? match[1] : null
+}
+
+/**
+ * Every hook text the user has, read page by page. A plain select stops at
+ * the API's 1000-row cap, which would let duplicates through for a big
+ * warehouse. Works with the browser and the server Supabase client alike.
+ */
+export async function fetchAllHookTexts(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  userId: string,
+): Promise<string[]> {
+  const PAGE = 1000
+  const texts: string[] = []
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("hooks")
+      .select("hook_text")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: true })
+      .range(from, from + PAGE - 1)
+    if (error) throw new Error(error.message ?? "hooks read failed")
+    const rows = (data as { hook_text: string }[] | null) ?? []
+    for (const r of rows) if (r.hook_text) texts.push(r.hook_text)
+    if (rows.length < PAGE) return texts
+  }
 }
