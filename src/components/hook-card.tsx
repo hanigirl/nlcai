@@ -20,9 +20,11 @@ interface HookCardProps {
   onToggleFavorite?: () => void
   isFavorite?: boolean
   used?: boolean
+  /** Just arrived (e.g. imported from a file). Fades back to normal when unset. */
+  highlighted?: boolean
 }
 
-export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onToggleFavorite, isFavorite, used }: HookCardProps) {
+export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onToggleFavorite, isFavorite, used, highlighted }: HookCardProps) {
   const [copied, setCopied] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(hookText)
@@ -73,7 +75,11 @@ export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onTog
   return (
     <Card
       dir="rtl"
-      className={`group gap-4 rounded-[16px] border-border-neutral-default bg-white dark:bg-gray-10 p-4 py-4 shadow-none transition-all ${
+      className={`group gap-4 rounded-[16px] p-4 py-4 shadow-none transition-all duration-700 ${
+        highlighted
+          ? "border-yellow-50 bg-bg-surface-primary-default dark:bg-gray-10 ring-2 ring-yellow-50/30"
+          : "border-border-neutral-default bg-white dark:bg-gray-10"
+      } ${
         used
           ? "opacity-60"
           : "hover:bg-bg-surface-hover hover:border-gray-80 hover:ring-2 hover:ring-gray-80/30"

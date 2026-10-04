@@ -248,7 +248,8 @@ export default function HooksPage() {
     setImporting(true)
     // A list file is read in a blink. Keep the skeletons up for a beat anyway
     // so the cards visibly arrive instead of the grid just jumping.
-    const minDelay = new Promise((r) => setTimeout(r, 1200))
+    // The preview holds them longer so a reviewer can actually look at them.
+    const minDelay = new Promise((r) => setTimeout(r, importPreview ? 4000 : 1200))
     try {
       const form = new FormData()
       form.append("file", file)
@@ -473,7 +474,7 @@ export default function HooksPage() {
           <button
             type="button"
             onClick={openImportPicker}
-            disabled={importing}
+            disabled={importing || loading}
             className="flex items-center gap-1.5 px-2 h-[34px] rounded-md text-small text-text-primary-default underline underline-offset-4 decoration-gray-70 hover:decoration-text-primary-default disabled:text-text-primary-disabled disabled:no-underline transition-colors cursor-pointer disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
           >
             {importing ? <Loader2 className="size-3.5 animate-spin" /> : <FileText className="size-3.5" />}
@@ -679,7 +680,7 @@ export default function HooksPage() {
                 <div
                   key={hook.id}
                   style={opts?.staggerIndex !== undefined ? { animationDelay: `${Math.min(opts.staggerIndex * 25, 500)}ms` } : undefined}
-                  className={`rounded-[16px] transition-all duration-400 ease-out animate-hook-bump ${deletingId === hook.id ? "opacity-0 translate-y-6 scale-95" : ""} ${highlightIds.has(hook.id) ? "ring-2 ring-yellow-50 ring-offset-2 ring-offset-white dark:ring-offset-gray-10" : "ring-0 ring-transparent"}`}
+                  className={`transition-all duration-400 ease-out animate-hook-bump ${deletingId === hook.id ? "opacity-0 translate-y-6 scale-95" : ""}`}
                 >
                   <HookCard
                     hookText={hook.hook_text}
@@ -689,6 +690,7 @@ export default function HooksPage() {
                     onToggleFavorite={() => toggleFavorite(hook.id)}
                     isFavorite={hook.is_favorite}
                     used={hook.is_used}
+                    highlighted={highlightIds.has(hook.id)}
                   />
                 </div>
               )
