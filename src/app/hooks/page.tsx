@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Anchor, Loader2, Sparkles, LayoutGrid, List, Star, Search, ChevronDown, Check, Plus } from "lucide-react"
+import { Anchor, Loader2, Sparkles, LayoutGrid, List, Star, Search, ChevronDown, Check, Plus, FileText } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { Button } from "@/components/ui/button"
 import {
@@ -49,6 +49,26 @@ function HookSkeleton() {
   )
 }
 
+const IMPORT_SKELETONS = 3
+
+const IMPORT_MESSAGES = [
+  "קוראים את הקובץ...",
+  "מאתרים את ההוקים...",
+  "מסדרים אותם במחסן...",
+]
+
+const IMPORT_ERRORS: Record<string, string> = {
+  unsupported_type: "אפשר להעלות רק קובץ Word (doc או docx)",
+  file_too_large: "הקובץ גדול מדי. אפשר להעלות קובץ עד 5MB.",
+  empty_file: "הקובץ ריק. אין בו הוקים לייבא.",
+  file_unreadable: "לא הצלחנו לקרוא את הקובץ. שמרו אותו מחדש כ-docx ונסו שוב.",
+  credits_exhausted: "נגמר הקרדיט במפתח ה-AI, ולכן לא הצלחנו לאתר את ההוקים בקובץ.",
+  anthropic_overloaded: "השרתים עמוסים כרגע. נסו שוב בעוד רגע.",
+  gemini_overloaded: "השרתים עמוסים כרגע. נסו שוב בעוד רגע.",
+  gemini_quota_exceeded: "נגמרה המכסה במפתח ה-Gemini, ולכן לא הצלחנו לאתר את ההוקים בקובץ.",
+  gemini_key_invalid: "מפתח ה-Gemini לא תקין. בדקו אותו בהגדרות.",
+}
+
 export default function HooksPage() {
   const router = useRouter()
   const {
@@ -76,6 +96,18 @@ export default function HooksPage() {
   // Hooks the user is writing by hand. Client-only until saved, so a
   // discarded draft never touches the DB. Newest first, like the grid.
   const [drafts, setDrafts] = useState<string[]>([])
+  // Import from a Word file. While the file is being read the grid shows
+  // skeleton cards where the new hooks will land; once they're in, they keep
+  // a highlight for a few seconds so it's obvious which ones arrived.
+  const [importing, setImporting] = useState(false)
+  const [highlightIds, setHighlightIds] = useState<Set<string>>(new Set())
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  // ?import=preview — review-only dry run: the file is really read, but the
+  // hooks are shown locally and never written to the DB.
+  const [importPreview, setImportPreview] = useState(false)
+  useEffect(() => {
+    setImportPreview(new URLSearchParams(window.location.search).get("import") === "preview")
+  }, [])
 
   const loadHooks = async () => {
     const supabase = createClient()
@@ -166,34 +198,125 @@ export default function HooksPage() {
     setDrafts((prev) => prev.filter((d) => d !== draftId))
   }
 
-  const handleSaveDraft = async (draftId: string, text: string, productId: string | null): Promise<boolean> => {
+  // The one way a user-supplied hook enters the warehouse — a hand-written
+  // draft and a file import both go through here, so they land identically.
+  const insertHooks = async (
+    texts: string[],
+    productId: string | null,
+  ): Promise<{ rows: HookItem[] } | { error: string }> => {
     const supabase = createClient()
     const { data: { user } } = await getCurrentUser(supabase)
-    if (!user) {
-      toast.error("צריך להתחבר כדי לשמור הוק")
-      return false
-    }
+    if (!user) return { error: "צריך להתחבר כדי לשמור הוק" }
     const { data, error } = await withRetry(() =>
       supabase
         .from("hooks")
-        .insert({
-          user_id: user.id,
-          hook_text: text,
-          display_order: 0,
-          status: "completed",
-          product_ids: productId ? [productId] : [],
-        } as never)
-        .select("id, hook_text, is_used, is_favorite, created_at, product_ids")
-        .single(),
+        .insert(
+          texts.map((text, idx) => ({
+            user_id: user.id,
+            hook_text: text,
+            display_order: idx,
+            status: "completed",
+            product_ids: productId ? [productId] : [],
+          })) as never,
+        )
+        .select("id, hook_text, is_used, is_favorite, created_at, product_ids"),
     )
-    if (error || !data) {
-      toast.error(`ההוק לא נשמר: ${error?.message ?? "תקלת רשת"}`)
+    if (error || !data) return { error: error?.message ?? "תקלת רשת" }
+    return { rows: data as HookItem[] }
+  }
+
+  const handleSaveDraft = async (draftId: string, text: string, productId: string | null): Promise<boolean> => {
+    const result = await insertHooks([text], productId)
+    if ("error" in result) {
+      toast.error(`ההוק לא נשמר: ${result.error}`)
       return false
     }
-    setHooks((prev) => [data as HookItem, ...prev])
+    setHooks((prev) => [...result.rows, ...prev])
     setDrafts((prev) => prev.filter((d) => d !== draftId))
     toast.success("ההוק נוסף למחסן")
     return true
+  }
+
+  const openImportPicker = () => fileInputRef.current?.click()
+
+  const handleImportFile = async (file: File) => {
+    const name = file.name.toLowerCase()
+    if (!name.endsWith(".docx") && !name.endsWith(".doc")) {
+      toast.error("אפשר להעלות רק קובץ Word (doc או docx)")
+      return
+    }
+    setImporting(true)
+    // A list file is read in a blink. Keep the skeletons up for a beat anyway
+    // so the cards visibly arrive instead of the grid just jumping.
+    const minDelay = new Promise((r) => setTimeout(r, 1200))
+    try {
+      const form = new FormData()
+      form.append("file", file)
+      const res = await fetch("/api/hooks/import", { method: "POST", body: form })
+      const body = (await res.json().catch(() => ({}))) as {
+        hooks?: string[]
+        duplicates?: number
+        error?: string
+      }
+      await minDelay
+      if (!res.ok) {
+        toast.error(IMPORT_ERRORS[body.error ?? ""] ?? "לא הצלחנו לייבא את הקובץ. נסו שוב בעוד רגע.", {
+          action: { label: "בחירת קובץ אחר", onClick: openImportPicker },
+        })
+        return
+      }
+      const texts = body.hooks ?? []
+      if (texts.length === 0) {
+        toast.error(
+          body.duplicates
+            ? "כל ההוקים בקובץ כבר נמצאים במחסן"
+            : "לא מצאנו הוקים בקובץ. כדאי לשים כל הוק בשורה נפרדת.",
+        )
+        return
+      }
+
+      let rows: HookItem[]
+      if (importPreview) {
+        const now = new Date().toISOString()
+        rows = texts.map((hook_text) => ({
+          id: `preview-${crypto.randomUUID()}`,
+          hook_text,
+          is_used: false,
+          is_favorite: false,
+          created_at: now,
+          product_ids: [],
+        }))
+      } else {
+        const result = await insertHooks(texts, null)
+        if ("error" in result) {
+          toast.error(`ההוקים לא נשמרו: ${result.error}`)
+          return
+        }
+        rows = result.rows
+      }
+
+      setHooks((prev) => [...rows, ...prev])
+      // Clear filters that could hide the new hooks the moment they land.
+      setShowFavorites(false)
+      setFilter("all")
+      setSearchQuery("")
+      const ids = new Set(rows.map((r) => r.id))
+      setHighlightIds(ids)
+      setTimeout(() => setHighlightIds(new Set()), 4000)
+      const skipped = body.duplicates
+        ? ` (${body.duplicates} ${body.duplicates === 1 ? "הוק כבר היה" : "הוקים כבר היו"} במחסן)`
+        : ""
+      toast.success(
+        rows.length === 1 ? `הוק אחד נוסף למחסן${skipped}` : `${rows.length} הוקים נוספו למחסן${skipped}`,
+      )
+    } catch {
+      await minDelay
+      toast.error("לא הצלחנו לייבא את הקובץ. בדקו את החיבור ונסו שוב.", {
+        action: { label: "נסו שוב", onClick: openImportPicker },
+      })
+    } finally {
+      setImporting(false)
+    }
   }
 
   const handleDelete = async (id: string) => {
@@ -296,7 +419,7 @@ export default function HooksPage() {
     )
     const groups = new Map<string, HookItem[]>()
     // Ensure today's section appears (with skeletons) even if no hooks exist yet
-    if (skeletonCount > 0 || drafts.length > 0) groups.set(todayKey, [])
+    if (skeletonCount > 0 || drafts.length > 0 || importing) groups.set(todayKey, [])
     for (const hook of sorted) {
       const key = getDayKey(hook.created_at)
       const existing = groups.get(key)
@@ -345,6 +468,31 @@ export default function HooksPage() {
           {/* Manual add — first in DOM so it sits to the RIGHT of the
               generate button in this RTL row. Users asked to write their
               own hooks, not only generated ones. */}
+          {/* Import from file — a text link, deliberately quieter than the two
+              buttons: it's the occasional bulk action, not the everyday one. */}
+          <button
+            type="button"
+            onClick={openImportPicker}
+            disabled={importing}
+            className="flex items-center gap-1.5 px-2 h-[34px] rounded-md text-small text-text-primary-default underline underline-offset-4 decoration-gray-70 hover:decoration-text-primary-default disabled:text-text-primary-disabled disabled:no-underline transition-colors cursor-pointer disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+          >
+            {importing ? <Loader2 className="size-3.5 animate-spin" /> : <FileText className="size-3.5" />}
+            {importing ? "קוראים את הקובץ..." : "הוספת הוקים מקובץ"}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword"
+            className="hidden"
+            aria-hidden="true"
+            tabIndex={-1}
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              // Reset so picking the same file again still fires onChange.
+              e.target.value = ""
+              if (file) void handleImportFile(file)
+            }}
+          />
           <Button size="sm" variant="outline" onClick={handleAddDraft} className="gap-1.5">
             <Plus className="size-3.5" />
             הוספת הוק ידנית
@@ -502,7 +650,7 @@ export default function HooksPage() {
           </div>
         )}
 
-        {!loading && hooks.length === 0 && !generating && drafts.length === 0 && (
+        {!loading && hooks.length === 0 && !generating && drafts.length === 0 && !importing && (
           <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
             <div className="rounded-2xl bg-bg-surface p-6">
               <Anchor className="size-10 text-text-neutral-default mx-auto mb-3" />
@@ -531,7 +679,7 @@ export default function HooksPage() {
                 <div
                   key={hook.id}
                   style={opts?.staggerIndex !== undefined ? { animationDelay: `${Math.min(opts.staggerIndex * 25, 500)}ms` } : undefined}
-                  className={`transition-all duration-400 ease-out animate-hook-bump ${deletingId === hook.id ? "opacity-0 translate-y-6 scale-95" : ""}`}
+                  className={`rounded-[16px] transition-all duration-400 ease-out animate-hook-bump ${deletingId === hook.id ? "opacity-0 translate-y-6 scale-95" : ""} ${highlightIds.has(hook.id) ? "ring-2 ring-yellow-50 ring-offset-2 ring-offset-white dark:ring-offset-gray-10" : "ring-0 ring-transparent"}`}
                 >
                   <HookCard
                     hookText={hook.hook_text}
@@ -549,6 +697,9 @@ export default function HooksPage() {
                   <div className="flex flex-col gap-2 mb-4">
                     <p className="text-small text-text-neutral-default">{label}</p>
                     {isToday && generating && <GeneratingStatus />}
+                    {isToday && importing && !generating && (
+                      <GeneratingStatus messages={IMPORT_MESSAGES} subtitle={null} />
+                    )}
                   </div>
                   <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" : "flex flex-col gap-2"}>
                     {/* Hand-written drafts lead today's section. Same bump-in as a
@@ -561,6 +712,10 @@ export default function HooksPage() {
                           onDiscard={() => handleDiscardDraft(draftId)}
                         />
                       </div>
+                    ))}
+                    {/* File import in progress: placeholders where the hooks will land. */}
+                    {isToday && importing && Array.from({ length: IMPORT_SKELETONS }).map((_, i) => (
+                      <HookSkeleton key={`import-skel-${i}`} />
                     ))}
                     {/* Per-slot rendering on today: each slot is either an arrived
                         hook or a skeleton — slot N becomes hook N in place. */}
