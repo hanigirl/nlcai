@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Anchor, Loader2, Sparkles, LayoutGrid, List, Star, Search, ChevronDown, Check, Plus, FileText } from "lucide-react"
+import { Anchor, Loader2, Sparkles, LayoutGrid, List, Star, Search, ChevronDown, Check, Plus, FileText, MoreVertical } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { Button } from "@/components/ui/button"
 import {
@@ -19,6 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { HookCard } from "@/components/hook-card"
 import { NewHookCard } from "@/components/new-hook-card"
+import { ImportHooksDialog } from "@/components/import-hooks-dialog"
 import { GeneratingStatus } from "@/components/generating-status"
 import { GeminiConnectNotice } from "@/components/gemini-connect-notice"
 import { createClient } from "@/lib/supabase/client"
@@ -52,7 +53,7 @@ function HookSkeleton() {
 const IMPORT_SKELETONS = 3
 
 const IMPORT_MESSAGES = [
-  "קוראים את הקובץ...",
+  "קוראים את המסמך...",
   "מאתרים את ההוקים...",
   "מסדרים אותם במחסן...",
 ]
@@ -60,13 +61,17 @@ const IMPORT_MESSAGES = [
 const IMPORT_ERRORS: Record<string, string> = {
   unsupported_type: "אפשר להעלות רק קובץ Word (doc או docx)",
   file_too_large: "הקובץ גדול מדי. אפשר להעלות קובץ עד 5MB.",
-  empty_file: "הקובץ ריק. אין בו הוקים לייבא.",
+  empty_file: "המסמך ריק. אין בו הוקים לייבא.",
   file_unreadable: "לא הצלחנו לקרוא את הקובץ. שמרו אותו מחדש כ-docx ונסו שוב.",
   credits_exhausted: "נגמר הקרדיט במפתח ה-AI, ולכן לא הצלחנו לאתר את ההוקים בקובץ.",
   anthropic_overloaded: "השרתים עמוסים כרגע. נסו שוב בעוד רגע.",
   gemini_overloaded: "השרתים עמוסים כרגע. נסו שוב בעוד רגע.",
   gemini_quota_exceeded: "נגמרה המכסה במפתח ה-Gemini, ולכן לא הצלחנו לאתר את ההוקים בקובץ.",
   gemini_key_invalid: "מפתח ה-Gemini לא תקין. בדקו אותו בהגדרות.",
+  invalid_docs_url: "זה לא נראה כמו קישור ל-Google Docs. העתיקו את הקישור מכפתור השיתוף של המסמך.",
+  private_doc: "המסמך פרטי, ולכן אין לנו גישה אליו. שתפו אותו עם ״כל מי שיש לו את הקישור״ ונסו שוב.",
+  doc_not_found: "לא מצאנו את המסמך. בדקו שהקישור נכון ושהמסמך לא נמחק.",
+  doc_fetch_failed: "לא הצלחנו להגיע ל-Google Docs. נסו שוב בעוד רגע.",
 }
 
 export default function HooksPage() {
@@ -101,7 +106,7 @@ export default function HooksPage() {
   // a highlight for a few seconds so it's obvious which ones arrived.
   const [importing, setImporting] = useState(false)
   const [highlightIds, setHighlightIds] = useState<Set<string>>(new Set())
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
   // ?import=preview — review-only dry run: the file is really read, but the
   // hooks are shown locally and never written to the DB.
   const [importPreview, setImportPreview] = useState(false)
@@ -237,13 +242,17 @@ export default function HooksPage() {
     return true
   }
 
-  const openImportPicker = () => fileInputRef.current?.click()
+  const openImportDialog = () => setImportDialogOpen(true)
 
-  const handleImportFile = async (file: File) => {
-    const name = file.name.toLowerCase()
-    if (!name.endsWith(".docx") && !name.endsWith(".doc")) {
-      toast.error("אפשר להעלות רק קובץ Word (doc או docx)")
-      return
+  // One flow for both sources: a Word file from the computer or a Google
+  // Docs link. The route reads either into text and extracts the hooks.
+  const runImport = async (source: { file: File } | { url: string }) => {
+    if ("file" in source) {
+      const name = source.file.name.toLowerCase()
+      if (!name.endsWith(".docx") && !name.endsWith(".doc")) {
+        toast.error("אפשר להעלות רק קובץ Word (doc או docx)")
+        return
+      }
     }
     setImporting(true)
     // A list file is read in a blink. Keep the skeletons up for a beat anyway
@@ -251,9 +260,18 @@ export default function HooksPage() {
     // The preview holds them longer so a reviewer can actually look at them.
     const minDelay = new Promise((r) => setTimeout(r, importPreview ? 4000 : 1200))
     try {
-      const form = new FormData()
-      form.append("file", file)
-      const res = await fetch("/api/hooks/import", { method: "POST", body: form })
+      let res: Response
+      if ("file" in source) {
+        const form = new FormData()
+        form.append("file", source.file)
+        res = await fetch("/api/hooks/import", { method: "POST", body: form })
+      } else {
+        res = await fetch("/api/hooks/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: source.url }),
+        })
+      }
       const body = (await res.json().catch(() => ({}))) as {
         hooks?: string[]
         duplicates?: number
@@ -262,7 +280,7 @@ export default function HooksPage() {
       await minDelay
       if (!res.ok) {
         toast.error(IMPORT_ERRORS[body.error ?? ""] ?? "לא הצלחנו לייבא את הקובץ. נסו שוב בעוד רגע.", {
-          action: { label: "בחירת קובץ אחר", onClick: openImportPicker },
+          action: { label: "ניסיון עם מקור אחר", onClick: openImportDialog },
         })
         return
       }
@@ -313,7 +331,7 @@ export default function HooksPage() {
     } catch {
       await minDelay
       toast.error("לא הצלחנו לייבא את הקובץ. בדקו את החיבור ונסו שוב.", {
-        action: { label: "נסו שוב", onClick: openImportPicker },
+        action: { label: "נסו שוב", onClick: openImportDialog },
       })
     } finally {
       setImporting(false)
@@ -469,31 +487,27 @@ export default function HooksPage() {
           {/* Manual add — first in DOM so it sits to the RIGHT of the
               generate button in this RTL row. Users asked to write their
               own hooks, not only generated ones. */}
-          {/* Import from file — a text link, deliberately quieter than the two
-              buttons: it's the occasional bulk action, not the everyday one. */}
-          <button
-            type="button"
-            onClick={openImportPicker}
-            disabled={importing || loading}
-            className="flex items-center gap-1.5 px-2 h-[34px] rounded-md text-small text-text-primary-default underline underline-offset-4 decoration-gray-70 hover:decoration-text-primary-default disabled:text-text-primary-disabled disabled:no-underline transition-colors cursor-pointer disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-          >
-            {importing ? <Loader2 className="size-3.5 animate-spin" /> : <FileText className="size-3.5" />}
-            {importing ? "קוראים את הקובץ..." : "הוספת הוקים מקובץ"}
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword"
-            className="hidden"
-            aria-hidden="true"
-            tabIndex={-1}
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              // Reset so picking the same file again still fires onChange.
-              e.target.value = ""
-              if (file) void handleImportFile(file)
-            }}
-          />
+          {/* More actions — a kebab, quieter than the two labelled buttons:
+              importing is the occasional bulk action, not the everyday one. */}
+          <DropdownMenu dir="rtl">
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={importing || loading}
+                aria-label={importing ? "ייבוא הוקים מתבצע" : "פעולות נוספות"}
+                className="w-[34px] px-0 disabled:opacity-50"
+              >
+                {importing ? <Loader2 className="size-4 animate-spin" /> : <MoreVertical className="size-4" />}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-[180px]">
+              <DropdownMenuItem onSelect={openImportDialog} className="gap-2">
+                <FileText className="size-3.5" />
+                הוספת הוקים מקובץ
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button size="sm" variant="outline" onClick={handleAddDraft} className="gap-1.5">
             <Plus className="size-3.5" />
             הוספת הוק ידנית
@@ -743,6 +757,13 @@ export default function HooksPage() {
           </div>
         )}
       </div>
+
+      <ImportHooksDialog
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        onImportFile={(file) => void runImport({ file })}
+        onImportDocsUrl={(url) => void runImport({ url })}
+      />
 
       {/* Delete confirmation dialog */}
       <ConfirmModal

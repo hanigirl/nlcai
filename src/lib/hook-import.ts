@@ -96,3 +96,16 @@ export function parseExtractedHooks(raw: string): string[] {
       .filter((l) => l.length >= MIN_HOOK_CHARS && !isLabel(l)),
   ).slice(0, MAX_IMPORTED_HOOKS)
 }
+
+/** Pulls the document id out of any docs.google.com/document/… link. */
+export function parseGoogleDocId(raw: string): string | null {
+  let url: URL
+  try {
+    url = new URL(raw.trim())
+  } catch {
+    return null
+  }
+  if (url.protocol !== "https:" || url.hostname !== "docs.google.com") return null
+  const match = url.pathname.match(/^\/document\/(?:u\/\d+\/)?d\/([a-zA-Z0-9_-]{10,})/)
+  return match ? match[1] : null
+}
