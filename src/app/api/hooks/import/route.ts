@@ -162,10 +162,10 @@ async function extractWithModel(
 /**
  * Fetches a Google Doc as plain text through its public export URL.
  *
- * Only works for docs shared as "anyone with the link". A private doc does
- * not return an error code you can rely on: Google redirects to a sign-in
- * page. So redirects are not followed, and any redirect, 401/403, or a
- * non-text response is treated as "private".
+ * Only works for docs shared as "anyone with the link". A shared doc's export
+ * redirects to the file itself on googleusercontent.com, so redirects to
+ * Google's file hosts are followed. A private doc redirects to the sign-in
+ * page (or answers 401/403); that, or a non-text response, is "private".
  */
 async function fetchGoogleDocText(
   raw: string,
@@ -173,20 +173,30 @@ async function fetchGoogleDocText(
   const id = parseGoogleDocId(raw)
   if (!id) return { error: "invalid_docs_url" }
 
-  let res: Response
+  let url = `https://docs.google.com/document/d/${id}/export?format=txt`
+  let res: Response | undefined
   try {
-    res = await fetch(`https://docs.google.com/document/d/${id}/export?format=txt`, {
-      redirect: "manual",
-      signal: AbortSignal.timeout(15_000),
-    })
+    for (let hop = 0; hop < 5; hop++) {
+      res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(15_000) })
+      if (res.status < 300 || res.status >= 400) break
+      const next = res.headers.get("location")
+      if (!next) return { error: "private_doc" }
+      const target = new URL(next, url)
+      const isFileHost =
+        target.protocol === "https:" &&
+        (target.hostname.endsWith(".googleusercontent.com") ||
+          target.hostname === "docs.google.com")
+      if (!isFileHost) return { error: "private_doc" }
+      url = target.toString()
+      res = undefined
+    }
   } catch {
     return { error: "doc_fetch_failed" }
   }
+  if (!res) return { error: "doc_fetch_failed" }
 
   if (res.status === 404) return { error: "doc_not_found" }
-  if ((res.status >= 300 && res.status < 400) || res.status === 401 || res.status === 403) {
-    return { error: "private_doc" }
-  }
+  if (res.status === 401 || res.status === 403) return { error: "private_doc" }
   if (!res.ok) return { error: "doc_fetch_failed" }
   if (!(res.headers.get("content-type") ?? "").includes("text/plain")) {
     return { error: "private_doc" }
