@@ -108,12 +108,6 @@ export default function HooksPage() {
   const [importing, setImporting] = useState(false)
   const [highlightIds, setHighlightIds] = useState<Set<string>>(new Set())
   const [importDialogOpen, setImportDialogOpen] = useState(false)
-  // ?import=preview — review-only dry run: the file is really read, but the
-  // hooks are shown locally and never written to the DB.
-  const [importPreview, setImportPreview] = useState(false)
-  useEffect(() => {
-    setImportPreview(new URLSearchParams(window.location.search).get("import") === "preview")
-  }, [])
 
   const loadHooks = async () => {
     const supabase = createClient()
@@ -258,8 +252,7 @@ export default function HooksPage() {
     setImporting(true)
     // A list file is read in a blink. Keep the skeletons up for a beat anyway
     // so the cards visibly arrive instead of the grid just jumping.
-    // The preview holds them longer so a reviewer can actually look at them.
-    const minDelay = new Promise((r) => setTimeout(r, importPreview ? 4000 : 1200))
+    const minDelay = new Promise((r) => setTimeout(r, 1200))
     try {
       let res: Response
       if ("file" in source) {
@@ -289,7 +282,7 @@ export default function HooksPage() {
       // The route already skipped exact duplicates, but the warehouse may
       // have changed since (another tab, a generation that just landed), so
       // check again against the DB right before inserting. Exact text only,
-      // see hookKey. Reading is free, so the preview does it too.
+      // see hookKey.
       let texts = found
       if (found.length > 0) {
         const supabase = createClient()
@@ -306,25 +299,12 @@ export default function HooksPage() {
         return
       }
 
-      let rows: HookItem[]
-      if (importPreview) {
-        const now = new Date().toISOString()
-        rows = texts.map((hook_text) => ({
-          id: `preview-${crypto.randomUUID()}`,
-          hook_text,
-          is_used: false,
-          is_favorite: false,
-          created_at: now,
-          product_ids: [],
-        }))
-      } else {
-        const result = await insertHooks(texts, null)
-        if ("error" in result) {
-          toast.error(`ההוקים לא נשמרו: ${result.error}`)
-          return
-        }
-        rows = result.rows
+      const result = await insertHooks(texts, null)
+      if ("error" in result) {
+        toast.error(`ההוקים לא נשמרו: ${result.error}`)
+        return
       }
+      const rows = result.rows
 
       setHooks((prev) => [...rows, ...prev])
       // Clear filters that could hide the new hooks the moment they land.
