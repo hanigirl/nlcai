@@ -15,7 +15,6 @@ import {
   MAX_BRAND_EXAMPLES,
   isHexColor,
   visualLanguageSignature,
-  type NicheVisualLanguage,
   type VisualLanguage,
 } from "@/lib/visual-language/types"
 
@@ -67,7 +66,6 @@ export function VisualLanguagePanel() {
   const [elements, setElements] = useState<ElementItem[]>([])
   const [examples, setExamples] = useState<ExampleItem[]>([])
   const [visualLanguage, setVisualLanguage] = useState<VisualLanguage | null>(null)
-  const [nicheLanguage, setNicheLanguage] = useState<NicheVisualLanguage | null>(null)
 
   const [uploadingElements, setUploadingElements] = useState(0)
   const [uploadingExamples, setUploadingExamples] = useState(0)
@@ -89,7 +87,7 @@ export function VisualLanguagePanel() {
       const [userRes, mediaRes] = await Promise.all([
         supabase
           .from("users")
-          .select("brand_colors, visual_language, niche_visual_language")
+          .select("brand_colors, visual_language")
           .eq("id", user.id)
           .single(),
         supabase
@@ -105,11 +103,9 @@ export function VisualLanguagePanel() {
       const row = userRes.data as {
         brand_colors?: string[] | null
         visual_language?: VisualLanguage | null
-        niche_visual_language?: NicheVisualLanguage | null
       } | null
       setColors(row?.brand_colors ?? [])
       setVisualLanguage(row?.visual_language ?? null)
-      setNicheLanguage(row?.niche_visual_language ?? null)
 
       const rows = (mediaRes.data ?? []) as MediaRow[]
       setElements(
@@ -498,8 +494,7 @@ export function VisualLanguagePanel() {
       </section>
 
       {/* ── 4. Analysis ── */}
-      <section className="flex flex-col gap-3 border-t border-border-neutral-default pt-6" aria-labelledby="vl-analysis">
-        <h4 id="vl-analysis" className="text-small-bold text-text-primary-default">השפה הוויזואלית שלכם</h4>
+      <section className="flex flex-col gap-3" aria-label="ניתוח השפה הוויזואלית">
 
         {visualLanguage?.status === "ok" && (
           <div className="flex flex-col gap-3 rounded-xl bg-bg-surface p-4">
@@ -539,14 +534,6 @@ export function VisualLanguagePanel() {
               ודאו שהצבעים, האלמנטים והדוגמאות מציגים שפה ויזואלית אחת, ספציפית וברורה, ונתחו שוב. עד אז נעצב לפי הנישה שלכם.
             </p>
           </div>
-        )}
-
-        {!visualLanguage && (
-          <p className="text-sm text-text-neutral-default">
-            {nicheLanguage
-              ? `עדיין לא הוגדרה שפה ויזואלית, אז כרגע אנחנו מעצבים לפי הנישה שלכם: ${nicheLanguage.summary_he}`
-              : "עדיין לא הוגדרה שפה ויזואלית. עד שתגדירו, נבחר לכם שפה שמתאימה לנישה שלכם."}
-          </p>
         )}
 
         {visualLanguage?.unreadable_links?.length ? (
