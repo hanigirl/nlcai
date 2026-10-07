@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import Link from "next/link"
 import { Loader2, ThumbsDown, ThumbsUp } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -83,8 +82,6 @@ function StyleFeedbackRow({
   const [reasons, setReasons] = useState<DislikeReason[]>([])
   const [note, setNote] = useState("")
   const [sending, setSending] = useState(false)
-  const [adopting, setAdopting] = useState(false)
-  const [adopted, setAdopted] = useState(false)
 
   const httpUrl = mediaUrl?.startsWith("http") ? mediaUrl : undefined
 
@@ -117,25 +114,6 @@ function StyleFeedbackRow({
       toast.error("הפידבק לא נשמר. נסו שוב.")
     } finally {
       setSending(false)
-    }
-  }
-
-  const adopt = async () => {
-    setAdopting(true)
-    try {
-      const res = await fetch("/api/visual-language/adopt-example", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, format, mediaUrl: httpUrl }),
-      })
-      const data = (await res.json().catch(() => ({}))) as { message?: string }
-      if (!res.ok) {
-        toast.error(data.message ?? "ההוספה נכשלה")
-        return
-      }
-      setAdopted(true)
-    } finally {
-      setAdopting(false)
     }
   }
 
@@ -205,31 +183,6 @@ function StyleFeedbackRow({
             {sending && <Loader2 className="size-3.5 animate-spin" />}
             עדכון השפה
           </Button>
-        </div>
-      )}
-
-      {/* Only a niche-language image can become her visual language — one
-          made in her own language already is. */}
-      {vote === "like" && !askingWhy && style !== "brand" && (
-        <div className="px-5">
-          {adopted ? (
-            <p className="text-xs text-text-neutral-default">
-              נוסף לדוגמאות שלך.{" "}
-              <Link href="/settings?tab=media&sub=visual" className="underline">
-                לניתוח השפה הוויזואלית
-              </Link>
-            </p>
-          ) : (
-            <button
-              type="button"
-              onClick={adopt}
-              disabled={adopting}
-              className="flex items-center gap-1.5 text-start text-xs text-text-primary-default underline-offset-2 hover:underline cursor-pointer disabled:opacity-60"
-            >
-              {adopting && <Loader2 className="size-3.5 animate-spin" />}
-              להפוך את זה לשפה הוויזואלית שלי
-            </button>
-          )}
         </div>
       )}
 
