@@ -197,8 +197,6 @@ export interface ImageCaptionBlockProps {
   onRetry?: () => void
   /** Opens the picture full size. */
   onOpenLightbox?: (src: string) => void
-  /** Rendered at the top of the grey band (the style feedback strip). */
-  topSlot?: React.ReactNode
 }
 
 export function ImageCaptionBlock({
@@ -210,7 +208,6 @@ export function ImageCaptionBlock({
   captionOn,
   onRetry,
   onOpenLightbox,
-  topSlot,
 }: ImageCaptionBlockProps) {
   const busy = state === "captioning"
   // While a re-render is in flight the PREVIOUS picture stays on screen under
@@ -225,7 +222,6 @@ export function ImageCaptionBlock({
       dir="rtl"
       className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-4 bg-gray-95 px-6 py-5 dark:bg-gray-10"
     >
-      {topSlot}
       <p className="text-center text-xs text-text-neutral-default">
         התמונה שלך
       </p>

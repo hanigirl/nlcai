@@ -6,16 +6,66 @@ import { Loader2, ThumbsDown, ThumbsUp } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { recordAiStyleVote } from "@/lib/ai-style-provenance"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { getAiStyle, recordAiStyleVote } from "@/lib/ai-style-provenance"
+import { getFormatMeta } from "@/lib/timing-storage"
+import { BRAND_TEMPLATE_ID } from "@/lib/carousel-templates"
 import { DISLIKE_REASONS, type DislikeReason } from "@/lib/visual-language/types"
 
+type FeedbackStyle = "brand" | "ai-dark" | "ai-light"
+
 /**
- * 👍 / 👎 above AI media in every format but the avatar, in every style
- * (Hani, 2026-10-07). A style's brief is written once; this is what may
+ * 👍 / 👎 row inside a format's result card on the canvas — "אהבת את מה
+ * שיצרנו?" under the card header (Figma 651:1599). Every AI format but the
+ * avatar, every style. A style's brief is written once; this is what may
  * change it: a like locks it and makes this image its style reference, a
- * dislike rewrites it once with her reasons. See /api/visual-language/style-feedback.
+ * dislike rewrites it once with her reasons.
+ * See /api/visual-language/style-feedback.
+ *
+ * Renders nothing unless the card's media was made by AI in a known style:
+ * the store records that per post + format (carousels by their template).
  */
-export function StyleFeedbackStrip({
+export function CardStyleFeedback({
+  postId,
+  format,
+  mediaUrl,
+}: {
+  postId: string | null | undefined
+  format: "carousel" | "story" | "image_post" | "b_roll"
+  /** The media the card shows — must be the one the AI made. */
+  mediaUrl?: string | null
+}) {
+  if (!postId || typeof window === "undefined") return null
+
+  let style: FeedbackStyle | null = null
+  let vote: "like" | "dislike" | undefined
+  if (format === "carousel") {
+    const tid = getFormatMeta(postId, "carousel").templateId
+    style = tid === BRAND_TEMPLATE_ID ? "brand" : tid === "ai-dark" || tid === "ai-light" ? tid : null
+    vote = getAiStyle(postId, "carousel")?.vote
+  } else {
+    const rec = getAiStyle(postId, format)
+    // Story sets have no stable URL until reload — tracked per format only.
+    if (rec && rec.style !== "niche" && (format === "story" || rec.mediaKey === mediaUrl)) {
+      style = rec.style
+      vote = rec.vote
+    }
+  }
+  if (!style) return null
+
+  return (
+    <StyleFeedbackRow
+      key={`${format}:${mediaUrl ?? ""}`}
+      postId={postId}
+      format={format}
+      style={style}
+      mediaUrl={mediaUrl}
+      initialVote={vote}
+    />
+  )
+}
+
+function StyleFeedbackRow({
   postId,
   format,
   style,
@@ -24,9 +74,7 @@ export function StyleFeedbackStrip({
 }: {
   postId: string
   format: string
-  /** The style that made this media. */
-  style: "brand" | "ai-dark" | "ai-light"
-  /** The image she's looking at (used as the style anchor on 👍). */
+  style: FeedbackStyle
   mediaUrl?: string | null
   initialVote?: "like" | "dislike"
 }) {
@@ -37,6 +85,8 @@ export function StyleFeedbackStrip({
   const [sending, setSending] = useState(false)
   const [adopting, setAdopting] = useState(false)
   const [adopted, setAdopted] = useState(false)
+
+  const httpUrl = mediaUrl?.startsWith("http") ? mediaUrl : undefined
 
   const send = async (verdict: "like" | "dislike") => {
     setSending(true)
@@ -49,7 +99,7 @@ export function StyleFeedbackStrip({
           format,
           verdict,
           postId,
-          mediaUrl: mediaUrl?.startsWith("http") ? mediaUrl : undefined,
+          mediaUrl: httpUrl,
           ...(verdict === "dislike" ? { reasons, note } : {}),
         }),
       })
@@ -63,7 +113,7 @@ export function StyleFeedbackStrip({
       recordAiStyleVote(postId, format, verdict)
       if (data.message) toast.success(data.message, { duration: 6000 })
     } catch (err) {
-      console.error("[niche-feedback]", err)
+      console.error("[style-feedback]", err)
       toast.error("הפידבק לא נשמר. נסו שוב.")
     } finally {
       setSending(false)
@@ -76,7 +126,7 @@ export function StyleFeedbackStrip({
       const res = await fetch("/api/visual-language/adopt-example", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, format, mediaUrl: mediaUrl?.startsWith("http") ? mediaUrl : undefined }),
+        body: JSON.stringify({ postId, format, mediaUrl: httpUrl }),
       })
       const data = (await res.json().catch(() => ({}))) as { message?: string }
       if (!res.ok) {
@@ -90,33 +140,33 @@ export function StyleFeedbackStrip({
   }
 
   return (
-    // Framed so it reads on the white carousel panel as well as the grey
-    // preview band — borderless, it vanished on white.
-    <div className="flex w-full flex-col items-center gap-2 rounded-xl border border-border-neutral-default bg-white px-4 py-3 dark:bg-gray-20">
-      <div className="flex w-full items-center justify-between gap-3">
-        <p className="text-xs text-text-neutral-default">הפידבק שלך ישפיע על יצירת מדיה עתידית</p>
-        <div className="flex shrink-0 items-center gap-1" role="group" aria-label="פידבק על הסגנון">
-          <VoteButton
-            label="אהבתי את הסגנון"
-            active={vote === "like"}
-            disabled={sending}
-            onClick={() => send("like")}
-          >
-            <ThumbsUp className="size-4" />
-          </VoteButton>
-          <VoteButton
-            label="לא אהבתי את הסגנון"
-            active={vote === "dislike" || askingWhy}
-            disabled={sending}
-            onClick={() => setAskingWhy((v) => !v)}
-          >
-            <ThumbsDown className="size-4" />
-          </VoteButton>
-        </div>
-      </div>
+    <div className="flex w-full flex-col gap-3" onMouseDown={(e) => e.stopPropagation()}>
+      {/* The whole row is the tooltip trigger, so hovering anywhere on it —
+          the text or either button — explains what the vote does. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="flex w-full items-center justify-between px-5">
+            <p className="text-xs text-gray-40">אהבת את מה שיצרנו?</p>
+            <div className="flex items-center gap-1" role="group" aria-label="פידבק על הסגנון">
+              <VoteButton label="אהבתי" active={vote === "like"} disabled={sending} onClick={() => send("like")}>
+                <ThumbsUp className="size-4" />
+              </VoteButton>
+              <VoteButton
+                label="לא אהבתי"
+                active={vote === "dislike" || askingWhy}
+                disabled={sending}
+                onClick={() => setAskingWhy((v) => !v)}
+              >
+                <ThumbsDown className="size-4" />
+              </VoteButton>
+            </div>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="top">הפידבק שלך ישפיע על הגירסאות הבאות</TooltipContent>
+      </Tooltip>
 
       {askingWhy && (
-        <div className="flex w-full flex-col gap-2">
+        <div className="flex flex-col gap-2 px-5">
           <p className="text-xs text-text-primary-default">מה לא עבד?</p>
           <div className="flex flex-wrap gap-1.5">
             {(Object.keys(DISLIKE_REASONS) as DislikeReason[]).map((r) => {
@@ -161,25 +211,29 @@ export function StyleFeedbackStrip({
       {/* Only a niche-language image can become her visual language — one
           made in her own language already is. */}
       {vote === "like" && !askingWhy && style !== "brand" && (
-        adopted ? (
-          <p className="w-full text-xs text-text-neutral-default">
-            נוסף לדוגמאות שלך.{" "}
-            <Link href="/settings?tab=media&sub=visual" className="underline">
-              לניתוח השפה הוויזואלית
-            </Link>
-          </p>
-        ) : (
-          <button
-            type="button"
-            onClick={adopt}
-            disabled={adopting}
-            className="flex w-full items-center gap-1.5 text-start text-xs text-text-primary-default underline-offset-2 hover:underline cursor-pointer disabled:opacity-60"
-          >
-            {adopting && <Loader2 className="size-3.5 animate-spin" />}
-            להפוך את זה לשפה הוויזואלית שלי
-          </button>
-        )
+        <div className="px-5">
+          {adopted ? (
+            <p className="text-xs text-text-neutral-default">
+              נוסף לדוגמאות שלך.{" "}
+              <Link href="/settings?tab=media&sub=visual" className="underline">
+                לניתוח השפה הוויזואלית
+              </Link>
+            </p>
+          ) : (
+            <button
+              type="button"
+              onClick={adopt}
+              disabled={adopting}
+              className="flex items-center gap-1.5 text-start text-xs text-text-primary-default underline-offset-2 hover:underline cursor-pointer disabled:opacity-60"
+            >
+              {adopting && <Loader2 className="size-3.5 animate-spin" />}
+              להפוך את זה לשפה הוויזואלית שלי
+            </button>
+          )}
+        </div>
       )}
+
+      <div className="h-px w-full bg-border-neutral-default" role="separator" />
     </div>
   )
 }
@@ -204,10 +258,8 @@ function VoteButton({
       aria-pressed={active}
       disabled={disabled}
       onClick={onClick}
-      className={`flex size-8 items-center justify-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
-        active
-          ? "bg-bg-surface-primary-default text-text-primary-default"
-          : "text-text-neutral-default hover:bg-gray-95 dark:hover:bg-gray-30"
+      className={`flex size-8 items-center justify-center rounded-full text-text-primary-default transition-colors cursor-pointer disabled:opacity-50 ${
+        active ? "bg-bg-surface-primary-default" : "hover:bg-gray-95 dark:hover:bg-gray-30"
       }`}
     >
       {children}

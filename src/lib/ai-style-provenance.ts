@@ -44,8 +44,9 @@ export function getAiStyle(postId: string, format: string): AiStyleRecord | null
 }
 
 export function recordAiStyleVote(postId: string, format: string, vote: "like" | "dislike") {
-  const rec = getAiStyle(postId, format)
-  if (!rec) return
+  // Carousels have no record (their template is their provenance) — keep
+  // just the vote for them.
+  const rec = getAiStyle(postId, format) ?? { style: "brand", mediaKey: "" }
   try {
     localStorage.setItem(key(postId, format), JSON.stringify({ ...rec, vote }))
   } catch (err) {

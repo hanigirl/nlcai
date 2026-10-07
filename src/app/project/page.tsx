@@ -1,5 +1,6 @@
 "use client"
 
+import { CardStyleFeedback } from "@/components/style-feedback-strip"
 import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
@@ -3172,6 +3173,7 @@ function FormatTree({
                     frames={frames}
                     cardRef={storyCardRef}
                     onEdit={onStoryEdit}
+                    postId={savedPostId}
                   />
                 )
               })()}
@@ -3204,6 +3206,7 @@ function FormatTree({
                       <span className="text-p-bold text-text-primary-default">הבי-רול שלכם</span>
                       <Film className="size-4 text-text-neutral-default" />
                     </div>
+                    <CardStyleFeedback postId={savedPostId} format="b_roll" mediaUrl={bRollUrl} />
                     <div className="px-6 flex flex-col gap-4">
                       <div className="flex justify-center">
                         <div className="w-[200px] aspect-[9/16] overflow-hidden rounded-xl border border-border-neutral-default bg-bg-surface">
@@ -3272,6 +3275,7 @@ function FormatTree({
                       <span className="text-p-bold text-text-primary-default">התמונה שלכם</span>
                       <Image className="size-4 text-text-neutral-default" />
                     </div>
+                    <CardStyleFeedback postId={savedPostId} format="image_post" mediaUrl={imagePostUrl} />
                     <div className="px-6 flex flex-col gap-4">
                       <div className="flex justify-center">
                         <div className="relative w-[200px] aspect-[4/5] rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
@@ -3463,6 +3467,7 @@ function CarouselResultCard({
           <span className="text-p-bold text-text-primary-default">הקרוסלה שלכם</span>
           <Layers className="size-4 text-text-neutral-default" />
         </div>
+        <CardStyleFeedback postId={postId} format="carousel" mediaUrl={images[0]} />
         <div className="px-6 flex flex-col items-center gap-4">
           {/* Slide preview — no fixed aspect: templates are square (1080²)
               or IG-portrait (1080×1350); the img sets its natural ratio. */}
@@ -3557,10 +3562,12 @@ function StoryResultCard({
   frames,
   cardRef,
   onEdit,
+  postId,
 }: {
   frames: string[]
   cardRef: React.RefObject<HTMLDivElement | null>
   onEdit: () => void
+  postId: string | null
 }) {
   const [downloading, setDownloading] = useState(false)
 
@@ -3607,6 +3614,7 @@ function StoryResultCard({
           <span className="text-p-bold text-text-primary-default">הסטורי שלכם</span>
           <Smartphone className="size-4 text-text-neutral-default" />
         </div>
+        <CardStyleFeedback postId={postId} format="story" />
         <div className="px-6 flex flex-col items-center gap-4">
           {/* Plays on Instagram's clock rather than sitting on frame 1 — the
               point of the preview is to show the pacing the audience gets. */}

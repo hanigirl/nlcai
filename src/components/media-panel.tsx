@@ -63,8 +63,7 @@ import { flushPendingSaves } from "@/lib/pending-saves"
 import { BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import { useBrandCarouselTemplate } from "@/hooks/use-brand-carousel-template"
 import { MediaStylePicker, useMediaStyle } from "@/components/media-style-picker"
-import { StyleFeedbackStrip } from "@/components/style-feedback-strip"
-import { forgetAiStyle, getAiStyle } from "@/lib/ai-style-provenance"
+import { forgetAiStyle } from "@/lib/ai-style-provenance"
 import { parseTextToSlides } from "@/lib/carousel-slides"
 import {
   carouselBareSlides,
@@ -2077,23 +2076,6 @@ function CarouselFlow({
 
       </div>
 
-      {/* 👍/👎 on the saved AI carousel — the template that made it is its
-          provenance (her visual language, or the niche's dark / light). */}
-      {postId &&
-        images &&
-        images.length > 0 &&
-        (savedTemplateId === BRAND_TEMPLATE_ID ||
-          savedTemplateId === "ai-dark" ||
-          savedTemplateId === "ai-light") && (
-          <StyleFeedbackStrip
-            key={`carousel:${images[0]}`}
-            postId={postId}
-            format="carousel"
-            style={savedTemplateId === BRAND_TEMPLATE_ID ? "brand" : savedTemplateId}
-            mediaUrl={images[0]}
-          />
-        )}
-
       {/* 2. Actions — previews live in the dialog, not in the panel. */}
       {isAiTemplate && openAiConnected !== false && (
         <p className="text-xs-body text-text-neutral-default">
@@ -3006,27 +2988,6 @@ function MediaUploadFlow({
   // carousel templates.
   const mediaStyle = useMediaStyle()
 
-  /**
-   * The 👍/👎 strip for AI media, in any style — shown only while the post
-   * still shows THAT media (an upload or import replaces it, and the strip
-   * goes away). Story sets are tracked per format.
-   */
-  const feedbackFor = (fmt: string, mediaUrl: string | null | undefined) => {
-    if (!postId || typeof window === "undefined") return null
-    const rec = getAiStyle(postId, fmt)
-    if (!rec || rec.style === "niche") return null
-    if (fmt !== "story" && rec.mediaKey !== mediaUrl) return null
-    return (
-      <StyleFeedbackStrip
-        key={`${fmt}:${rec.mediaKey}`}
-        postId={postId}
-        format={fmt}
-        style={rec.style}
-        mediaUrl={mediaUrl}
-        initialVote={rec.vote}
-      />
-    )
-  }
 
   /**
    * Fire an AI image generation for this post. Delegates to the module
@@ -3996,7 +3957,6 @@ function MediaUploadFlow({
               the caption's own states and controls. */}
           {!hydrating && captionEnabled && (previewUrl || captioningImage) && (
             <ImageCaptionBlock
-              topSlot={feedbackFor("image_post", captionOriginalUrl ?? previewUrl)}
               aspect="4/5"
               state={
                 captioningImage
@@ -4216,7 +4176,6 @@ function MediaUploadFlow({
                  so what you watch being made is the thing you end up with. */}
           {(savedStorySet.length > 0 || busyOnStory) && (
             <div className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-5 bg-gray-95 px-6 py-5 dark:bg-gray-10">
-              {!busyOnStory && feedbackFor("story", savedStorySet[0])}
               <p className="text-center text-xs text-text-neutral-default">
                 {busyOnStory ? "מייצרים מדיה לסטורי..." : "הסטורי שלך"}
               </p>
@@ -4587,7 +4546,6 @@ function MediaUploadFlow({
             !(captionEnabled && previewKind === "image") &&
             (previewUrl || burningText || bRollGenerating) && (
             <div className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-5 bg-gray-95 px-6 py-5 dark:bg-gray-10">
-              {!bRollGenerating && !burningText && feedbackFor("b_roll", previewUrl)}
               <p className="text-center text-xs text-text-neutral-default">
                 {bRollGenerating
                   ? "מייצרים מדיה לבי-רול..."
