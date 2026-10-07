@@ -307,7 +307,7 @@ export function MediaPanel({
         {meta && formatId !== "story" && formatId !== "b_roll" && formatId !== "image_post" &&
           !(formatId === "talking_head" && (thAvatar || thSourceMode === "avatar")) && (
           <p className="mb-4 text-small text-text-neutral-default">
-            אפשר לייצר מדיה עם AI או לתת קישור מגוגל דרייב או קנבה לתמונה / סרטון שמאוחסן שם.
+            אפשר לייצר מדיה עם AI או לתת קישור מגוגל דרייב לתמונה / סרטון שמאוחסן שם.
           </p>
         )}
 
@@ -3498,9 +3498,12 @@ function MediaUploadFlow({
     if (!postId) return
     // Drive links become real media assets in the DATABASE (see
     // attachDriveMedia) — that's what makes them survive a different
-    // browser or machine. The localStorage readiness meta is only for
-    // Canva / other links we can't resolve, which stay as a reference the
-    // user opens manually.
+    // browser or machine.
+    //
+    // Drive is the ONLY accepted source (Hani, 2026-10-07). Canva links used
+    // to be saved as a bare reference, which left the post — and its
+    // calendar slot — with no image. Canva can't be fetched without a
+    // registered Canva app, so it is refused here instead of half-supported.
     //
     // A Drive link on blur/Enter is explicit user intent — attach it now,
     // bypassing BOTH the dirty check and the debounce's duplicate guard.
@@ -3515,15 +3518,14 @@ function MediaUploadFlow({
       }
       return
     }
-    // Non-Drive reference links only get written when actually edited.
-    if (!driveDirty) return
-    setFormatMeta(postId, format as FormatId, {
-      driveUrl: trimmed || undefined,
-    })
-    setDriveDirty(false)
-    if (driveUrl.trim().length > 0) {
-      toast.success("קישור המדיה נשמר", { duration: 3000 })
+    if (trimmed) {
+      setDriveError("אפשר להדביק רק קישור מגוגל דרייב.")
+      return
     }
+    // Emptied field — clear any reference link saved before Drive-only.
+    if (!driveDirty) return
+    setFormatMeta(postId, format as FormatId, { driveUrl: undefined })
+    setDriveDirty(false)
   }
 
   /**
@@ -3894,7 +3896,7 @@ function MediaUploadFlow({
                     onKeyDown={(e) => {
                       if (e.key === "Enter") e.currentTarget.blur()
                     }}
-                    placeholder="הדביקו קישור מגוגל דרייב או קנבה"
+                    placeholder="הדביקו קישור מגוגל דרייב"
                     className="pe-9 text-right"
                     disabled={!postId || drivePulling}
                     aria-label="קישור למדיה"
@@ -4474,7 +4476,7 @@ function MediaUploadFlow({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") e.currentTarget.blur()
                 }}
-                placeholder="הדביקו קישור מגוגל דרייב או קנבה"
+                placeholder="הדביקו קישור מגוגל דרייב"
                 className="pe-9 text-right"
                 disabled={!postId || drivePulling}
                 aria-label="קישור למדיה"
