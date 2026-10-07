@@ -44,6 +44,7 @@ import {
   extractDriveFileId,
   driveThumbnailUrl,
 } from "@/lib/drive-media"
+import { isCanvaUrl, isCompleteCanvaUrl } from "@/lib/canva-url"
 import {
   subscribeGeneration,
   getGenerationSnapshot,
@@ -2516,6 +2517,85 @@ function MediaUploadFlow({
   const [driveError, setDriveError] = useState<string | null>(null)
   const driveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastDriveRef = useRef<string>("")
+  // A Canva link waiting on the user's one-time Canva consent. Set when
+  // /api/media/from-canva answers `not_connected`; the "חיבור לקנבה" button
+  // under the field opens the consent popup, and a successful connect
+  // retries this exact link — no re-paste. The ref mirrors the state so the
+  // message listener (mounted once) always sees the current link.
+  const [canvaPendingLink, setCanvaPendingLink] = useState<string | null>(null)
+  const canvaPendingRef = useRef<string | null>(null)
+  const [canvaConnecting, setCanvaConnecting] = useState(false)
+  const canvaRetryRef = useRef<((link: string) => void) | null>(null)
+  const setCanvaPending = (link: string | null) => {
+    canvaPendingRef.current = link
+    setCanvaPendingLink(link)
+  }
+
+  // The popup's callback page (/api/canva/callback) posts its result here.
+  // Same-origin only — any other sender is ignored.
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      if (e.origin !== window.location.origin) return
+      const data = e.data as { source?: string; ok?: boolean } | null
+      if (!data || data.source !== "nlcai-canva") return
+      setCanvaConnecting(false)
+      if (!data.ok) {
+        setDriveError("החיבור לקנבה לא הושלם. נסו שוב.")
+        return
+      }
+      const pending = canvaPendingRef.current
+      canvaPendingRef.current = null
+      setCanvaPendingLink(null)
+      if (pending) canvaRetryRef.current?.(pending)
+    }
+    window.addEventListener("message", onMessage)
+    return () => window.removeEventListener("message", onMessage)
+  }, [])
+
+  const connectCanva = () => {
+    setDriveError(null)
+    // Opened synchronously in the click, on our own /api/canva/connect URL —
+    // it redirects to Canva itself, so no await stands between the click and
+    // window.open for the popup blocker to object to.
+    const popup = window.open(
+      "/api/canva/connect",
+      "nlcai-canva-connect",
+      "width=600,height=760",
+    )
+    if (!popup) {
+      setDriveError("הדפדפן חסם את חלון החיבור. אפשרו חלונות קופצים לאתר ונסו שוב.")
+      return
+    }
+    setCanvaConnecting(true)
+    // Closing the popup without finishing sends no message — notice that so
+    // the button doesn't spin forever.
+    const watch = setInterval(() => {
+      if (popup.closed) {
+        clearInterval(watch)
+        setCanvaConnecting(false)
+      }
+    }, 500)
+  }
+
+  const canvaConnectPrompt =
+    canvaPendingLink && !drivePulling ? (
+      <div className="flex flex-col gap-2 rounded-lg bg-bg-surface p-3">
+        <p className="text-xs text-text-neutral-default">
+          כדי להציג את העיצוב כאן ובלוח השנה, חברו את חשבון הקנבה שלכם. זה קורה פעם אחת.
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={connectCanva}
+          disabled={canvaConnecting}
+          className="w-full gap-1.5"
+        >
+          {canvaConnecting && <Loader2 className="size-3.5 animate-spin" />}
+          חיבור לקנבה
+        </Button>
+      </div>
+    ) : null
+
 
   // Uploaded asset preview (data URL while uploading; persistent URL after).
   // Seeded from what the page already loaded, so existing media is on screen
@@ -3469,6 +3549,19 @@ function MediaUploadFlow({
     // Without this the guard was the ONLY path, so a link that had already
     // been attempted could never be retried: re-pasting it did nothing.
     const trimmed = driveUrl.trim()
+    // A Canva link is exported into a real image, like a Drive image.
+    if (isCanvaUrl(trimmed)) {
+      if (
+        isCompleteCanvaUrl(trimmed) &&
+        !drivePulling &&
+        trimmed !== canvaPendingRef.current
+      ) {
+        if (driveDebounceRef.current) clearTimeout(driveDebounceRef.current)
+        lastDriveRef.current = trimmed
+        attachDriveMedia(trimmed)
+      }
+      return
+    }
     if (isDriveUrl(trimmed)) {
       if (isCompleteDriveUrl(trimmed) && !drivePulling) {
         if (driveDebounceRef.current) clearTimeout(driveDebounceRef.current)
@@ -3528,7 +3621,7 @@ function MediaUploadFlow({
   ) => {
     const link = rawLink.trim()
     if (!postId || !link) return
-    if (!isDriveUrl(link)) return
+    if (!isDriveUrl(link) && !isCanvaUrl(link)) return
     // Only paint into the panel when it is still showing the format this call
     // belongs to. Persistence always uses `targetFormat` and is unconditional —
     // the user's action should complete even if they navigated away.
@@ -3547,56 +3640,90 @@ function MediaUploadFlow({
         'הקובץ לא ציבורי. שנו את ההרשאה ל„כל מי שיש לו הקישור” ונסו שוב.',
       drive_timeout: "גוגל דרייב לא מגיב. בדקו שהקובץ משותף ונסו שוב.",
       file_too_large: `הקובץ גדול מדי (מקסימום ${MAX_FILE_MB}MB).`,
+      invalid_canva_link: "לא זוהה עיצוב בקישור. העתיקו את הקישור מכפתור השיתוף בקנבה.",
+      canva_no_access: "אין לחשבון הקנבה שלכם גישה לעיצוב הזה.",
+      export_timeout: "קנבה לא סיימה לייצא את העיצוב. נסו שוב.",
+      not_configured: "החיבור לקנבה עדיין לא זמין.",
     }
 
     try {
-      // Timeout bound so the spinner always resolves — see the matching
-      // note in processDriveLink.
-      const infoRes = await fetch("/api/media/drive-info", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: link }),
-        signal: AbortSignal.timeout(30_000),
-      })
-      const info = await infoRes.json()
-      if (!infoRes.ok || info.error) {
-        if (isCurrent()) {
-          setDriveError(
-            errorMessages[info.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.",
-          )
-        }
-        return
-      }
-
-      const kind: "image" | "video" = info.kind === "video" ? "video" : "image"
-
-      // image_post accepts images only — reject a Drive video with a clear
-      // message instead of silently storing something the format can't use.
-      // Checked against targetFormat, not the live one: this guard exists to
-      // protect the format being WRITTEN TO.
-      if (targetFormat === "image_post" && kind === "video") {
-        if (isCurrent()) setDriveError("פוסט תמונה תומך רק בתמונות")
-        return
-      }
-
-      // Video keeps the link; an image is copied into our bucket first.
+      // Canva: the link itself can't be fetched (Canva 403s every server
+      // request), so the server exports page 1 through the user's connected
+      // Canva account and stores the PNG. Always an image.
+      const isCanva = isCanvaUrl(link)
+      let kind: "image" | "video" = "image"
       let mediaUrl = link
-      if (kind === "image") {
-        const res = await fetch("/api/media/from-drive", {
+      if (isCanva) {
+        const res = await fetch("/api/media/from-canva", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url: link }),
+          signal: AbortSignal.timeout(90_000),
         })
-        const data = await res.json()
-        if (!res.ok || data.error) {
+        const data = await res.json().catch(() => ({}))
+        if (data.error === "not_connected") {
+          // Not a failure — the user just hasn't connected Canva yet. The
+          // prompt under the field takes it from here.
+          if (isCurrent()) setCanvaPending(link)
+          return
+        }
+        if (!res.ok || data.error || !data.url) {
           if (isCurrent()) {
             setDriveError(
-              errorMessages[data.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.",
+              errorMessages[data.error] ?? "טעינת העיצוב מקנבה נכשלה. נסו שוב.",
             )
           }
           return
         }
         mediaUrl = data.url
+      } else {
+        // Timeout bound so the spinner always resolves — see the matching
+        // note in processDriveLink.
+        const infoRes = await fetch("/api/media/drive-info", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: link }),
+          signal: AbortSignal.timeout(30_000),
+        })
+        const info = await infoRes.json()
+        if (!infoRes.ok || info.error) {
+          if (isCurrent()) {
+            setDriveError(
+              errorMessages[info.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.",
+            )
+          }
+          return
+        }
+
+        kind = info.kind === "video" ? "video" : "image"
+
+        // image_post accepts images only — reject a Drive video with a clear
+        // message instead of silently storing something the format can't use.
+        // Checked against targetFormat, not the live one: this guard exists to
+        // protect the format being WRITTEN TO.
+        if (targetFormat === "image_post" && kind === "video") {
+          if (isCurrent()) setDriveError("פוסט תמונה תומך רק בתמונות")
+          return
+        }
+
+        // Video keeps the link; an image is copied into our bucket first.
+        if (kind === "image") {
+          const res = await fetch("/api/media/from-drive", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: link }),
+          })
+          const data = await res.json()
+          if (!res.ok || data.error) {
+            if (isCurrent()) {
+              setDriveError(
+                errorMessages[data.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.",
+              )
+            }
+            return
+          }
+          mediaUrl = data.url
+        }
       }
 
       const persistRes = await fetch(`/api/core-posts/${postId}/media`, {
@@ -3638,7 +3765,7 @@ function MediaUploadFlow({
       ) {
         runImageCaption(mediaUrl)
       }
-      if (targetFormat === "story") {
+      if (targetFormat === "story" && !isCanva) {
         // The single-link field and the per-frame list are the SAME story
         // (Hani, 2026-07-28): a link pasted up there is frame 1 down here, and
         // has to be remembered as such. Only seeded when the list is empty —
@@ -3674,9 +3801,14 @@ function MediaUploadFlow({
       }
       lastDriveRef.current = link
       attached = true
+      setCanvaPending(null)
       setFormatMeta(postId, targetFormat as FormatId, { driveUrl: undefined })
       toast.success(
-        kind === "video" ? "הסרטון מהדרייב חובר לפוסט" : "המדיה נטענה מהדרייב",
+        isCanva
+          ? "העיצוב נטען מקנבה"
+          : kind === "video"
+            ? "הסרטון מהדרייב חובר לפוסט"
+            : "המדיה נטענה מהדרייב",
         { duration: 3000 },
       )
     } catch (err) {
@@ -3699,6 +3831,8 @@ function MediaUploadFlow({
     }
   }
 
+  canvaRetryRef.current = (link) => attachDriveMedia(link)
+
   /**
    * Debounced auto-attach: fires as soon as the field holds a full Drive
    * link with an extractable file id (mirrors the talking_head panel), so
@@ -3708,7 +3842,10 @@ function MediaUploadFlow({
   const scheduleDrivePull = (value: string) => {
     if (driveDebounceRef.current) clearTimeout(driveDebounceRef.current)
     const link = value.trim()
-    if (!isCompleteDriveUrl(link) || link === lastDriveRef.current) return
+    if (!(isCompleteDriveUrl(link) || isCompleteCanvaUrl(link))) return
+    if (link === lastDriveRef.current) return
+    // A different link replaces a pending Canva one — drop its prompt.
+    if (link !== canvaPendingRef.current) setCanvaPending(null)
     // Snapshot the format NOW, at the moment the user typed, not 500ms later
     // when the timer fires — by then they may be looking at a different format.
     const targetFormat = format
@@ -3879,9 +4016,13 @@ function MediaUploadFlow({
                     {drivePulling && (
                       <Loader2 className="size-3.5 animate-spin text-yellow-50" />
                     )}
-                    {driveError ?? "מחברים את המדיה מהדרייב..."}
+                    {driveError ??
+                  (isCanvaUrl(driveUrl)
+                    ? "מייבאים את העיצוב מקנבה..."
+                    : "מחברים את המדיה מהדרייב...")}
                   </p>
                 )}
+                {canvaConnectPrompt}
               </div>
 
               {/* The saved image and the AI candidates used to live in a
@@ -4449,9 +4590,13 @@ function MediaUploadFlow({
                 {drivePulling && (
                   <Loader2 className="size-3.5 animate-spin text-yellow-50" />
                 )}
-                {driveError ?? "מחברים את המדיה מהדרייב..."}
+                {driveError ??
+                  (isCanvaUrl(driveUrl)
+                    ? "מייבאים את העיצוב מקנבה..."
+                    : "מחברים את המדיה מהדרייב...")}
               </p>
             )}
+            {canvaConnectPrompt}
           </div>
           )}
 
