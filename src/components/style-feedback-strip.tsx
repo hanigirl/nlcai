@@ -10,21 +10,22 @@ import { recordAiStyleVote } from "@/lib/ai-style-provenance"
 import { DISLIKE_REASONS, type DislikeReason } from "@/lib/visual-language/types"
 
 /**
- * 👍 / 👎 above media made in "שפת הנישה · כהה/בהיר" (Hani, 2026-10-07).
- * The niche language is written once; this is what's allowed to change it:
- * a like locks the tone and makes this image its style reference, a dislike
- * rewrites the tone once with her reasons. See /api/visual-language/niche-feedback.
+ * 👍 / 👎 above AI media in every format but the avatar, in every style
+ * (Hani, 2026-10-07). A style's brief is written once; this is what may
+ * change it: a like locks it and makes this image its style reference, a
+ * dislike rewrites it once with her reasons. See /api/visual-language/style-feedback.
  */
-export function NicheFeedbackStrip({
+export function StyleFeedbackStrip({
   postId,
   format,
-  tone,
+  style,
   mediaUrl,
   initialVote,
 }: {
   postId: string
   format: string
-  tone: "dark" | "light"
+  /** The style that made this media. */
+  style: "brand" | "ai-dark" | "ai-light"
   /** The image she's looking at (used as the style anchor on 👍). */
   mediaUrl?: string | null
   initialVote?: "like" | "dislike"
@@ -40,11 +41,11 @@ export function NicheFeedbackStrip({
   const send = async (verdict: "like" | "dislike") => {
     setSending(true)
     try {
-      const res = await fetch("/api/visual-language/niche-feedback", {
+      const res = await fetch("/api/visual-language/style-feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tone,
+          style,
           format,
           verdict,
           postId,
@@ -89,7 +90,9 @@ export function NicheFeedbackStrip({
   }
 
   return (
-    <div className="flex w-full flex-col items-center gap-2 rounded-xl bg-white px-4 py-3 dark:bg-gray-20">
+    // Framed so it reads on the white carousel panel as well as the grey
+    // preview band — borderless, it vanished on white.
+    <div className="flex w-full flex-col items-center gap-2 rounded-xl border border-border-neutral-default bg-white px-4 py-3 dark:bg-gray-20">
       <div className="flex w-full items-center justify-between gap-3">
         <p className="text-xs text-text-neutral-default">הפידבק שלך ישפיע על יצירת מדיה עתידית</p>
         <div className="flex shrink-0 items-center gap-1" role="group" aria-label="פידבק על הסגנון">
@@ -155,7 +158,9 @@ export function NicheFeedbackStrip({
         </div>
       )}
 
-      {vote === "like" && !askingWhy && (
+      {/* Only a niche-language image can become her visual language — one
+          made in her own language already is. */}
+      {vote === "like" && !askingWhy && style !== "brand" && (
         adopted ? (
           <p className="w-full text-xs text-text-neutral-default">
             נוסף לדוגמאות שלך.{" "}

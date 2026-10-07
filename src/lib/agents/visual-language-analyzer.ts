@@ -324,6 +324,29 @@ export async function reviseNicheToneSpec(
   return runJson(apiKey, REVISE_SYSTEM, [{ type: "text", text }], REVISE_SCHEMA)
 }
 
+const REVISE_FORMAT_SYSTEM = `You are a senior brand designer. A content creator has her own visual language (the core brief below — keep it). She generated media in one format from it and DISLIKED the result. Rewrite ONLY the format-specific addition for that format so the next result fixes exactly what she pointed at. It may override details of the core brief for this format when her feedback demands it (say so explicitly); everything she didn't complain about stays.
+
+Write 50-140 English words of direct instructions for the image model.
+
+summary_he: one short Hebrew sentence telling her what changed.`
+
+/** Rewrite one format's addition to her own visual language after a 👎. */
+export async function reviseBrandFormatSpec(
+  apiKey: string,
+  input: { styleSpec: string; format: string; formatSpec: string; reasons: string[]; note?: string },
+): Promise<{ style_spec: string; summary_he: string }> {
+  const text = [
+    `Core brief:\n${input.styleSpec}`,
+    `Format: ${input.format}`,
+    `Current addition for this format:\n${input.formatSpec || "(none)"}`,
+    `What she disliked: ${input.reasons.length ? input.reasons.join(", ") : "(no reason picked)"}`,
+    input.note?.trim() ? `Her words: ${input.note.trim().slice(0, 600)}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n\n")
+  return runJson(apiKey, REVISE_FORMAT_SYSTEM, [{ type: "text", text }], REVISE_SCHEMA)
+}
+
 export async function deriveNicheVisualLanguage(
   apiKey: string,
   identity: { niche: string; whoIAm?: string | null; whoIServe?: string | null },

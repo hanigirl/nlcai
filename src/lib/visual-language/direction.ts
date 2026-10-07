@@ -66,6 +66,15 @@ export function noExtrasRule(direction: DesignDirection): string {
     : "No watermarks, no logos, no UI chrome, no borders, no signatures."
 }
 
+async function loadAnchor(supabase: SupabaseClient, path: string): Promise<ModelImage | null> {
+  try {
+    return await loadImageForModels(supabase.storage.from("user-media").getPublicUrl(path).data.publicUrl)
+  } catch (err) {
+    console.error("[visual-language][style-anchor]", err)
+    return null
+  }
+}
+
 function toneLine(tone: "dark" | "light"): string {
   return tone === "dark"
     ? "Make it a DARK design: a deep, rich background colour that belongs to this world, with light readable text — not neon, not sci-fi."
@@ -129,6 +138,17 @@ export async function resolveDesignDirection(
         ...loaded.map((r, i) => `- Reference image ${i + 1}: ${r.note}`),
       )
     }
+    // An image she liked in this format is its style anchor — appended
+    // after the element references so their numbering stays put.
+    const anchorPath = vl.feedback?.[opts.format]?.anchor_path
+    const anchor = anchorPath ? await loadAnchor(supabase, anchorPath) : null
+    if (anchor) {
+      references.push(anchor)
+      lines.push(
+        "",
+        `Reference image ${references.length} (the last one) is a STYLE ANCHOR — an image in this format the creator approved. Match its palette, background treatment, typography character, illustration style and overall feel closely, so they look like one series. Do NOT copy its text, layout or subject: this image has its own content.`,
+      )
+    }
     return { source: "brand", lines, references, fixed }
   }
 
@@ -154,14 +174,7 @@ export async function resolveDesignDirection(
       // A liked image in this tone is its style anchor: sent as a visual
       // reference, because the written brief alone drifts between images.
       const anchorPath = tone ? cached.feedback?.[tone]?.anchor_path : undefined
-      const anchor = anchorPath
-        ? await loadImageForModels(
-            supabase.storage.from("user-media").getPublicUrl(anchorPath).data.publicUrl,
-          ).catch((err) => {
-            console.error("[visual-language][style-anchor]", err)
-            return null
-          })
-        : null
+      const anchor = anchorPath ? await loadAnchor(supabase, anchorPath) : null
       return {
         source: "niche",
         lines: [

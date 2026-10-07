@@ -120,6 +120,8 @@ export interface VisualLanguage {
   formats?: Partial<Record<VisualFormat, string>>
   /** What each example was recognised as, keyed by user_media id. */
   example_kinds?: { id: string; kind: ExampleKind }[]
+  /** Likes / dislikes per format. A new analysis starts fresh. */
+  feedback?: Partial<Record<VisualFormat, StyleFeedback>>
   /** Colours for the carousel picker's mini-mock tile. */
   preview?: { bg: string; accent: string; title: string; body: string }
   /** Inputs the brief was made from — compared to detect stale analysis. */
@@ -140,9 +142,12 @@ export const DISLIKE_REASONS = {
 } as const
 export type DislikeReason = keyof typeof DISLIKE_REASONS
 
-/** What she said about one tone of her niche language. */
-export interface NicheToneFeedback {
-  /** She liked an image in this tone — the language is locked as is. */
+/**
+ * What she said about one style slot — a tone of her niche language, or one
+ * format of her own visual language.
+ */
+export interface StyleFeedback {
+  /** She liked an image here — the brief is locked as is. */
   approved: boolean
   /** Copy of the liked image (user-media path) — sent as a style reference. */
   anchor_path?: string
@@ -164,7 +169,7 @@ export interface NicheVisualLanguage {
   /** The same niche language on a light canvas ("בהיר"). */
   light_spec?: string
   /** Likes / dislikes per tone. Reset when the niche changes. */
-  feedback?: { dark?: NicheToneFeedback; light?: NicheToneFeedback }
+  feedback?: { dark?: StyleFeedback; light?: StyleFeedback }
   generated_at: string
 }
 
