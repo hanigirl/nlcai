@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
-import { getTemplate } from "@/lib/carousel-templates"
+import { BRAND_TEMPLATE_ID, getTemplate } from "@/lib/carousel-templates"
 import type { SlideData } from "@/lib/carousel-templates"
 import { getAuthUser } from "@/lib/auth-user"
 import { assertFeedSafeAspect } from "@/lib/social/media-spec"
@@ -152,8 +152,9 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const template = templateId ? getTemplate(templateId) : undefined
-    if (!template || template.kind !== "ai" || !template.aiStyleSpec) {
+    const isBrandTemplate = templateId === BRAND_TEMPLATE_ID
+    const template = templateId && !isBrandTemplate ? getTemplate(templateId) : undefined
+    if (!isBrandTemplate && (!template || template.kind !== "ai" || !template.aiStyleSpec)) {
       return NextResponse.json(
         { error: `Template "${templateId}" is not an AI template` },
         { status: 400 },
@@ -184,7 +185,7 @@ export async function POST(req: NextRequest) {
       throw err
     }
 
-    const styleSpec = template.aiStyleSpec
+    const styleSpec = template?.aiStyleSpec ?? ""
     const total = slides.length
     const images: string[] = new Array(total)
 
@@ -201,11 +202,22 @@ export async function POST(req: NextRequest) {
       ((identityRow as { niche?: string | null } | null)?.niche ?? "").trim() ||
       null
 
-    // Her own visual language overrides the template's palette. Without
-    // one, the template she picked stays authoritative (it IS her choice of
-    // look), so the niche fallback isn't applied here.
-    const direction = await resolveDesignDirection(supabase, user.id)
-    const brand = direction.source === "brand" ? direction : null
+    // "השפה הוויזואלית שלך" designs from her analysed language; every other
+    // template keeps its own look — picking it IS her choice of style.
+    let brand: DesignDirection | null = null
+    if (isBrandTemplate) {
+      const direction = await resolveDesignDirection(supabase, user.id, { format: "carousel" })
+      if (direction.source !== "brand") {
+        return NextResponse.json(
+          {
+            error: "no_visual_language",
+            message: "עדיין אין שפה ויזואלית מנותחת. הגדירו אותה בהגדרות ← מדיה ← שפה ויזואלית, או בחרו טמפלט אחר.",
+          },
+          { status: 400 },
+        )
+      }
+      brand = direction
+    }
 
     // Simple concurrency pool — kinder to OpenAI rate limits than firing
     // all slides at once, much faster than fully sequential.

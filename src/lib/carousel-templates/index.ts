@@ -67,3 +67,32 @@ export const CAROUSEL_TEMPLATES: TemplateConfig[] = [
 export function getTemplate(id: string): TemplateConfig | undefined {
   return CAROUSEL_TEMPLATES.find((t) => t.id === id)
 }
+
+/**
+ * "השפה הוויזואלית שלך" — not a fixed template: it exists only for a user
+ * whose visual language (Settings → Media) was analysed as consistent, so
+ * the picker builds it per user from that analysis. It's an AI template
+ * whose look comes entirely from her language; the server resolves it by
+ * this id rather than through CAROUSEL_TEMPLATES.
+ */
+export const BRAND_TEMPLATE_ID = "brand-visual-language"
+
+export function buildBrandTemplate(opts: {
+  preview?: TemplatePreview
+  /** One of her own carousel examples, when the analysis found one. */
+  thumbnailUrl?: string
+}): TemplateConfig {
+  return {
+    id: BRAND_TEMPLATE_ID,
+    name: "השפה הוויזואלית שלך",
+    kind: "ai",
+    size: { width: 1080, height: 1350 },
+    thumbnailUrl: opts.thumbnailUrl,
+    preview: opts.preview ?? {
+      bg: "#FFFFFF",
+      accent: "#111111",
+      titleColor: "#111111",
+      bodyColor: "#444444",
+    },
+  }
+}

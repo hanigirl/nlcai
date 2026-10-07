@@ -100,10 +100,10 @@ export async function POST() {
             unreadableLinks.push(link)
             return null
           }
-          return { label: `screenshot of ${link}`, image: shot.image, palette: shot.palette }
+          return { id: r.id, label: `screenshot of ${link}`, image: shot.image, palette: shot.palette }
         }
         try {
-          return { label: r.file_name, image: await loadImageForModels(publicUrl(r.storage_path)) }
+          return { id: r.id, label: r.file_name, image: await loadImageForModels(publicUrl(r.storage_path)) }
         } catch (err) {
           console.error("[visual-language][example]", r.id, err)
           return null
@@ -116,7 +116,7 @@ export async function POST() {
     (e): e is { id: string; description: string; image: ModelImage } => e !== null,
   )
   const okExamples = examples.filter(
-    (e): e is { label: string; image: ModelImage; palette?: string[] } => e !== null,
+    (e): e is { id: string; label: string; image: ModelImage; palette?: string[] } => e !== null,
   )
 
   let result
@@ -142,6 +142,12 @@ export async function POST() {
     style_spec: result.style_spec,
     palette: result.palette,
     elements: result.elements.filter((e) => elementIds.has(e.id)),
+    formats: result.formats,
+    // The model numbers examples 1..n in the order it saw them.
+    example_kinds: result.example_kinds
+      .filter((k) => okExamples[k.example - 1])
+      .map((k) => ({ id: okExamples[k.example - 1].id, kind: k.kind })),
+    preview: result.preview,
     inputs_signature: visualLanguageSignature({
       colors,
       elements: elementRows.map((r) => ({ id: r.id, description: description(r) })),

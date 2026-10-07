@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { getUserApiKey } from "@/lib/api-keys"
 import { deriveNicheVisualLanguage } from "@/lib/agents/visual-language-analyzer"
 import { loadImageForModels, type ModelImage } from "@/lib/visual-language/image-input"
-import type { NicheVisualLanguage, VisualLanguage } from "@/lib/visual-language/types"
+import type { NicheVisualLanguage, VisualFormat, VisualLanguage } from "@/lib/visual-language/types"
 
 /**
  * Which visual language an AI image follows, in priority order:
@@ -57,7 +57,7 @@ export function noExtrasRule(direction: DesignDirection): string {
 export async function resolveDesignDirection(
   supabase: SupabaseClient,
   userId: string,
-  opts: { allowReferences?: boolean } = {},
+  opts: { format: VisualFormat; allowReferences?: boolean },
 ): Promise<DesignDirection> {
   const [{ data: userRow }, { data: identityRow }] = await Promise.all([
     supabase
@@ -96,6 +96,10 @@ export async function resolveDesignDirection(
       "VISUAL LANGUAGE — this is the creator's own brand. Follow it faithfully; it overrides any generic style habit:",
       vl.style_spec.trim(),
     ]
+    const formatSpec = vl.formats?.[opts.format]?.trim()
+    if (formatSpec) {
+      lines.push("", `How this language works in this format: ${formatSpec}`)
+    }
     if (loaded.length) {
       lines.push(
         "",

@@ -217,7 +217,7 @@ export async function POST(req: NextRequest) {
     // The look: her visual language, else one derived from her niche.
     // Resolved once so every frame shares it; regenerate rotates only the
     // composition.
-    const direction = await resolveDesignDirection(supabase, user.id)
+    const direction = await resolveDesignDirection(supabase, user.id, { format: "story" })
     const composition = pickComposition(variationIndex)
 
     // Theme context: title + hook carry the essence; the body is truncated

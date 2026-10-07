@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import {
+  EXAMPLE_KIND_LABELS,
   MAX_BRAND_COLORS,
   MAX_BRAND_ELEMENTS,
   MAX_BRAND_EXAMPLES,
@@ -270,6 +271,11 @@ export function VisualLanguagePanel() {
     elements: elements.map((e) => ({ id: e.id, description: e.description })),
     examples: examples.map((x) => ({ id: x.id })),
   })
+  // What the last analysis recognised each example as (carousel, website…).
+  const kindLabel = (id: string) => {
+    const kind = visualLanguage?.example_kinds?.find((k) => k.id === id)?.kind
+    return kind ? EXAMPLE_KIND_LABELS[kind] : null
+  }
   const hasInputs = colors.length > 0 || elements.length > 0 || examples.length > 0
   const stale = !!visualLanguage && visualLanguage.inputs_signature !== currentSignature
   const busy = uploadingElements > 0 || uploadingExamples > 0
@@ -465,6 +471,11 @@ export function VisualLanguagePanel() {
                   >
                     {ex.name}
                   </a>
+                  {kindLabel(ex.id) && (
+                    <span className="shrink-0 rounded-md bg-bg-surface px-1.5 py-0.5 text-xs text-text-neutral-default">
+                      {kindLabel(ex.id)}
+                    </span>
+                  )}
                   <RemoveButton
                     label={`מחיקת ${ex.name}`}
                     onClick={async () => {
@@ -476,6 +487,11 @@ export function VisualLanguagePanel() {
                 <div key={ex.id} className="relative size-24 rounded-lg overflow-hidden bg-bg-surface group">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={ex.url} alt={ex.name} className="size-full object-cover" />
+                  {kindLabel(ex.id) && (
+                    <span className="absolute bottom-1 start-1 rounded-md bg-black/60 px-1.5 py-0.5 text-xs text-white">
+                      {kindLabel(ex.id)}
+                    </span>
+                  )}
                   <button
                     type="button"
                     aria-label={`מחיקת ${ex.name}`}

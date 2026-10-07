@@ -60,7 +60,8 @@ import {
 } from "@/lib/story-generation-store"
 import type { SlideData } from "@/lib/carousel-templates"
 import { flushPendingSaves } from "@/lib/pending-saves"
-import { CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
+import { BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
+import { useBrandCarouselTemplate } from "@/hooks/use-brand-carousel-template"
 import { parseTextToSlides } from "@/lib/carousel-slides"
 import {
   carouselBareSlides,
@@ -1416,12 +1417,32 @@ function CarouselFlow({
   const [savedTemplateId, setSavedTemplateId] = useState<string | undefined>(() => {
     if (!postId || typeof window === "undefined") return undefined
     const tid = getFormatMeta(postId, "carousel").templateId
-    return tid && CAROUSEL_TEMPLATES.some((t) => t.id === tid) ? tid : undefined
+    return tid && (tid === BRAND_TEMPLATE_ID || CAROUSEL_TEMPLATES.some((t) => t.id === tid))
+      ? tid
+      : undefined
   })
+
+  // "השפה הוויזואלית שלך" — only for a user with an analysed visual
+  // language; it leads the grid when present.
+  const brandTemplate = useBrandCarouselTemplate()
+  const templates = useMemo(
+    () => (brandTemplate ? [brandTemplate, ...CAROUSEL_TEMPLATES] : CAROUSEL_TEMPLATES),
+    [brandTemplate],
+  )
 
   const [selectedTemplate, setSelectedTemplate] = useState(
     () => savedTemplateId ?? CAROUSEL_TEMPLATES[0].id,
   )
+  // Her own language is the natural default once it loads — unless this
+  // post already has a carousel from another template, or she has already
+  // tapped a tile.
+  const [brandDefaultApplied, setBrandDefaultApplied] = useState(false)
+  if (brandTemplate && !brandDefaultApplied) {
+    setBrandDefaultApplied(true)
+    if (!savedTemplateId && selectedTemplate === CAROUSEL_TEMPLATES[0].id) {
+      setSelectedTemplate(BRAND_TEMPLATE_ID)
+    }
+  }
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [previewIndex, setPreviewIndex] = useState(0)
@@ -1519,7 +1540,7 @@ function CarouselFlow({
 
   // AI templates (kind: "ai") render via gpt-image-2 on the user's OpenAI
   // key — different endpoint, much longer, and it costs real money.
-  const selectedConfig = CAROUSEL_TEMPLATES.find((t) => t.id === selectedTemplate)
+  const selectedConfig = templates.find((t) => t.id === selectedTemplate)
   const isAiTemplate = selectedConfig?.kind === "ai"
 
   /**
@@ -1950,7 +1971,7 @@ function CarouselFlow({
           aria-label="בחירת טמפלט לקרוסלה"
           className="grid grid-cols-3 gap-2"
         >
-          {CAROUSEL_TEMPLATES.map((t) => {
+          {templates.map((t) => {
             const isSelected = selectedTemplate === t.id
             // A set actually generated for THIS post beats the live cover
             // render, which beats the static sample.
@@ -1983,23 +2004,27 @@ function CarouselFlow({
                     : "border-border-neutral-default hover:border-gray-80"
                 }`}
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={
-                    livePreview
-                      ? `data:image/png;base64,${livePreview}`
-                      : t.thumbnailUrl
-                  }
-                  alt={`שקופית לדוגמה בטמפלט ${t.name}`}
-                  className="w-full rounded-lg"
-                  style={{ aspectRatio: tileAspect, backgroundColor: t.preview.bg }}
-                />
+                {livePreview || t.thumbnailUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={
+                      livePreview
+                        ? `data:image/png;base64,${livePreview}`
+                        : t.thumbnailUrl
+                    }
+                    alt={`שקופית לדוגמה בטמפלט ${t.name}`}
+                    className="w-full rounded-lg object-cover"
+                    style={{ aspectRatio: tileAspect, backgroundColor: t.preview.bg }}
+                  />
+                ) : (
+                  <TemplateMiniMock preview={t.preview} aspect={tileAspect} />
+                )}
                 {isPostCarousel && (
                   <span className="absolute top-2 start-2 rounded-md bg-bg-surface-primary-default px-1.5 py-0.5 text-xs text-text-primary-default">
                     נוכחית
                   </span>
                 )}
-                <span className="w-full truncate text-center text-xs text-text-primary-default">
+                <span className="w-full line-clamp-2 text-center text-xs text-text-primary-default">
                   {t.name}
                 </span>
               </button>
@@ -2085,7 +2110,7 @@ function CarouselFlow({
               {dialogSlides === images && images
                 ? "הקרוסלה שלך"
                 : `תצוגה מקדימה — ${
-                    CAROUSEL_TEMPLATES.find((t) => t.id === dialogFor)?.name ?? ""
+                    templates.find((t) => t.id === dialogFor)?.name ?? ""
                   }`}
             </DialogTitle>
           </DialogHeader>
@@ -4611,3 +4636,30 @@ function MediaUploadFlow({
     </div>
   )
 }
+
+/**
+ * A slide drawn in a template's own colours — used when a tile has no
+ * sample image yet (the per-user "השפה הוויזואלית שלך" tile before she
+ * generates anything and without a carousel example of her own).
+ */
+function TemplateMiniMock({
+  preview,
+  aspect,
+}: {
+  preview: { bg: string; accent: string; titleColor: string; bodyColor: string }
+  aspect: string
+}) {
+  return (
+    <div
+      aria-hidden="true"
+      className="w-full rounded-lg flex flex-col justify-center gap-1.5 p-3"
+      style={{ aspectRatio: aspect, backgroundColor: preview.bg }}
+    >
+      <span className="h-2 w-4/5 rounded-full self-start" style={{ backgroundColor: preview.titleColor }} />
+      <span className="h-2 w-3/5 rounded-full self-start" style={{ backgroundColor: preview.accent }} />
+      <span className="h-1 w-full rounded-full mt-1" style={{ backgroundColor: preview.bodyColor, opacity: 0.6 }} />
+      <span className="h-1 w-2/3 rounded-full self-start" style={{ backgroundColor: preview.bodyColor, opacity: 0.6 }} />
+    </div>
+  )
+}
+

@@ -255,6 +255,7 @@ export async function POST(req: NextRequest) {
     // elements: this is a text-free background and the caption is laid
     // over it afterwards, so a logo would collide with it.
     const direction = await resolveDesignDirection(supabase, user.id, {
+      format: "b_roll",
       allowReferences: false,
     })
     const context = (post.body ?? variantBody ?? hook).slice(0, 600)

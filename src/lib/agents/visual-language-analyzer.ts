@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk"
 import type { ModelImage } from "@/lib/visual-language/image-input"
+import type { ExampleKind, VisualFormat } from "@/lib/visual-language/types"
 
 /**
  * Two jobs, one model:
@@ -37,12 +38,21 @@ Decide first: do these inputs express ONE clear, unified visual language?
 - consistent = false when the examples contradict each other (e.g. one is pastel and hand-drawn, another is dark neon 3D, a third is a stock-photo collage), OR the chosen brand colours don't appear in / clash with the examples, OR the examples are so generic that no language can be identified.
 - With no examples at all, judge the colours and elements on their own: consistent unless they clearly clash.
 
+Classify every example in example_kinds (by its number) as exactly one of: carousel, story, feed_post, cover, website, banner, poster, other. A carousel is a multi-slide feed series (often shown as several slides side by side, numbered, or with a swipe cue); a cover is a reel/video cover; a website is a page screenshot.
+
 When inconsistent, issues_he lists each concrete contradiction in short, kind, specific Hebrew (refer to "דוגמה 2", "האלמנט <name>", the colour hex), and still fill summary_he with what you DID see. style_spec may then be an empty string.
 
 When consistent:
 - summary_he: 2-3 Hebrew sentences describing the language the way a designer would explain it to the creator.
 - style_spec: the brief (rules below). The brand colours she chose are authoritative — build the palette around them.
 - palette: the colours in priority order with a short English role each.
+- preview: four hex colours for a tiny mock slide of her carousel — bg (slide background), accent (her highlight colour), title (headline text colour), body (body text colour). Must be readable together.
+- formats: how the language adapts to each output format. Each value is 50-120 English words of format-specific instructions that ADD to style_spec (never repeat or contradict it):
+  - carousel: Instagram 4:5 multi-slide series — how the cover slide differs from content slides and the closing slide, slide numbering / swipe cues, how continuity carries across slides.
+  - story: 9:16 vertical with the top ~14% and bottom ~24% kept clear — how text and imagery stack, how multi-frame stories connect.
+  - image_post: single 4:5 feed image — headline / sub-headline / closing line hierarchy and layout.
+  - b_roll: a TEXT-FREE 9:16 video background — imagery, texture and tone only; a white caption is added later in the lower-middle band.
+  When examples of a format exist, describe what THOSE examples actually do (layout, recurring devices, density). When none exist, extrapolate thoughtfully from the language and say so in one short clause. Websites, posters and banners inform the language, not slide structure.
 - elements: for EVERY element provided, its id, a short Hebrew name, and an English instruction for the image model on when and how to use it, derived from her note (e.g. "small, bottom corner of closing frames only"). If her note is empty, infer the use from the image.
 
 ${SPEC_RULES}`
@@ -64,7 +74,7 @@ ${SPEC_RULES}`
 const ANALYZE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["consistent", "issues_he", "summary_he", "style_spec", "palette", "elements"],
+  required: ["consistent", "issues_he", "summary_he", "style_spec", "palette", "elements", "example_kinds", "preview", "formats"],
   properties: {
     consistent: { type: "boolean" },
     issues_he: { type: "array", items: { type: "string" } },
@@ -77,6 +87,43 @@ const ANALYZE_SCHEMA = {
         additionalProperties: false,
         required: ["hex", "role"],
         properties: { hex: { type: "string" }, role: { type: "string" } },
+      },
+    },
+    example_kinds: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["example", "kind"],
+        properties: {
+          example: { type: "integer" },
+          kind: {
+            type: "string",
+            enum: ["carousel", "story", "feed_post", "cover", "website", "banner", "poster", "other"],
+          },
+        },
+      },
+    },
+    preview: {
+      type: "object",
+      additionalProperties: false,
+      required: ["bg", "accent", "title", "body"],
+      properties: {
+        bg: { type: "string" },
+        accent: { type: "string" },
+        title: { type: "string" },
+        body: { type: "string" },
+      },
+    },
+    formats: {
+      type: "object",
+      additionalProperties: false,
+      required: ["carousel", "story", "image_post", "b_roll"],
+      properties: {
+        carousel: { type: "string" },
+        story: { type: "string" },
+        image_post: { type: "string" },
+        b_roll: { type: "string" },
       },
     },
     elements: {
@@ -119,6 +166,10 @@ export interface AnalyzeOutput {
   style_spec: string
   palette: { hex: string; role: string }[]
   elements: { id: string; name: string; usage: string }[]
+  /** 1-based example number → what kind of design it is. */
+  example_kinds: { example: number; kind: ExampleKind }[]
+  preview: { bg: string; accent: string; title: string; body: string }
+  formats: Record<VisualFormat, string>
 }
 
 function imageBlock(img: ModelImage): Anthropic.Messages.ImageBlockParam {

@@ -184,7 +184,7 @@ export async function POST(req: NextRequest) {
     const context = [post.title, post.hook_text, post.body?.slice(0, 600)]
       .filter(Boolean)
       .join("\n")
-    const direction = await resolveDesignDirection(supabase, user.id)
+    const direction = await resolveDesignDirection(supabase, user.id, { format: "image_post" })
     const generatedBase64 = await generateImage(
       openaiKey,
       buildImagePrompt(texts, context, direction, pickComposition(variationIndex)),

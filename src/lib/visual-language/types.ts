@@ -11,6 +11,31 @@ export const MAX_BRAND_COLORS = 3
 export const MAX_BRAND_ELEMENTS = 8
 export const MAX_BRAND_EXAMPLES = 6
 
+/** The media formats a visual language is adapted to. */
+export type VisualFormat = "carousel" | "story" | "image_post" | "b_roll"
+
+/** What kind of design each example is — the analysis decides. */
+export type ExampleKind =
+  | "carousel"
+  | "story"
+  | "feed_post"
+  | "cover"
+  | "website"
+  | "banner"
+  | "poster"
+  | "other"
+
+export const EXAMPLE_KIND_LABELS: Record<ExampleKind, string> = {
+  carousel: "קרוסלה",
+  story: "סטורי",
+  feed_post: "פוסט",
+  cover: "קאבר",
+  website: "אתר",
+  banner: "באנר",
+  poster: "פוסטר",
+  other: "אחר",
+}
+
 /** What the analysis concluded about her inputs. */
 export interface VisualLanguage {
   /**
@@ -29,6 +54,16 @@ export interface VisualLanguage {
   palette: { hex: string; role: string }[]
   /** One line per element: how the image model may use it. */
   elements: { id: string; name: string; usage: string }[]
+  /**
+   * Per-format additions to style_spec (carousel slide structure, story
+   * stacking…), learned from examples of that format when she gave some.
+   * Optional: analyses saved before formats existed don't have it.
+   */
+  formats?: Partial<Record<VisualFormat, string>>
+  /** What each example was recognised as, keyed by user_media id. */
+  example_kinds?: { id: string; kind: ExampleKind }[]
+  /** Colours for the carousel picker's mini-mock tile. */
+  preview?: { bg: string; accent: string; title: string; body: string }
   /** Inputs the brief was made from — compared to detect stale analysis. */
   inputs_signature: string
   /** Links that could not be read and were skipped (shown as a note). */
