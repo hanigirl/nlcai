@@ -12,6 +12,7 @@ import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { userKey } from "@/lib/user-scoped-storage"
 import { getCurrentUser } from "@/lib/supabase/current-user"
+import { CLAUDE_BILLING_URL, CLAUDE_CREDITS_MESSAGE } from "@/lib/claude-credits"
 
 export interface StreamedHook {
   id: string
@@ -70,7 +71,22 @@ const ERROR_MESSAGES: Record<string, string> = {
   gemini_overloaded: "השרתים של Gemini עמוסים כרגע. נסו שוב בעוד דקה.",
   anthropic_not_connected: "לא חובר מפתח Anthropic. צריך לחבר אותו בהגדרות.",
   anthropic_overloaded: "השרתים של Anthropic עמוסים כרגע. נסו שוב בעוד דקה.",
-  credits_exhausted: "נגמרו הקרדיטים של Anthropic.",
+  credits_exhausted: CLAUDE_CREDITS_MESSAGE,
+}
+
+/** The error toast — with a way to top up when the cause is Claude credits. */
+function showHookError(code: unknown) {
+  const outOfCredits = code === "credits_exhausted"
+  toast.error(hookErrorMessage(code), {
+    id: TOAST_ID,
+    duration: outOfCredits ? 30000 : 6000,
+    action: outOfCredits
+      ? {
+          label: "לטעינת קרדיטים",
+          onClick: () => window.open(CLAUDE_BILLING_URL, "_blank", "noopener,noreferrer"),
+        }
+      : undefined,
+  })
 }
 
 function hookErrorMessage(code: unknown): string {
@@ -162,7 +178,7 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
         const data = await res.json().catch(() => ({}))
         setError(data.error || "שגיאה ביצירת הוקים")
         setIsGenerating(false)
-        toast.error(hookErrorMessage(data.error), { id: TOAST_ID, duration: 6000 })
+        showHookError(data.error)
         return
       }
 
@@ -198,7 +214,7 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
             if (parsed.error) {
               errorSeen = true
               setError(parsed.error)
-              toast.error(hookErrorMessage(parsed.error), { id: TOAST_ID, duration: 6000 })
+              showHookError(parsed.error)
               continue
             }
             // The route has always streamed this; the warehouse path used to

@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipLabel } from "@/components/ui/tooltip"
 import { MediaPanel } from "@/components/media-panel"
+import { CLAUDE_BILLING_LABEL, CLAUDE_BILLING_URL, CLAUDE_CREDITS_MESSAGE } from "@/lib/claude-credits"
 import { useFormatMediaBusy } from "@/hooks/use-format-media-busy"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { CorePostCelebration } from "@/components/core-post-celebration"
@@ -2028,9 +2029,9 @@ function ProjectPageInner() {
                       </>
                     ) : error === "credits_exhausted" ? (
                       <>
-                        <span className="text-small text-text-primary-default">נגמרו לכם הקרדיטים של Anthropic</span>
-                        <a href="https://console.anthropic.com/settings/billing" target="_blank" rel="noopener noreferrer" className="text-small-bold text-text-primary-default hover:underline">
-                          לרכישת קרדיטים ←
+                        <span className="text-small text-text-primary-default">{CLAUDE_CREDITS_MESSAGE}</span>
+                        <a href={CLAUDE_BILLING_URL} target="_blank" rel="noopener noreferrer" className="text-small-bold text-text-primary-default hover:underline">
+                          {CLAUDE_BILLING_LABEL}
                         </a>
                       </>
                     ) : (
@@ -2215,6 +2216,15 @@ function ProjectPageInner() {
                         <span className="text-small text-button-destructive-default">
                           השרתים של אנתרופיק עמוסים ולא ניתן זמנית לייצר תוכן. אפשר לנסות שוב בעוד כמה דקות.
                         </span>
+                      </>
+                    ) : postError === "credits_exhausted" ? (
+                      <>
+                        <span className="text-small-bold text-button-destructive-default">
+                          {CLAUDE_CREDITS_MESSAGE}
+                        </span>
+                        <a href={CLAUDE_BILLING_URL} target="_blank" rel="noopener noreferrer" className="text-small-bold text-text-primary-default hover:underline">
+                          {CLAUDE_BILLING_LABEL}
+                        </a>
                       </>
                     ) : (
                       <span className="text-small text-button-destructive-default">{postError}</span>
