@@ -23,6 +23,7 @@ import {
   type OnboardingBannerVariant,
 } from "@/components/onboarding-progress-banner"
 import { getCurrentUser } from "@/lib/supabase/current-user"
+import { CLAUDE_BILLING_URL, CLAUDE_BILLING_LABEL, CLAUDE_CREDITS_MESSAGE } from "@/lib/claude-credits"
 
 interface IdeaNote {
   text: string
@@ -877,8 +878,8 @@ function HomeContent() {
               const isInfo = infoStyles.includes(ideasError)
               const config: Record<string, { message: string; action?: { href: string; label: string; external?: boolean } }> = {
                 credits_exhausted: {
-                  message: "לא הצלחנו לייצר את התכנים כי נגמרו לך הקרדיטים של Anthropic",
-                  action: { href: "https://console.anthropic.com/settings/billing", label: "לרכישת קרדיטים נוספים →", external: true },
+                  message: CLAUDE_CREDITS_MESSAGE,
+                  action: { href: CLAUDE_BILLING_URL, label: CLAUDE_BILLING_LABEL, external: true },
                 },
                 anthropic_overloaded: {
                   message: "השרתים של Anthropic עמוסים כרגע. נסו שוב בעוד דקה",
