@@ -141,6 +141,35 @@ export function AvatarPicker({ onSelect }: AvatarPickerProps) {
     )
   }
 
+  // Nothing to pick. This used to render an empty grid — no text, no way
+  // to tell "still loading" from "broken" from "nothing here" — and a user
+  // read it as the connection failing (2026-10-07). Only recorded video
+  // avatars are listed, so the two usual causes are named.
+  if (avatars.length === 0) {
+    return (
+      <div
+        role="status"
+        className="flex flex-col items-center justify-center gap-2 rounded-xl border border-border-neutral-default bg-bg-surface px-6 py-8 text-center"
+      >
+        <p className="text-small-bold text-text-primary-default">
+          לא נמצאו אווטרים מוקלטים בחשבון ה-HeyGen שלך
+        </p>
+        <p className="text-small text-text-neutral-default">
+          כאן מופיעים רק אווטרים שהוקלטו בווידאו. אווטר שנוצר מתמונה לא יופיע,
+          ואווטר חדש מופיע רק אחרי ש-HeyGen מסיים לעבד אותו.
+        </p>
+        <a
+          href="https://app.heygen.com/avatars"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-small font-semibold text-text-primary-default hover:underline"
+        >
+          לאווטרים שלי ב-HeyGen ←
+        </a>
+      </div>
+    )
+  }
+
   return (
     <div className="grid grid-cols-2 gap-3">
       {avatars.map((avatar) => (
