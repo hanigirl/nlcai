@@ -1,0 +1,218 @@
+import type { SupabaseClient } from "@supabase/supabase-js"
+import { getUserApiKey } from "@/lib/api-keys"
+import { deriveNicheVisualLanguage } from "@/lib/agents/visual-language-analyzer"
+import { loadImageForModels, type ModelImage } from "@/lib/visual-language/image-input"
+import type { NicheVisualLanguage, VisualLanguage } from "@/lib/visual-language/types"
+
+/**
+ * Which visual language an AI image follows, in priority order:
+ *
+ * 1. brand — the user's analysed visual language (Settings → Media), when
+ *    the analysis found a clear, unified one. Her graphic elements ride along
+ *    as reference images.
+ * 2. niche — no usable brand language: a language derived from her niche
+ *    (cached per niche). Her brand colours, if she set any, still apply.
+ * 3. niche-direct — same intent, but there's no Claude key to derive and
+ *    cache a brief, so the image model is told to choose from the niche.
+ * 4. none — no niche either: a clean, content-led look.
+ *
+ * Never the old universal dark-neon-3D canvas.
+ */
+
+export interface DesignDirection {
+  source: "brand" | "niche" | "niche-direct" | "none"
+  /** Prompt lines describing the language. */
+  lines: string[]
+  /** Brand elements to attach as reference images (brand source only). */
+  references: ModelImage[]
+}
+
+// Each reference image costs input tokens on every frame; four covers a
+// logo + a few recurring marks.
+const MAX_REFERENCES = 4
+
+/**
+ * Layout variety for regenerate. The language (palette, type, imagery
+ * style) stays fixed — only the arrangement changes between attempts.
+ */
+const COMPOSITIONS = [
+  "Composition: type-led — the Hebrew headline is the hero, set large, with one supporting visual element drawn from the visual language.",
+  "Composition: image-led — one strong visual fills most of the frame; the text sits on a calm, clear area of it.",
+  "Composition: framed — the text sits inside a shape, card or frame drawn from the visual language, with the visual around it.",
+  "Composition: asymmetric editorial — text aligned to the right edge (RTL), the visual offset to the left, generous whitespace.",
+]
+
+export function pickComposition(variationIndex: number | undefined): string {
+  const n = COMPOSITIONS.length
+  return COMPOSITIONS[(((variationIndex ?? 0) % n) + n) % n]
+}
+
+/** The closing "no extras" rule — allows her own elements when attached. */
+export function noExtrasRule(direction: DesignDirection): string {
+  return direction.references.length
+    ? "No watermarks, no UI chrome, no borders, no signatures, and no logos or marks other than the attached brand elements."
+    : "No watermarks, no logos, no UI chrome, no borders, no signatures."
+}
+
+export async function resolveDesignDirection(
+  supabase: SupabaseClient,
+  userId: string,
+  opts: { allowReferences?: boolean } = {},
+): Promise<DesignDirection> {
+  const [{ data: userRow }, { data: identityRow }] = await Promise.all([
+    supabase
+      .from("users")
+      .select("brand_colors, visual_language, niche_visual_language")
+      .eq("id", userId)
+      .single(),
+    supabase
+      .from("core_identities")
+      .select("niche, who_i_am, who_i_serve")
+      .eq("user_id", userId)
+      .maybeSingle(),
+  ])
+
+  const row = userRow as {
+    brand_colors?: string[] | null
+    visual_language?: VisualLanguage | null
+    niche_visual_language?: NicheVisualLanguage | null
+  } | null
+  const identity = identityRow as {
+    niche?: string | null
+    who_i_am?: string | null
+    who_i_serve?: string | null
+  } | null
+
+  const colors = row?.brand_colors ?? []
+  const vl = row?.visual_language
+  const niche = identity?.niche?.trim() || null
+
+  // 1. Her own visual language.
+  if (vl?.status === "ok" && vl.style_spec?.trim()) {
+    const loaded =
+      opts.allowReferences === false ? [] : await loadReferences(supabase, userId, vl)
+    const references = loaded.map((r) => r.image)
+    const lines = [
+      "VISUAL LANGUAGE — this is the creator's own brand. Follow it faithfully; it overrides any generic style habit:",
+      vl.style_spec.trim(),
+    ]
+    if (loaded.length) {
+      lines.push(
+        "",
+        "Attached reference images are the creator's real brand elements. Reproduce each one exactly as it is (same shape, colours and proportions — never redraw or restyle it), and only where its note says it belongs; it's fine to leave one out of this image:",
+        ...loaded.map((r, i) => `- Reference image ${i + 1}: ${r.note}`),
+      )
+    }
+    return { source: "brand", lines, references }
+  }
+
+  const colorLine = colors.length
+    ? `The creator's brand colours are ${colors.join(", ")} — build the palette around them.`
+    : null
+
+  // 2. Derived from the niche (cached until the niche changes).
+  if (niche) {
+    let cached = row?.niche_visual_language
+    if (!cached || cached.niche !== niche) {
+      cached = await deriveAndCacheNiche(supabase, userId, niche, identity)
+    }
+    if (cached) {
+      return {
+        source: "niche",
+        lines: [
+          `VISUAL LANGUAGE — chosen to suit the creator's niche (${niche}). Follow it consistently; do NOT fall back to dark neon gradients or glossy 3D glass objects unless it says so:`,
+          cached.style_spec.trim(),
+          ...(colorLine ? [colorLine] : []),
+        ],
+        references: [],
+      }
+    }
+    // 3. No Claude key / derivation failed — let the image model choose.
+    return {
+      source: "niche-direct",
+      lines: [
+        `VISUAL LANGUAGE — the creator's niche is """${niche}""". Choose the visual language a thoughtful brand designer would give this niche so her audience instantly feels it belongs to that world (e.g. a doctor → clean, calm whites and clinical blues with subtle tech motifs; parent guidance → soft pastels, rounded shapes, gentle illustration). Do NOT default to dark neon gradients or glossy 3D glass objects unless the niche truly calls for it.`,
+        ...(colorLine ? [colorLine] : []),
+      ],
+      references: [],
+    }
+  }
+
+  // 4. Nothing to go on.
+  return {
+    source: "none",
+    lines: [
+      "VISUAL LANGUAGE — clean, modern and content-led: let the post's subject suggest the palette and imagery. Calm, readable, premium; avoid dark neon gradients and glossy 3D glass objects.",
+      ...(colorLine ? [colorLine] : []),
+    ],
+    references: [],
+  }
+}
+
+async function loadReferences(
+  supabase: SupabaseClient,
+  userId: string,
+  vl: VisualLanguage,
+): Promise<{ image: ModelImage; note: string }[]> {
+  const wanted = (vl.elements ?? []).slice(0, MAX_REFERENCES)
+  if (!wanted.length) return []
+  const { data } = await supabase
+    .from("user_media")
+    .select("id, storage_path")
+    .eq("user_id", userId)
+    .eq("category", "element")
+    .in("id", wanted.map((e) => e.id))
+  const rows = (data ?? []) as { id: string; storage_path: string }[]
+
+  const loaded = await Promise.all(
+    wanted.map(async (el) => {
+      const r = rows.find((x) => x.id === el.id)
+      if (!r) return null
+      try {
+        const url = supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl
+        return { image: await loadImageForModels(url), note: `${el.name} — ${el.usage}` }
+      } catch (err) {
+        console.error("[visual-language][reference]", el.id, err)
+        return null
+      }
+    }),
+  )
+  // Failed loads drop out, so notes stay aligned with the attached images.
+  return loaded.filter((x): x is { image: ModelImage; note: string } => x !== null)
+}
+
+async function deriveAndCacheNiche(
+  supabase: SupabaseClient,
+  userId: string,
+  niche: string,
+  identity: { who_i_am?: string | null; who_i_serve?: string | null } | null,
+): Promise<NicheVisualLanguage | null> {
+  let apiKey: string
+  try {
+    apiKey = await getUserApiKey(supabase, "anthropic_api_key")
+  } catch {
+    return null
+  }
+  try {
+    const out = await deriveNicheVisualLanguage(apiKey, {
+      niche,
+      whoIAm: identity?.who_i_am,
+      whoIServe: identity?.who_i_serve,
+    })
+    const value: NicheVisualLanguage = {
+      niche,
+      summary_he: out.summary_he,
+      style_spec: out.style_spec,
+      generated_at: new Date().toISOString(),
+    }
+    const { error } = await supabase
+      .from("users")
+      .update({ niche_visual_language: value } as never)
+      .eq("id", userId)
+    if (error) console.error("[visual-language][niche-cache]", error)
+    return value
+  } catch (err) {
+    console.error("[visual-language][niche-derive]", err)
+    return null
+  }
+}

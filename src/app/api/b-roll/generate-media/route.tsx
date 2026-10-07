@@ -11,6 +11,11 @@ import {
   renderSecondaryCaptionPng,
 } from "@/lib/caption-overlay"
 import { getAuthUser } from "@/lib/auth-user"
+import { generateImage } from "@/lib/openai-image"
+import {
+  resolveDesignDirection,
+  type DesignDirection,
+} from "@/lib/visual-language/direction"
 
 // gpt-image-2 takes 30-120s for one image.
 export const maxDuration = 300
@@ -109,11 +114,13 @@ function renderClip(
   })
 }
 
-const PALETTES = [
-  "Palette: deep indigo / navy canvas with a violet→magenta accent gradient. Premium and cinematic.",
-  "Palette: warm charcoal canvas with an amber→gold accent gradient. Rich and inviting.",
-  "Palette: deep plum / aubergine canvas with a rose→coral accent gradient. Bold and confident.",
-  "Palette: dark teal / midnight canvas with an aqua→emerald accent gradient. Fresh and striking.",
+// Variety per press. The visual language stays fixed, so a second attempt
+// changes the framing rather than the palette.
+const FRAMINGS = [
+  "Framing: one subject, close-up, filling the upper half.",
+  "Framing: a wider scene with the subject small and atmospheric.",
+  "Framing: an overhead / flat-lay arrangement of the subject's objects.",
+  "Framing: an abstract, textural interpretation of the subject.",
 ]
 
 /**
@@ -123,8 +130,8 @@ const PALETTES = [
  * that slips through would sit UNDER our caption and read as a smudge.
  */
 function buildBackgroundPrompt(
-  palette: string,
-  niche: string | null,
+  direction: DesignDirection,
+  framing: string,
   context: string,
 ): string {
   return [
@@ -132,51 +139,21 @@ function buildBackgroundPrompt(
     "",
     "ABSOLUTELY NO TEXT. No words, no letters, no numbers, no Hebrew or Latin characters, no captions, no watermarks, no logos, no signage, no UI chrome, no borders. If any surface in the scene would naturally carry writing, leave it blank.",
     "",
-    "- One conceptual 3D-rendered translucent glass visual as the subject — a real object or scene, richly lit.",
-    ...(niche
-      ? [
-          `- The creator's niche is: """${niche}""". Draw the objects and metaphors from this niche's world — its tools, environments and symbols — never generic stock decoration.`,
-        ]
-      : []),
-    "- Canvas: atmospheric, with a subtle vignette and soft gradient lighting. Premium, never flat, never busy.",
-    "- Texture: soft flowing gradient lines, gentle glow edges or light streaks as accents.",
+    ...direction.lines,
     "",
-    palette,
+    framing,
+    "- One clear subject drawn from the post's topic, rendered in the visual language above — never generic stock decoration.",
     "",
     // The caption lands in the lower-middle band, so that area has to stay
     // calm or the type sits on top of the busiest part of the picture.
-    "- COMPOSITION: keep the lower-middle third relatively calm and uncluttered — darker and simpler — because a caption will be placed there afterwards. Put the visual interest in the upper half.",
+    // The caption is WHITE, so even a light/pastel language needs a deeper
+    // band there — in its own colours, not a generic black scrim.
+    "- COMPOSITION: keep the lower-middle third calm and uncluttered, and deep enough in tone (a darker shade from the visual language's own palette) that WHITE caption text placed there afterwards reads clearly. Put the visual interest in the upper half.",
     "- The mood should relate to this post content (written in Hebrew): " +
       `"""${context}"""`,
   ]
     .filter(Boolean)
     .join("\n")
-}
-
-async function generateImage(apiKey: string, prompt: string): Promise<string> {
-  const res = await fetch("https://api.openai.com/v1/images/generations", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "gpt-image-2",
-      prompt,
-      size: "1024x1536", // closest documented portrait; cropped to 9:16 below
-    }),
-  })
-  const json = await res.json()
-  if (!res.ok) {
-    const msg = String(json?.error?.message ?? "")
-    if (/billing|quota|limit/i.test(msg)) {
-      throw new Error(
-        "מפתח ה-OpenAI שלכם הגיע לתקרת החיוב. היכנסו ל-platform.openai.com → Billing כדי להוסיף קרדיט או להעלות את התקרה, ונסו שוב.",
-      )
-    }
-    throw new Error(msg || "יצירת התמונה נכשלה")
-  }
-  return json.data[0].b64_json
 }
 
 /**
@@ -274,22 +251,21 @@ export async function POST(req: NextRequest) {
       throw e
     }
 
-    const { data: identity } = await supabase
-      .from("core_identities")
-      .select("niche")
-      .eq("user_id", user.id)
-      .maybeSingle()
-    const niche = (identity as { niche: string | null } | null)?.niche ?? null
-
-    // Vary the palette per press so a second attempt looks different rather
-    // than returning a near-identical image.
-    const palette =
-      PALETTES[Math.abs(variationIndex ?? 0) % PALETTES.length]
+    // Her visual language (or the niche-derived one). No reference
+    // elements: this is a text-free background and the caption is laid
+    // over it afterwards, so a logo would collide with it.
+    const direction = await resolveDesignDirection(supabase, user.id, {
+      allowReferences: false,
+    })
     const context = (post.body ?? variantBody ?? hook).slice(0, 600)
 
     const raw = await generateImage(
       openaiKey,
-      buildBackgroundPrompt(palette, niche, context),
+      buildBackgroundPrompt(
+        direction,
+        FRAMINGS[Math.abs(variationIndex ?? 0) % FRAMINGS.length],
+        context,
+      ),
     )
     const background = cropToCanvas(raw)
     // Background and caption stay SEPARATE files — that separation is what

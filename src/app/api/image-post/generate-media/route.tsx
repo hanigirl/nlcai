@@ -5,6 +5,13 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
 import { parseImagePostBody, type ImagePostTexts } from "@/lib/image-post-text"
 import { assertFeedSafeAspect } from "@/lib/social/media-spec"
+import { generateImage } from "@/lib/openai-image"
+import {
+  noExtrasRule,
+  pickComposition,
+  resolveDesignDirection,
+  type DesignDirection,
+} from "@/lib/visual-language/direction"
 
 // gpt-image-2 generation can take 60-120s; leave headroom for the normalize pass.
 export const maxDuration = 300
@@ -41,24 +48,6 @@ assertFeedSafeAspect(IMAGE_WIDTH, IMAGE_HEIGHT, "פוסט תמונה")
  */
 
 /**
- * Distinct visual directions, rotated by the per-post generation index so
- * consecutive attempts look meaningfully different (different palette,
- * mood, composition, and type treatment) — the user regenerates to get
- * genuine variety, not near-duplicates. Each stays legible and on-theme;
- * only the DESIGN language changes.
- */
-const STYLE_DIRECTIONS = [
-  "Bold high-contrast editorial: deep dark background, oversized cream/white headline, lots of confident negative space, minimal decoration.",
-  "Soft airy pastel: light background, delicate thin elegant typography, gentle tones, plenty of breathing room.",
-  "Vibrant duotone gradient background with punchy modern type and a single bright accent color.",
-  "Photographic: a tasteful real-world scene related to the theme, with the text over a soft dark scrim for legibility.",
-  "Warm earthy magazine layout: cream/terracotta/olive tones, a refined serif-feel headline, structured editorial grid.",
-  "Playful flat geometric: abstract color blocks and simple shapes, clean sans-serif type, cheerful and graphic.",
-  "Dark cinematic mood: near-black background with one glowing accent color and dramatic lighting around the headline.",
-  "Clean minimal light: near-white background, subtle paper/texture, precise restrained typography, a thin accent line.",
-]
-
-/**
  * Full-image prompt: the model designs the whole post, INCLUDING the
  * Hebrew text. We give it the exact lines (quoted, so it copies them
  * verbatim), a clear typographic hierarchy, RTL guidance, and a safe-zone
@@ -69,7 +58,8 @@ const STYLE_DIRECTIONS = [
 function buildImagePrompt(
   texts: ImagePostTexts,
   context: string,
-  variationIndex: number,
+  direction: DesignDirection,
+  composition: string,
 ): string {
   const textLines = [
     `Headline (largest, boldest, dominant): "${texts.headline}"`,
@@ -83,21 +73,12 @@ function buildImagePrompt(
     .filter(Boolean)
     .join("\n")
 
-  const direction =
-    STYLE_DIRECTIONS[
-      ((variationIndex % STYLE_DIRECTIONS.length) + STYLE_DIRECTIONS.length) %
-        STYLE_DIRECTIONS.length
-    ]
-
   return [
     "Design a complete, polished vertical (portrait) social media post image in HEBREW.",
     "",
-    // The chosen style is the AUTHORITATIVE look — stated first and
-    // forcefully so the model commits to it. We deliberately do NOT anchor
-    // a fixed "editorial/minimal" style elsewhere, otherwise every image
-    // drifts back to the same look regardless of this direction.
-    `PRIMARY DESIGN DIRECTION — commit fully to THIS look, and make it clearly, visually DIFFERENT from any other version of this post (different background, color palette, composition, and typography):`,
-    `>>> ${direction}`,
+    ...direction.lines,
+    "",
+    composition,
     "",
     "The image MUST contain exactly this Hebrew text, spelled EXACTLY as written, laid out right-to-left (RTL). Do not translate, transliterate, paraphrase, or add any other words:",
     textLines,
@@ -110,47 +91,8 @@ function buildImagePrompt(
     "- The mood should still relate to this post content (written in Hebrew): " +
       `"""${context}"""`,
     "",
-    "Do NOT add any text other than the exact lines above. No watermarks, no logos, no UI chrome, no borders, no signatures.",
+    `Do NOT add any text other than the exact lines above. ${noExtrasRule(direction)}`,
   ].join("\n")
-}
-
-async function generateImage(apiKey: string, prompt: string): Promise<string> {
-  const res = await fetch("https://api.openai.com/v1/images/generations", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      // gpt-image-2 (OpenAI's newest image model, Apr 2026) — ~99%
-      // character-level text accuracy and far better multi-script text
-      // rendering than gpt-image-1, which garbled Hebrew. This is the
-      // whole reason we render text in-model rather than overlaying it.
-      model: "gpt-image-2",
-      prompt,
-      size: "1024x1536", // closest documented portrait size; normalized to 4:5 via center-crop
-      // Legible Hebrew glyphs are the whole point here, so we pay for "high".
-      quality: "high",
-      n: 1,
-    }),
-  })
-
-  const json = (await res.json().catch(() => null)) as {
-    data?: Array<{ b64_json?: string }>
-    error?: { message?: string }
-  } | null
-
-  if (!res.ok || !json?.data?.[0]?.b64_json) {
-    const detail = json?.error?.message || `OpenAI החזיר ${res.status}`
-    // Billing/quota failures get actionable Hebrew instead of raw API text.
-    if (/billing|quota|insufficient/i.test(detail)) {
-      throw new Error(
-        "מפתח ה-OpenAI שלכם הגיע לתקרת החיוב. היכנסו ל-platform.openai.com → Billing כדי להוסיף קרדיט או להעלות את התקרה, ונסו שוב.",
-      )
-    }
-    throw new Error(detail)
-  }
-  return json.data[0].b64_json
 }
 
 /* ------------------------- normalize pass ------------------------ */
@@ -242,9 +184,12 @@ export async function POST(req: NextRequest) {
     const context = [post.title, post.hook_text, post.body?.slice(0, 600)]
       .filter(Boolean)
       .join("\n")
+    const direction = await resolveDesignDirection(supabase, user.id)
     const generatedBase64 = await generateImage(
       openaiKey,
-      buildImagePrompt(texts, context, variationIndex ?? 0),
+      buildImagePrompt(texts, context, direction, pickComposition(variationIndex)),
+      // Legible Hebrew glyphs are the whole point here, so we pay for "high".
+      { quality: "high", references: direction.references },
     )
 
     // Center-crop the model's image to an exact 4:5 canvas via Resvg.

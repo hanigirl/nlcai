@@ -29,6 +29,7 @@
     "react-colorful": "^5.7.0",
     "react-dom": "19.2.3",
     "satori": "^0.26.0",
+    "sharp": "^0.34.5",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
     "word-extractor": "^1.0.4"

@@ -67,6 +67,9 @@ export interface User {
   avatar_url: string | null;
   plan: PlanTier;
   brand_style: BrandStyle | null;
+  brand_colors: string[];
+  visual_language: Record<string, unknown> | null;
+  niche_visual_language: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
@@ -240,7 +243,7 @@ export interface BusinessSource {
 export type BusinessSourceInsert = Pick<BusinessSource, "user_id" | "title"> &
   Partial<Pick<BusinessSource, "source_type" | "source_url" | "summary" | "raw_text" | "status" | "active">>;
 
-export type UserMediaCategory = "font" | "element" | "cover" | "style_file" | "audience_file";
+export type UserMediaCategory = "font" | "element" | "cover" | "style_file" | "audience_file" | "brand_example";
 
 export interface UserMedia {
   id: string;

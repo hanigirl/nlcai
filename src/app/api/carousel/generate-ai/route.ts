@@ -6,6 +6,12 @@ import { getTemplate } from "@/lib/carousel-templates"
 import type { SlideData } from "@/lib/carousel-templates"
 import { getAuthUser } from "@/lib/auth-user"
 import { assertFeedSafeAspect } from "@/lib/social/media-spec"
+import { generateImage } from "@/lib/openai-image"
+import {
+  noExtrasRule,
+  resolveDesignDirection,
+  type DesignDirection,
+} from "@/lib/visual-language/direction"
 
 // gpt-image-2 takes 30-120s per image; several slides run with limited
 // concurrency, so leave generous headroom.
@@ -48,6 +54,7 @@ function buildSlidePrompt(
   total: number,
   topic: string,
   niche: string | null,
+  brand: DesignDirection | null,
 ): string {
   const role =
     slide.type === "cover"
@@ -71,6 +78,30 @@ function buildSlidePrompt(
     "",
     role,
     "",
+    ...(brand
+      ? [
+          "Design (IDENTICAL across every slide of this series):",
+          ...brand.lines,
+          "- The imagery makes THIS slide's message visible — drawn from the topic and rendered in the visual language above, never generic stock decoration.",
+          "- Typography: Hebrew type with a clear hierarchy INSIDE the text — the single most important word or phrase is emphasised the way the visual language describes; the rest stays clean and highly readable.",
+          `- A small circular badge with the number ${index + 1} in a bottom corner, styled in the visual language.`,
+          "",
+          `Keep all text within the central 70% of the height (generous top/bottom margins). ${noExtrasRule(brand)} No extra words.`,
+        ]
+      : templateDesignLines(styleSpec, index, niche)),
+  ].join("\n")
+}
+
+/**
+ * The template's own look — dark / light / vibrant / neon, which the user
+ * picked explicitly. Used when she has no visual language of her own.
+ */
+function templateDesignLines(
+  styleSpec: string,
+  index: number,
+  niche: string | null,
+): string[] {
+  return [
     "Design language (IDENTICAL across every slide of this series):",
     "- One conceptual 3D-rendered translucent glass visual that makes THIS slide's message physical — a real object or scene embodying the idea (e.g. fanned phone screens for designing screens, building bricks for building blocks, flowing waves for an abstract statement). It frames or surrounds the text; imagery and text share the composition without crowding each other.",
     ...(niche
@@ -86,44 +117,7 @@ function buildSlidePrompt(
     styleSpec,
     "",
     "Keep all text within the central 70% of the height (generous top/bottom margins). No watermarks, logos, borders, or extra words.",
-  ].join("\n")
-}
-
-async function generateImage(apiKey: string, prompt: string): Promise<string> {
-  const res = await fetch("https://api.openai.com/v1/images/generations", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      // gpt-image-2 — ~99% character-level text accuracy across scripts;
-      // legible Hebrew glyphs are the whole point, so we pay for "high"
-      // (same reasoning as image-post/generate-media).
-      model: "gpt-image-2",
-      prompt,
-      size: "1024x1536", // closest documented portrait; center-cropped to 4:5
-      quality: "high",
-      n: 1,
-    }),
-  })
-
-  const json = (await res.json().catch(() => null)) as {
-    data?: Array<{ b64_json?: string }>
-    error?: { message?: string }
-  } | null
-
-  if (!res.ok || !json?.data?.[0]?.b64_json) {
-    const detail = json?.error?.message || `OpenAI החזיר ${res.status}`
-    // Billing/quota failures get actionable Hebrew instead of raw API text.
-    if (/billing|quota|insufficient/i.test(detail)) {
-      throw new Error(
-        "מפתח ה-OpenAI שלכם הגיע לתקרת החיוב. היכנסו ל-platform.openai.com → Billing כדי להוסיף קרדיט או להעלות את התקרה, ונסו שוב.",
-      )
-    }
-    throw new Error(detail)
-  }
-  return json.data[0].b64_json
+  ]
 }
 
 /** Center-crop 1024×1536 → exact 1080×1350, same as image-post. */
@@ -207,6 +201,12 @@ export async function POST(req: NextRequest) {
       ((identityRow as { niche?: string | null } | null)?.niche ?? "").trim() ||
       null
 
+    // Her own visual language overrides the template's palette. Without
+    // one, the template she picked stays authoritative (it IS her choice of
+    // look), so the niche fallback isn't applied here.
+    const direction = await resolveDesignDirection(supabase, user.id)
+    const brand = direction.source === "brand" ? direction : null
+
     // Simple concurrency pool — kinder to OpenAI rate limits than firing
     // all slides at once, much faster than fully sequential.
     let next = 0
@@ -220,8 +220,13 @@ export async function POST(req: NextRequest) {
           total,
           topic,
           niche,
+          brand,
         )
-        const raw = await generateImage(openaiKey, prompt)
+        const raw = await generateImage(openaiKey, prompt, {
+          // Legible Hebrew glyphs are the whole point, so we pay for "high".
+          quality: "high",
+          references: brand?.references,
+        })
         images[i] = cropToCanvas(raw)
       }
     }

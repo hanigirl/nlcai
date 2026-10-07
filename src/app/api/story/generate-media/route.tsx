@@ -7,6 +7,13 @@ import {
   splitScriptIntoFrames,
 } from "@/lib/story-text-split"
 import { getAuthUser } from "@/lib/auth-user"
+import { generateImage } from "@/lib/openai-image"
+import {
+  noExtrasRule,
+  pickComposition,
+  resolveDesignDirection,
+  type DesignDirection,
+} from "@/lib/visual-language/direction"
 
 // gpt-image-2 takes 30-120s per image; a long story fans out to up to 3
 // frames run with limited concurrency, so leave generous headroom.
@@ -48,39 +55,23 @@ function splitStoryIntoFrames(body: string): string[] {
 
 
 /**
- * Palette / mood variants — the story has no template picker, so we rotate
- * the palette by the per-post generation index to give real variety on
- * regenerate. Each variant plugs into the SHARED premium design language
- * below (same as the approved AI carousel system: dark atmospheric canvas +
- * one accent gradient). The chosen palette is applied IDENTICALLY to every
- * frame of one generation, so a multi-frame story reads as one cohesive set.
- */
-const PALETTE_VARIANTS = [
-  "Palette: deep navy / charcoal canvas with a lavender→purple accent gradient. Cool, premium, modern.",
-  "Palette: near-black canvas with a warm amber→gold accent gradient. Cinematic and rich.",
-  "Palette: deep plum / aubergine canvas with a rose→coral accent gradient. Bold and confident.",
-  "Palette: dark teal / midnight canvas with an aqua→emerald accent gradient. Fresh and striking.",
-]
-
-/**
- * Full-image prompt for one story frame — same approved design language as
- * the AI carousel (see carousel-design skill): a premium dark canvas, one
- * conceptual glassy 3D visual that makes THIS frame's message physical,
- * bold white Hebrew type with a gradient-highlighted key word, and (for a
- * cohesive set) an identical palette across frames. Story-specific: 9:16
- * full-bleed and the Instagram Story safe zone.
+ * Full-image prompt for one story frame. The LOOK comes from the user's
+ * visual language (Settings → Media), or — without one — from a language
+ * derived from her niche (see lib/visual-language/direction). The same
+ * direction + composition go to every frame of one generation, so a
+ * multi-frame story reads as one set. Story-specific: 9:16 full-bleed and
+ * the Instagram Story safe zone.
  *
  * `frameIndex`/`frameCount` steer the per-frame role and a subtle progress
- * indicator; `palette` is shared across all frames of a generation;
- * `niche` pulls the imagery into the creator's world; `context` anchors the
- * mood to the post.
+ * indicator; `composition` rotates per regenerate; `context` anchors the
+ * imagery and mood to the post.
  */
 function buildStoryPrompt(
   frameText: string,
   frameIndex: number,
   frameCount: number,
-  palette: string,
-  niche: string | null,
+  direction: DesignDirection,
+  composition: string,
   context: string,
 ): string {
   const role =
@@ -105,18 +96,12 @@ function buildStoryPrompt(
     "",
     role,
     "",
-    "Design language (IDENTICAL across every frame of this story — same canvas, palette, material and type treatment):",
-    "- One conceptual 3D-rendered translucent glass visual that makes THIS frame's message physical — a real object or scene embodying the idea. It frames or surrounds the text; imagery and text share the composition without crowding each other.",
-    ...(niche
-      ? [
-          `- The creator's niche is: """${niche}""". Draw the visual's objects and metaphors from this niche's world, combined with what THIS frame says — the imagery should instantly feel like it belongs to this niche (its tools, environments, symbols and vibe), never generic stock decoration.`,
-        ]
-      : []),
-    "- Canvas: rich and atmospheric with a subtle vignette and soft gradient lighting — premium, never flat, never busy.",
-    "- Typography: bold, modern white Hebrew type with a clear hierarchy INSIDE the text — the single most important word or phrase is set in the accent gradient and one size step up; the rest stays clean and highly readable.",
-    "- Texture: soft flowing gradient lines, gentle glow edges or light streaks as background accents.",
+    "Design (IDENTICAL across every frame of this story — same canvas, palette, imagery style and type treatment):",
+    ...direction.lines,
     "",
-    palette,
+    composition,
+    "- The imagery makes THIS frame's message visible — drawn from the post's subject and rendered in the visual language above, never generic stock decoration. Imagery and text share the composition without crowding each other.",
+    "- Typography: Hebrew type with a clear hierarchy INSIDE the text — the single most important word or phrase is emphasised in the way the visual language describes; the rest stays clean and highly readable.",
     "",
     "Rules that always hold:",
     "- Correct Hebrew letterforms and right-to-left reading order; reproduce every character precisely.",
@@ -126,47 +111,10 @@ function buildStoryPrompt(
     "- The mood should relate to this post content (written in Hebrew): " +
       `"""${context}"""`,
     "",
-    "Do NOT add any text other than the exact Hebrew lines above (and the tiny frame indicator if requested). No watermarks, no logos, no UI chrome, no borders, no signatures.",
+    `Do NOT add any text other than the exact Hebrew lines above (and the tiny frame indicator if requested). ${noExtrasRule(direction)}`,
   ]
     .filter(Boolean)
     .join("\n")
-}
-
-async function generateImage(apiKey: string, prompt: string): Promise<string> {
-  const res = await fetch("https://api.openai.com/v1/images/generations", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      // gpt-image-2 — ~99% character-level text accuracy across scripts;
-      // legible Hebrew glyphs are the whole point, so we pay for "high"
-      // (same reasoning as image-post/generate-media).
-      model: "gpt-image-2",
-      prompt,
-      size: "1024x1536", // closest documented portrait; center-cropped to 9:16
-      quality: "high",
-      n: 1,
-    }),
-  })
-
-  const json = (await res.json().catch(() => null)) as {
-    data?: Array<{ b64_json?: string }>
-    error?: { message?: string }
-  } | null
-
-  if (!res.ok || !json?.data?.[0]?.b64_json) {
-    const detail = json?.error?.message || `OpenAI החזיר ${res.status}`
-    // Billing/quota failures get actionable Hebrew instead of raw API text.
-    if (/billing|quota|insufficient/i.test(detail)) {
-      throw new Error(
-        "מפתח ה-OpenAI שלכם הגיע לתקרת החיוב. היכנסו ל-platform.openai.com → Billing כדי להוסיף קרדיט או להעלות את התקרה, ונסו שוב.",
-      )
-    }
-    throw new Error(detail)
-  }
-  return json.data[0].b64_json
 }
 
 /**
@@ -266,25 +214,11 @@ export async function POST(req: NextRequest) {
       throw err
     }
 
-    const palette =
-      PALETTE_VARIANTS[
-        (((variationIndex ?? 0) % PALETTE_VARIANTS.length) +
-          PALETTE_VARIANTS.length) %
-          PALETTE_VARIANTS.length
-      ]
-
-    // The creator's niche pulls the conceptual imagery into their WORLD
-    // (health niche → health objects/vibe; design niche → screens/tools)
-    // — same rule as the AI carousel. Missing niche → context-only imagery
-    // (the line is omitted, not sent empty).
-    const { data: identityRow } = await supabase
-      .from("core_identities")
-      .select("niche")
-      .eq("user_id", user.id)
-      .single()
-    const niche =
-      ((identityRow as { niche?: string | null } | null)?.niche ?? "").trim() ||
-      null
+    // The look: her visual language, else one derived from her niche.
+    // Resolved once so every frame shares it; regenerate rotates only the
+    // composition.
+    const direction = await resolveDesignDirection(supabase, user.id)
+    const composition = pickComposition(variationIndex)
 
     // Theme context: title + hook carry the essence; the body is truncated
     // so a long post doesn't drown the composition instructions.
@@ -305,11 +239,16 @@ export async function POST(req: NextRequest) {
           frames[i],
           i,
           total,
-          palette,
-          niche,
+          direction,
+          composition,
           context,
         )
-        const raw = await generateImage(openaiKey, prompt)
+        const raw = await generateImage(openaiKey, prompt, {
+          // gpt-image-2 — legible Hebrew glyphs are the whole point, so we
+          // pay for "high" (same reasoning as image-post/generate-media).
+          quality: "high",
+          references: direction.references,
+        })
         images[i] = cropToCanvas(raw)
       }
     }
