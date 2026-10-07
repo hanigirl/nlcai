@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Loader2, ThumbsDown, ThumbsUp } from "lucide-react"
+import { ThumbsDown, ThumbsUp } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -81,12 +81,24 @@ function StyleFeedbackRow({
   const [askingWhy, setAskingWhy] = useState(false)
   const [reasons, setReasons] = useState<DislikeReason[]>([])
   const [note, setNote] = useState("")
-  const [sending, setSending] = useState(false)
 
   const httpUrl = mediaUrl?.startsWith("http") ? mediaUrl : undefined
 
+  // Optimistic: the button answers on click and the save runs behind it
+  // (a like copies the image, a dislike is a Claude rewrite — seconds).
+  // On failure the vote is rolled back with an error.
   const send = async (verdict: "like" | "dislike") => {
-    setSending(true)
+    if (verdict === vote && verdict === "like") return
+    const prevVote = vote
+    setVote(verdict)
+    setAskingWhy(false)
+    recordAiStyleVote(postId, format, verdict)
+    const toastId = verdict === "dislike" ? toast.loading("מעדכנים את השפה לפי הפידבק...") : undefined
+    const rollBack = (message: string) => {
+      setVote(prevVote)
+      if (prevVote) recordAiStyleVote(postId, format, prevVote)
+      toast.error(message, { id: toastId })
+    }
     try {
       const res = await fetch("/api/visual-language/style-feedback", {
         method: "POST",
@@ -102,18 +114,14 @@ function StyleFeedbackRow({
       })
       const data = (await res.json().catch(() => ({}))) as { message?: string }
       if (!res.ok) {
-        toast.error(data.message ?? "הפידבק לא נשמר. נסו שוב.")
+        rollBack(data.message ?? "הפידבק לא נשמר. נסו שוב.")
         return
       }
-      setVote(verdict)
-      setAskingWhy(false)
-      recordAiStyleVote(postId, format, verdict)
-      if (data.message) toast.success(data.message, { duration: 6000 })
+      if (data.message) toast.success(data.message, { id: toastId, duration: 6000 })
+      else if (toastId) toast.dismiss(toastId)
     } catch (err) {
       console.error("[style-feedback]", err)
-      toast.error("הפידבק לא נשמר. נסו שוב.")
-    } finally {
-      setSending(false)
+      rollBack("הפידבק לא נשמר. נסו שוב.")
     }
   }
 
@@ -126,13 +134,12 @@ function StyleFeedbackRow({
           <div className="flex w-full items-center justify-between px-5">
             <p className="text-xs text-gray-40">אהבת את מה שיצרנו?</p>
             <div className="flex items-center gap-1" role="group" aria-label="פידבק על הסגנון">
-              <VoteButton label="אהבתי" active={vote === "like"} disabled={sending} onClick={() => send("like")}>
+              <VoteButton label="אהבתי" active={vote === "like"} onClick={() => send("like")}>
                 <ThumbsUp className="size-4" />
               </VoteButton>
               <VoteButton
                 label="לא אהבתי"
                 active={vote === "dislike" || askingWhy}
-                disabled={sending}
                 onClick={() => setAskingWhy((v) => !v)}
               >
                 <ThumbsDown className="size-4" />
@@ -177,10 +184,9 @@ function StyleFeedbackRow({
           <Button
             size="sm"
             onClick={() => send("dislike")}
-            disabled={sending || (!reasons.length && !note.trim())}
+            disabled={!reasons.length && !note.trim()}
             className="w-fit gap-1.5"
           >
-            {sending && <Loader2 className="size-3.5 animate-spin" />}
             עדכון השפה
           </Button>
         </div>
@@ -194,13 +200,11 @@ function StyleFeedbackRow({
 function VoteButton({
   label,
   active,
-  disabled,
   onClick,
   children,
 }: {
   label: string
   active: boolean
-  disabled: boolean
   onClick: () => void
   children: React.ReactNode
 }) {
@@ -209,9 +213,8 @@ function VoteButton({
       type="button"
       aria-label={label}
       aria-pressed={active}
-      disabled={disabled}
       onClick={onClick}
-      className={`flex size-8 items-center justify-center rounded-full text-text-primary-default transition-colors cursor-pointer disabled:opacity-50 ${
+      className={`flex size-8 items-center justify-center rounded-full text-text-primary-default cursor-pointer ${
         active ? "bg-bg-surface-primary-default" : "hover:bg-gray-95 dark:hover:bg-gray-30"
       }`}
     >
