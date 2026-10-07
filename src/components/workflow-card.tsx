@@ -26,6 +26,8 @@ interface WorkflowCardProps {
   onChange?: (value: string) => void
   onFocus?: () => void
   onSubmit?: () => void
+  /** True while the submit's work is running — the button can't be pressed again. */
+  submitting?: boolean
   className?: string
   // Optional product + trigger-word controls. When `products` is provided, the
   // card renders a product dropdown + trigger-word input above the textarea.
@@ -47,6 +49,7 @@ export function WorkflowCard({
   onChange,
   onFocus,
   onSubmit,
+  submitting = false,
   className,
   products,
   productId,
@@ -203,7 +206,7 @@ export function WorkflowCard({
               <Mic className="size-4" />
               {buttonLabel}
             </Button>
-            <Button onClick={onSubmit} disabled={!active || !value?.trim()}>
+            <Button onClick={onSubmit} disabled={!active || !value?.trim() || submitting}>
               {submitLabel}
             </Button>
           </div>
