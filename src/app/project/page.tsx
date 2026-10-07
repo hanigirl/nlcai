@@ -12,7 +12,7 @@ import { toast } from "sonner"
 import { registerPendingSaveFlusher } from "@/lib/pending-saves"
 import { AppShell } from "@/components/app-shell"
 import { GeminiConnectNoticeCard, useGeminiNoticeVisible } from "@/components/gemini-connect-notice"
-import { InfiniteCanvas } from "@/components/infinite-canvas"
+import { InfiniteCanvas, type InfiniteCanvasHandle } from "@/components/infinite-canvas"
 import { WorkflowCard } from "@/components/workflow-card"
 import { SelectionCard } from "@/components/selection-card"
 import { Textarea } from "@/components/ui/textarea"
@@ -296,6 +296,7 @@ function ProjectPageInner() {
   // the click stays at the bottom of the canvas and reads as "nothing
   // happened".
   const corePostResultRef = useRef<HTMLDivElement>(null)
+  const canvasRef = useRef<InfiniteCanvasHandle>(null)
 
   // Carousel state (lifted for panel persistence)
   const [carouselImages, setCarouselImages] = useState<string[] | null>(null)
@@ -1074,6 +1075,11 @@ function ProjectPageInner() {
   // instead of inserting a new one. We guard on `postId` so the saved-flow
   // load isn't racing the create.
   const draftInFlightRef = useRef(false)
+  // A create (the hook-pick draft or the first save) that may still be on
+  // its way. Async work awaits it, together with `savedPostIdRef` below,
+  // rather than trusting the `savedPostId` it closed over.
+  const creatingPostRef = useRef<Promise<string | null> | null>(null)
+  const generatingPostRef = useRef(false)
   useEffect(() => {
     if (savedPostId) return
     if (postId) return
@@ -1085,6 +1091,8 @@ function ProjectPageInner() {
     const chosenId = hookIds[selectedHook] || undefined
 
     draftInFlightRef.current = true
+    let resolveDraft: (id: string | null) => void = () => {}
+    creatingPostRef.current = new Promise((r) => { resolveDraft = r })
     fetch("/api/core-posts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1098,7 +1106,9 @@ function ProjectPageInner() {
     })
       .then((r) => r.json())
       .then((data) => {
+        resolveDraft(data.id ?? null)
         if (data.id) {
+          savedPostIdRef.current = data.id
           setSavedPostId(data.id)
           // Reflect the new draft id in the URL so a refresh recovers it
           // without re-creating. We use replaceState so Next 16's
@@ -1110,8 +1120,14 @@ function ProjectPageInner() {
           }
         }
       })
-      .catch((err) => console.error("[project][create-draft]", err))
-      .finally(() => { draftInFlightRef.current = false })
+      .catch((err) => {
+        resolveDraft(null)
+        console.error("[project][create-draft]", err)
+      })
+      .finally(() => {
+        draftInFlightRef.current = false
+        creatingPostRef.current = null
+      })
   }, [flow, savedPostId, postId, selectedHook, hooks, hookIds, idea])
 
   // If the user re-picks a hook (or edits its text) after the draft / saved
@@ -1463,6 +1479,8 @@ function ProjectPageInner() {
   }): Promise<boolean> => {
     setSavingPost(true)
     setSaveError("")
+    let resolveCreate: (id: string | null) => void = () => {}
+    creatingPostRef.current = new Promise((r) => { resolveCreate = r })
     try {
       const res = await fetch("/api/core-posts", {
         method: "POST",
@@ -1474,6 +1492,8 @@ function ProjectPageInner() {
         throw new Error(saveData?.error || `HTTP ${res.status}`)
       }
       if (saveData.id) {
+        savedPostIdRef.current = saveData.id
+        resolveCreate(saveData.id)
         setSavedPostId(saveData.id)
         setPendingSavePayload(null)
         // Update URL with post_id so a refresh re-loads this exact post
@@ -1498,6 +1518,8 @@ function ProjectPageInner() {
       setSaveError("שמירת הפוסט נכשלה — נסו שוב")
       return false
     } finally {
+      resolveCreate(null)
+      creatingPostRef.current = null
       setSavingPost(false)
     }
   }
@@ -1509,6 +1531,12 @@ function ProjectPageInner() {
 
   const handleGeneratePost = async () => {
     if (!activeHook || !response.trim()) return
+    // One generation at a time. The button stayed live while the post was
+    // being written, so a second press ran a second generation — and as
+    // neither knew the row the other was creating, each inserted its own
+    // core_post: the same post twice on /core_posts (user report, 2026-10-07).
+    if (generatingPostRef.current) return
+    generatingPostRef.current = true
 
     // Hydrate editableHook + savedHookText so the post-generation UI (which
     // mirrors the "from hook" / "from saved" rendering) has the right hook
@@ -1534,8 +1562,12 @@ function ProjectPageInner() {
     // Wait one frame so the loading chip mounts and the ref attaches before
     // we ask the browser to scroll. block: "start" lands the chip near the
     // top of the viewport so the user actually sees the spinner.
+    // Bring the "writing the post" loader into view, so pressing the button
+    // visibly starts something even when the result lands off-screen. Through
+    // the canvas: it pans with a transform, so scrollIntoView did nothing.
     requestAnimationFrame(() => {
-      corePostResultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+      const loader = corePostResultRef.current
+      if (loader) canvasRef.current?.focusOn(loader)
     })
 
     try {
@@ -1570,8 +1602,13 @@ function ProjectPageInner() {
           selectedHook !== null && hookIds[selectedHook]
             ? hookIds[selectedHook]
             : undefined
-        if (savedPostId) {
-          fetch(`/api/core-posts/${savedPostId}`, {
+        // Read the id NOW, not from this render's closure: a row created
+        // while the AI was writing (the hook-pick draft, or a save that
+        // landed a moment ago) must be updated, not duplicated.
+        const existingPostId =
+          savedPostIdRef.current ?? (await creatingPostRef.current)
+        if (existingPostId) {
+          fetch(`/api/core-posts/${existingPostId}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -1597,6 +1634,7 @@ function ProjectPageInner() {
       setPostError("שגיאה ביצירת הפוסט")
     } finally {
       setPostLoading(false)
+      generatingPostRef.current = false
     }
   }
 
@@ -1910,7 +1948,7 @@ function ProjectPageInner() {
         />
       )}
 
-      <InfiniteCanvas>
+      <InfiniteCanvas handleRef={canvasRef}>
         {apiNotConnected && (
           <div dir="rtl" className="mx-6 mt-6 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4 flex items-center justify-between">
             <p className="text-small text-text-neutral-default">
@@ -2091,6 +2129,7 @@ function ProjectPageInner() {
                       onFocus={() => setActiveCard("response")}
                       onChange={(val) => setResponse(val)}
                       onSubmit={handleGeneratePost}
+                      submitting={postLoading}
                       products={products}
                       productId={selectedProductId}
                       onProductChange={(id) => {
@@ -2158,6 +2197,7 @@ function ProjectPageInner() {
                   onFocus={() => setActiveCard("response")}
                   onChange={(val) => setResponse(val)}
                   onSubmit={handleGeneratePost}
+                      submitting={postLoading}
                   products={products}
                   productId={selectedProductId}
                   onProductChange={(id) => {
