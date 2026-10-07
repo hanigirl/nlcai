@@ -5,6 +5,15 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
 import { parseImagePostBody, type ImagePostTexts } from "@/lib/image-post-text"
 import { assertFeedSafeAspect } from "@/lib/social/media-spec"
+import { generateImage, KEEP_INSIDE_FRAME_RULE } from "@/lib/openai-image"
+import { applyFixedElements, reservedZoneLines } from "@/lib/visual-language/fixed-elements"
+import { isMediaStyle } from "@/lib/visual-language/types"
+import {
+  noExtrasRule,
+  pickComposition,
+  resolveDesignDirection,
+  type DesignDirection,
+} from "@/lib/visual-language/direction"
 
 // gpt-image-2 generation can take 60-120s; leave headroom for the normalize pass.
 export const maxDuration = 300
@@ -30,10 +39,9 @@ assertFeedSafeAspect(IMAGE_WIDTH, IMAGE_HEIGHT, "פוסט תמונה")
  * scripts, so baking the Hebrew text into the model output is now viable
  * — designed typography AND correct spelling. Still worth a human glance.
  *
- * gpt-image-2 has no documented native 4:5 size, so we generate the
- * closest portrait (1024×1536) and a thin Resvg pass center-crops it to
- * exactly 1080×1350. The prompt keeps all text in the central safe zone
- * so the crop never clips it.
+ * gpt-image-2 paints the exact 4:5 ratio (see lib/openai-image) and a thin
+ * Resvg pass scales it to exactly 1080×1350 — no trimming, so corner
+ * elements arrive whole.
  *
  * The route is pure: it returns a base64 PNG and does not persist
  * anything. The client reuses the existing upload path (Storage +
@@ -41,35 +49,20 @@ assertFeedSafeAspect(IMAGE_WIDTH, IMAGE_HEIGHT, "פוסט תמונה")
  */
 
 /**
- * Distinct visual directions, rotated by the per-post generation index so
- * consecutive attempts look meaningfully different (different palette,
- * mood, composition, and type treatment) — the user regenerates to get
- * genuine variety, not near-duplicates. Each stays legible and on-theme;
- * only the DESIGN language changes.
- */
-const STYLE_DIRECTIONS = [
-  "Bold high-contrast editorial: deep dark background, oversized cream/white headline, lots of confident negative space, minimal decoration.",
-  "Soft airy pastel: light background, delicate thin elegant typography, gentle tones, plenty of breathing room.",
-  "Vibrant duotone gradient background with punchy modern type and a single bright accent color.",
-  "Photographic: a tasteful real-world scene related to the theme, with the text over a soft dark scrim for legibility.",
-  "Warm earthy magazine layout: cream/terracotta/olive tones, a refined serif-feel headline, structured editorial grid.",
-  "Playful flat geometric: abstract color blocks and simple shapes, clean sans-serif type, cheerful and graphic.",
-  "Dark cinematic mood: near-black background with one glowing accent color and dramatic lighting around the headline.",
-  "Clean minimal light: near-white background, subtle paper/texture, precise restrained typography, a thin accent line.",
-]
-
-/**
  * Full-image prompt: the model designs the whole post, INCLUDING the
  * Hebrew text. We give it the exact lines (quoted, so it copies them
- * verbatim), a clear typographic hierarchy, RTL guidance, and a safe-zone
- * rule so the later center-crop to 4:5 never clips the text. The
- * `variationIndex` picks a distinct design direction so each regeneration
- * is visually different from the last.
+ * verbatim), a clear typographic hierarchy, RTL guidance, and a rule that
+ * nothing touches the edge.
+ *
+ * The LOOK is the user's visual language (or one derived from her niche —
+ * see lib/visual-language/direction). Regenerating keeps that language and
+ * rotates only the composition.
  */
 function buildImagePrompt(
   texts: ImagePostTexts,
   context: string,
-  variationIndex: number,
+  direction: DesignDirection,
+  composition: string,
 ): string {
   const textLines = [
     `Headline (largest, boldest, dominant): "${texts.headline}"`,
@@ -83,21 +76,12 @@ function buildImagePrompt(
     .filter(Boolean)
     .join("\n")
 
-  const direction =
-    STYLE_DIRECTIONS[
-      ((variationIndex % STYLE_DIRECTIONS.length) + STYLE_DIRECTIONS.length) %
-        STYLE_DIRECTIONS.length
-    ]
-
   return [
     "Design a complete, polished vertical (portrait) social media post image in HEBREW.",
     "",
-    // The chosen style is the AUTHORITATIVE look — stated first and
-    // forcefully so the model commits to it. We deliberately do NOT anchor
-    // a fixed "editorial/minimal" style elsewhere, otherwise every image
-    // drifts back to the same look regardless of this direction.
-    `PRIMARY DESIGN DIRECTION — commit fully to THIS look, and make it clearly, visually DIFFERENT from any other version of this post (different background, color palette, composition, and typography):`,
-    `>>> ${direction}`,
+    ...direction.lines,
+    "",
+    composition,
     "",
     "The image MUST contain exactly this Hebrew text, spelled EXACTLY as written, laid out right-to-left (RTL). Do not translate, transliterate, paraphrase, or add any other words:",
     textLines,
@@ -106,62 +90,22 @@ function buildImagePrompt(
     "- Strong visual hierarchy — the headline is clearly dominant.",
     "- Correct Hebrew letterforms and right-to-left reading order; reproduce every character precisely.",
     "- High legibility: strong contrast between text and background (use a clean area, scrim, or a solid shape behind the text if the style needs it).",
-    "- Keep ALL text within the central 70% of the height, with generous top and bottom margins, so nothing is cut off near the edges.",
+    KEEP_INSIDE_FRAME_RULE,
+    ...reservedZoneLines(direction.fixed, "single", IMAGE_WIDTH, IMAGE_HEIGHT),
     "- The mood should still relate to this post content (written in Hebrew): " +
       `"""${context}"""`,
     "",
-    "Do NOT add any text other than the exact lines above. No watermarks, no logos, no UI chrome, no borders, no signatures.",
+    `Do NOT add any text other than the exact lines above. ${noExtrasRule(direction)}`,
   ].join("\n")
-}
-
-async function generateImage(apiKey: string, prompt: string): Promise<string> {
-  const res = await fetch("https://api.openai.com/v1/images/generations", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      // gpt-image-2 (OpenAI's newest image model, Apr 2026) — ~99%
-      // character-level text accuracy and far better multi-script text
-      // rendering than gpt-image-1, which garbled Hebrew. This is the
-      // whole reason we render text in-model rather than overlaying it.
-      model: "gpt-image-2",
-      prompt,
-      size: "1024x1536", // closest documented portrait size; normalized to 4:5 via center-crop
-      // Legible Hebrew glyphs are the whole point here, so we pay for "high".
-      quality: "high",
-      n: 1,
-    }),
-  })
-
-  const json = (await res.json().catch(() => null)) as {
-    data?: Array<{ b64_json?: string }>
-    error?: { message?: string }
-  } | null
-
-  if (!res.ok || !json?.data?.[0]?.b64_json) {
-    const detail = json?.error?.message || `OpenAI החזיר ${res.status}`
-    // Billing/quota failures get actionable Hebrew instead of raw API text.
-    if (/billing|quota|insufficient/i.test(detail)) {
-      throw new Error(
-        "מפתח ה-OpenAI שלכם הגיע לתקרת החיוב. היכנסו ל-platform.openai.com → Billing כדי להוסיף קרדיט או להעלות את התקרה, ונסו שוב.",
-      )
-    }
-    throw new Error(detail)
-  }
-  return json.data[0].b64_json
 }
 
 /* ------------------------- normalize pass ------------------------ */
 
 /**
- * Center-crop the model's 1024×1536 image to an exact 1080×1350 (4:5)
- * canvas — gpt-image-2 has no documented native 4:5 size. We wrap the PNG in a
- * minimal SVG and let Resvg rasterize it; `preserveAspectRatio="xMidYMid
- * slice"` is the SVG equivalent of CSS object-fit:cover, trimming ~8% off
- * the top and bottom (inside the prompt's safe zone, so text is kept).
- * No fonts / no text — this pass draws nothing of its own.
+ * Normalise the model's image to exactly 1080×1350. The model now paints the
+ * exact ratio (lib/openai-image), so `xMidYMid slice` (CSS object-fit:cover)
+ * only scales; it trims anything only if OpenAI refused the custom size and
+ * we fell back to 1024×1536.
  */
 function cropToCanvasSvg(imageBase64: string): string {
   return (
@@ -173,9 +117,10 @@ function cropToCanvasSvg(imageBase64: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { postId, variationIndex } = (await req.json().catch(() => ({}))) as {
+    const { postId, variationIndex, style } = (await req.json().catch(() => ({}))) as {
       postId?: string
       variationIndex?: number
+      style?: unknown
     }
     if (!postId) {
       return NextResponse.json({ error: "postId is required" }, { status: 400 })
@@ -242,14 +187,24 @@ export async function POST(req: NextRequest) {
     const context = [post.title, post.hook_text, post.body?.slice(0, 600)]
       .filter(Boolean)
       .join("\n")
+    const direction = await resolveDesignDirection(supabase, user.id, {
+      format: "image_post",
+      style: isMediaStyle(style) ? style : undefined,
+    })
     const generatedBase64 = await generateImage(
       openaiKey,
-      buildImagePrompt(texts, context, variationIndex ?? 0),
+      buildImagePrompt(texts, context, direction, pickComposition(variationIndex)),
+      // Legible Hebrew glyphs are the whole point here, so we pay for "high".
+      { shape: "4:5", quality: "high", references: direction.references },
     )
 
     // Center-crop the model's image to an exact 4:5 canvas via Resvg.
     const resvg = new Resvg(cropToCanvasSvg(generatedBase64))
-    const png = Buffer.from(resvg.render().asPng()).toString("base64")
+    const png = await applyFixedElements(
+      Buffer.from(resvg.render().asPng()).toString("base64"),
+      direction.fixed,
+      "single",
+    )
 
     return NextResponse.json({ image: png, texts })
   } catch (error) {

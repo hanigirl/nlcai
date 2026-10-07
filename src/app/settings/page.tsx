@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { Loader2, Link2, Unlink, Plus, Trash2, Upload, X, Sparkles, Check, Type, Image as ImageIcon, Search, Download, AlertCircle, AlertTriangle } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
-import { ComingSoon } from "@/components/coming-soon"
+import { VisualLanguagePanel } from "@/components/visual-language-panel"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -193,7 +193,7 @@ interface UploadingFile {
   status: "uploading" | "done" | "error"
 }
 
-type MediaSection = "fonts" | "elements" | "covers" | "carousels"
+type MediaSection = "visual" | "fonts" | "covers"
 
 // Sub-sections per main tab. Module scope, not component scope, because the
 // initial state has to resolve `?sub=...` against it before the first render —
@@ -224,10 +224,11 @@ const SUB_SECTIONS: Record<SettingsTab, { id: string; label: string; icon: typeo
     { id: "list", label: "היוצרים שלכם", icon: Type },
   ],
   media: [
+    // Colours, graphic elements and design examples live together on one
+    // page — the analysis needs all three, so splitting them hid the flow.
+    { id: "visual", label: "שפה ויזואלית", icon: Sparkles },
     { id: "fonts", label: "פונטים", icon: Type },
-    { id: "elements", label: "אלמנטים גרפיים", icon: ImageIcon },
-    { id: "covers", label: "קאברים", icon: Sparkles },
-    { id: "carousels", label: "קרוסלות", icon: ImageIcon },
+    { id: "covers", label: "קאברים", icon: ImageIcon },
   ],
 }
 
@@ -261,7 +262,7 @@ function SettingsPageInner() {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
   const [activeSubSection, setActiveSubSection] = useState<string>(resolvedSub)
   const [activeMediaSection, setActiveMediaSection] = useState<MediaSection>(
-    initialTab === "media" ? (resolvedSub as MediaSection) : "fonts",
+    initialTab === "media" ? (resolvedSub as MediaSection) : "visual",
   )
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<KeyName | null>(null)
@@ -347,11 +348,8 @@ function SettingsPageInner() {
   const [googleFontSearch, setGoogleFontSearch] = useState("")
   const [showFontDropdown, setShowFontDropdown] = useState(false)
   const [fontUploading, setFontUploading] = useState<UploadingFile[]>([])
-  const [elementItems, setElementItems] = useState<MediaItem[]>([])
-  const [elementUploading, setElementUploading] = useState<UploadingFile[]>([])
   const coverInputRef = useRef<HTMLInputElement>(null)
   const fontInputRef = useRef<HTMLInputElement>(null)
-  const elementInputRef = useRef<HTMLInputElement>(null)
 
   // Close font dropdown on outside click
   useEffect(() => {
@@ -461,7 +459,6 @@ function SettingsPageInner() {
           return { id: r.id, name: r.file_name, url: isGoogle ? "" : supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl }
         }
         setFontItems(mediaRows.filter((r) => r.category === "font").map(toItem))
-        setElementItems(mediaRows.filter((r) => r.category === "element").map(toItem))
         setCoverItems(mediaRows.filter((r) => r.category === "cover").map(toItem))
       }
 
@@ -579,7 +576,7 @@ function SettingsPageInner() {
   }
 
   // --- Media upload helpers ---
-  const uploadMediaFile = useCallback(async (file: File, category: "font" | "element" | "cover", metadata: Record<string, unknown> = {}) => {
+  const uploadMediaFile = useCallback(async (file: File, category: "font" | "cover", metadata: Record<string, unknown> = {}) => {
     const supabase = createClient()
     const { data: { user } } = await getCurrentUser(supabase)
     if (!user) return null
@@ -653,21 +650,6 @@ function SettingsPageInner() {
       if (item) setFontItems((prev) => [...prev, item])
     }
     if (fontInputRef.current) fontInputRef.current.value = ""
-  }
-
-  const handleElementUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (!files) return
-    for (const file of Array.from(files)) {
-      const fileId = crypto.randomUUID()
-      setElementUploading((prev) => [...prev, { id: fileId, name: file.name, progress: 0, status: "uploading" }])
-      setElementUploading((prev) => prev.map((f) => f.id === fileId ? { ...f, progress: 50 } : f))
-      const item = await uploadMediaFile(file, "element")
-      setElementUploading((prev) => prev.map((f) => f.id === fileId ? { ...f, progress: 100, status: "done" } : f))
-      setTimeout(() => setElementUploading((prev) => prev.filter((f) => f.id !== fileId)), 1000)
-      if (item) setElementItems((prev) => [...prev, item])
-    }
-    if (elementInputRef.current) elementInputRef.current.value = ""
   }
 
   const handleAddGoogleFont = async (fontName: string) => {
@@ -1513,16 +1495,12 @@ function SettingsPageInner() {
             {/* ==================== MEDIA TAB ==================== */}
             {activeTab === "media" && (
               <div className="flex gap-8">
-                <div className="pointer-events-none opacity-50">
-                  <SubNav sections={SUB_SECTIONS.media} active={activeMediaSection} onChange={(id) => { setActiveMediaSection(id as MediaSection); setActiveSubSection(id) }} />
-                </div>
+                <SubNav sections={SUB_SECTIONS.media} active={activeMediaSection} onChange={(id) => { setActiveMediaSection(id as MediaSection); setActiveSubSection(id) }} />
 
-                {/* Content area — 50% of page, disabled with Coming Soon overlay */}
-                <div className="w-1/2 min-w-0 relative">
-                  <div className="absolute inset-0 z-10 flex items-start justify-center pt-12 bg-bg-surface/60 backdrop-blur-[2px] rounded-xl">
-                    <ComingSoon />
-                  </div>
-                  <div className="pointer-events-none opacity-40 select-none" aria-hidden="true">
+                <div className="flex-1 min-w-0 max-w-lg">
+                  {/* ── Visual language ── */}
+                  {activeMediaSection === "visual" && <VisualLanguagePanel />}
+
                   {/* ── Fonts ── */}
                   {activeMediaSection === "fonts" && (
                     <div className="flex flex-col gap-5">
@@ -1616,46 +1594,6 @@ function SettingsPageInner() {
                     </div>
                   )}
 
-                  {/* ── Graphic Elements ── */}
-                  {activeMediaSection === "elements" && (
-                    <div className="flex flex-col gap-5">
-                      <div>
-                        <h3 className="text-p-bold text-text-primary-default">אלמנטים גרפיים</h3>
-                        <p className="text-small text-text-neutral-default mt-1">לוגו, אייקונים, סטיקרים או מדבקות.</p>
-                      </div>
-
-                      <input ref={elementInputRef} type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" multiple onChange={handleElementUpload} className="hidden" />
-                      <button
-                        onClick={() => elementInputRef.current?.click()}
-                        className="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-border-neutral-default p-5 hover:bg-gray-95 dark:hover:bg-gray-20 transition-all cursor-pointer"
-                      >
-                        <Upload className="size-5 text-text-neutral-default" />
-                        <span className="text-xs text-text-neutral-default">PNG, JPG, SVG</span>
-                      </button>
-
-                      {elementUploading.map((f) => (
-                        <div key={f.id} className="flex items-center gap-2 rounded-lg bg-bg-surface p-2">
-                          <span className="text-xs text-text-primary-default truncate flex-1">{f.name}</span>
-                          {f.status === "done" ? <Check className="size-3.5 text-green-600 dark:text-green-400" /> : <Progress value={f.progress} className="w-20 h-1.5" />}
-                        </div>
-                      ))}
-
-                      {elementItems.length > 0 && (
-                        <div className="flex gap-3 flex-wrap">
-                          {elementItems.map((item) => (
-                            <div key={item.id} className="relative size-[80px] rounded-lg overflow-hidden bg-bg-surface group">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={item.url} alt={item.name} className="w-full h-full object-contain p-2" />
-                              <button onClick={async () => { await deleteMediaItem(item); setElementItems((prev) => prev.filter((e) => e.id !== item.id)) }} className="absolute top-1 end-1 size-5 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                <X className="size-3 text-white" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
                   {/* ── Covers ── */}
                   {activeMediaSection === "covers" && (
                     <div className="flex flex-col gap-5">
@@ -1701,13 +1639,13 @@ function SettingsPageInner() {
                       {analyzingStyle && (
                         <div className="flex items-center gap-2 text-sm text-text-neutral-default">
                           <Loader2 className="size-4 animate-spin" />
-                          מנתח שפה ויזואלית...
+                          מנתח את סגנון הקאברים...
                         </div>
                       )}
                       {styleAnalyzed && !analyzingStyle && (
                         <div className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400">
                           <Check className="size-4" />
-                          שפה ויזואלית נשמרה
+                          סגנון הקאברים נשמר
                         </div>
                       )}
 
@@ -1736,27 +1674,12 @@ function SettingsPageInner() {
                           className="w-fit gap-2"
                         >
                           <Sparkles className="size-4" />
-                          נתח שפה ויזואלית מחדש
+                          נתח את סגנון הקאברים מחדש
                         </Button>
                       )}
 
                     </div>
                   )}
-
-                  {/* ── Carousels (coming soon) ── */}
-                  {activeMediaSection === "carousels" && (
-                    <div className="flex flex-col gap-5">
-                      <div>
-                        <h3 className="text-p-bold text-text-primary-default">דוגמאות לקרוסלות</h3>
-                        <p className="text-small text-text-neutral-default mt-1">בקרוב</p>
-                      </div>
-                      <div className="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-border-neutral-default p-5 opacity-40">
-                        <Upload className="size-5 text-text-neutral-default" />
-                        <span className="text-xs text-text-neutral-default">PNG, JPG</span>
-                      </div>
-                    </div>
-                  )}
-                  </div>
                 </div>
               </div>
             )}

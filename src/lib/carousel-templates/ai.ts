@@ -1,20 +1,18 @@
 import type { TemplateConfig } from "./index"
 
 /**
- * The four carousel templates — all rendered by gpt-image-2 with ONE
- * shared design language (see the carousel-design skill, derived from
- * ChatGPT carousels Hani approved): conceptual 3D translucent visual per
- * slide, gradient-highlighted key word, texture accents, number badge.
- *
- * A template contributes ONLY palette/contrast/mood via `aiStyleSpec`
- * (per Hani 2026-07-09: exactly four — dark / light / vibrant / neon).
+ * The AI carousel templates. Since 2026-10-07 (Hani) "כהה" / "בהיר" no
+ * longer mean the glass-3D neon look: they render the user's NICHE language
+ * on a dark or light canvas (see lib/visual-language/direction — e.g. kids'
+ * education in dark → deep navy with playful toys). `aiStyleSpec` stays only
+ * as the marker that a template is AI-rendered; prompts don't use it.
+ * Tiles draw a mini-mock from `preview` instead of the old glass samples.
  */
 
 export const aiDarkTemplate: TemplateConfig = {
   id: "ai-dark",
-  name: "כהה (AI)",
+  name: "שפת הנישה · כהה",
   kind: "ai",
-  thumbnailUrl: "/images/carousel-templates/ai-dark.png",
   size: { width: 1080, height: 1350 },
   preview: {
     bg: "#101218",
@@ -33,9 +31,8 @@ export const aiDarkTemplate: TemplateConfig = {
 
 export const aiLightTemplate: TemplateConfig = {
   id: "ai-light",
-  name: "בהיר (AI)",
+  name: "שפת הנישה · בהיר",
   kind: "ai",
-  thumbnailUrl: "/images/carousel-templates/ai-light.png",
   size: { width: 1080, height: 1350 },
   preview: {
     bg: "#F5F8FD",
@@ -56,7 +53,6 @@ export const aiVibrantTemplate: TemplateConfig = {
   id: "ai-vibrant",
   name: "ויברנטי (AI)",
   kind: "ai",
-  thumbnailUrl: "/images/carousel-templates/ai-vibrant.png",
   size: { width: 1080, height: 1350 },
   preview: {
     bg: "#8B2FC9",
@@ -77,7 +73,6 @@ export const aiNeonTemplate: TemplateConfig = {
   id: "ai-neon",
   name: "ניאון (AI)",
   kind: "ai",
-  thumbnailUrl: "/images/carousel-templates/ai-neon.png",
   size: { width: 1080, height: 1350 },
   preview: {
     bg: "#06060F",

@@ -2,10 +2,21 @@ import { NextRequest, NextResponse } from "next/server"
 import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
-import { getTemplate } from "@/lib/carousel-templates"
+import { BRAND_TEMPLATE_ID, getTemplate } from "@/lib/carousel-templates"
 import type { SlideData } from "@/lib/carousel-templates"
 import { getAuthUser } from "@/lib/auth-user"
 import { assertFeedSafeAspect } from "@/lib/social/media-spec"
+import { generateImage, KEEP_INSIDE_FRAME_RULE } from "@/lib/openai-image"
+import {
+  applyFixedElements,
+  reservedZoneLines,
+  type ImageRole,
+} from "@/lib/visual-language/fixed-elements"
+import {
+  noExtrasRule,
+  resolveDesignDirection,
+  type DesignDirection,
+} from "@/lib/visual-language/direction"
 
 // gpt-image-2 takes 30-120s per image; several slides run with limited
 // concurrency, so leave generous headroom.
@@ -28,26 +39,19 @@ const CONCURRENCY = 3
 /**
  * AI carousel generation — gpt-image-2 (BYOK — users.openai_api_key)
  * renders each slide as a COMPLETE designed image including the Hebrew
- * text, following the template's locked `aiStyleSpec` so all slides read
- * as one series. Same model + crop approach as image-post/generate-media.
+ * text, all slides in one design direction so they read as one series:
+ * her visual language, or her niche's language in dark / light.
  *
  * The route is pure: returns base64 PNGs in the same `{ images }` shape as
  * /api/carousel/generate, so preview / ZIP / persistence reuse one path.
  */
 
-/**
- * The shared AI-carousel design language — reverse-engineered from
- * ChatGPT-designed carousels Hani approved (see the carousel-design
- * skill): real conceptual imagery + strong typography, one system.
- * Templates contribute only palette/contrast via `styleSpec`.
- */
 function buildSlidePrompt(
-  styleSpec: string,
   slide: SlideData,
   index: number,
   total: number,
   topic: string,
-  niche: string | null,
+  direction: DesignDirection,
 ): string {
   const role =
     slide.type === "cover"
@@ -71,62 +75,24 @@ function buildSlidePrompt(
     "",
     role,
     "",
-    "Design language (IDENTICAL across every slide of this series):",
-    "- One conceptual 3D-rendered translucent glass visual that makes THIS slide's message physical — a real object or scene embodying the idea (e.g. fanned phone screens for designing screens, building bricks for building blocks, flowing waves for an abstract statement). It frames or surrounds the text; imagery and text share the composition without crowding each other.",
-    ...(niche
-      ? [
-          `- The creator's niche is: """${niche}""". Draw the visual's objects and metaphors from this niche's world, combined with what THIS slide says — the imagery should instantly feel like it belongs to this niche (its tools, environments, symbols and vibe), never generic stock decoration.`,
-        ]
-      : []),
-    "- Canvas: rich and atmospheric with a subtle vignette and soft gradient lighting — premium, never flat, never busy.",
-    "- Typography: bold, modern Hebrew type with a clear hierarchy INSIDE the text — the single most important word or phrase of this slide is set in the accent gradient and one size step up; the rest stays clean and highly readable.",
-    "- Texture: soft flowing gradient lines, gentle glow edges or light streaks as background accents.",
-    `- A small circular badge with the number ${index + 1} in a bottom corner.`,
+    "Design (IDENTICAL across every slide of this series):",
+    ...direction.lines,
+    "- The imagery makes THIS slide's message visible — drawn from the topic and rendered in the visual language above, never generic stock decoration.",
+    "- Typography: Hebrew type with a clear hierarchy INSIDE the text — the single most important word or phrase is emphasised the way the visual language describes; the rest stays clean and highly readable.",
+    `- A small circular badge with the number ${index + 1} in a bottom corner, styled in the visual language.`,
     "",
-    styleSpec,
+    ...reservedZoneLines(direction.fixed, slideRole(slide), IMAGE_WIDTH, IMAGE_HEIGHT),
     "",
-    "Keep all text within the central 70% of the height (generous top/bottom margins). No watermarks, logos, borders, or extra words.",
+    KEEP_INSIDE_FRAME_RULE,
+    `${noExtrasRule(direction)} No extra words.`,
   ].join("\n")
 }
 
-async function generateImage(apiKey: string, prompt: string): Promise<string> {
-  const res = await fetch("https://api.openai.com/v1/images/generations", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      // gpt-image-2 — ~99% character-level text accuracy across scripts;
-      // legible Hebrew glyphs are the whole point, so we pay for "high"
-      // (same reasoning as image-post/generate-media).
-      model: "gpt-image-2",
-      prompt,
-      size: "1024x1536", // closest documented portrait; center-cropped to 4:5
-      quality: "high",
-      n: 1,
-    }),
-  })
-
-  const json = (await res.json().catch(() => null)) as {
-    data?: Array<{ b64_json?: string }>
-    error?: { message?: string }
-  } | null
-
-  if (!res.ok || !json?.data?.[0]?.b64_json) {
-    const detail = json?.error?.message || `OpenAI החזיר ${res.status}`
-    // Billing/quota failures get actionable Hebrew instead of raw API text.
-    if (/billing|quota|insufficient/i.test(detail)) {
-      throw new Error(
-        "מפתח ה-OpenAI שלכם הגיע לתקרת החיוב. היכנסו ל-platform.openai.com → Billing כדי להוסיף קרדיט או להעלות את התקרה, ונסו שוב.",
-      )
-    }
-    throw new Error(detail)
-  }
-  return json.data[0].b64_json
+function slideRole(slide: SlideData): ImageRole {
+  return slide.type === "cover" ? "cover" : slide.type === "cta" ? "closing" : "content"
 }
 
-/** Center-crop 1024×1536 → exact 1080×1350, same as image-post. */
+/** Scale the 4:5 render to exactly 1080×1350 (trims only on the 1024×1536 fallback). */
 function cropToCanvas(imageBase64: string): string {
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${IMAGE_WIDTH}" height="${IMAGE_HEIGHT}" viewBox="0 0 ${IMAGE_WIDTH} ${IMAGE_HEIGHT}">` +
@@ -158,8 +124,9 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const template = templateId ? getTemplate(templateId) : undefined
-    if (!template || template.kind !== "ai" || !template.aiStyleSpec) {
+    const isBrandTemplate = templateId === BRAND_TEMPLATE_ID
+    const template = templateId && !isBrandTemplate ? getTemplate(templateId) : undefined
+    if (!isBrandTemplate && (!template || template.kind !== "ai" || !template.aiStyleSpec)) {
       return NextResponse.json(
         { error: `Template "${templateId}" is not an AI template` },
         { status: 400 },
@@ -190,22 +157,33 @@ export async function POST(req: NextRequest) {
       throw err
     }
 
-    const styleSpec = template.aiStyleSpec
     const total = slides.length
     const images: string[] = new Array(total)
 
-    // The carousel's topic anchors every slide's imagery to the content;
-    // the creator's niche anchors it to their WORLD (health niche → health
-    // objects/environments/vibe). Both feed every slide prompt.
+    // The carousel's topic anchors every slide's imagery to the content.
     const topic = slides[0]?.title ?? ""
-    const { data: identityRow } = await supabase
-      .from("core_identities")
-      .select("niche")
-      .eq("user_id", user.id)
-      .single()
-    const niche =
-      ((identityRow as { niche?: string | null } | null)?.niche ?? "").trim() ||
-      null
+
+    // "השפה הוויזואלית שלך" designs from her analysed language. "כהה" /
+    // "בהיר" are her NICHE's language on a dark / light canvas — never the
+    // old glass-3D neon look (Hani, 2026-10-07).
+    let direction: DesignDirection
+    if (isBrandTemplate) {
+      direction = await resolveDesignDirection(supabase, user.id, { format: "carousel" })
+      if (direction.source !== "brand") {
+        return NextResponse.json(
+          {
+            error: "no_visual_language",
+            message: "עדיין אין שפה ויזואלית מנותחת. הגדירו אותה בהגדרות ← מדיה ← שפה ויזואלית, או בחרו טמפלט אחר.",
+          },
+          { status: 400 },
+        )
+      }
+    } else {
+      direction = await resolveDesignDirection(supabase, user.id, {
+        format: "carousel",
+        style: templateId === "ai-light" ? "ai-light" : templateId === "ai-dark" ? "ai-dark" : "niche",
+      })
+    }
 
     // Simple concurrency pool — kinder to OpenAI rate limits than firing
     // all slides at once, much faster than fully sequential.
@@ -213,16 +191,15 @@ export async function POST(req: NextRequest) {
     async function worker() {
       while (next < total) {
         const i = next++
-        const prompt = buildSlidePrompt(
-          styleSpec,
-          slides![i],
-          i,
-          total,
-          topic,
-          niche,
-        )
-        const raw = await generateImage(openaiKey, prompt)
-        images[i] = cropToCanvas(raw)
+        const prompt = buildSlidePrompt(slides![i], i, total, topic, direction)
+        const raw = await generateImage(openaiKey, prompt, {
+          shape: "4:5",
+          // Legible Hebrew glyphs are the whole point, so we pay for "high".
+          quality: "high",
+          references: direction.references,
+        })
+        // Fixed brand elements go in by code — same pixels on every slide.
+        images[i] = await applyFixedElements(cropToCanvas(raw), direction.fixed, slideRole(slides![i]))
       }
     }
     await Promise.all(

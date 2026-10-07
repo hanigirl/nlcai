@@ -1,4 +1,6 @@
+import { rememberAiStyle } from "@/lib/ai-style-provenance"
 import { toast } from "sonner"
+import type { MediaStyle } from "@/lib/visual-language/types"
 import { flushPendingSaves } from "@/lib/pending-saves"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
@@ -156,7 +158,7 @@ export function getGenerationSnapshot(key: string): GenerationState {
  * repeatedly — each call runs in parallel and appends its own result.
  * Never throws (failures surface as a toast).
  */
-export function startImageGeneration(postId: string): void {
+export function startImageGeneration(postId: string, style?: MediaStyle): void {
   if (!postId) return
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   // Steers this attempt toward a design distinct from the previous ones.
@@ -175,7 +177,7 @@ export function startImageGeneration(postId: string): void {
       const res = await fetch("/api/image-post/generate-media", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, variationIndex }),
+        body: JSON.stringify({ postId, variationIndex, style }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         image?: string
@@ -215,6 +217,7 @@ export function startImageGeneration(postId: string): void {
           return
         }
         update(postId, (s) => ({ ...s, saved: entry }))
+        if (style) rememberAiStyle(postId, "image_post", style, entry)
       }
       toast.success("התמונה מוכנה ונשמרה", {
         id: toastId,

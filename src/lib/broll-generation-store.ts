@@ -1,3 +1,5 @@
+import { rememberAiStyle } from "@/lib/ai-style-provenance"
+import type { MediaStyle } from "@/lib/visual-language/types"
 import { toast } from "sonner"
 import { flushPendingSaves } from "@/lib/pending-saves"
 
@@ -125,6 +127,7 @@ export function getBRollGenerationSnapshot(postId: string | null): BRollState {
 export function startBRollGeneration(
   postId: string,
   variationIndex: number,
+  style?: MediaStyle,
 ): void {
   if (!postId) return
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
@@ -142,7 +145,7 @@ export function startBRollGeneration(
       const res = await fetch("/api/b-roll/generate-media", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, variationIndex }),
+        body: JSON.stringify({ postId, variationIndex, style }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         url?: string
@@ -157,6 +160,7 @@ export function startBRollGeneration(
         return
       }
       update(postId, (s) => ({ ...s, url: data.url as string }))
+      if (style) rememberAiStyle(postId, "b_roll", style, data.url)
       toast.success("הבי-רול נוצר", { id: toastId, duration: 4000 })
     } catch (err) {
       toast.error(
