@@ -88,8 +88,8 @@ function StyleFeedbackRow({
   // (a like copies the image, a dislike is a Claude rewrite — seconds).
   // On failure the vote is rolled back with an error.
   const send = async (verdict: "like" | "dislike") => {
-    // One vote per media — once cast, it's final.
-    if (vote) return
+    // Re-sending the vote that's already in place does nothing.
+    if (verdict === vote) return
     const prevVote = vote
     setVote(verdict)
     setAskingWhy(false)
@@ -135,13 +135,14 @@ function StyleFeedbackRow({
           <div className="flex w-full items-center justify-between px-5">
             <p className="text-xs text-gray-40">אהבת את מה שיצרנו?</p>
             <div className="flex items-center gap-1" role="group" aria-label="פידבק על הסגנון">
-              {/* One choice per media (Hani, 2026-10-07): after a vote both
-                  are locked, and while the dislike reasons are open 👍 is
-                  locked — tapping 👎 again closes them and frees it. */}
+              {/* A single choice (Hani, 2026-10-07): only one thumb is ever
+                  filled, and she can switch. Opening the dislike reasons
+                  un-fills 👍 at once; closing them (tap 👎 again) restores
+                  it; submitting makes 👎 the vote. 👍 switches directly. */}
               <VoteButton
                 label="אהבתי"
-                active={vote === "like"}
-                locked={vote !== null || askingWhy}
+                active={vote === "like" && !askingWhy}
+                locked={vote === "like" && !askingWhy}
                 tilt="-14deg"
                 onClick={() => send("like")}
               >
@@ -150,7 +151,7 @@ function StyleFeedbackRow({
               <VoteButton
                 label="לא אהבתי"
                 active={vote === "dislike" || askingWhy}
-                locked={vote !== null}
+                locked={vote === "dislike" && !askingWhy}
                 tilt="14deg"
                 onClick={() => setAskingWhy((v) => !v)}
               >
@@ -224,7 +225,7 @@ function VoteButton({
 }: {
   label: string
   active: boolean
-  /** Not tappable. The chosen one stays filled; the other one dims. */
+  /** It's the current vote — tapping it again does nothing. */
   locked: boolean
   /** Which way the pop leans — toward the thumb's direction. */
   tilt: string
@@ -244,11 +245,7 @@ function VoteButton({
       }}
       className={`flex size-8 items-center justify-center rounded-full ${
         active ? "text-button-primary-default" : "text-text-primary-default"
-      } ${
-        locked
-          ? `cursor-default ${active ? "" : "opacity-30"}`
-          : "cursor-pointer hover:bg-gray-95 dark:hover:bg-gray-30"
-      }`}
+      } ${locked ? "cursor-default" : "cursor-pointer hover:bg-gray-95 dark:hover:bg-gray-30"}`}
     >
       <span
         key={taps}
