@@ -28,6 +28,12 @@ type BRollState = {
   url: string | null
   /** How many caption burns are running for this post. */
   burning: number
+  /**
+   * The format of each running burn, one entry per burn. `burning` alone
+   * can't say whether the story or the b-roll is the one waiting, and the
+   * canvas needs to know which card to hold a skeleton for.
+   */
+  burningFormats: string[]
   /** The most recently burned clip, and which format it belongs to. */
   burned: { url: string; format: string } | null
   /** Whether a story Drive import is running for this post. */
@@ -40,6 +46,8 @@ type BRollState = {
   storyFrames: string[] | null
   /** How many STILL-image caption renders are running for this post. */
   captioningImage: number
+  /** The format of each running still-caption render — see `burningFormats`. */
+  captioningFormats: string[]
   /**
    * The most recent captioned still, its untouched original, and which
    * format it belongs to. Both URLs are kept because the panel offers the
@@ -58,17 +66,25 @@ const EMPTY: BRollState = {
   inFlight: 0,
   url: null,
   burning: 0,
+  burningFormats: [],
   burned: null,
   storyImporting: false,
   storyProgress: "",
   storyError: null,
   storyFrames: null,
   captioningImage: 0,
+  captioningFormats: [],
   captionedImage: null,
   captionImageError: null,
 }
 
 const states = new Map<string, BRollState>()
+
+/** Drop ONE occurrence — two burns of the same format can overlap. */
+function withoutOne(list: string[], item: string): string[] {
+  const i = list.indexOf(item)
+  return i === -1 ? list : [...list.slice(0, i), ...list.slice(i + 1)]
+}
 const listeners = new Map<string, Set<() => void>>()
 let toastSeq = 0
 
@@ -167,7 +183,11 @@ export function startBRollGeneration(
  */
 export function startCaptionBurn(postId: string, format: string): void {
   if (!postId) return
-  update(postId, (s) => ({ ...s, burning: s.burning + 1 }))
+  update(postId, (s) => ({
+    ...s,
+    burning: s.burning + 1,
+    burningFormats: [...s.burningFormats, format],
+  }))
   const toastId = `caption-burn-${++toastSeq}`
   toast.loading("מטמיעים את הכיתוב בסרטון...", {
     id: toastId,
@@ -209,7 +229,11 @@ export function startCaptionBurn(postId: string, format: string): void {
         { id: toastId, duration: 10000 },
       )
     } finally {
-      update(postId, (s) => ({ ...s, burning: Math.max(0, s.burning - 1) }))
+      update(postId, (s) => ({
+        ...s,
+        burning: Math.max(0, s.burning - 1),
+        burningFormats: withoutOne(s.burningFormats, format),
+      }))
     }
   })()
 }
@@ -241,6 +265,7 @@ export function startImageCaption(
   update(postId, (s) => ({
     ...s,
     captioningImage: s.captioningImage + 1,
+    captioningFormats: [...s.captioningFormats, format],
     captionImageError: null,
   }))
   const toastId = `image-caption-${++toastSeq}`
@@ -299,6 +324,7 @@ export function startImageCaption(
       update(postId, (s) => ({
         ...s,
         captioningImage: Math.max(0, s.captioningImage - 1),
+        captioningFormats: withoutOne(s.captioningFormats, format),
       }))
     }
   })()

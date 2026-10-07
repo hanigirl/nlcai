@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipLabel } from "@/components/ui/tooltip"
 import { MediaPanel } from "@/components/media-panel"
+import { useFormatMediaBusy } from "@/hooks/use-format-media-busy"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { CorePostCelebration } from "@/components/core-post-celebration"
 import { ScheduleInCalendarBar } from "@/components/schedule-in-calendar-bar"
@@ -356,6 +357,13 @@ function ProjectPageInner() {
 
   // Saved post tracking
   const [savedPostId, setSavedPostId] = useState<string | null>(postId || null)
+  // Per-format "media is being made" — drives the skeleton card on the canvas.
+  const { busy: mediaBusy, onPanelBusyChange } = useFormatMediaBusy(savedPostId, {
+    onStoryImages: setStoryImages,
+    onStoryVideoUrl: setStoryVideoUrl,
+    onImagePostUrl: setImagePostUrl,
+    onBRollUrl: setBRollUrl,
+  })
   const [savedPostLoading, setSavedPostLoading] = useState(!!postId)
   const [savedHookText, setSavedHookText] = useState("")
   // Save lifecycle for the auto-POST that persists a freshly-generated core
@@ -1861,6 +1869,7 @@ function ProjectPageInner() {
         onImagePostUrlChange={setImagePostUrl}
         onStoryImagesChange={setStoryImages}
         onStoryVideoUrlChange={setStoryVideoUrl}
+        onMediaBusyChange={onPanelBusyChange}
       />
 
       {/* "Keep chatting about the post" floating panel — sibling to the
@@ -2447,6 +2456,7 @@ function ProjectPageInner() {
                           hookText={activeHook}
                           thVideoUrl={thVideoUrl}
                           thVideoLoading={thVideoLoading}
+                          mediaBusy={mediaBusy}
                           thVideoCardRef={thVideoCardRef}
                           onThReRecord={() => {
                             setThAudioBlob(null)
@@ -2657,6 +2667,7 @@ function FormatTree({
   hookText,
   thVideoUrl,
   thVideoLoading,
+  mediaBusy,
   thVideoCardRef,
   onThReRecord,
   onThDelete,
@@ -2702,6 +2713,8 @@ function FormatTree({
   hookText: string
   thVideoUrl: string | null
   thVideoLoading: boolean
+  /** Formats whose media is being made right now — see useFormatMediaBusy. */
+  mediaBusy: Record<string, boolean>
   thVideoCardRef: React.RefObject<HTMLDivElement | null>
   onThReRecord: () => void
   onThDelete: () => void
@@ -2879,7 +2892,7 @@ function FormatTree({
               {/* Video skeleton — placeholder while the saved post is being
                   loaded from DB and we don't yet know if there is a video.
                   Same shape as the real card so the layout doesn't jump. */}
-              {fid === "talking_head" && !thVideoUrl && thVideoLoading && (
+              {fid === "talking_head" && ((!thVideoUrl && thVideoLoading) || mediaBusy.talking_head) && (
                 <>
                   <div className="w-[2px] h-7 bg-gray-80" />
                   <div
@@ -2905,7 +2918,7 @@ function FormatTree({
               )}
 
               {/* Video result below talking_head card */}
-              {fid === "talking_head" && thVideoUrl && (
+              {fid === "talking_head" && thVideoUrl && !mediaBusy.talking_head && (
                 <>
                   {/* Connector line */}
                   <div className="w-[2px] h-7 bg-gray-80" />
@@ -3119,7 +3132,10 @@ function FormatTree({
               )}
 
               {/* Carousel result below carousel card */}
-              {fid === "carousel" && carouselImages && carouselImages.length > 0 && (
+              {fid === "carousel" && mediaBusy.carousel && (
+                <MediaSkeletonCard title="הקרוסלה שלכם" icon={Layers} preview="w-full aspect-square" pager />
+              )}
+              {fid === "carousel" && !mediaBusy.carousel && carouselImages && carouselImages.length > 0 && (
                 <CarouselResultCard
                   images={carouselImages}
                   cardRef={carouselCardRef}
@@ -3140,7 +3156,10 @@ function FormatTree({
                   The clip is appended only when it isn't already a frame —
                   the burn flow writes it as a standalone video asset, and
                   dropping the card outright would have lost it. */}
-              {fid === "story" && (() => {
+              {fid === "story" && mediaBusy.story && (
+                <MediaSkeletonCard title="הסטורי שלכם" icon={Smartphone} preview="w-[200px] aspect-[9/16]" squareButtons={1} />
+              )}
+              {fid === "story" && !mediaBusy.story && (() => {
                 const frames = [
                   ...(storyImages ?? []),
                   ...(storyVideoUrl && !(storyImages ?? []).includes(storyVideoUrl)
@@ -3170,7 +3189,10 @@ function FormatTree({
                   Before this the card rendered `bRollUrl` in a <video> no
                   matter what it was, so a still hydrated from storage came
                   back as an empty player (Hani, 2026-08-13). */}
-              {fid === "b_roll" && bRollUrl && (
+              {fid === "b_roll" && mediaBusy.b_roll && (
+                <MediaSkeletonCard title="הבי-רול שלכם" icon={Film} preview="w-[200px] aspect-[9/16]" />
+              )}
+              {fid === "b_roll" && !mediaBusy.b_roll && bRollUrl && (
                 <>
                   <div className="w-[2px] h-7 bg-gray-80" />
                   <div
@@ -3235,7 +3257,10 @@ function FormatTree({
                   has generated + approved (or uploaded) an image. Same
                   connected-card pattern as the talking_head video/cover
                   cards above. */}
-              {fid === "image_post" && imagePostUrl && (
+              {fid === "image_post" && mediaBusy.image_post && (
+                <MediaSkeletonCard title="התמונה שלכם" icon={Image} preview="w-[200px] aspect-[4/5]" />
+              )}
+              {fid === "image_post" && !mediaBusy.image_post && imagePostUrl && (
                 <>
                   <div className="w-[2px] h-7 bg-gray-80" />
                   <div
@@ -3610,6 +3635,68 @@ function StoryResultCard({
                 )}
               </Button>
             </TooltipLabel>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Media skeleton card                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Stand-in for a format's media card while that media is being made — an AI
+ * generation, a Drive import, an upload, a caption burn. Same connector,
+ * shell and header as the real card (title and icon included, so it's clear
+ * WHAT is on its way), with the preview and the action row as skeletons, so
+ * the canvas doesn't jump when the result lands.
+ */
+function MediaSkeletonCard({
+  title,
+  icon: Icon,
+  preview,
+  pager = false,
+  squareButtons = 0,
+}: {
+  title: string
+  icon: LucideIcon
+  /** Size + aspect of the real card's preview, e.g. "w-[200px] aspect-[9/16]". */
+  preview: string
+  /** Carousel: the slide pager row under the preview. */
+  pager?: boolean
+  /** Icon buttons beside the main action (story's download). */
+  squareButtons?: number
+}) {
+  return (
+    <>
+      <div className="w-[2px] h-7 bg-gray-80" />
+      <div
+        dir="rtl"
+        role="status"
+        aria-busy="true"
+        className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
+      >
+        <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface-primary-default-80">
+          <span className="text-p-bold text-text-primary-default">{title}</span>
+          <Icon className="size-4 text-text-neutral-default" />
+          <span className="sr-only">נוצר עכשיו</span>
+        </div>
+        <div className="px-6 flex flex-col items-center gap-4">
+          <Skeleton className={`${preview} rounded-xl`} />
+          {pager && (
+            <div className="flex items-center gap-3">
+              <Skeleton className="size-7 rounded-lg" />
+              <Skeleton className="h-3 w-10" />
+              <Skeleton className="size-7 rounded-lg" />
+            </div>
+          )}
+          <div className="flex gap-3 w-full items-center">
+            <Skeleton className="flex-1 h-11 rounded-[12px]" />
+            {Array.from({ length: squareButtons }, (_, i) => (
+              <Skeleton key={i} className="w-11 h-11 rounded-[12px]" />
+            ))}
           </div>
         </div>
       </div>
