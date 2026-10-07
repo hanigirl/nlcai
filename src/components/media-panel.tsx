@@ -2939,6 +2939,11 @@ function MediaUploadFlow({
     }
   }
 
+  // Image post / story / b-roll style: her visual language, the niche
+  // language, or its dark / light version — picked in the AI card, like the
+  // carousel templates.
+  const mediaStyle = useMediaStyle()
+
   /**
    * Fire an AI image generation for this post. Delegates to the module
    * store, which runs the fetch detached — so it keeps going (and its
@@ -2951,12 +2956,8 @@ function MediaUploadFlow({
       toast.error("שמרו קודם את הפוסט כדי לייצר תמונה", { duration: 4000 })
       return
     }
-    startImageGeneration(postId)
+    startImageGeneration(postId, mediaStyle.style)
   }
-
-  // Story / b-roll style: her visual language, the niche language, or a
-  // dark / light template — picked in the AI card, like carousel templates.
-  const mediaStyle = useMediaStyle()
 
   /** Fire an AI story generation (produces a 1-3 frame set). */
   const handleStoryGenerate = () => {
@@ -3769,6 +3770,12 @@ function MediaUploadFlow({
                 ניצור תמונה מעוצבת לפי תוכן הפוסט, עם הטקסט של הפורמט משולב
                 בעיצוב
               </span>
+              <MediaStylePicker
+                value={mediaStyle.style}
+                onChange={mediaStyle.setStyle}
+                brandTemplate={mediaStyle.brandTemplate}
+                aspect="4/5"
+              />
               <Button
                 variant="outline"
                 onClick={handleAiGenerate}

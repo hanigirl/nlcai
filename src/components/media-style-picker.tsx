@@ -7,7 +7,7 @@ import { useBrandCarouselTemplate } from "@/hooks/use-brand-carousel-template"
 import type { MediaStyle } from "@/lib/visual-language/types"
 
 /**
- * Style picker for AI story / b-roll — the same idea as the carousel's
+ * Style picker for AI image post / story / b-roll — the same idea as the carousel's
  * template grid: her own visual language (when analysed), a language that
  * fits her niche, or the dark / light AI templates.
  *
@@ -30,11 +30,14 @@ export function MediaStylePicker({
   onChange,
   brandTemplate,
   label = "סגנון",
+  aspect = "9/16",
 }: {
   value: MediaStyle
   onChange: (s: MediaStyle) => void
   brandTemplate: TemplateConfig | null
   label?: string
+  /** Tile shape — the format's own: 9/16 story & b-roll, 4/5 image post. */
+  aspect?: "9/16" | "4/5"
 }) {
   const dark = getTemplate("ai-dark")
   const light = getTemplate("ai-light")
@@ -101,7 +104,9 @@ export function MediaStylePicker({
                 selected ? "border-yellow-50 ring-1 ring-yellow-50" : "border-border-neutral-default hover:border-gray-80"
               }`}
             >
-              <div className="aspect-[9/16] w-full overflow-hidden rounded-md">{o.thumb}</div>
+              <div className={`${aspect === "4/5" ? "aspect-[4/5]" : "aspect-[9/16]"} w-full overflow-hidden rounded-md`}>
+                {o.thumb}
+              </div>
               <span className="line-clamp-3 text-center text-[11px] leading-tight text-text-primary-default">
                 {o.name}
               </span>

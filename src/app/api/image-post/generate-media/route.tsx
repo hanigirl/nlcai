@@ -7,6 +7,7 @@ import { parseImagePostBody, type ImagePostTexts } from "@/lib/image-post-text"
 import { assertFeedSafeAspect } from "@/lib/social/media-spec"
 import { generateImage, KEEP_INSIDE_FRAME_RULE } from "@/lib/openai-image"
 import { applyFixedElements, reservedZoneLines } from "@/lib/visual-language/fixed-elements"
+import { isMediaStyle } from "@/lib/visual-language/types"
 import {
   noExtrasRule,
   pickComposition,
@@ -116,9 +117,10 @@ function cropToCanvasSvg(imageBase64: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { postId, variationIndex } = (await req.json().catch(() => ({}))) as {
+    const { postId, variationIndex, style } = (await req.json().catch(() => ({}))) as {
       postId?: string
       variationIndex?: number
+      style?: unknown
     }
     if (!postId) {
       return NextResponse.json({ error: "postId is required" }, { status: 400 })
@@ -185,7 +187,10 @@ export async function POST(req: NextRequest) {
     const context = [post.title, post.hook_text, post.body?.slice(0, 600)]
       .filter(Boolean)
       .join("\n")
-    const direction = await resolveDesignDirection(supabase, user.id, { format: "image_post" })
+    const direction = await resolveDesignDirection(supabase, user.id, {
+      format: "image_post",
+      style: isMediaStyle(style) ? style : undefined,
+    })
     const generatedBase64 = await generateImage(
       openaiKey,
       buildImagePrompt(texts, context, direction, pickComposition(variationIndex)),
