@@ -302,7 +302,10 @@ export function MediaPanel({
             NOTE: this used to promise "upload from your computer". There is no
             file input anywhere in this component — that path was removed — so
             the copy was advertising a button that does not exist. */}
-        {meta && formatId !== "story" && formatId !== "b_roll" && formatId !== "image_post" && (
+        {/* Not on the avatar picker: an avatar render has nothing to do with
+            AI media or Drive / Canva links (Hani, 2026-10-07). */}
+        {meta && formatId !== "story" && formatId !== "b_roll" && formatId !== "image_post" &&
+          !(formatId === "talking_head" && (thAvatar || thSourceMode === "avatar")) && (
           <p className="mb-4 text-small text-text-neutral-default">
             אפשר לייצר מדיה עם AI או לתת קישור מגוגל דרייב או קנבה לתמונה / סרטון שמאוחסן שם.
           </p>
