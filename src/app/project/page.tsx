@@ -12,7 +12,7 @@ import { toast } from "sonner"
 import { registerPendingSaveFlusher } from "@/lib/pending-saves"
 import { AppShell } from "@/components/app-shell"
 import { GeminiConnectNoticeCard, useGeminiNoticeVisible } from "@/components/gemini-connect-notice"
-import { InfiniteCanvas } from "@/components/infinite-canvas"
+import { InfiniteCanvas, type InfiniteCanvasHandle } from "@/components/infinite-canvas"
 import { WorkflowCard } from "@/components/workflow-card"
 import { SelectionCard } from "@/components/selection-card"
 import { Textarea } from "@/components/ui/textarea"
@@ -296,6 +296,7 @@ function ProjectPageInner() {
   // the click stays at the bottom of the canvas and reads as "nothing
   // happened".
   const corePostResultRef = useRef<HTMLDivElement>(null)
+  const canvasRef = useRef<InfiniteCanvasHandle>(null)
 
   // Carousel state (lifted for panel persistence)
   const [carouselImages, setCarouselImages] = useState<string[] | null>(null)
@@ -1561,8 +1562,12 @@ function ProjectPageInner() {
     // Wait one frame so the loading chip mounts and the ref attaches before
     // we ask the browser to scroll. block: "start" lands the chip near the
     // top of the viewport so the user actually sees the spinner.
+    // Bring the "writing the post" loader into view, so pressing the button
+    // visibly starts something even when the result lands off-screen. Through
+    // the canvas: it pans with a transform, so scrollIntoView did nothing.
     requestAnimationFrame(() => {
-      corePostResultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+      const loader = corePostResultRef.current
+      if (loader) canvasRef.current?.focusOn(loader)
     })
 
     try {
@@ -1943,7 +1948,7 @@ function ProjectPageInner() {
         />
       )}
 
-      <InfiniteCanvas>
+      <InfiniteCanvas handleRef={canvasRef}>
         {apiNotConnected && (
           <div dir="rtl" className="mx-6 mt-6 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4 flex items-center justify-between">
             <p className="text-small text-text-neutral-default">

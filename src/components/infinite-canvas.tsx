@@ -5,23 +5,58 @@ import {
   useState,
   useCallback,
   useEffect,
+  useImperativeHandle,
   type ReactNode,
+  type Ref,
   type MouseEvent,
   type WheelEvent,
 } from "react"
 import { Minus, Plus, Maximize } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
-interface InfiniteCanvasProps {
-  children: ReactNode
+export interface InfiniteCanvasHandle {
+  /**
+   * Glide the canvas so `el` sits in the middle of the view. The canvas pans
+   * with a transform, so the browser's own `scrollIntoView` does nothing
+   * here — anything that wants to show the user a card has to ask the canvas.
+   */
+  focusOn: (el: HTMLElement) => void
 }
 
-export function InfiniteCanvas({ children }: InfiniteCanvasProps) {
+interface InfiniteCanvasProps {
+  children: ReactNode
+  handleRef?: Ref<InfiniteCanvasHandle>
+}
+
+/** How long a programmatic glide takes; hand panning stays instant. */
+const FOCUS_MS = 450
+
+export function InfiniteCanvas({ children, handleRef }: InfiniteCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
   const [scale, setScale] = useState(0.9)
   const [isPanning, setIsPanning] = useState(false)
   const [panStart, setPanStart] = useState({ x: 0, y: 0 })
+  const [gliding, setGliding] = useState(false)
+  const glideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useImperativeHandle(handleRef, () => ({
+    focusOn: (el) => {
+      const view = containerRef.current?.getBoundingClientRect()
+      if (!view) return
+      const box = el.getBoundingClientRect()
+      // Centre it; a card taller than the view keeps its top in sight instead.
+      const dx = view.left + view.width / 2 - (box.left + box.width / 2)
+      const dy =
+        box.height > view.height * 0.8
+          ? view.top + 80 - box.top
+          : view.top + view.height / 2 - (box.top + box.height / 2)
+      setGliding(true)
+      setOffset((o) => ({ x: o.x + dx, y: o.y + dy }))
+      if (glideTimer.current) clearTimeout(glideTimer.current)
+      glideTimer.current = setTimeout(() => setGliding(false), FOCUS_MS)
+    },
+  }), [])
 
   const handleMouseDown = useCallback(
     (e: MouseEvent) => {
@@ -116,6 +151,7 @@ export function InfiniteCanvas({ children }: InfiniteCanvasProps) {
           style={{
             transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
             transformOrigin: "0 0",
+            transition: gliding ? `transform ${FOCUS_MS}ms ease-out` : undefined,
           }}
         >
           {children}
