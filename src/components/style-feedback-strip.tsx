@@ -88,7 +88,8 @@ function StyleFeedbackRow({
   // (a like copies the image, a dislike is a Claude rewrite — seconds).
   // On failure the vote is rolled back with an error.
   const send = async (verdict: "like" | "dislike") => {
-    if (verdict === vote && verdict === "like") return
+    // One vote per media — once cast, it's final.
+    if (vote) return
     const prevVote = vote
     setVote(verdict)
     setAskingWhy(false)
@@ -134,12 +135,22 @@ function StyleFeedbackRow({
           <div className="flex w-full items-center justify-between px-5">
             <p className="text-xs text-gray-40">אהבת את מה שיצרנו?</p>
             <div className="flex items-center gap-1" role="group" aria-label="פידבק על הסגנון">
-              <VoteButton label="אהבתי" active={vote === "like"} tilt="-14deg" onClick={() => send("like")}>
+              {/* One choice per media (Hani, 2026-10-07): after a vote both
+                  are locked, and while the dislike reasons are open 👍 is
+                  locked — tapping 👎 again closes them and frees it. */}
+              <VoteButton
+                label="אהבתי"
+                active={vote === "like"}
+                locked={vote !== null || askingWhy}
+                tilt="-14deg"
+                onClick={() => send("like")}
+              >
                 {(filled) => <ThumbsUp className="size-4" fill={filled ? "currentColor" : "none"} />}
               </VoteButton>
               <VoteButton
                 label="לא אהבתי"
                 active={vote === "dislike" || askingWhy}
+                locked={vote !== null}
                 tilt="14deg"
                 onClick={() => setAskingWhy((v) => !v)}
               >
@@ -206,12 +217,15 @@ function StyleFeedbackRow({
 function VoteButton({
   label,
   active,
+  locked,
   tilt,
   onClick,
   children,
 }: {
   label: string
   active: boolean
+  /** Not tappable. The chosen one stays filled; the other one dims. */
+  locked: boolean
   /** Which way the pop leans — toward the thumb's direction. */
   tilt: string
   onClick: () => void
@@ -223,12 +237,17 @@ function VoteButton({
       type="button"
       aria-label={label}
       aria-pressed={active}
+      disabled={locked}
       onClick={() => {
         setTaps((n) => n + 1)
         onClick()
       }}
-      className={`flex size-8 items-center justify-center rounded-full cursor-pointer hover:bg-gray-95 dark:hover:bg-gray-30 ${
+      className={`flex size-8 items-center justify-center rounded-full ${
         active ? "text-button-primary-default" : "text-text-primary-default"
+      } ${
+        locked
+          ? `cursor-default ${active ? "" : "opacity-30"}`
+          : "cursor-pointer hover:bg-gray-95 dark:hover:bg-gray-30"
       }`}
     >
       <span
