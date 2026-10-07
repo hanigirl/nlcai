@@ -5,7 +5,7 @@ import { fetchDriveFile } from "@/lib/drive-fetch"
 import { frameCaption } from "@/lib/story-text-split"
 import { parseTextToSlides } from "@/lib/carousel-slides"
 import { parseImagePostBody } from "@/lib/image-post-text"
-import { BROLL_VIDEO_CTA } from "@/lib/broll-copy"
+import { BROLL_VIDEO_CTA, hasDescriptionCta } from "@/lib/broll-copy"
 import {
   CANVAS_4_5,
   CANVAS_9_16,
@@ -238,7 +238,7 @@ export async function POST(req: NextRequest) {
       // Every b-roll carries the follow-up line. On a clip it arrives on its
       // own beat as a second layer; a still has no timeline, so it joins the
       // body block instead of being dropped.
-      if (format === "b_roll") {
+      if (format === "b_roll" && !hasDescriptionCta(overlayHook, overlayBody)) {
         overlayBody = [overlayBody, BROLL_VIDEO_CTA].filter(Boolean).join("\n")
       }
     }

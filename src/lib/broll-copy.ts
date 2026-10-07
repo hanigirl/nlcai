@@ -16,3 +16,13 @@ export const BROLL_VIDEO_CTA = "קראו בתיאור"
  * the viewer to read, in the caption it points at what's below.
  */
 export const BROLL_SCRIPT_CTA = "תראו בתיאור"
+
+/**
+ * Whether any of these texts already sends the viewer to the description —
+ * "קראו בתיאור", or the script's own "תראו בתיאור" (every b-roll script ends
+ * on it). The on-video line is added only when nothing says it yet;
+ * otherwise the clip carries the same instruction twice (Hani, 2026-10-07).
+ */
+export function hasDescriptionCta(...texts: (string | null | undefined)[]): boolean {
+  return texts.some((t) => !!t && /[קת]ראו\s+(?:ה|ב|בה|הב)?תיאור/.test(t))
+}

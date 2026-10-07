@@ -9,6 +9,7 @@ import {
   renderCaptionOverlayPng,
   renderSecondaryCaptionPng,
 } from "@/lib/caption-overlay"
+import { hasDescriptionCta } from "@/lib/broll-copy"
 import { getAuthUser } from "@/lib/auth-user"
 
 // Downloading + re-encoding a user video is heavier than an image render;
@@ -331,7 +332,7 @@ export async function POST(req: NextRequest) {
     // Every b-roll carries the follow-up line; the story doesn't — its frames
     // already end on their own CTA block.
     let secondaryPath: string | undefined
-    if (format === "b_roll") {
+    if (format === "b_roll" && !hasDescriptionCta(overlayHook, overlayBody)) {
       const fsMod = await import("fs/promises")
       const pathMod = await import("path")
       secondaryPath = pathMod.join(tmp, `story-ovl2-${id}.png`)
