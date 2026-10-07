@@ -4,7 +4,13 @@ import { deriveNicheVisualLanguage } from "@/lib/agents/visual-language-analyzer
 import { loadImageForModels, type ModelImage } from "@/lib/visual-language/image-input"
 import { measureElement, type FixedElement } from "@/lib/visual-language/fixed-elements"
 import sharp from "sharp"
-import type { NicheVisualLanguage, VisualFormat, VisualLanguage } from "@/lib/visual-language/types"
+import type {
+  MediaStyle,
+  NicheVisualLanguage,
+  VisualFormat,
+  VisualLanguage,
+} from "@/lib/visual-language/types"
+import { getTemplate } from "@/lib/carousel-templates"
 
 /**
  * Which visual language an AI image follows, in priority order:
@@ -64,8 +70,13 @@ export function noExtrasRule(direction: DesignDirection): string {
 export async function resolveDesignDirection(
   supabase: SupabaseClient,
   userId: string,
-  opts: { format: VisualFormat; allowReferences?: boolean },
+  opts: { format: VisualFormat; allowReferences?: boolean; style?: MediaStyle },
 ): Promise<DesignDirection> {
+  // A fixed template the user picked — its look, imagery from her niche.
+  if (opts.style === "ai-dark" || opts.style === "ai-light") {
+    return templateDirection(supabase, userId, opts.style)
+  }
+
   const [{ data: userRow }, { data: identityRow }] = await Promise.all([
     supabase
       .from("users")
@@ -94,8 +105,8 @@ export async function resolveDesignDirection(
   const vl = row?.visual_language
   const niche = identity?.niche?.trim() || null
 
-  // 1. Her own visual language.
-  if (vl?.status === "ok" && vl.style_spec?.trim()) {
+  // 1. Her own visual language (unless she picked the niche language).
+  if (opts.style !== "niche" && vl?.status === "ok" && vl.style_spec?.trim()) {
     const { references: loaded, fixed } =
       opts.allowReferences === false
         ? { references: [], fixed: [] }
@@ -159,6 +170,40 @@ export async function resolveDesignDirection(
     lines: [
       "VISUAL LANGUAGE — clean, modern and content-led: let the post's subject suggest the palette and imagery. Calm, readable, premium; avoid dark neon gradients and glossy 3D glass objects.",
       ...(colorLine ? [colorLine] : []),
+    ],
+    references: [],
+    fixed: [],
+  }
+}
+
+/**
+ * The dark / light AI template look (shared with the carousel picker): the
+ * glass-3D design language plus the template's palette, imagery drawn from
+ * her niche. Chosen explicitly, so it's the one place that look still lives.
+ */
+async function templateDirection(
+  supabase: SupabaseClient,
+  userId: string,
+  templateId: "ai-dark" | "ai-light",
+): Promise<DesignDirection> {
+  const template = getTemplate(templateId)
+  const { data } = await supabase
+    .from("core_identities")
+    .select("niche")
+    .eq("user_id", userId)
+    .maybeSingle()
+  const niche = (data as { niche?: string | null } | null)?.niche?.trim()
+  return {
+    source: "none",
+    lines: [
+      `VISUAL LANGUAGE — the "${template?.name ?? templateId}" template:`,
+      "- One conceptual 3D-rendered translucent glass visual that makes the message physical — a real object or scene embodying the idea.",
+      ...(niche
+        ? [`- The creator's niche is: """${niche}""". Draw the visual's objects and metaphors from this niche's world, never generic stock decoration.`]
+        : []),
+      "- Canvas: rich and atmospheric with a subtle vignette and soft gradient lighting — premium, never flat, never busy.",
+      "- Texture: soft flowing gradient lines, gentle glow edges or light streaks as background accents.",
+      ...(template?.aiStyleSpec ? [template.aiStyleSpec] : []),
     ],
     references: [],
     fixed: [],

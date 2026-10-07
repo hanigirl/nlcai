@@ -12,6 +12,7 @@ import {
 } from "@/lib/caption-overlay"
 import { getAuthUser } from "@/lib/auth-user"
 import { generateImage } from "@/lib/openai-image"
+import { isMediaStyle } from "@/lib/visual-language/types"
 import {
   resolveDesignDirection,
   type DesignDirection,
@@ -173,9 +174,10 @@ function cropToCanvas(imageBase64: string): string {
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
   try {
-    const { postId, variationIndex } = (await req.json().catch(() => ({}))) as {
+    const { postId, variationIndex, style } = (await req.json().catch(() => ({}))) as {
       postId?: string
       variationIndex?: number
+      style?: unknown
     }
     if (!postId) {
       return NextResponse.json({ error: "postId is required" }, { status: 400 })
@@ -258,6 +260,7 @@ export async function POST(req: NextRequest) {
     const direction = await resolveDesignDirection(supabase, user.id, {
       format: "b_roll",
       allowReferences: false,
+      style: isMediaStyle(style) ? style : undefined,
     })
     const context = (post.body ?? variantBody ?? hook).slice(0, 600)
 

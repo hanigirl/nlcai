@@ -62,6 +62,7 @@ import type { SlideData } from "@/lib/carousel-templates"
 import { flushPendingSaves } from "@/lib/pending-saves"
 import { BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import { useBrandCarouselTemplate } from "@/hooks/use-brand-carousel-template"
+import { MediaStylePicker, useMediaStyle } from "@/components/media-style-picker"
 import { parseTextToSlides } from "@/lib/carousel-slides"
 import {
   carouselBareSlides,
@@ -2953,13 +2954,17 @@ function MediaUploadFlow({
     startImageGeneration(postId)
   }
 
+  // Story / b-roll style: her visual language, the niche language, or a
+  // dark / light template — picked in the AI card, like carousel templates.
+  const mediaStyle = useMediaStyle()
+
   /** Fire an AI story generation (produces a 1-3 frame set). */
   const handleStoryGenerate = () => {
     if (!postId) {
       toast.error("שמרו קודם את הפוסט כדי לייצר סטורי", { duration: 4000 })
       return
     }
-    startStoryGeneration(postId)
+    startStoryGeneration(postId, mediaStyle.style)
   }
 
   /**
@@ -3240,7 +3245,7 @@ function MediaUploadFlow({
     }
     // Bumped per press so a retry varies the palette instead of returning a
     // near-identical picture.
-    startBRollGeneration(postId, bRollAttemptRef.current++)
+    startBRollGeneration(postId, bRollAttemptRef.current++, mediaStyle.style)
   }
 
   // Save what the AI just made, without waiting to be asked (Hani,
@@ -3992,6 +3997,11 @@ function MediaUploadFlow({
               <span className="max-w-[286px] text-center text-xs leading-relaxed text-text-neutral-default">
                 ניצור רקע שמתאים לתוכן הפוסט ונשלב עליו את הטקסט של הסטורי
               </span>
+              <MediaStylePicker
+                value={mediaStyle.style}
+                onChange={mediaStyle.setStyle}
+                brandTemplate={mediaStyle.brandTemplate}
+              />
               <Button
                 variant="outline"
                 onClick={handleStoryGenerate}
@@ -4202,6 +4212,11 @@ function MediaUploadFlow({
                   ניצור רקע שמתאים לתוכן הפוסט, נשלב עליו את הטקסט של הבי-רול
                   ונהפוך את זה לסרטון קצר
                 </span>
+                <MediaStylePicker
+                  value={mediaStyle.style}
+                  onChange={mediaStyle.setStyle}
+                  brandTemplate={mediaStyle.brandTemplate}
+                />
                 <Button
                   variant="outline"
                   onClick={handleBRollGenerate}

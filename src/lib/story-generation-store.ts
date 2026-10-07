@@ -1,3 +1,4 @@
+import type { MediaStyle } from "@/lib/visual-language/types"
 import { toast } from "sonner"
 import { flushPendingSaves } from "@/lib/pending-saves"
 
@@ -101,7 +102,7 @@ export function getStoryGenerationSnapshot(key: string): StoryGenerationState {
  * repeatedly — each call runs in parallel and appends its own frame set.
  * Never throws (failures surface as a toast).
  */
-export function startStoryGeneration(postId: string): void {
+export function startStoryGeneration(postId: string, style?: MediaStyle): void {
   if (!postId) return
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   // Steers this attempt toward a palette distinct from the previous ones.
@@ -120,7 +121,7 @@ export function startStoryGeneration(postId: string): void {
       const res = await fetch("/api/story/generate-media", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, variationIndex }),
+        body: JSON.stringify({ postId, variationIndex, style }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         images?: string[]

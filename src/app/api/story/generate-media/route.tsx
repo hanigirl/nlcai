@@ -13,6 +13,7 @@ import {
   reservedZoneLines,
   type ImageRole,
 } from "@/lib/visual-language/fixed-elements"
+import { isMediaStyle } from "@/lib/visual-language/types"
 import {
   noExtrasRule,
   pickComposition,
@@ -146,9 +147,10 @@ function cropToCanvas(imageBase64: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { postId, variationIndex } = (await req.json().catch(() => ({}))) as {
+    const { postId, variationIndex, style } = (await req.json().catch(() => ({}))) as {
       postId?: string
       variationIndex?: number
+      style?: unknown
     }
     if (!postId) {
       return NextResponse.json({ error: "postId is required" }, { status: 400 })
@@ -229,7 +231,10 @@ export async function POST(req: NextRequest) {
     // The look: her visual language, else one derived from her niche.
     // Resolved once so every frame shares it; regenerate rotates only the
     // composition.
-    const direction = await resolveDesignDirection(supabase, user.id, { format: "story" })
+    const direction = await resolveDesignDirection(supabase, user.id, {
+      format: "story",
+      style: isMediaStyle(style) ? style : undefined,
+    })
     const composition = pickComposition(variationIndex)
 
     // Theme context: title + hook carry the essence; the body is truncated

@@ -11,6 +11,17 @@ export const MAX_BRAND_COLORS = 3
 export const MAX_BRAND_ELEMENTS = 8
 export const MAX_BRAND_EXAMPLES = 6
 
+/**
+ * The look a story / b-roll is generated in, picked per generation:
+ * her analysed visual language, the niche-derived one, or a fixed
+ * template (the same dark / light pair the AI carousel offers).
+ */
+export type MediaStyle = "brand" | "niche" | "ai-dark" | "ai-light"
+
+export function isMediaStyle(v: unknown): v is MediaStyle {
+  return v === "brand" || v === "niche" || v === "ai-dark" || v === "ai-light"
+}
+
 /** The media formats a visual language is adapted to. */
 export type VisualFormat = "carousel" | "story" | "image_post" | "b_roll"
 
