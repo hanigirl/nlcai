@@ -134,15 +134,16 @@ function StyleFeedbackRow({
           <div className="flex w-full items-center justify-between px-5">
             <p className="text-xs text-gray-40">אהבת את מה שיצרנו?</p>
             <div className="flex items-center gap-1" role="group" aria-label="פידבק על הסגנון">
-              <VoteButton label="אהבתי" active={vote === "like"} onClick={() => send("like")}>
-                <ThumbsUp className="size-4" />
+              <VoteButton label="אהבתי" active={vote === "like"} tilt="-14deg" onClick={() => send("like")}>
+                {(filled) => <ThumbsUp className="size-4" fill={filled ? "currentColor" : "none"} />}
               </VoteButton>
               <VoteButton
                 label="לא אהבתי"
                 active={vote === "dislike" || askingWhy}
+                tilt="14deg"
                 onClick={() => setAskingWhy((v) => !v)}
               >
-                <ThumbsDown className="size-4" />
+                {(filled) => <ThumbsDown className="size-4" fill={filled ? "currentColor" : "none"} />}
               </VoteButton>
             </div>
           </div>
@@ -197,28 +198,46 @@ function StyleFeedbackRow({
   )
 }
 
+/**
+ * A thumb that pops when tapped and, when active, is filled in the primary
+ * colour — no background state (Hani, 2026-10-07). The icon remounts on
+ * each tap so the bump replays every time.
+ */
 function VoteButton({
   label,
   active,
+  tilt,
   onClick,
   children,
 }: {
   label: string
   active: boolean
+  /** Which way the pop leans — toward the thumb's direction. */
+  tilt: string
   onClick: () => void
-  children: React.ReactNode
+  children: (filled: boolean) => React.ReactNode
 }) {
+  const [taps, setTaps] = useState(0)
   return (
     <button
       type="button"
       aria-label={label}
       aria-pressed={active}
-      onClick={onClick}
-      className={`flex size-8 items-center justify-center rounded-full text-text-primary-default cursor-pointer ${
-        active ? "bg-bg-surface-primary-default" : "hover:bg-gray-95 dark:hover:bg-gray-30"
+      onClick={() => {
+        setTaps((n) => n + 1)
+        onClick()
+      }}
+      className={`flex size-8 items-center justify-center rounded-full cursor-pointer hover:bg-gray-95 dark:hover:bg-gray-30 ${
+        active ? "text-button-primary-default" : "text-text-primary-default"
       }`}
     >
-      {children}
+      <span
+        key={taps}
+        className={`flex ${taps > 0 ? "vote-bump" : ""}`}
+        style={{ "--vote-tilt": tilt } as React.CSSProperties}
+      >
+        {children(active)}
+      </span>
     </button>
   )
 }
