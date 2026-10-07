@@ -183,6 +183,30 @@ interface MediaPanelProps {
    * (null).
    */
   onStoryVideoUrlChange?: (url: string | null) => void
+  /**
+   * Work this panel is doing that will land on the format's canvas card —
+   * an upload, a Drive pull, a talking-head render, a carousel generation.
+   * The canvas shows a skeleton card while it is true. Work that runs in the
+   * module stores (AI story / image / b-roll, caption burns) is read by the
+   * canvas straight from those stores and is NOT reported here.
+   */
+  onMediaBusyChange?: (format: string, busy: boolean) => void
+}
+
+/**
+ * Report a flow's busy flag to the canvas, and withdraw it on unmount: work
+ * tracked in component state dies with the component, so a skeleton left up
+ * after the panel closes would wait for a card that never comes.
+ */
+function useReportBusy(
+  report: ((format: string, busy: boolean) => void) | undefined,
+  format: string,
+  busy: boolean,
+) {
+  useEffect(() => {
+    report?.(format, busy)
+  }, [report, format, busy])
+  useEffect(() => () => report?.(format, false), [report, format])
 }
 
 export function MediaPanel({
@@ -223,6 +247,7 @@ export function MediaPanel({
   onImagePostUrlChange,
   onStoryImagesChange,
   onStoryVideoUrlChange,
+  onMediaBusyChange,
 }: MediaPanelProps) {
   const isOpen = formatId !== null
   const meta = formatId ? FORMAT_META[formatId] : null
@@ -298,6 +323,7 @@ export function MediaPanel({
             onVideoFrameChange={onThVideoFrameChange}
             hookText={panelHookText}
             onScrollToVideo={onScrollToVideo}
+            onBusyChange={onMediaBusyChange}
           />
         )}
 
@@ -316,6 +342,7 @@ export function MediaPanel({
             onSlidesChange={onCarouselSlidesChange}
             driveLinks={carouselDriveLinks}
             onDriveLinksChange={onCarouselDriveLinksChange}
+            onBusyChange={onMediaBusyChange}
           />
         )}
 
@@ -345,6 +372,7 @@ export function MediaPanel({
             initialMediaUrl={formatId ? initialFormatMedia?.[formatId] : undefined}
             initialStoryFrames={initialStoryFrames}
             postLoaded={postLoaded}
+            onBusyChange={onMediaBusyChange}
           />
         )}
       </div>
@@ -373,6 +401,7 @@ function TalkingHeadFlow({
   onVideoFrameChange,
   hookText,
   onScrollToVideo,
+  onBusyChange,
 }: {
   avatar: Avatar | null
   audioBlob: Blob | null
@@ -390,6 +419,7 @@ function TalkingHeadFlow({
   onVideoFrameChange?: (dataUrl: string) => void
   hookText?: string
   onScrollToVideo?: () => void
+  onBusyChange?: (format: string, busy: boolean) => void
 }) {
   // --- Google Drive link state ---
   // The talking_head format takes its media from a Google Drive share link
@@ -422,6 +452,7 @@ function TalkingHeadFlow({
 
   // --- video generation state ---
   const [videoPhase, setVideoPhase] = useState<"idle" | "generating" | "done">(liftedVideoUrl ? "done" : "idle")
+  useReportBusy(onBusyChange, "talking_head", videoPhase === "generating" || driveLoading)
   const [videoProgress, setVideoProgress] = useState("")
   const [videoError, setVideoError] = useState<string | null>(null)
 
@@ -1394,6 +1425,7 @@ function CarouselFlow({
   onSlidesChange,
   driveLinks,
   onDriveLinksChange,
+  onBusyChange,
 }: {
   postId: string | null
   carouselText: string
@@ -1403,6 +1435,7 @@ function CarouselFlow({
   onSlidesChange: (slides: SlideData[] | null) => void
   driveLinks: string[] | null
   onDriveLinksChange: (links: string[] | null) => void
+  onBusyChange?: (format: string, busy: boolean) => void
 }) {
   // No separate "current carousel" tile (Hani 2026-07-09): the template
   // that made the saved carousel shows its real cover, starts SELECTED,
@@ -1580,6 +1613,10 @@ function CarouselFlow({
     // switch panels mid-generation and still get the result.
     const templateName = selectedConfig?.name ?? ""
     const genId = selectedTemplate
+    // Reported directly, not through useReportBusy: this fetch outlives the
+    // panel and still lands its slides on the canvas, so the skeleton must
+    // too — it comes down in `finally`, whoever is mounted by then.
+    onBusyChange?.("carousel", true)
     const genToast = toast.loading(
       isAiTemplate
         ? `מציירים קרוסלת AI (${templateName})... זה לוקח כמה דקות`
@@ -1668,6 +1705,7 @@ function CarouselFlow({
       toast.error("שגיאה ביצירת הקרוסלה", { id: genToast, duration: 8000 })
     } finally {
       setGenerating(false)
+      onBusyChange?.("carousel", false)
     }
   }
 
@@ -1817,6 +1855,7 @@ function CarouselFlow({
     }
     setDriveImportError(null)
     setDriveImporting(true)
+    onBusyChange?.("carousel", true)
     const errMap: Record<string, string> = {
       invalid_drive_link: "לא זוהה קובץ באחד הקישורים.",
       drive_not_public:
@@ -1896,6 +1935,7 @@ function CarouselFlow({
       setDriveImportError("שגיאת רשת בטעינת השקופיות. נסו שוב.")
     } finally {
       setDriveImporting(false)
+      onBusyChange?.("carousel", false)
       setDriveImportProgress("")
     }
   }
@@ -2392,6 +2432,7 @@ function MediaUploadFlow({
   initialMediaUrl,
   initialStoryFrames,
   postLoaded,
+  onBusyChange,
 }: {
   format: string
   postId: string | null
@@ -2407,6 +2448,7 @@ function MediaUploadFlow({
   initialMediaUrl?: string
   initialStoryFrames?: string[] | null
   postLoaded?: boolean
+  onBusyChange?: (format: string, busy: boolean) => void
 }) {
   // Read once, before any narrowing. Inside the burn-button condition TS has
   // already pinned `format` to "story", so a literal check for b-roll there
@@ -2557,6 +2599,7 @@ function MediaUploadFlow({
     index: number
   } | null>(null)
   const [savingStory, setSavingStory] = useState(false)
+  useReportBusy(onBusyChange, format, uploading || drivePulling || savingStory)
   const [pendingStoryDelete, setPendingStoryDelete] = useState(false)
   // A story video whose caption is already baked in — the burn route stores
   // it under a "burned-" filename, so we can tell a finished clip from a raw
@@ -3228,24 +3271,43 @@ function MediaUploadFlow({
   // Guarded by a ref rather than by "is there already media": re-running the
   // effect must not re-save the same set, but a DELIBERATE second generation
   // must replace the first.
-  const autoSavedStoryRef = useRef<string | null>(null)
+  //
+  // The STORES save now (story set, storage-backed image), so the result
+  // reaches the canvas even when this panel was closed before it landed.
+  // These effects only bring the panel's own view up to date.
+  const storySaved = storyGenState.saved
   useEffect(() => {
-    if (format !== "story") return
-    const latest = storySets[storySets.length - 1]
-    if (!latest || latest.length === 0) return
-    const key = `${latest.length}|${latest[0]?.slice(0, 24)}`
-    if (autoSavedStoryRef.current === key) return
-    autoSavedStoryRef.current = key
-    void handleStorySave(latest)
+    if (format !== "story" || !storySaved) return
+    setSavedStorySet(storySaved)
+    onStoryImagesChange?.(storySaved)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [format, storySets])
+  }, [format, storySaved])
 
+  const imageSaved = genState.saved
+  useEffect(() => {
+    if (format !== "image_post" || !imageSaved) return
+    // Keep the picture it replaces in the row, as a manual pick does.
+    if (postId && previewUrl && previewUrl !== imageSaved) {
+      addGenerationResult(postId, previewUrl)
+    }
+    setPreviewUrl(imageSaved)
+    setPreviewKind("image")
+    onImagePostUrlChange?.(imageSaved)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [format, imageSaved])
+
+  // A base64 fallback (its Storage upload failed) is the one result the
+  // image store can't record by URL — it goes through the upload path here.
+  // Storage URLs are skipped: the store saved those, and this also stops
+  // the kept versions rehydrated on open from being re-saved over whatever
+  // the post currently shows.
   const autoSavedImageRef = useRef<string | null>(null)
   useEffect(() => {
     if (format !== "image_post") return
     const latest = aiPreviews[aiPreviews.length - 1]
-    if (!latest) return
-    const key = latest.slice(0, 24)
+    if (!latest || latest.startsWith("http")) return
+    // The tail, not the head: every base64 PNG starts with the same bytes.
+    const key = `${latest.length}|${latest.slice(-24)}`
     if (autoSavedImageRef.current === key) return
     autoSavedImageRef.current = key
     void handleAiSave(latest)

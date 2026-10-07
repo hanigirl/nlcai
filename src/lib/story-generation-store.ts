@@ -28,9 +28,16 @@ export interface StoryGenerationState {
   sets: string[][]
   /** How many generations are currently running for this post. */
   inFlight: number
+  /**
+   * The last set this store saved as the post's story. Generating is
+   * choosing, so a finished set is saved here rather than by the panel —
+   * the panel is often closed by the time it lands, and the canvas card
+   * (and its skeleton) can't wait for someone to reopen it.
+   */
+  saved: string[] | null
 }
 
-const EMPTY: StoryGenerationState = { sets: [], inFlight: 0 }
+const EMPTY: StoryGenerationState = { sets: [], inFlight: 0, saved: null }
 
 const states = new Map<string, StoryGenerationState>()
 const listeners = new Map<string, Set<() => void>>()
@@ -136,12 +143,24 @@ export function startStoryGeneration(postId: string): void {
         return
       }
       const set = data.images
-      update(postId, (s) => ({ ...s, sets: [...s.sets, set] }))
+      const saveRes = await fetch(`/api/core-posts/${postId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storyImages: set }),
+      }).catch(() => null)
+      if (!saveRes?.ok) {
+        // Keep it as a candidate so it can still be saved from the panel.
+        update(postId, (s) => ({ ...s, sets: [...s.sets, set] }))
+        toast.error("הסטורי נוצר אבל לא נשמר — פתחו את הפאנל כדי לשמור", {
+          id: toastId,
+          duration: 10000,
+        })
+        return
+      }
+      update(postId, (s) => ({ ...s, saved: set }))
       const count = set.length
       toast.success(
-        count > 1
-          ? `הסטורי מוכן — ${count} פריימים. הקליקו לתצוגה ושמירה`
-          : "הסטורי מוכן — הקליקו עליו לתצוגה ושמירה",
+        count > 1 ? `הסטורי מוכן ונשמר — ${count} פריימים` : "הסטורי מוכן ונשמר",
         { id: toastId, duration: 4000 },
       )
     } catch (err) {

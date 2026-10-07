@@ -27,6 +27,12 @@ export interface GenerationState {
   results: string[]
   /** How many generations are currently running for this post. */
   inFlight: number
+  /**
+   * The last generated image this store saved as the post's image. Saved
+   * here rather than by the panel so the canvas card appears even when the
+   * panel was closed before the image landed.
+   */
+  saved: string | null
 }
 
 const MEDIA_BUCKET = "user-media"
@@ -84,7 +90,7 @@ async function uploadCandidate(base64: string): Promise<string> {
 // this session — so reopening the panel doesn't re-append them.
 const hydratedPosts = new Set<string>()
 
-const EMPTY: GenerationState = { results: [], inFlight: 0 }
+const EMPTY: GenerationState = { results: [], inFlight: 0, saved: null }
 
 const states = new Map<string, GenerationState>()
 const listeners = new Map<string, Set<() => void>>()
@@ -193,7 +199,24 @@ export function startImageGeneration(postId: string): void {
       }
       update(postId, (s) => ({ ...s, results: [...s.results, entry] }))
       persistPostUrls(postId)
-      toast.success("התמונה מוכנה — הקליקו עליה להגדלה ושמירה", {
+      // Generating is choosing. A base64 fallback (upload failed) can't be
+      // recorded by URL — the panel saves that one through its upload path.
+      if (entry.startsWith("http")) {
+        const saveRes = await fetch(`/api/core-posts/${postId}/media`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ format: "image_post", url: entry, assetType: "image" }),
+        }).catch(() => null)
+        if (!saveRes?.ok) {
+          toast.error("התמונה נוצרה אבל לא נשמרה — פתחו את הפאנל כדי לבחור אותה", {
+            id: toastId,
+            duration: 10000,
+          })
+          return
+        }
+        update(postId, (s) => ({ ...s, saved: entry }))
+      }
+      toast.success("התמונה מוכנה ונשמרה", {
         id: toastId,
         duration: 4000,
       })
