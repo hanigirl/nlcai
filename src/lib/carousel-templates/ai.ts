@@ -11,7 +11,7 @@ import type { TemplateConfig } from "./index"
 
 export const aiDarkTemplate: TemplateConfig = {
   id: "ai-dark",
-  name: "כהה (AI)",
+  name: "שפת הנישה · כהה",
   kind: "ai",
   size: { width: 1080, height: 1350 },
   preview: {
@@ -31,7 +31,7 @@ export const aiDarkTemplate: TemplateConfig = {
 
 export const aiLightTemplate: TemplateConfig = {
   id: "ai-light",
-  name: "בהיר (AI)",
+  name: "שפת הנישה · בהיר",
   kind: "ai",
   size: { width: 1080, height: 1350 },
   preview: {
