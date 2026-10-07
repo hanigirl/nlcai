@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { getUserApiKey } from "@/lib/api-keys"
 import { deriveNicheVisualLanguage } from "@/lib/agents/visual-language-analyzer"
 import { loadImageForModels, type ModelImage } from "@/lib/visual-language/image-input"
-import type { FixedElement } from "@/lib/visual-language/fixed-elements"
+import { measureElement, type FixedElement } from "@/lib/visual-language/fixed-elements"
 import sharp from "sharp"
 import type { NicheVisualLanguage, VisualFormat, VisualLanguage } from "@/lib/visual-language/types"
 
@@ -112,7 +112,7 @@ export async function resolveDesignDirection(
     if (loaded.length) {
       lines.push(
         "",
-        "Attached reference images are the creator's real brand elements. Reproduce each one exactly as it is (same shape, colours and proportions — never redraw or restyle it), and only where its note says it belongs; it's fine to leave one out of this image:",
+        "Attached reference images are the creator's real brand elements. Reproduce each one exactly as it is (same shape, colours and proportions — never redraw or restyle it), and only where its note says it belongs; it's fine to leave one out of this image. One exception: if an element would sit on a background of similar tone and get lost (a dark mark on a dark area, a light one on a light area), render its opposite-tone version — same shape, only light↔dark flipped — so it stays clearly visible:",
         ...loaded.map((r, i) => `- Reference image ${i + 1}: ${r.note}`),
       )
     }
@@ -182,14 +182,25 @@ async function loadElements(
   if (!all.length) return { references: [], fixed: [] }
   const { data } = await supabase
     .from("user_media")
-    .select("id, storage_path")
+    .select("id, storage_path, metadata")
     .eq("user_id", userId)
     .eq("category", "element")
     .in("id", all.map((e) => e.id))
-  const rows = (data ?? []) as { id: string; storage_path: string }[]
+  const rows = (data ?? []) as {
+    id: string
+    storage_path: string
+    metadata: { alt_storage_path?: string } | null
+  }[]
+  const publicUrl = (path: string) => supabase.storage.from("user-media").getPublicUrl(path).data.publicUrl
   const urlFor = (id: string) => {
     const r = rows.find((x) => x.id === id)
-    return r ? supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl : null
+    return r ? publicUrl(r.storage_path) : null
+  }
+  const fetchPng = async (url: string) => {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`fetch ${res.status}`)
+    // Full resolution, transparency kept (SVG rasterised).
+    return sharp(Buffer.from(await res.arrayBuffer()), { density: 300 }).png().toBuffer()
   }
 
   const fixedEls = all.filter(
@@ -203,16 +214,25 @@ async function loadElements(
         const url = urlFor(el.id)
         if (!url) return null
         try {
-          const res = await fetch(url)
-          if (!res.ok) throw new Error(`fetch ${res.status}`)
-          // Full resolution, transparency kept (SVG rasterised).
-          const png = await sharp(Buffer.from(await res.arrayBuffer()), { density: 300 }).png().toBuffer()
+          const png = await fetchPng(url)
           const meta = await sharp(png).metadata()
+          // Her opposite-tone version, if she uploaded one. Resized to the
+          // original's box at paste time, so a slightly different canvas
+          // size still lands on the same pixels.
+          const altPath = rows.find((x) => x.id === el.id)?.metadata?.alt_storage_path
+          const alt = altPath
+            ? await fetchPng(publicUrl(altPath)).catch((err) => {
+                console.error("[visual-language][fixed-element-alt]", el.id, err)
+                return undefined
+              })
+            : undefined
           return {
             name: el.name,
             png,
+            alt,
             aspect: (meta.height ?? 1) / (meta.width ?? 1),
             placement: el.placement!,
+            ...(await measureElement(png)),
           }
         } catch (err) {
           console.error("[visual-language][fixed-element]", el.id, err)

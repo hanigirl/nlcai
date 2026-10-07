@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
 import { analyzeVisualLanguage } from "@/lib/agents/visual-language-analyzer"
+import { measureElement } from "@/lib/visual-language/fixed-elements"
 import {
   loadImageForModels,
   screenshotWebsite,
@@ -133,6 +134,14 @@ export async function POST() {
     return NextResponse.json({ error: "analyze_failed", message: `הניתוח נכשל: ${msg}` }, { status: 500 })
   }
 
+  // Tone + photo detection per element — Settings uses it to ask for the
+  // right opposite-tone version (light for dark artwork, and vice versa).
+  const measured = new Map(
+    await Promise.all(
+      okElements.map(async (e) => [e.id, await measureElement(Buffer.from(e.image.base64, "base64"))] as const),
+    ),
+  )
+
   // Only keep element instructions for elements that actually exist.
   const elementIds = new Set(okElements.map((e) => e.id))
   const visualLanguage: VisualLanguage = {
@@ -147,6 +156,8 @@ export async function POST() {
         id: e.id,
         name: e.name,
         usage: e.usage,
+        tone: (measured.get(e.id)?.luminance ?? 0.5) < 0.4 ? ("dark" as const) : ("light" as const),
+        photographic: measured.get(e.id)?.photographic ?? false,
         ...(e.fixed
           ? {
               placement: {

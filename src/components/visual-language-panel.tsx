@@ -40,6 +40,8 @@ interface ElementItem {
   url: string
   storagePath: string
   description: string
+  /** Her opposite-tone version (light for dark artwork, or the reverse). */
+  altPath?: string
 }
 
 interface ExampleItem {
@@ -119,6 +121,7 @@ export function VisualLanguagePanel() {
             storagePath: r.storage_path,
             url: publicUrl(r.storage_path),
             description: typeof r.metadata?.description === "string" ? r.metadata.description : "",
+            altPath: typeof r.metadata?.alt_storage_path === "string" ? r.metadata.alt_storage_path : undefined,
           })),
       )
       setExamples(
@@ -255,14 +258,55 @@ export function VisualLanguagePanel() {
     return true
   }
 
-  const saveElementDescription = async (id: string, description: string) => {
+  // metadata holds BOTH the note and the alternate version — always write
+  // the whole object so saving one never wipes the other.
+  const saveElementMetadata = async (el: ElementItem) => {
     const { error } = await supabase
       .from("user_media")
-      .update({ metadata: { description } } as never)
-      .eq("id", id)
+      .update({
+        metadata: { description: el.description.trim(), ...(el.altPath ? { alt_storage_path: el.altPath } : {}) },
+      } as never)
+      .eq("id", el.id)
     if (error) {
-      console.error("[visual-language][element-description]", error)
-      toast.error("לא הצלחנו לשמור את התיאור")
+      console.error("[visual-language][element-metadata]", error)
+      toast.error("לא הצלחנו לשמור את השינוי")
+      return false
+    }
+    return true
+  }
+
+  const [uploadingAltFor, setUploadingAltFor] = useState<string | null>(null)
+
+  const uploadAlt = async (el: ElementItem, file: File) => {
+    if (!userId || !file.type.startsWith("image/")) return
+    setUploadingAltFor(el.id)
+    try {
+      const ext = file.name.split(".").pop() || "png"
+      const path = `${userId}/element/alt-${crypto.randomUUID()}.${ext}`
+      const { error } = await supabase.storage.from("user-media").upload(path, file)
+      if (error) {
+        console.error("[visual-language][alt-upload]", error)
+        toast.error("ההעלאה נכשלה")
+        return
+      }
+      const next = { ...el, altPath: path }
+      if (await saveElementMetadata(next)) {
+        if (el.altPath) await supabase.storage.from("user-media").remove([el.altPath])
+        setElements((prev) => prev.map((x) => (x.id === el.id ? next : x)))
+      } else {
+        await supabase.storage.from("user-media").remove([path])
+      }
+    } finally {
+      setUploadingAltFor(null)
+    }
+  }
+
+  const removeAlt = async (el: ElementItem) => {
+    if (!el.altPath) return
+    const next = { ...el, altPath: undefined }
+    if (await saveElementMetadata(next)) {
+      await supabase.storage.from("user-media").remove([el.altPath])
+      setElements((prev) => prev.map((x) => (x.id === el.id ? next : x)))
     }
   }
 
@@ -400,17 +444,30 @@ export function VisualLanguagePanel() {
                 onChange={(e) =>
                   setElements((prev) => prev.map((x) => (x.id === el.id ? { ...x, description: e.target.value } : x)))
                 }
-                onBlur={(e) => saveElementDescription(el.id, e.target.value.trim())}
+                onBlur={(e) => saveElementMetadata({ ...el, description: e.target.value })}
                 className="text-sm min-h-0"
               />
               {placementLabel(el.id) && (
                 <p className="text-xs text-text-neutral-default">{placementLabel(el.id)}</p>
               )}
+              {placementLabel(el.id) && (
+                <AltVersionSlot
+                  element={el}
+                  analysed={visualLanguage?.elements.find((e) => e.id === el.id)}
+                  altUrl={el.altPath ? publicUrl(el.altPath) : undefined}
+                  uploading={uploadingAltFor === el.id}
+                  onUpload={(file) => uploadAlt(el, file)}
+                  onRemove={() => removeAlt(el)}
+                />
+              )}
             </div>
             <RemoveButton
               label={`מחיקת ${el.name}`}
               onClick={async () => {
-                if (await removeMedia(el.id, el.storagePath)) setElements((prev) => prev.filter((x) => x.id !== el.id))
+                if (await removeMedia(el.id, el.storagePath)) {
+                  if (el.altPath) await supabase.storage.from("user-media").remove([el.altPath])
+                  setElements((prev) => prev.filter((x) => x.id !== el.id))
+                }
               }}
             />
           </div>
@@ -599,6 +656,77 @@ export function VisualLanguagePanel() {
 }
 
 /* ── small pieces ── */
+
+/**
+ * Optional opposite-tone version of a fixed element. Pasted elements can't
+ * be recoloured by the image model, so a dark badge on a dark slide would
+ * vanish — this is the version used there. Flat artwork gets an automatic
+ * one when she doesn't upload; artwork with a photo can't, so we ask.
+ */
+function AltVersionSlot({
+  element,
+  analysed,
+  altUrl,
+  uploading,
+  onUpload,
+  onRemove,
+}: {
+  element: ElementItem
+  analysed?: { tone?: "dark" | "light"; photographic?: boolean }
+  altUrl?: string
+  uploading: boolean
+  onUpload: (file: File) => void
+  onRemove: () => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const isDark = analysed?.tone !== "light"
+  const label = isDark ? "גרסה בהירה לרקעים כהים" : "גרסה כהה לרקעים בהירים"
+  const hint = analysed?.photographic
+    ? "באלמנט יש תמונה, אז לא נוכל להתאים אותו אוטומטית. מומלץ להעלות גרסה, אחרת על רקע דומה בגוון הוא עלול להיבלע."
+    : "לא חובה. אם לא תעלו, ניצור גרסה כזו אוטומטית בשקופיות שבהן האלמנט לא בולט מספיק."
+  return (
+    <div className="flex items-center gap-2 pt-1">
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/png,image/svg+xml,image/webp"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          if (f) onUpload(f)
+          e.target.value = ""
+        }}
+      />
+      {altUrl ? (
+        <div className={`flex items-center gap-2 rounded-lg px-2 py-1 ${isDark ? "bg-gray-10" : "bg-bg-surface"}`}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={altUrl} alt={`${label} של ${element.name}`} className="h-8 max-w-24 object-contain" />
+          <button
+            type="button"
+            aria-label={`מחיקת ${label}`}
+            onClick={onRemove}
+            className={`size-6 rounded-full flex items-center justify-center cursor-pointer ${isDark ? "text-gray-90 hover:bg-gray-20" : "text-text-neutral-default hover:bg-gray-95"}`}
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      ) : (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={uploading}
+          onClick={() => inputRef.current?.click()}
+          className="gap-1.5 shrink-0"
+        >
+          {uploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+          {label}
+        </Button>
+      )}
+      {!altUrl && <p className="text-xs text-text-neutral-default">{hint}</p>}
+    </div>
+  )
+}
 
 function BrandColorField({
   index,

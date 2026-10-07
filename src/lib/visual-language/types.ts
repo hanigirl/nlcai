@@ -91,7 +91,16 @@ export interface VisualLanguage {
   /** The palette as the analysis understood it, in priority order. */
   palette: { hex: string; role: string }[]
   /** One line per element: how the image model may use it. */
-  elements: { id: string; name: string; usage: string; placement?: ElementPlacement }[]
+  elements: {
+    id: string
+    name: string
+    usage: string
+    placement?: ElementPlacement
+    /** Dark or light artwork — decides which opposite version to ask for. */
+    tone?: "dark" | "light"
+    /** Contains a photo, so it can't be tone-flipped automatically. */
+    photographic?: boolean
+  }[]
   /**
    * Per-format additions to style_spec (carousel slide structure, story
    * stacking…), learned from examples of that format when she gave some.
