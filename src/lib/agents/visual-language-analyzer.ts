@@ -82,6 +82,10 @@ Do NOT default to dark canvases, neon gradients, glossy 3D glass objects or "fut
 
 summary_he: 2 Hebrew sentences explaining the chosen language and why it fits her niche.
 
+Also write two tone variants of the SAME niche language — same world, imagery, motifs, type character and mood, only the canvas tone changes. Each is a complete brief in the same format as style_spec:
+- dark_spec: a DARK design for this niche. The background is a deep colour that belongs to the niche's world (e.g. kids' education → deep navy or midnight blue with playful toys and warm light accents; wellness → deep forest green or warm charcoal), with light text and the niche's accent colours glowing against it. Dark here means deep and rich, NOT neon, NOT glossy 3D glass, NOT generic sci-fi.
+- light_spec: a LIGHT design for this niche — a light, airy canvas in the niche's palette with dark readable text.
+
 ${SPEC_RULES}`
 
 const ANALYZE_SCHEMA = {
@@ -174,10 +178,12 @@ const ANALYZE_SCHEMA = {
 const NICHE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["summary_he", "style_spec"],
+  required: ["summary_he", "style_spec", "dark_spec", "light_spec"],
   properties: {
     summary_he: { type: "string" },
     style_spec: { type: "string" },
+    dark_spec: { type: "string" },
+    light_spec: { type: "string" },
   },
 } as const
 
@@ -291,7 +297,7 @@ export async function analyzeVisualLanguage(
 export async function deriveNicheVisualLanguage(
   apiKey: string,
   identity: { niche: string; whoIAm?: string | null; whoIServe?: string | null },
-): Promise<{ summary_he: string; style_spec: string }> {
+): Promise<{ summary_he: string; style_spec: string; dark_spec: string; light_spec: string }> {
   const lines = [
     `Niche: ${identity.niche}`,
     identity.whoIAm ? `Who she is: ${identity.whoIAm.slice(0, 800)}` : null,

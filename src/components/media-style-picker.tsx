@@ -73,9 +73,13 @@ export function MediaStylePicker({
       .map((t) => ({
         id: t.id as MediaStyle,
         name: t.name,
+        // Dark / light = her niche's language on that canvas; the tile only
+        // sketches the tone.
         thumb: (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={t.thumbnailUrl} alt="" className="size-full object-cover" style={{ backgroundColor: t.preview.bg }} />
+          <div className="size-full flex flex-col justify-center gap-1 p-2" style={{ backgroundColor: t.preview.bg }}>
+            <span className="h-1.5 w-4/5 rounded-full" style={{ backgroundColor: t.preview.titleColor }} />
+            <span className="h-1.5 w-3/5 rounded-full" style={{ backgroundColor: t.preview.accent }} />
+          </div>
         ),
       })),
   ]

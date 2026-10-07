@@ -10,7 +10,6 @@ import type {
   VisualFormat,
   VisualLanguage,
 } from "@/lib/visual-language/types"
-import { getTemplate } from "@/lib/carousel-templates"
 
 /**
  * Which visual language an AI image follows, in priority order:
@@ -67,15 +66,17 @@ export function noExtrasRule(direction: DesignDirection): string {
     : "No watermarks, no logos, no UI chrome, no borders, no signatures."
 }
 
+function toneLine(tone: "dark" | "light"): string {
+  return tone === "dark"
+    ? "Make it a DARK design: a deep, rich background colour that belongs to this world, with light readable text — not neon, not sci-fi."
+    : "Make it a LIGHT design: a light, airy background with dark readable text."
+}
+
 export async function resolveDesignDirection(
   supabase: SupabaseClient,
   userId: string,
   opts: { format: VisualFormat; allowReferences?: boolean; style?: MediaStyle },
 ): Promise<DesignDirection> {
-  // A fixed template the user picked — its look, imagery from her niche.
-  if (opts.style === "ai-dark" || opts.style === "ai-light") {
-    return templateDirection(supabase, userId, opts.style)
-  }
 
   const [{ data: userRow }, { data: identityRow }] = await Promise.all([
     supabase
@@ -105,8 +106,9 @@ export async function resolveDesignDirection(
   const vl = row?.visual_language
   const niche = identity?.niche?.trim() || null
 
-  // 1. Her own visual language (unless she picked the niche language).
-  if (opts.style !== "niche" && vl?.status === "ok" && vl.style_spec?.trim()) {
+  // 1. Her own visual language — unless she picked the niche language or a
+  // dark / light niche variant.
+  if ((!opts.style || opts.style === "brand") && vl?.status === "ok" && vl.style_spec?.trim()) {
     const { references: loaded, fixed } =
       opts.allowReferences === false
         ? { references: [], fixed: [] }
@@ -134,18 +136,28 @@ export async function resolveDesignDirection(
     ? `The creator's brand colours are ${colors.join(", ")} — build the palette around them.`
     : null
 
+  // "כהה" / "בהיר" — the niche language on a dark or light canvas. Never
+  // the old glass-3D neon look: dark means dark FOR HER WORLD (kids'
+  // education → deep navy with playful toys), not sci-fi.
+  const tone = opts.style === "ai-dark" ? "dark" : opts.style === "ai-light" ? "light" : null
+
   // 2. Derived from the niche (cached until the niche changes).
   if (niche) {
-    let cached = row?.niche_visual_language
-    if (!cached || cached.niche !== niche) {
-      cached = await deriveAndCacheNiche(supabase, userId, niche, identity)
+    let cached = row?.niche_visual_language ?? null
+    // Caches from before tone variants existed lack them — refresh once.
+    if (!cached || cached.niche !== niche || (tone && !cached[`${tone}_spec`])) {
+      cached = (await deriveAndCacheNiche(supabase, userId, niche, identity)) ?? cached
+      if (cached && cached.niche !== niche) cached = null
     }
-    if (cached) {
+    const spec = cached ? (tone ? cached[`${tone}_spec`] : cached.style_spec) : undefined
+    if (cached && spec?.trim()) {
       return {
         source: "niche",
         lines: [
-          `VISUAL LANGUAGE — chosen to suit the creator's niche (${niche}). Follow it consistently; do NOT fall back to dark neon gradients or glossy 3D glass objects unless it says so:`,
-          cached.style_spec.trim(),
+          tone
+            ? `VISUAL LANGUAGE — a ${tone.toUpperCase()} design fitted to the creator's niche (${niche}). Follow it consistently; no neon, no glossy 3D glass objects unless it says so:`
+            : `VISUAL LANGUAGE — chosen to suit the creator's niche (${niche}). Follow it consistently; do NOT fall back to dark neon gradients or glossy 3D glass objects unless it says so:`,
+          spec.trim(),
           ...(colorLine ? [colorLine] : []),
         ],
         references: [],
@@ -157,6 +169,7 @@ export async function resolveDesignDirection(
       source: "niche-direct",
       lines: [
         `VISUAL LANGUAGE — the creator's niche is """${niche}""". Choose the visual language a thoughtful brand designer would give this niche so her audience instantly feels it belongs to that world (e.g. a doctor → clean, calm whites and clinical blues with subtle tech motifs; parent guidance → soft pastels, rounded shapes, gentle illustration). Do NOT default to dark neon gradients or glossy 3D glass objects unless the niche truly calls for it.`,
+        ...(tone ? [toneLine(tone)] : []),
         ...(colorLine ? [colorLine] : []),
       ],
       references: [],
@@ -169,41 +182,8 @@ export async function resolveDesignDirection(
     source: "none",
     lines: [
       "VISUAL LANGUAGE — clean, modern and content-led: let the post's subject suggest the palette and imagery. Calm, readable, premium; avoid dark neon gradients and glossy 3D glass objects.",
+      ...(tone ? [toneLine(tone)] : []),
       ...(colorLine ? [colorLine] : []),
-    ],
-    references: [],
-    fixed: [],
-  }
-}
-
-/**
- * The dark / light AI template look (shared with the carousel picker): the
- * glass-3D design language plus the template's palette, imagery drawn from
- * her niche. Chosen explicitly, so it's the one place that look still lives.
- */
-async function templateDirection(
-  supabase: SupabaseClient,
-  userId: string,
-  templateId: "ai-dark" | "ai-light",
-): Promise<DesignDirection> {
-  const template = getTemplate(templateId)
-  const { data } = await supabase
-    .from("core_identities")
-    .select("niche")
-    .eq("user_id", userId)
-    .maybeSingle()
-  const niche = (data as { niche?: string | null } | null)?.niche?.trim()
-  return {
-    source: "none",
-    lines: [
-      `VISUAL LANGUAGE — the "${template?.name ?? templateId}" template:`,
-      "- One conceptual 3D-rendered translucent glass visual that makes the message physical — a real object or scene embodying the idea.",
-      ...(niche
-        ? [`- The creator's niche is: """${niche}""". Draw the visual's objects and metaphors from this niche's world, never generic stock decoration.`]
-        : []),
-      "- Canvas: rich and atmospheric with a subtle vignette and soft gradient lighting — premium, never flat, never busy.",
-      "- Texture: soft flowing gradient lines, gentle glow edges or light streaks as background accents.",
-      ...(template?.aiStyleSpec ? [template.aiStyleSpec] : []),
     ],
     references: [],
     fixed: [],
@@ -327,6 +307,8 @@ async function deriveAndCacheNiche(
       niche,
       summary_he: out.summary_he,
       style_spec: out.style_spec,
+      dark_spec: out.dark_spec,
+      light_spec: out.light_spec,
       generated_at: new Date().toISOString(),
     }
     const { error } = await supabase

@@ -39,27 +39,19 @@ const CONCURRENCY = 3
 /**
  * AI carousel generation — gpt-image-2 (BYOK — users.openai_api_key)
  * renders each slide as a COMPLETE designed image including the Hebrew
- * text, following the template's locked `aiStyleSpec` so all slides read
- * as one series. Same model + crop approach as image-post/generate-media.
+ * text, all slides in one design direction so they read as one series:
+ * her visual language, or her niche's language in dark / light.
  *
  * The route is pure: returns base64 PNGs in the same `{ images }` shape as
  * /api/carousel/generate, so preview / ZIP / persistence reuse one path.
  */
 
-/**
- * The shared AI-carousel design language — reverse-engineered from
- * ChatGPT-designed carousels Hani approved (see the carousel-design
- * skill): real conceptual imagery + strong typography, one system.
- * Templates contribute only palette/contrast via `styleSpec`.
- */
 function buildSlidePrompt(
-  styleSpec: string,
   slide: SlideData,
   index: number,
   total: number,
   topic: string,
-  niche: string | null,
-  brand: DesignDirection | null,
+  direction: DesignDirection,
 ): string {
   const role =
     slide.type === "cover"
@@ -83,50 +75,17 @@ function buildSlidePrompt(
     "",
     role,
     "",
-    ...(brand
-      ? [
-          "Design (IDENTICAL across every slide of this series):",
-          ...brand.lines,
-          "- The imagery makes THIS slide's message visible — drawn from the topic and rendered in the visual language above, never generic stock decoration.",
-          "- Typography: Hebrew type with a clear hierarchy INSIDE the text — the single most important word or phrase is emphasised the way the visual language describes; the rest stays clean and highly readable.",
-          `- A small circular badge with the number ${index + 1} in a bottom corner, styled in the visual language.`,
-          "",
-          ...reservedZoneLines(brand.fixed, slideRole(slide), IMAGE_WIDTH, IMAGE_HEIGHT),
-          "",
-          KEEP_INSIDE_FRAME_RULE,
-          `${noExtrasRule(brand)} No extra words.`,
-        ]
-      : templateDesignLines(styleSpec, index, niche)),
-  ].join("\n")
-}
-
-/**
- * The template's own look — dark / light / vibrant / neon, which the user
- * picked explicitly. Used when she has no visual language of her own.
- */
-function templateDesignLines(
-  styleSpec: string,
-  index: number,
-  niche: string | null,
-): string[] {
-  return [
-    "Design language (IDENTICAL across every slide of this series):",
-    "- One conceptual 3D-rendered translucent glass visual that makes THIS slide's message physical — a real object or scene embodying the idea (e.g. fanned phone screens for designing screens, building bricks for building blocks, flowing waves for an abstract statement). It frames or surrounds the text; imagery and text share the composition without crowding each other.",
-    ...(niche
-      ? [
-          `- The creator's niche is: """${niche}""". Draw the visual's objects and metaphors from this niche's world, combined with what THIS slide says — the imagery should instantly feel like it belongs to this niche (its tools, environments, symbols and vibe), never generic stock decoration.`,
-        ]
-      : []),
-    "- Canvas: rich and atmospheric with a subtle vignette and soft gradient lighting — premium, never flat, never busy.",
-    "- Typography: bold, modern Hebrew type with a clear hierarchy INSIDE the text — the single most important word or phrase of this slide is set in the accent gradient and one size step up; the rest stays clean and highly readable.",
-    "- Texture: soft flowing gradient lines, gentle glow edges or light streaks as background accents.",
-    `- A small circular badge with the number ${index + 1} in a bottom corner.`,
+    "Design (IDENTICAL across every slide of this series):",
+    ...direction.lines,
+    "- The imagery makes THIS slide's message visible — drawn from the topic and rendered in the visual language above, never generic stock decoration.",
+    "- Typography: Hebrew type with a clear hierarchy INSIDE the text — the single most important word or phrase is emphasised the way the visual language describes; the rest stays clean and highly readable.",
+    `- A small circular badge with the number ${index + 1} in a bottom corner, styled in the visual language.`,
     "",
-    styleSpec,
+    ...reservedZoneLines(direction.fixed, slideRole(slide), IMAGE_WIDTH, IMAGE_HEIGHT),
     "",
     KEEP_INSIDE_FRAME_RULE,
-    "No watermarks, logos, borders, or extra words.",
-  ]
+    `${noExtrasRule(direction)} No extra words.`,
+  ].join("\n")
 }
 
 function slideRole(slide: SlideData): ImageRole {
@@ -198,28 +157,18 @@ export async function POST(req: NextRequest) {
       throw err
     }
 
-    const styleSpec = template?.aiStyleSpec ?? ""
     const total = slides.length
     const images: string[] = new Array(total)
 
-    // The carousel's topic anchors every slide's imagery to the content;
-    // the creator's niche anchors it to their WORLD (health niche → health
-    // objects/environments/vibe). Both feed every slide prompt.
+    // The carousel's topic anchors every slide's imagery to the content.
     const topic = slides[0]?.title ?? ""
-    const { data: identityRow } = await supabase
-      .from("core_identities")
-      .select("niche")
-      .eq("user_id", user.id)
-      .single()
-    const niche =
-      ((identityRow as { niche?: string | null } | null)?.niche ?? "").trim() ||
-      null
 
-    // "השפה הוויזואלית שלך" designs from her analysed language; every other
-    // template keeps its own look — picking it IS her choice of style.
-    let brand: DesignDirection | null = null
+    // "השפה הוויזואלית שלך" designs from her analysed language. "כהה" /
+    // "בהיר" are her NICHE's language on a dark / light canvas — never the
+    // old glass-3D neon look (Hani, 2026-10-07).
+    let direction: DesignDirection
     if (isBrandTemplate) {
-      const direction = await resolveDesignDirection(supabase, user.id, { format: "carousel" })
+      direction = await resolveDesignDirection(supabase, user.id, { format: "carousel" })
       if (direction.source !== "brand") {
         return NextResponse.json(
           {
@@ -229,7 +178,11 @@ export async function POST(req: NextRequest) {
           { status: 400 },
         )
       }
-      brand = direction
+    } else {
+      direction = await resolveDesignDirection(supabase, user.id, {
+        format: "carousel",
+        style: templateId === "ai-light" ? "ai-light" : templateId === "ai-dark" ? "ai-dark" : "niche",
+      })
     }
 
     // Simple concurrency pool — kinder to OpenAI rate limits than firing
@@ -238,25 +191,15 @@ export async function POST(req: NextRequest) {
     async function worker() {
       while (next < total) {
         const i = next++
-        const prompt = buildSlidePrompt(
-          styleSpec,
-          slides![i],
-          i,
-          total,
-          topic,
-          niche,
-          brand,
-        )
+        const prompt = buildSlidePrompt(slides![i], i, total, topic, direction)
         const raw = await generateImage(openaiKey, prompt, {
           shape: "4:5",
           // Legible Hebrew glyphs are the whole point, so we pay for "high".
           quality: "high",
-          references: brand?.references,
+          references: direction.references,
         })
         // Fixed brand elements go in by code — same pixels on every slide.
-        images[i] = brand
-          ? await applyFixedElements(cropToCanvas(raw), brand.fixed, slideRole(slides![i]))
-          : cropToCanvas(raw)
+        images[i] = await applyFixedElements(cropToCanvas(raw), direction.fixed, slideRole(slides![i]))
       }
     }
     await Promise.all(

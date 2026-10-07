@@ -134,6 +134,10 @@ export interface NicheVisualLanguage {
   niche: string
   summary_he: string
   style_spec: string
+  /** The same niche language on a deep canvas ("כהה"). Missing on caches made before tone variants. */
+  dark_spec?: string
+  /** The same niche language on a light canvas ("בהיר"). */
+  light_spec?: string
   generated_at: string
 }
 
