@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { spawn } from "child_process"
+import { createWriteStream } from "node:fs"
+import { Readable } from "node:stream"
+import { pipeline } from "node:stream/promises"
 import ffmpegPath from "ffmpeg-static"
 import { createClient } from "@/lib/supabase/server"
 import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
@@ -72,8 +75,11 @@ function burnOverlay(
     // layer, so the same feature behaved differently depending on where the
     // footage came from.
     const filter =
-      `[0:v]scale=${CANVAS_WIDTH}:${CANVAS_HEIGHT}:force_original_aspect_ratio=increase,` +
-      `crop=${CANVAS_WIDTH}:${CANVAS_HEIGHT},setsar=1[bg];` +
+      // ONE template literal on purpose. Split into two joined by `+`, the
+      // production build folds them and drops the first one's tail — the
+      // filter shipped as "scale=1080:1920crop=..." and every burn failed
+      // with "Option not found" (2026-10-07). Don't split this line.
+      `[0:v]scale=${CANVAS_WIDTH}:${CANVAS_HEIGHT}:force_original_aspect_ratio=increase,crop=${CANVAS_WIDTH}:${CANVAS_HEIGHT},setsar=1[bg];` +
       `[1:v]format=rgba,fade=t=in:st=0.7:d=0.9:alpha=1,setsar=1[cap];` +
       (secondaryPath
         ? // Comes in at 2s, once the hook has been read, and stays.
@@ -320,9 +326,9 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const { createWriteStream } = await import("fs")
-    const { Readable } = await import("stream")
-    const { pipeline } = await import("stream/promises")
+    // Static imports, not `await import("stream")`: the dynamic form came back
+    // with `Readable` undefined in a dev server ("Cannot read properties of
+    // undefined (reading 'fromWeb')", 2026-10-07), failing every burn there.
     await pipeline(
       Readable.fromWeb(videoRes.body as Parameters<typeof Readable.fromWeb>[0]),
       createWriteStream(inputPath),
