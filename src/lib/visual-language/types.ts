@@ -130,6 +130,31 @@ export interface VisualLanguage {
 }
 
 /** Fallback brief derived from the niche, cached until the niche changes. */
+/** Dislike reasons offered as quick buttons under 👎. */
+export const DISLIKE_REASONS = {
+  colors: "הצבעים",
+  illustration: "סגנון האיור",
+  too_childish: "ילדותי מדי",
+  too_busy: "עמוס מדי",
+  typography: "הטיפוגרפיה",
+} as const
+export type DislikeReason = keyof typeof DISLIKE_REASONS
+
+/** What she said about one tone of her niche language. */
+export interface NicheToneFeedback {
+  /** She liked an image in this tone — the language is locked as is. */
+  approved: boolean
+  /** Copy of the liked image (user-media path) — sent as a style reference. */
+  anchor_path?: string
+  votes: {
+    verdict: "like" | "dislike"
+    format: string
+    reasons?: DislikeReason[]
+    note?: string
+    at: string
+  }[]
+}
+
 export interface NicheVisualLanguage {
   niche: string
   summary_he: string
@@ -138,6 +163,8 @@ export interface NicheVisualLanguage {
   dark_spec?: string
   /** The same niche language on a light canvas ("בהיר"). */
   light_spec?: string
+  /** Likes / dislikes per tone. Reset when the niche changes. */
+  feedback?: { dark?: NicheToneFeedback; light?: NicheToneFeedback }
   generated_at: string
 }
 

@@ -1,3 +1,4 @@
+import { rememberAiStyle } from "@/lib/ai-style-provenance"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import { toast } from "sonner"
 import { flushPendingSaves } from "@/lib/pending-saves"
@@ -159,6 +160,7 @@ export function startBRollGeneration(
         return
       }
       update(postId, (s) => ({ ...s, url: data.url as string }))
+      if (style) rememberAiStyle(postId, "b_roll", style, data.url)
       toast.success("הבי-רול נוצר", { id: toastId, duration: 4000 })
     } catch (err) {
       toast.error(

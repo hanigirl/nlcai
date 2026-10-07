@@ -294,6 +294,36 @@ export async function analyzeVisualLanguage(
   return runJson<AnalyzeOutput>(apiKey, ANALYZE_SYSTEM, content, ANALYZE_SCHEMA)
 }
 
+const REVISE_SYSTEM = `You are a senior brand designer. A content creator generated an image from the design brief below and DISLIKED it. Revise the brief to fix exactly what she pointed at — keep everything she didn't complain about (it's her niche's world). Stay in the same tone (dark stays dark, light stays light). Never introduce neon or glossy 3D glass.
+
+${SPEC_RULES}
+
+summary_he: one short Hebrew sentence telling her what changed.`
+
+const REVISE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["style_spec", "summary_he"],
+  properties: { style_spec: { type: "string" }, summary_he: { type: "string" } },
+} as const
+
+/** Rewrite one tone of the niche brief after a 👎, guided by her reasons. */
+export async function reviseNicheToneSpec(
+  apiKey: string,
+  input: { niche: string; tone: "dark" | "light"; spec: string; reasons: string[]; note?: string },
+): Promise<{ style_spec: string; summary_he: string }> {
+  const text = [
+    `Niche: ${input.niche}`,
+    `Tone: ${input.tone}`,
+    `Current brief:\n${input.spec}`,
+    `What she disliked: ${input.reasons.length ? input.reasons.join(", ") : "(no reason picked)"}`,
+    input.note?.trim() ? `Her words: ${input.note.trim().slice(0, 600)}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n\n")
+  return runJson(apiKey, REVISE_SYSTEM, [{ type: "text", text }], REVISE_SCHEMA)
+}
+
 export async function deriveNicheVisualLanguage(
   apiKey: string,
   identity: { niche: string; whoIAm?: string | null; whoIServe?: string | null },

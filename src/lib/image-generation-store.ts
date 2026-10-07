@@ -1,3 +1,4 @@
+import { rememberAiStyle } from "@/lib/ai-style-provenance"
 import { toast } from "sonner"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import { flushPendingSaves } from "@/lib/pending-saves"
@@ -216,6 +217,7 @@ export function startImageGeneration(postId: string, style?: MediaStyle): void {
           return
         }
         update(postId, (s) => ({ ...s, saved: entry }))
+        if (style) rememberAiStyle(postId, "image_post", style, entry)
       }
       toast.success("התמונה מוכנה ונשמרה", {
         id: toastId,

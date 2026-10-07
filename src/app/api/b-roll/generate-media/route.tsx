@@ -277,7 +277,9 @@ export async function POST(req: NextRequest) {
         FRAMINGS[Math.abs(variationIndex ?? 0) % FRAMINGS.length],
         context,
       ),
-      { shape: "9:16" },
+      // Brand elements are off for b-roll (allowReferences: false); what can
+      // ride along is an approved niche style anchor.
+      { shape: "9:16", references: direction.references },
     )
     const background = cropToCanvas(raw)
     // Background and caption stay SEPARATE files — that separation is what
