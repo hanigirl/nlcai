@@ -138,6 +138,19 @@ export async function POST(req: NextRequest) {
       )
     }
     const reasonText = reasons.map((x) => DISLIKE_REASONS[x])
+    // Every earlier dislike that said WHY, so the rewrite doesn't undo them.
+    const history = prev.votes
+      .filter((v) => v.verdict === "dislike" && (v.reasons?.length || v.note))
+      .slice(-8)
+      .map((v) =>
+        [
+          `${v.at.slice(0, 10)} (${v.format})`,
+          v.reasons?.length ? v.reasons.map((x) => DISLIKE_REASONS[x]).join(", ") : null,
+          v.note ? `"${v.note}"` : null,
+        ]
+          .filter(Boolean)
+          .join(" — "),
+      )
     let revised: { style_spec: string; summary_he: string }
     try {
       revised =
@@ -148,6 +161,7 @@ export async function POST(req: NextRequest) {
               formatSpec: brief,
               reasons: reasonText,
               note: body.note,
+              history,
             })
           : await reviseNicheToneSpec(apiKey, {
               niche: r!.niche_visual_language!.niche,
@@ -155,6 +169,7 @@ export async function POST(req: NextRequest) {
               spec: brief,
               reasons: reasonText,
               note: body.note,
+              history,
             })
     } catch (err) {
       console.error("[style-feedback][revise]", err)

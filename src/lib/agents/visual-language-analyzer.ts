@@ -307,10 +307,32 @@ const REVISE_SCHEMA = {
   properties: { style_spec: { type: "string" }, summary_he: { type: "string" } },
 } as const
 
+/**
+ * Her earlier dislikes on the same style. Each rewrite used to see only the
+ * current complaint, so fixing "colours" could bring back the "too childish"
+ * she rejected before (Hani, 2026-10-07). The current brief already carries
+ * those fixes; this keeps the model from undoing them.
+ */
+function historyBlock(history?: string[]): string | null {
+  if (!history?.length) return null
+  return [
+    "Her EARLIER dislikes on this same style (oldest first). The current brief already fixed these — keep those fixes, and never reintroduce anything she rejected:",
+    ...history.map((h) => `- ${h}`),
+  ].join("\n")
+}
+
 /** Rewrite one tone of the niche brief after a 👎, guided by her reasons. */
 export async function reviseNicheToneSpec(
   apiKey: string,
-  input: { niche: string; tone: "dark" | "light"; spec: string; reasons: string[]; note?: string },
+  input: {
+    niche: string
+    tone: "dark" | "light"
+    spec: string
+    reasons: string[]
+    note?: string
+    /** Her earlier dislikes on this style, oldest first. */
+    history?: string[]
+  },
 ): Promise<{ style_spec: string; summary_he: string }> {
   const text = [
     `Niche: ${input.niche}`,
@@ -318,6 +340,7 @@ export async function reviseNicheToneSpec(
     `Current brief:\n${input.spec}`,
     `What she disliked: ${input.reasons.length ? input.reasons.join(", ") : "(no reason picked)"}`,
     input.note?.trim() ? `Her words: ${input.note.trim().slice(0, 600)}` : null,
+    historyBlock(input.history),
   ]
     .filter(Boolean)
     .join("\n\n")
@@ -333,7 +356,15 @@ summary_he: one short Hebrew sentence telling her what changed.`
 /** Rewrite one format's addition to her own visual language after a 👎. */
 export async function reviseBrandFormatSpec(
   apiKey: string,
-  input: { styleSpec: string; format: string; formatSpec: string; reasons: string[]; note?: string },
+  input: {
+    styleSpec: string
+    format: string
+    formatSpec: string
+    reasons: string[]
+    note?: string
+    /** Her earlier dislikes on this format, oldest first. */
+    history?: string[]
+  },
 ): Promise<{ style_spec: string; summary_he: string }> {
   const text = [
     `Core brief:\n${input.styleSpec}`,
@@ -341,6 +372,7 @@ export async function reviseBrandFormatSpec(
     `Current addition for this format:\n${input.formatSpec || "(none)"}`,
     `What she disliked: ${input.reasons.length ? input.reasons.join(", ") : "(no reason picked)"}`,
     input.note?.trim() ? `Her words: ${input.note.trim().slice(0, 600)}` : null,
+    historyBlock(input.history),
   ]
     .filter(Boolean)
     .join("\n\n")
