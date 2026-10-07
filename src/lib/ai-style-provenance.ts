@@ -43,12 +43,12 @@ export function getAiStyle(postId: string, format: string): AiStyleRecord | null
   }
 }
 
-export function recordAiStyleVote(postId: string, format: string, vote: "like" | "dislike") {
+export function recordAiStyleVote(postId: string, format: string, vote: "like" | "dislike" | null) {
   // Carousels have no record (their template is their provenance) — keep
   // just the vote for them.
   const rec = getAiStyle(postId, format) ?? { style: "brand", mediaKey: "" }
   try {
-    localStorage.setItem(key(postId, format), JSON.stringify({ ...rec, vote }))
+    localStorage.setItem(key(postId, format), JSON.stringify({ ...rec, vote: vote ?? undefined }))
   } catch (err) {
     console.error("[ai-style-provenance][vote]", err)
   }

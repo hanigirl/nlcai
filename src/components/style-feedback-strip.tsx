@@ -84,22 +84,17 @@ function StyleFeedbackRow({
 
   const httpUrl = mediaUrl?.startsWith("http") ? mediaUrl : undefined
 
-  // Optimistic: the button answers on click and the save runs behind it
-  // (a like copies the image, a dislike is a Claude rewrite — seconds).
-  // On failure the vote is rolled back with an error.
-  const send = async (verdict: "like" | "dislike") => {
-    // Re-sending the vote that's already in place does nothing.
-    if (verdict === vote) return
-    const prevVote = vote
-    setVote(verdict)
-    setAskingWhy(false)
-    recordAiStyleVote(postId, format, verdict)
-    const toastId = verdict === "dislike" ? toast.loading("מעדכנים את השפה לפי הפידבק...") : undefined
-    const rollBack = (message: string) => {
-      setVote(prevVote)
-      if (prevVote) recordAiStyleVote(postId, format, prevVote)
-      toast.error(message, { id: toastId })
-    }
+  /**
+   * Thumbs are toggles that switch freely (Hani, 2026-10-07), like YouTube:
+   * tap 👍 → liked, tap again → off; tap 👎 while liked → 👍 off, 👎 on at
+   * once. 👎 opens optional reasons — only submitting them rewrites the
+   * language. Optimistic: the thumb answers on tap, the save runs behind it,
+   * a failure rolls back with an error.
+   */
+  const post = async (
+    verdict: "like" | "dislike" | "clear",
+    withReasons = false,
+  ): Promise<{ ok: boolean; message?: string }> => {
     try {
       const res = await fetch("/api/visual-language/style-feedback", {
         method: "POST",
@@ -110,20 +105,46 @@ function StyleFeedbackRow({
           verdict,
           postId,
           mediaUrl: httpUrl,
-          ...(verdict === "dislike" ? { reasons, note } : {}),
+          ...(withReasons ? { reasons, note } : {}),
         }),
       })
       const data = (await res.json().catch(() => ({}))) as { message?: string }
-      if (!res.ok) {
-        rollBack(data.message ?? "הפידבק לא נשמר. נסו שוב.")
-        return
-      }
-      if (data.message) toast.success(data.message, { id: toastId, duration: 6000 })
-      else if (toastId) toast.dismiss(toastId)
+      return { ok: res.ok, message: data.message }
     } catch (err) {
       console.error("[style-feedback]", err)
-      rollBack("הפידבק לא נשמר. נסו שוב.")
+      return { ok: false }
     }
+  }
+
+  const setVoteEverywhere = (next: "like" | "dislike" | null) => {
+    setVote(next)
+    recordAiStyleVote(postId, format, next)
+  }
+
+  const toggle = async (thumb: "like" | "dislike") => {
+    const prev = vote
+    const next = vote === thumb ? null : thumb
+    setVoteEverywhere(next)
+    setAskingWhy(next === "dislike")
+    const res = await post(next ?? "clear")
+    if (!res.ok) {
+      setVoteEverywhere(prev)
+      setAskingWhy(false)
+      toast.error(res.message ?? "הפידבק לא נשמר. נסו שוב.")
+    } else if (next === "like" && res.message) {
+      toast.success(res.message, { duration: 5000 })
+    }
+  }
+
+  // Submitting the reasons is what rewrites the language (one Claude call).
+  const sendReasons = async () => {
+    setAskingWhy(false)
+    const toastId = toast.loading("מעדכנים את השפה לפי הפידבק...")
+    const res = await post("dislike", true)
+    if (!res.ok) toast.error(res.message ?? "לא הצלחנו לעדכן את השפה. נסו שוב.", { id: toastId })
+    else toast.success(res.message ?? "השפה עודכנה.", { id: toastId, duration: 6000 })
+    setReasons([])
+    setNote("")
   }
 
   return (
@@ -135,26 +156,10 @@ function StyleFeedbackRow({
           <div className="flex w-full items-center justify-between px-5">
             <p className="text-xs text-gray-40">אהבת את מה שיצרנו?</p>
             <div className="flex items-center gap-1" role="group" aria-label="פידבק על הסגנון">
-              {/* A single choice (Hani, 2026-10-07): only one thumb is ever
-                  filled, and she can switch. Opening the dislike reasons
-                  un-fills 👍 at once; closing them (tap 👎 again) restores
-                  it; submitting makes 👎 the vote. 👍 switches directly. */}
-              <VoteButton
-                label="אהבתי"
-                active={vote === "like" && !askingWhy}
-                locked={vote === "like" && !askingWhy}
-                tilt="-14deg"
-                onClick={() => send("like")}
-              >
+              <VoteButton label="אהבתי" active={vote === "like"} tilt="-14deg" onClick={() => toggle("like")}>
                 {(filled) => <ThumbsUp className="size-4" fill={filled ? "currentColor" : "none"} />}
               </VoteButton>
-              <VoteButton
-                label="לא אהבתי"
-                active={vote === "dislike" || askingWhy}
-                locked={vote === "dislike" && !askingWhy}
-                tilt="14deg"
-                onClick={() => setAskingWhy((v) => !v)}
-              >
+              <VoteButton label="לא אהבתי" active={vote === "dislike"} tilt="14deg" onClick={() => toggle("dislike")}>
                 {(filled) => <ThumbsDown className="size-4" fill={filled ? "currentColor" : "none"} />}
               </VoteButton>
             </div>
@@ -196,7 +201,7 @@ function StyleFeedbackRow({
           />
           <Button
             size="sm"
-            onClick={() => send("dislike")}
+            onClick={sendReasons}
             disabled={!reasons.length && !note.trim()}
             className="w-fit gap-1.5"
           >
@@ -218,15 +223,12 @@ function StyleFeedbackRow({
 function VoteButton({
   label,
   active,
-  locked,
   tilt,
   onClick,
   children,
 }: {
   label: string
   active: boolean
-  /** It's the current vote — tapping it again does nothing. */
-  locked: boolean
   /** Which way the pop leans — toward the thumb's direction. */
   tilt: string
   onClick: () => void
@@ -238,14 +240,13 @@ function VoteButton({
       type="button"
       aria-label={label}
       aria-pressed={active}
-      disabled={locked}
       onClick={() => {
         setTaps((n) => n + 1)
         onClick()
       }}
       className={`flex size-8 items-center justify-center rounded-full ${
         active ? "text-button-primary-default" : "text-text-primary-default"
-      } ${locked ? "cursor-default" : "cursor-pointer hover:bg-gray-95 dark:hover:bg-gray-30"}`}
+      } cursor-pointer hover:bg-gray-95 dark:hover:bg-gray-30`}
     >
       <span
         key={taps}

@@ -26,8 +26,10 @@ import {
  *
  * like    → slot approved; the image is copied as the slot's style anchor,
  *           sent as a visual reference with every future image there.
- * dislike → the slot's brief is rewritten ONCE with her reasons; approval
- *           and anchor are dropped.
+ * dislike → approval and anchor are dropped. With reasons / a note the
+ *           slot's brief is also rewritten ONCE with them (Claude); a bare
+ *           👎 tap only records the vote.
+ * clear   → she toggled her thumb off: approval and anchor are dropped.
  *
  * Body: { style, format, verdict, mediaUrl?, postId?, reasons?, note? }
  */
@@ -51,7 +53,8 @@ export async function POST(req: NextRequest) {
     note?: string
   }
   const style = body.style === "brand" || body.style === "ai-dark" || body.style === "ai-light" ? body.style : null
-  const verdict = body.verdict === "like" || body.verdict === "dislike" ? body.verdict : null
+  const verdict =
+    body.verdict === "like" || body.verdict === "dislike" || body.verdict === "clear" ? body.verdict : null
   const format = FORMATS.find((f) => f === body.format)
   if (!style || !verdict || !format) {
     return NextResponse.json({ error: "style, verdict and format are required" }, { status: 400 })
@@ -59,7 +62,7 @@ export async function POST(req: NextRequest) {
 
   const reasons = (body.reasons ?? []).filter((r): r is DislikeReason => r in DISLIKE_REASONS)
   const vote = {
-    verdict,
+    verdict: verdict === "clear" ? "dislike" : verdict,
     format,
     ...(reasons.length ? { reasons } : {}),
     ...(body.note?.trim() ? { note: body.note.trim().slice(0, 600) } : {}),
@@ -104,7 +107,15 @@ export async function POST(req: NextRequest) {
   let nextBrief: string | null = null
   let message: string
 
-  if (verdict === "like") {
+  const hasReasons = reasons.length > 0 || !!body.note?.trim()
+  if (verdict === "clear" || (verdict === "dislike" && !hasReasons)) {
+    if (prev.anchor_path) await supabase.storage.from("user-media").remove([prev.anchor_path])
+    nextSlot = {
+      approved: false,
+      votes: verdict === "dislike" ? [...prev.votes, vote].slice(-20) : prev.votes,
+    }
+    message = ""
+  } else if (verdict === "like") {
     const anchorPath = await copyAnchor(supabase, user.id, style, format, body.mediaUrl, body.postId)
     if (anchorPath && prev.anchor_path) await supabase.storage.from("user-media").remove([prev.anchor_path])
     nextSlot = {
