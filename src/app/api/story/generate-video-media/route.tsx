@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { spawn } from "child_process"
+import { createWriteStream } from "node:fs"
+import { Readable } from "node:stream"
+import { pipeline } from "node:stream/promises"
 import ffmpegPath from "ffmpeg-static"
 import { createClient } from "@/lib/supabase/server"
 import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
@@ -323,9 +326,9 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const { createWriteStream } = await import("fs")
-    const { Readable } = await import("stream")
-    const { pipeline } = await import("stream/promises")
+    // Static imports, not `await import("stream")`: the dynamic form came back
+    // with `Readable` undefined in a dev server ("Cannot read properties of
+    // undefined (reading 'fromWeb')", 2026-10-07), failing every burn there.
     await pipeline(
       Readable.fromWeb(videoRes.body as Parameters<typeof Readable.fromWeb>[0]),
       createWriteStream(inputPath),
