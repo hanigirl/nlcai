@@ -7,7 +7,12 @@ import {
   splitScriptIntoFrames,
 } from "@/lib/story-text-split"
 import { getAuthUser } from "@/lib/auth-user"
-import { generateImage } from "@/lib/openai-image"
+import { generateImage, KEEP_INSIDE_FRAME_RULE } from "@/lib/openai-image"
+import {
+  applyFixedElements,
+  reservedZoneLines,
+  type ImageRole,
+} from "@/lib/visual-language/fixed-elements"
 import {
   noExtrasRule,
   pickComposition,
@@ -66,6 +71,12 @@ function splitStoryIntoFrames(body: string): string[] {
  * indicator; `composition` rotates per regenerate; `context` anchors the
  * imagery and mood to the post.
  */
+function frameRole(frameIndex: number, frameCount: number): ImageRole {
+  if (frameCount === 1) return "single"
+  if (frameIndex === 0) return "cover"
+  return frameIndex === frameCount - 1 ? "closing" : "content"
+}
+
 function buildStoryPrompt(
   frameText: string,
   frameIndex: number,
@@ -107,6 +118,8 @@ function buildStoryPrompt(
     "- Correct Hebrew letterforms and right-to-left reading order; reproduce every character precisely.",
     "- High legibility: strong contrast between text and background.",
     "- INSTAGRAM STORY SAFE ZONE: keep ALL text and key elements within the central 62% of the height — leave a generous empty margin in the TOP ~14% and BOTTOM ~24% so the profile header and the reply bar never cover the text.",
+    KEEP_INSIDE_FRAME_RULE,
+    ...reservedZoneLines(direction.fixed, frameRole(frameIndex, frameCount), IMAGE_WIDTH, IMAGE_HEIGHT),
     progress,
     "- The mood should relate to this post content (written in Hebrew): " +
       `"""${context}"""`,
@@ -118,11 +131,10 @@ function buildStoryPrompt(
 }
 
 /**
- * Center-crop the model's 1024×1536 image to an exact 1080×1920 (9:16)
- * canvas — gpt-image-2 has no documented native 9:16 size.
- * `preserveAspectRatio="xMidYMid slice"` is the SVG equivalent of CSS
- * object-fit:cover, trimming ~8% off each side (inside the prompt's safe
- * zone, so the centered text is kept). No fonts / no text in this pass.
+ * Normalise the model's image to exactly 1080×1920. The model now paints the
+ * exact ratio (lib/openai-image), so `xMidYMid slice` (CSS object-fit:cover)
+ * only scales; it trims anything only if OpenAI refused the custom size and
+ * we fell back to 1024×1536.
  */
 function cropToCanvas(imageBase64: string): string {
   const svg =
@@ -244,12 +256,14 @@ export async function POST(req: NextRequest) {
           context,
         )
         const raw = await generateImage(openaiKey, prompt, {
+          shape: "9:16",
           // gpt-image-2 — legible Hebrew glyphs are the whole point, so we
           // pay for "high" (same reasoning as image-post/generate-media).
           quality: "high",
           references: direction.references,
         })
-        images[i] = cropToCanvas(raw)
+        // Fixed brand elements go in by code — same pixels on every frame.
+        images[i] = await applyFixedElements(cropToCanvas(raw), direction.fixed, frameRole(i, total))
       }
     }
     await Promise.all(

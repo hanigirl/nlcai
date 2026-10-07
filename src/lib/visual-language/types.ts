@@ -36,6 +36,44 @@ export const EXAMPLE_KIND_LABELS: Record<ExampleKind, string> = {
   other: "אחר",
 }
 
+export type ElementAnchor =
+  | "top-left"
+  | "top-right"
+  | "bottom-left"
+  | "bottom-right"
+  | "top-center"
+  | "bottom-center"
+
+/** Which slides / frames of a multi-image piece a fixed element appears on. */
+export type ElementSlides = "all" | "cover" | "content" | "closing" | "not_cover"
+
+/**
+ * A graphic element with a FIXED spot (her badge "always bottom-left").
+ * The image model never draws these — it leaves the zone empty and we paste
+ * her real file in afterwards, at the same pixels on every slide.
+ */
+export interface ElementPlacement {
+  anchor: ElementAnchor
+  /** Element width as % of the frame width. */
+  width_pct: number
+  /** Gap from the nearest side edge, % of frame width. */
+  margin_x_pct: number
+  /** Gap from the top/bottom edge, % of frame width (same unit, so it holds across 4:5 and 9:16). */
+  margin_y_pct: number
+  slides: ElementSlides
+  /** Formats it appears in at all. */
+  formats: VisualFormat[]
+}
+
+export const ANCHOR_LABELS: Record<ElementAnchor, string> = {
+  "top-left": "שמאל למעלה",
+  "top-right": "ימין למעלה",
+  "bottom-left": "שמאל למטה",
+  "bottom-right": "ימין למטה",
+  "top-center": "למעלה במרכז",
+  "bottom-center": "למטה במרכז",
+}
+
 /** What the analysis concluded about her inputs. */
 export interface VisualLanguage {
   /**
@@ -53,7 +91,7 @@ export interface VisualLanguage {
   /** The palette as the analysis understood it, in priority order. */
   palette: { hex: string; role: string }[]
   /** One line per element: how the image model may use it. */
-  elements: { id: string; name: string; usage: string }[]
+  elements: { id: string; name: string; usage: string; placement?: ElementPlacement }[]
   /**
    * Per-format additions to style_spec (carousel slide structure, story
    * stacking…), learned from examples of that format when she gave some.

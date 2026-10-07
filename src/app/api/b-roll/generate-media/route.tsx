@@ -157,9 +157,10 @@ function buildBackgroundPrompt(
 }
 
 /**
- * Center-crop the model's 1024×1536 to an exact 1080×1920 — gpt-image-2 has
- * no documented native 9:16. `xMidYMid slice` is the SVG equivalent of CSS
- * object-fit:cover.
+ * Normalise the model's image to exactly 1080×1920. The model now paints the
+ * exact ratio (lib/openai-image), so `xMidYMid slice` (CSS object-fit:cover)
+ * only scales; it trims anything only if OpenAI refused the custom size and
+ * we fell back to 1024×1536.
  */
 function cropToCanvas(imageBase64: string): string {
   const svg =
@@ -267,6 +268,7 @@ export async function POST(req: NextRequest) {
         FRAMINGS[Math.abs(variationIndex ?? 0) % FRAMINGS.length],
         context,
       ),
+      { shape: "9:16" },
     )
     const background = cropToCanvas(raw)
     // Background and caption stay SEPARATE files — that separation is what

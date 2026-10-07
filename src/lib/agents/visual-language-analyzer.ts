@@ -1,6 +1,11 @@
 import Anthropic from "@anthropic-ai/sdk"
 import type { ModelImage } from "@/lib/visual-language/image-input"
-import type { ExampleKind, VisualFormat } from "@/lib/visual-language/types"
+import type {
+  ElementAnchor,
+  ElementSlides,
+  ExampleKind,
+  VisualFormat,
+} from "@/lib/visual-language/types"
 
 /**
  * Two jobs, one model:
@@ -54,6 +59,14 @@ When consistent:
   - b_roll: a TEXT-FREE 9:16 video background — imagery, texture and tone only; a white caption is added later in the lower-middle band.
   When examples of a format exist, describe what THOSE examples actually do (layout, recurring devices, density). When none exist, extrapolate thoughtfully from the language and say so in one short clause. Websites, posters and banners inform the language, not slide structure.
 - elements: for EVERY element provided, its id, a short Hebrew name, and an English instruction for the image model on when and how to use it, derived from her note (e.g. "small, bottom corner of closing frames only"). If her note is empty, infer the use from the image.
+  Then decide whether the element has a FIXED position:
+  - fixed = true when her note names a position ("always bottom-left", "בצד שמאל למטה") OR the examples show it in the same spot on every design. Fixed elements are pasted by code at exact pixels, identical on every slide — so be precise.
+  - anchor: the corner/edge it sits at (top-left, top-right, bottom-left, bottom-right, top-center, bottom-center). Her note wins over the examples. "שמאל" = left, "ימין" = right, as seen on the image.
+  - width_pct: the element's width as a percentage of the frame width, MEASURED from the examples where it appears (e.g. a badge spanning about a quarter of the slide → 25). Without examples pick a modest size (badges/logos 18-28, arrow groups 20-30).
+  - margin_x_pct / margin_y_pct: its distance from the side edge and from the top/bottom edge, both as a percentage of the frame WIDTH, measured from the examples; default 5. Never less than 4.
+  - slides: which slides/frames of a multi-image piece carry it — all, cover, content, closing, or not_cover — from her note and the examples.
+  - formats: which of carousel, story, image_post it appears in. If her note ties it to one format (e.g. "לקרוסלות"), list only that one.
+  When fixed = false, still fill these fields with sensible values; they are ignored.
 
 ${SPEC_RULES}`
 
@@ -131,11 +144,27 @@ const ANALYZE_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["id", "name", "usage"],
+        required: [
+          "id", "name", "usage", "fixed", "anchor", "width_pct",
+          "margin_x_pct", "margin_y_pct", "slides", "formats",
+        ],
         properties: {
           id: { type: "string" },
           name: { type: "string" },
           usage: { type: "string" },
+          fixed: { type: "boolean" },
+          anchor: {
+            type: "string",
+            enum: ["top-left", "top-right", "bottom-left", "bottom-right", "top-center", "bottom-center"],
+          },
+          width_pct: { type: "number" },
+          margin_x_pct: { type: "number" },
+          margin_y_pct: { type: "number" },
+          slides: { type: "string", enum: ["all", "cover", "content", "closing", "not_cover"] },
+          formats: {
+            type: "array",
+            items: { type: "string", enum: ["carousel", "story", "image_post"] },
+          },
         },
       },
     },
@@ -165,7 +194,18 @@ export interface AnalyzeOutput {
   summary_he: string
   style_spec: string
   palette: { hex: string; role: string }[]
-  elements: { id: string; name: string; usage: string }[]
+  elements: {
+    id: string
+    name: string
+    usage: string
+    fixed: boolean
+    anchor: ElementAnchor
+    width_pct: number
+    margin_x_pct: number
+    margin_y_pct: number
+    slides: ElementSlides
+    formats: VisualFormat[]
+  }[]
   /** 1-based example number → what kind of design it is. */
   example_kinds: { example: number; kind: ExampleKind }[]
   preview: { bg: string; accent: string; title: string; body: string }

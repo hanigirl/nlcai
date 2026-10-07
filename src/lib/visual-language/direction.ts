@@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { getUserApiKey } from "@/lib/api-keys"
 import { deriveNicheVisualLanguage } from "@/lib/agents/visual-language-analyzer"
 import { loadImageForModels, type ModelImage } from "@/lib/visual-language/image-input"
+import type { FixedElement } from "@/lib/visual-language/fixed-elements"
+import sharp from "sharp"
 import type { NicheVisualLanguage, VisualFormat, VisualLanguage } from "@/lib/visual-language/types"
 
 /**
@@ -25,6 +27,11 @@ export interface DesignDirection {
   lines: string[]
   /** Brand elements to attach as reference images (brand source only). */
   references: ModelImage[]
+  /**
+   * Brand elements with a fixed spot — never sent to the model; the route
+   * reserves their zone in the prompt and pastes them in afterwards.
+   */
+  fixed: FixedElement[]
 }
 
 // Each reference image costs input tokens on every frame; four covers a
@@ -89,8 +96,10 @@ export async function resolveDesignDirection(
 
   // 1. Her own visual language.
   if (vl?.status === "ok" && vl.style_spec?.trim()) {
-    const loaded =
-      opts.allowReferences === false ? [] : await loadReferences(supabase, userId, vl)
+    const { references: loaded, fixed } =
+      opts.allowReferences === false
+        ? { references: [], fixed: [] }
+        : await loadElements(supabase, userId, vl, opts.format)
     const references = loaded.map((r) => r.image)
     const lines = [
       "VISUAL LANGUAGE — this is the creator's own brand. Follow it faithfully; it overrides any generic style habit:",
@@ -107,7 +116,7 @@ export async function resolveDesignDirection(
         ...loaded.map((r, i) => `- Reference image ${i + 1}: ${r.note}`),
       )
     }
-    return { source: "brand", lines, references }
+    return { source: "brand", lines, references, fixed }
   }
 
   const colorLine = colors.length
@@ -129,6 +138,7 @@ export async function resolveDesignDirection(
           ...(colorLine ? [colorLine] : []),
         ],
         references: [],
+        fixed: [],
       }
     }
     // 3. No Claude key / derivation failed — let the image model choose.
@@ -139,6 +149,7 @@ export async function resolveDesignDirection(
         ...(colorLine ? [colorLine] : []),
       ],
       references: [],
+      fixed: [],
     }
   }
 
@@ -150,39 +161,83 @@ export async function resolveDesignDirection(
       ...(colorLine ? [colorLine] : []),
     ],
     references: [],
+    fixed: [],
   }
 }
 
-async function loadReferences(
+/**
+ * Her graphic elements for this format, split in two:
+ * - fixed (a placement for this format) → loaded at full quality for
+ *   compositing; the model never sees them.
+ * - free → reference images the model may use where her note says.
+ * Elements whose placement names other formats only are left out entirely.
+ */
+async function loadElements(
   supabase: SupabaseClient,
   userId: string,
   vl: VisualLanguage,
-): Promise<{ image: ModelImage; note: string }[]> {
-  const wanted = (vl.elements ?? []).slice(0, MAX_REFERENCES)
-  if (!wanted.length) return []
+  format: VisualFormat,
+): Promise<{ references: { image: ModelImage; note: string }[]; fixed: FixedElement[] }> {
+  const all = vl.elements ?? []
+  if (!all.length) return { references: [], fixed: [] }
   const { data } = await supabase
     .from("user_media")
     .select("id, storage_path")
     .eq("user_id", userId)
     .eq("category", "element")
-    .in("id", wanted.map((e) => e.id))
+    .in("id", all.map((e) => e.id))
   const rows = (data ?? []) as { id: string; storage_path: string }[]
+  const urlFor = (id: string) => {
+    const r = rows.find((x) => x.id === id)
+    return r ? supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl : null
+  }
 
-  const loaded = await Promise.all(
-    wanted.map(async (el) => {
-      const r = rows.find((x) => x.id === el.id)
-      if (!r) return null
-      try {
-        const url = supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl
-        return { image: await loadImageForModels(url), note: `${el.name} — ${el.usage}` }
-      } catch (err) {
-        console.error("[visual-language][reference]", el.id, err)
-        return null
-      }
-    }),
+  const fixedEls = all.filter(
+    (e) => e.placement && (e.placement.formats as string[]).includes(format),
   )
-  // Failed loads drop out, so notes stay aligned with the attached images.
-  return loaded.filter((x): x is { image: ModelImage; note: string } => x !== null)
+  const freeEls = all.filter((e) => !e.placement).slice(0, MAX_REFERENCES)
+
+  const [fixed, references] = await Promise.all([
+    Promise.all(
+      fixedEls.map(async (el): Promise<FixedElement | null> => {
+        const url = urlFor(el.id)
+        if (!url) return null
+        try {
+          const res = await fetch(url)
+          if (!res.ok) throw new Error(`fetch ${res.status}`)
+          // Full resolution, transparency kept (SVG rasterised).
+          const png = await sharp(Buffer.from(await res.arrayBuffer()), { density: 300 }).png().toBuffer()
+          const meta = await sharp(png).metadata()
+          return {
+            name: el.name,
+            png,
+            aspect: (meta.height ?? 1) / (meta.width ?? 1),
+            placement: el.placement!,
+          }
+        } catch (err) {
+          console.error("[visual-language][fixed-element]", el.id, err)
+          return null
+        }
+      }),
+    ),
+    Promise.all(
+      freeEls.map(async (el) => {
+        const url = urlFor(el.id)
+        if (!url) return null
+        try {
+          return { image: await loadImageForModels(url), note: `${el.name} — ${el.usage}` }
+        } catch (err) {
+          console.error("[visual-language][reference]", el.id, err)
+          return null
+        }
+      }),
+    ),
+  ])
+  return {
+    fixed: fixed.filter((x): x is FixedElement => x !== null),
+    // Failed loads drop out, so notes stay aligned with the attached images.
+    references: references.filter((x): x is { image: ModelImage; note: string } => x !== null),
+  }
 }
 
 async function deriveAndCacheNiche(

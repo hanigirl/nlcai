@@ -141,7 +141,27 @@ export async function POST() {
     issues_he: result.consistent ? [] : result.issues_he,
     style_spec: result.style_spec,
     palette: result.palette,
-    elements: result.elements.filter((e) => elementIds.has(e.id)),
+    elements: result.elements
+      .filter((e) => elementIds.has(e.id))
+      .map((e) => ({
+        id: e.id,
+        name: e.name,
+        usage: e.usage,
+        ...(e.fixed
+          ? {
+              placement: {
+                anchor: e.anchor,
+                // Clamp to sane bounds — a 90%-wide "badge" or a 0 margin
+                // would bury the slide or kiss the edge.
+                width_pct: Math.min(60, Math.max(6, e.width_pct)),
+                margin_x_pct: Math.min(20, Math.max(4, e.margin_x_pct)),
+                margin_y_pct: Math.min(20, Math.max(4, e.margin_y_pct)),
+                slides: e.slides,
+                formats: e.formats,
+              },
+            }
+          : {}),
+      })),
     formats: result.formats,
     // The model numbers examples 1..n in the order it saw them.
     example_kinds: result.example_kinds

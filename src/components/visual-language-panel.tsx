@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import {
+  ANCHOR_LABELS,
   EXAMPLE_KIND_LABELS,
   MAX_BRAND_COLORS,
   MAX_BRAND_ELEMENTS,
@@ -276,6 +277,14 @@ export function VisualLanguagePanel() {
     const kind = visualLanguage?.example_kinds?.find((k) => k.id === id)?.kind
     return kind ? EXAMPLE_KIND_LABELS[kind] : null
   }
+  // Where the analysis pinned an element (pasted at exact pixels).
+  const SLIDE_LABELS = { all: "בכל השקופיות", cover: "בשקופית הפתיחה", content: "בשקופיות התוכן", closing: "בשקופית הסיום", not_cover: "בכל השקופיות חוץ מהפתיחה" } as const
+  const FORMAT_LABELS = { carousel: "קרוסלה", story: "סטורי", image_post: "פוסט תמונה", b_roll: "בי-רול" } as const
+  const placementLabel = (id: string) => {
+    const p = visualLanguage?.elements.find((e) => e.id === id)?.placement
+    if (!p) return null
+    return `מיקום קבוע: ${ANCHOR_LABELS[p.anchor]}, ${SLIDE_LABELS[p.slides]} (${p.formats.map((f) => FORMAT_LABELS[f]).join(", ")})`
+  }
   const hasInputs = colors.length > 0 || elements.length > 0 || examples.length > 0
   const stale = !!visualLanguage && visualLanguage.inputs_signature !== currentSignature
   const busy = uploadingElements > 0 || uploadingExamples > 0
@@ -394,6 +403,9 @@ export function VisualLanguagePanel() {
                 onBlur={(e) => saveElementDescription(el.id, e.target.value.trim())}
                 className="text-sm min-h-0"
               />
+              {placementLabel(el.id) && (
+                <p className="text-xs text-text-neutral-default">{placementLabel(el.id)}</p>
+              )}
             </div>
             <RemoveButton
               label={`מחיקת ${el.name}`}

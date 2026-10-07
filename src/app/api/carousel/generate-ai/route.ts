@@ -6,7 +6,12 @@ import { BRAND_TEMPLATE_ID, getTemplate } from "@/lib/carousel-templates"
 import type { SlideData } from "@/lib/carousel-templates"
 import { getAuthUser } from "@/lib/auth-user"
 import { assertFeedSafeAspect } from "@/lib/social/media-spec"
-import { generateImage } from "@/lib/openai-image"
+import { generateImage, KEEP_INSIDE_FRAME_RULE } from "@/lib/openai-image"
+import {
+  applyFixedElements,
+  reservedZoneLines,
+  type ImageRole,
+} from "@/lib/visual-language/fixed-elements"
 import {
   noExtrasRule,
   resolveDesignDirection,
@@ -86,7 +91,10 @@ function buildSlidePrompt(
           "- Typography: Hebrew type with a clear hierarchy INSIDE the text — the single most important word or phrase is emphasised the way the visual language describes; the rest stays clean and highly readable.",
           `- A small circular badge with the number ${index + 1} in a bottom corner, styled in the visual language.`,
           "",
-          `Keep all text within the central 70% of the height (generous top/bottom margins). ${noExtrasRule(brand)} No extra words.`,
+          ...reservedZoneLines(brand.fixed, slideRole(slide), IMAGE_WIDTH, IMAGE_HEIGHT),
+          "",
+          KEEP_INSIDE_FRAME_RULE,
+          `${noExtrasRule(brand)} No extra words.`,
         ]
       : templateDesignLines(styleSpec, index, niche)),
   ].join("\n")
@@ -116,11 +124,16 @@ function templateDesignLines(
     "",
     styleSpec,
     "",
-    "Keep all text within the central 70% of the height (generous top/bottom margins). No watermarks, logos, borders, or extra words.",
+    KEEP_INSIDE_FRAME_RULE,
+    "No watermarks, logos, borders, or extra words.",
   ]
 }
 
-/** Center-crop 1024×1536 → exact 1080×1350, same as image-post. */
+function slideRole(slide: SlideData): ImageRole {
+  return slide.type === "cover" ? "cover" : slide.type === "cta" ? "closing" : "content"
+}
+
+/** Scale the 4:5 render to exactly 1080×1350 (trims only on the 1024×1536 fallback). */
 function cropToCanvas(imageBase64: string): string {
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${IMAGE_WIDTH}" height="${IMAGE_HEIGHT}" viewBox="0 0 ${IMAGE_WIDTH} ${IMAGE_HEIGHT}">` +
@@ -235,11 +248,15 @@ export async function POST(req: NextRequest) {
           brand,
         )
         const raw = await generateImage(openaiKey, prompt, {
+          shape: "4:5",
           // Legible Hebrew glyphs are the whole point, so we pay for "high".
           quality: "high",
           references: brand?.references,
         })
-        images[i] = cropToCanvas(raw)
+        // Fixed brand elements go in by code — same pixels on every slide.
+        images[i] = brand
+          ? await applyFixedElements(cropToCanvas(raw), brand.fixed, slideRole(slides![i]))
+          : cropToCanvas(raw)
       }
     }
     await Promise.all(
