@@ -49,6 +49,11 @@ export async function POST() {
     return NextResponse.json({ url })
   } catch (err) {
     if (err instanceof SocialPublishError) {
+      // See the note in api/social/accounts: the error the user is told
+      // nothing about is the one that has to reach the log.
+      if (!err.userActionable) {
+        console.error(`[api/social/connect] ${err.code}: ${err.message}`)
+      }
       return NextResponse.json(
         { error: err.code, message: err.userActionable ? err.message : "משהו השתבש. ננסה שוב עוד רגע." },
         { status: err.userActionable ? 400 : 500 },

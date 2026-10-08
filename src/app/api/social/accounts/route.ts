@@ -17,6 +17,14 @@ import { isProviderInstalled } from "@/lib/social/highlevel-auth"
 
 function fail(err: unknown, where: string) {
   if (err instanceof SocialPublishError) {
+    // A non-actionable error is the one the user is told nothing about, which
+    // makes it exactly the one we must write down. Skipping this log cost an
+    // afternoon on 2026-10-08: the screen said "something went wrong" and the
+    // provider's own words — the only thing that identified the fault — were
+    // thrown away on the way out.
+    if (!err.userActionable) {
+      console.error(`[api/social/accounts][${where}] ${err.code}: ${err.message}`)
+    }
     return NextResponse.json(
       {
         error: err.code,
