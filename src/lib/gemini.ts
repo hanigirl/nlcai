@@ -19,6 +19,8 @@
 // why generateWithGeminiFallback retries on any failure, not just 5xx.
 export const GEMINI_PRIMARY_MODEL = "gemini-3.1-pro-preview"
 export const GEMINI_FALLBACK_MODEL = "gemini-3.6-flash"
+/** The model hooks are actually written with — see generateWithGeminiFallback. */
+export const GEMINI_WRITER_MODEL = GEMINI_FALLBACK_MODEL
 
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions"
 
@@ -48,10 +50,6 @@ export class GeminiError extends Error {
     this.status = status
   }
 }
-
-/** Per-minute limits: wait at least a full window, at most a little more. */
-const MIN_RATE_LIMIT_WAIT_MS = 61_000
-const MAX_RATE_LIMIT_WAIT_MS = 75_000
 
 /**
  * Read Google's 429 body. Two shapes exist:
@@ -98,19 +96,6 @@ interface GenerateOptions {
    * interaction with zero text blocks.
    */
   maxOutputTokens?: number
-  /**
-   * On a per-minute 429, wait the delay Google names and try once more.
-   *
-   * A free-tier key gets 5 Flash requests a minute, and one round of hooks
-   * sends 6 at once — so the 6th was rejected on EVERY round, with no prior
-   * use at all, and the user was told she had "exceeded her quota" (Hani,
-   * 2026-10-08; AI Studio showed 6/5 RPM, 6/20 RPD). Waiting out the window
-   * turns that into a slower 6th hook instead of a missing one.
-   *
-   * Off by default: on Pro a free key's limit is ZERO, and waiting a minute
-   * for a call that can never succeed only delays the Flash fallback.
-   */
-  retryOnRateLimit?: boolean
   /** Pro defaults to "high"; drop to "low" for mechanical, non-reasoning calls. */
   thinkingLevel?: "minimal" | "low" | "medium" | "high"
   systemInstruction?: string
@@ -125,34 +110,6 @@ interface GenerateOptions {
  * user-facing errors the Anthropic path uses.
  */
 export async function generateWithGemini(
-  apiKey: string,
-  opts: GenerateOptions,
-): Promise<string> {
-  try {
-    return await generateOnce(apiKey, opts)
-  } catch (err) {
-    if (
-      opts.retryOnRateLimit &&
-      err instanceof GeminiError &&
-      err.code === "quota" &&
-      !err.daily
-    ) {
-      // Never less than a full minute. Google's retryDelay can be a few
-      // seconds while the window is still full of this round's other calls —
-      // a retry that early was rejected again (AI Studio: 7/5 RPM).
-      const waitMs = Math.min(
-        Math.max(err.retryAfterMs ?? 0, MIN_RATE_LIMIT_WAIT_MS),
-        MAX_RATE_LIMIT_WAIT_MS,
-      )
-      console.log(`[gemini] ${opts.model ?? GEMINI_PRIMARY_MODEL} per-minute limit — retrying in ${Math.round(waitMs / 1000)}s`)
-      await new Promise((resolve) => setTimeout(resolve, waitMs))
-      return generateOnce(apiKey, opts)
-    }
-    throw err
-  }
-}
-
-async function generateOnce(
   apiKey: string,
   {
     prompt,
@@ -233,18 +190,17 @@ async function generateOnce(
 }
 
 /**
- * Pro first, Flash second. Returns whether the fallback fired so routes can
- * tell the client.
+ * ONE request per call, on Flash. No Pro attempt, no fallback, no retry.
  *
- * Retries on ANY Pro failure, deliberately — unlike the Sonnet→Haiku fallback
- * this mirrors, the common case here isn't an overloaded server, it's a free
- * Gemini key that has no Pro access at all and gets 429/403 on every single
- * call. Narrowing this to 5xx would hand those users zero hooks and an
- * "invalid key" message for a key that is perfectly valid.
+ * This used to try Pro first and fall back to Flash, and later also retried
+ * Flash after a rate limit. On a free-tier key Pro's limit is zero, so every
+ * hook cost two to three requests against a budget of 5 a minute and 20 a
+ * day — Hani burned two keys' daily allowance in one morning without a
+ * single hook saved (2026-10-08). Her rule: a round of 6 hooks sends 6
+ * requests, never more. Flash is the model every key can reach.
  *
- * If Flash fails too, Flash's error is what propagates — it's the model every
- * key can reach, so its failure is the one that actually describes the
- * user's problem.
+ * The name and return shape are kept so callers don't change; `fallback` is
+ * always false now.
  */
 export async function generateWithGeminiFallback(
   apiKey: string,
@@ -252,31 +208,16 @@ export async function generateWithGeminiFallback(
     fallbackTimeoutMs,
     ...opts
   }: Omit<GenerateOptions, "model"> & {
-    /**
-     * Cap for the Flash retry only. Pro and Flash aren't the same shape of
-     * call — Pro thinks, Flash barely does — so one shared timeout either cuts
-     * Pro off while it's still working or lets a stuck Flash call run long.
-     * Defaults to the primary's cap, which is the previous behaviour.
-     */
+    /** Kept for callers; Flash is the only call now, so this caps it when set. */
     fallbackTimeoutMs?: number
   },
 ): Promise<{ text: string; fallback: boolean; model: string }> {
-  try {
-    const text = await generateWithGemini(apiKey, { ...opts, model: GEMINI_PRIMARY_MODEL })
-    return { text, fallback: false, model: GEMINI_PRIMARY_MODEL }
-  } catch (err) {
-    const code = err instanceof GeminiError ? err.code : "unknown"
-    console.log(`[gemini] ${GEMINI_PRIMARY_MODEL} failed (${code}) — retrying on ${GEMINI_FALLBACK_MODEL}`)
-    const text = await generateWithGemini(apiKey, {
-      ...opts,
-      model: GEMINI_FALLBACK_MODEL,
-      // Flash is the model a free key actually runs on — sit out its
-      // per-minute window rather than drop the hook.
-      retryOnRateLimit: true,
-      ...(fallbackTimeoutMs ? { timeoutMs: fallbackTimeoutMs } : {}),
-    })
-    return { text, fallback: true, model: GEMINI_FALLBACK_MODEL }
-  }
+  const text = await generateWithGemini(apiKey, {
+    ...opts,
+    model: GEMINI_WRITER_MODEL,
+    ...(fallbackTimeoutMs ? { timeoutMs: fallbackTimeoutMs } : {}),
+  })
+  return { text, fallback: false, model: GEMINI_WRITER_MODEL }
 }
 
 /**

@@ -832,8 +832,22 @@ ${formatTemplatesForPrompt()}
           // Each batch waits for all its plans to finish before the next starts —
           // that keeps concurrent Claude calls bounded and the stream ordered by
           // batch (plans within a batch may arrive in any order, which is fine).
+          //
+          // Gemini: one request per plan (see generateWithGeminiFallback), and
+          // batches start at least a minute apart. A free key allows 5
+          // requests a minute; firing the 6th straight after the first 5 got it
+          // rejected every round. Waiting costs time, not requests.
+          const GEMINI_WINDOW_MS = 61_000
+          let batchStartedAt = 0
           for (let i = 0; i < plans.length && hookCount < HOOK_COUNT; i += BATCH_SIZE) {
-            const batch = plans.slice(i, i + BATCH_SIZE)
+            if (geminiCohort && batchStartedAt) {
+              const wait = GEMINI_WINDOW_MS - (Date.now() - batchStartedAt)
+              if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
+            }
+            batchStartedAt = Date.now()
+            // Never write more plans than hooks still needed — each one is a
+            // request against the user's quota.
+            const batch = plans.slice(i, Math.min(i + BATCH_SIZE, i + (HOOK_COUNT - hookCount)))
             await Promise.all(batch.map((plan, j) => processOnePlan(plan, i + j)))
           }
 
