@@ -61,13 +61,26 @@ export function useHookGeneration(): HookGenContextValue {
 const TOTAL_HOOKS = 6
 const TOAST_ID = "hook-generation-status"
 
+// Google's own page for the key's per-model limits and current usage. A
+// free-tier key gets a handful of requests a minute and a few dozen a day —
+// less than a busy afternoon of hooks — and that page shows the real numbers
+// for the user's own project, so we link to it rather than quoting limits
+// Google changes.
+const GEMINI_LIMITS_URL = "https://aistudio.google.com/rate-limit"
+const geminiLimitsAction = {
+  label: "לצפייה במגבלות שלי",
+  onClick: () => window.open(GEMINI_LIMITS_URL, "_blank", "noopener,noreferrer"),
+}
+
 // The route streams raw error codes. Without this map the user sees English
 // snake_case in a toast — most of these are new since hooks moved to Gemini.
 const ERROR_MESSAGES: Record<string, string> = {
   audience_missing: "לא הצלחנו לקרוא את ניתוח קהל היעד. יש לעדכן את הקובץ בהגדרות.",
   gemini_not_connected: "לא חובר מפתח Gemini. צריך לחבר אותו בהגדרות כדי לייצר הוקים.",
   gemini_key_invalid: "מפתח ה-Gemini לא תקף. צריך לחבר אותו מחדש בהגדרות.",
-  gemini_quota_exceeded: "חרגתם מהמכסה של Gemini. בדקו את המגבלות בחשבון או נסו שוב מאוחר יותר.",
+  // Not "you used it all up" — on a free key one round of hooks can hit the
+  // per-minute limit with no prior use at all (Hani, 2026-10-08).
+  gemini_quota_exceeded: "Google חסמה זמנית את מפתח ה-Gemini שלכם. מפתח במסלול החינמי של Google מוגבל למעט מאוד בקשות בדקה וביום, ולכן ההוקים לא נוצרו. נסו שוב בעוד דקה. אם זה חוזר, הגעתם למגבלה היומית, והיא מתאפסת מחר.",
   gemini_overloaded: "השרתים של Gemini עמוסים כרגע. נסו שוב בעוד דקה.",
   anthropic_not_connected: "לא חובר מפתח Anthropic. צריך לחבר אותו בהגדרות.",
   anthropic_overloaded: "השרתים של Anthropic עמוסים כרגע. נסו שוב בעוד דקה.",
@@ -77,15 +90,18 @@ const ERROR_MESSAGES: Record<string, string> = {
 /** The error toast — with a way to top up when the cause is Claude credits. */
 function showHookError(code: unknown) {
   const outOfCredits = code === "credits_exhausted"
+  const geminiQuota = code === "gemini_quota_exceeded"
   toast.error(hookErrorMessage(code), {
     id: TOAST_ID,
-    duration: outOfCredits ? 30000 : 6000,
+    duration: outOfCredits ? 30000 : geminiQuota ? 20000 : 6000,
     action: outOfCredits
       ? {
           label: "לטעינת קרדיטים",
           onClick: () => window.open(CLAUDE_BILLING_URL, "_blank", "noopener,noreferrer"),
         }
-      : undefined,
+      : geminiQuota
+        ? geminiLimitsAction
+        : undefined,
   })
 }
 
@@ -243,8 +259,8 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
             // success path below run for the hooks that did land.
             if (parsed.gemini_quota_warning) {
               toast.error(
-                "חלק מההוקים לא נוצרו כי חרגתם מהמכסה של Gemini. נסו שוב בעוד דקה.",
-                { duration: 8000 },
+                "חלק מההוקים לא נוצרו: Google מגבילה מפתח Gemini במסלול החינמי למעט מאוד בקשות בדקה וביום. נסו שוב בעוד דקה.",
+                { duration: 20000, action: geminiLimitsAction },
               )
               continue
             }

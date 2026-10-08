@@ -2054,9 +2054,11 @@ function ProjectPageInner() {
                       </>
                     ) : error === "gemini_quota_exceeded" ? (
                       <>
-                        <span className="text-small text-text-primary-default">חרגתם מהמכסה של Gemini</span>
-                        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-small-bold text-text-primary-default hover:underline">
-                          לבדיקת המכסה ←
+                        <span className="text-small text-text-primary-default text-center">
+                          Google חסמה זמנית את מפתח ה-Gemini שלכם. במסלול החינמי יש מעט מאוד בקשות בדקה וביום. נסו שוב בעוד דקה, ואם זה חוזר — מחר.
+                        </span>
+                        <a href="https://aistudio.google.com/rate-limit" target="_blank" rel="noopener noreferrer" className="text-small-bold text-text-primary-default hover:underline">
+                          לצפייה במגבלות שלי ←
                         </a>
                       </>
                     ) : error === "gemini_key_invalid" ? (
