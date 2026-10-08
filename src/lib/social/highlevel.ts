@@ -343,14 +343,13 @@ export class HighLevelPublisher implements SocialPublisher {
       : (results?.pages ?? results?.accounts ?? [])
 
     if (pages.length === 0) {
-      // The one case where the provider's own words are worth more than our
-      // guess at what they mean — an empty list here has several causes.
+      // The provider's own answer beats our guess at what it means — an empty
+      // list here has several possible causes and they are not distinguishable
+      // from this side.
       console.error(
-        "[social/finishConnect] no accounts returned",
+        "[social/finishConnect] no accounts returned:",
         JSON.stringify(available).slice(0, 600),
       )
-    }
-    if (pages.length === 0) {
       throw new SocialPublishError(
         "לא נמצא חשבון אינסטגרם מקצועי שמקושר לדף פייסבוק. צריך לקשר דף ולנסות שוב.",
         "not_connected"
@@ -361,7 +360,27 @@ export class HighLevelPublisher implements SocialPublisher {
     // there are several we take the first rather than inventing a chooser —
     // a picker is a product decision, not a fix for this bug.
     const page = pages[0]
-    if (!page.originId || !page.name) {
+
+    // The field names here are the provider's, not a standard, and they differ
+    // per platform. Fall back through the plausible spellings instead of
+    // failing on the first one that happens to be absent.
+    const raw = page as Record<string, unknown>
+    const str = (...keys: string[]): string | undefined => {
+      for (const k of keys) {
+        const v = raw[k]
+        if (typeof v === "string" && v) return v
+      }
+      return undefined
+    }
+    const originId = str("originId", "id", "pageId", "accountId", "originalId")
+    const name = str("name", "username", "pageName", "accountName", "title")
+    const avatar = str("avatar", "avatarUrl", "picture", "profilePicture", "image")
+
+    if (!originId || !name) {
+      console.error(
+        "[social/finishConnect] account is missing originId/name:",
+        JSON.stringify(page).slice(0, 600),
+      )
       throw new SocialPublishError(
         "החשבון שאינסטגרם החזירה חסר פרטים. נסי לחבר שוב.",
         "provider_error",
@@ -375,9 +394,9 @@ export class HighLevelPublisher implements SocialPublisher {
       method: "POST",
       token,
       body: {
-        originId: page.originId,
-        name: page.name,
-        ...(page.avatar ? { avatar: page.avatar } : {}),
+        originId,
+        name,
+        ...(avatar ? { avatar } : {}),
       },
     })
 
