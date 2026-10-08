@@ -118,10 +118,22 @@ async function ghlFetch<T>(path: string, opts: GhlFetchOptions): Promise<T> {
         "rate_limited"
       )
     }
+    // 422 means "I understood the request and refuse it", and what that refusal
+    // is about depends entirely on which endpoint said it. Only the posting
+    // endpoints can be refusing *media*; everywhere else that message sends the
+    // reader hunting through image dimensions for a problem that is in our
+    // request body. This cost an afternoon on 2026-10-08.
     if (res.status === 422) {
+      if (path.includes("/posts")) {
+        throw new SocialPublishError(
+          "אינסטגרם דחתה את המדיה. בדקי שיחס הגובה-רוחב בין 4:5 ל-1.91:1 ושהקובץ קטן מ-8MB.",
+          "media_rejected"
+        )
+      }
       throw new SocialPublishError(
-        "אינסטגרם דחתה את המדיה. בדקי שיחס הגובה-רוחב בין 4:5 ל-1.91:1 ושהקובץ קטן מ-8MB.",
-        "media_rejected"
+        `HighLevel rejected the request to ${path}: ${detail.slice(0, 300)}`,
+        "provider_error",
+        false
       )
     }
     throw new SocialPublishError(
@@ -306,14 +318,54 @@ export class HighLevelPublisher implements SocialPublisher {
   ): Promise<SocialAccount> {
     const locationId = await this.tenantId(userId)
 
+    const token = await getLocationToken(locationId)
+    const path = `/social-media-posting/oauth/${locationId}/${platform}/accounts/${encodeURIComponent(
+      externalAccountId
+    )}`
+
+    // Attaching is two calls, not one. The popup hands back a *grant*, not an
+    // account: one Instagram login can expose several professional accounts,
+    // so the provider makes us list them and name the one we want.
+    //
+    // Verified live (2026-10-08): POSTing without that body answers 422, and
+    // the fields it wants — `originId` and `name` — exist only in this GET.
+    const available = await ghlFetch<{
+      results?: {
+        pages?: { id?: string; originId?: string; name?: string; avatar?: string }[]
+      }
+    }>(path, { token })
+
+    const pages = available.results?.pages ?? []
+    if (pages.length === 0) {
+      throw new SocialPublishError(
+        "לא נמצא חשבון אינסטגרם מקצועי שמקושר לדף פייסבוק. צריך לקשר דף ולנסות שוב.",
+        "not_connected"
+      )
+    }
+
+    // One grant, one account, in the overwhelming majority of cases. When
+    // there are several we take the first rather than inventing a chooser —
+    // a picker is a product decision, not a fix for this bug.
+    const page = pages[0]
+    if (!page.originId || !page.name) {
+      throw new SocialPublishError(
+        "החשבון שאינסטגרם החזירה חסר פרטים. נסי לחבר שוב.",
+        "provider_error",
+        false
+      )
+    }
+
     const attached = await ghlFetch<{
       results?: { id?: string; name?: string; avatar?: string }
-    }>(
-      `/social-media-posting/oauth/${locationId}/${platform}/accounts/${encodeURIComponent(
-        externalAccountId
-      )}`,
-      { method: "POST", token: await getLocationToken(locationId) }
-    )
+    }>(path, {
+      method: "POST",
+      token,
+      body: {
+        originId: page.originId,
+        name: page.name,
+        ...(page.avatar ? { avatar: page.avatar } : {}),
+      },
+    })
 
     const { data, error } = await this.db
       .from("social_accounts")
