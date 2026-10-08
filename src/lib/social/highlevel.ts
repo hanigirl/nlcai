@@ -36,6 +36,7 @@ import {
   type ScheduleResult,
   type SchedulePostInput,
   type SocialAccount,
+  type SocialMedia,
   type SocialPublisher,
 } from "./types"
 
@@ -147,14 +148,43 @@ async function ghlFetch<T>(path: string, opts: GhlFetchOptions): Promise<T> {
 }
 
 /**
- * Every field name here is unverified — see the header note. Keeping them in
- * one function means a token and one live call fixes the whole adapter.
+ * The MIME type for one media item.
+ *
+ * The provider wants a real content type and rejects the bare category. We
+ * know the category for certain (it decided which renderer produced the file)
+ * and the container only from the extension, so read the extension and fall
+ * back to the format each renderer actually writes.
  */
-function buildPostBody(input: SchedulePostInput, externalAccountId: string) {
+function mimeFor(media: SocialMedia): string {
+  const ext = new URL(media.url).pathname.split(".").pop()?.toLowerCase()
+  if (media.type === "video") {
+    return ext === "mov" ? "video/quicktime" : "video/mp4"
+  }
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg"
+  if (ext === "webp") return "image/webp"
+  return "image/png"
+}
+
+/**
+ * Verified against the live API on 2026-10-08 by scheduling a post a year out
+ * and deleting it. Two of the original guesses were wrong, and both failed
+ * loudly rather than silently, which is the only reason this is now settled:
+ *
+ *   - `media[].type` is a MIME type ("image/png"), not a category ("image").
+ *   - `userId` is required for OAuth-channel posts and was missing entirely.
+ *
+ * `thumbnail` remains a guess — reels were not part of that run.
+ */
+function buildPostBody(
+  input: SchedulePostInput,
+  plannerAccountId: string,
+  userId: string,
+) {
   return {
-    accountIds: [externalAccountId],
+    accountIds: [plannerAccountId],
+    userId,
     summary: input.caption,
-    media: input.media.map((m) => ({ url: m.url, type: m.type })),
+    media: input.media.map((m) => ({ url: m.url, type: mimeFor(m) })),
     type: input.kind,
     // Reel cover. HighLevel documents thumbnail support for reels but not the
     // field name, so this is one of the guesses — omitted entirely rather than
@@ -482,17 +512,43 @@ export class HighLevelPublisher implements SocialPublisher {
 
     const account = await this.accountRow(input.userId, input.socialAccountId)
     const locationId = account.external_tenant_id ?? (await this.tenantId(input.userId))
+    const token = await getLocationToken(locationId)
 
-    const created = await ghlFetch<{ id?: string; _id?: string }>(
-      `/social-media-posting/${locationId}/posts`,
-      {
-        method: "POST",
-        body: buildPostBody(input, account.external_account_id),
-        token: await getLocationToken(locationId),
-      }
+    // The id we stored at connect time is the OAuth grant's. The posting
+    // endpoints want the *planner's* id for the same account, which is a
+    // different string, so resolve it from the provider rather than storing a
+    // second id that can drift out of step with the first.
+    const connected = await ghlFetch<{
+      results?: { accounts?: { id?: string; oauthId?: string }[] }
+    }>(`/social-media-posting/${locationId}/accounts`, { token })
+
+    const match = (connected.results?.accounts ?? []).find(
+      (a) => a.oauthId === account.external_account_id,
     )
+    if (!match?.id || !match.oauthId) {
+      throw new SocialPublishError(
+        "החיבור לאינסטגרם פג. צריך לחבר מחדש כדי שהפוסטים ימשיכו לצאת.",
+        "needs_reconnect"
+      )
+    }
 
-    const providerPostId = created.id ?? created._id
+    const created = await ghlFetch<{
+      id?: string
+      _id?: string
+      results?: { post?: { id?: string; _id?: string } }
+    }>(`/social-media-posting/${locationId}/posts`, {
+      method: "POST",
+      body: buildPostBody(input, match.id, match.oauthId),
+      token,
+    })
+
+    // The id arrives nested under `results.post`, not at the top level — the
+    // flat read returned undefined and would have failed every publish.
+    const providerPostId =
+      created.results?.post?._id ??
+      created.results?.post?.id ??
+      created.id ??
+      created._id
     if (!providerPostId) {
       // Without an id we can never move or cancel this post again — better to
       // fail loudly now than to leave an unreachable item in the queue.
