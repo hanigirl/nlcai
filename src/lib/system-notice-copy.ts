@@ -16,8 +16,8 @@ export type NoticeCopy = {
 export const NOTICE_COPY: Record<NoticeCode, NoticeCopy> = {
   gemini_daily_limit: {
     title: "הגעתם למגבלה היומית של Gemini",
-    body: "מפתח ה-Gemini שלכם במסלול החינמי של Google מאפשר מעט בקשות ביום, והן נגמרו להיום. ייצור ההוקים יחזור לעבוד כשהמגבלה תתאפס, בסביבות 10:00 בבוקר.",
-    cta: { label: "לצפייה במגבלות שלי", href: "https://aistudio.google.com/rate-limit", external: true },
+    body: "מפתח ה-Gemini שלכם במסלול החינמי של Google מאפשר מעט בקשות ביום, והן נגמרו להיום. עד שהמכסה תתאפס, בסביבות 10:00 בבוקר, ההוקים נכתבים ב-Claude Sonnet (מהקרדיטים של Claude).",
+    cta: { label: "לצפייה בשימוש", href: "https://aistudio.google.com/usage", external: true },
   },
   gemini_key_invalid: {
     title: "מפתח ה-Gemini לא תקף",

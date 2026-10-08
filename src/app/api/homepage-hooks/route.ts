@@ -500,6 +500,10 @@ ${categoriesCatalog}
         let dailyRetryAfterMs: number | undefined
         let geminiKeyInvalid = false
         let geminiSucceeded = false
+        // Set on the first quota error: the rest of the round is written by
+        // Claude, and `claudeStandIns` counts those hooks for the notice.
+        let geminiOut = false
+        let claudeStandIns = 0
         // One engine announcement per batch, from the first writer that
         // actually succeeds — that's the only point where the model in use is
         // known for certain rather than assumed.
@@ -636,8 +640,8 @@ ${formatTemplatesForPrompt()}
             let draft: DraftHook | null = null
             let rawText = ""
 
-            if (geminiCohort) {
-              // Gemini Pro with a Flash overload fallback.
+            if (geminiCohort && !geminiOut) {
+              // Gemini — one Flash request (see generateWithGeminiFallback).
               //
               // 16384, not 4096: Pro's thinking is billed against this same
               // budget, so a tight cap doesn't shorten the hook, it truncates
@@ -668,24 +672,31 @@ ${formatTemplatesForPrompt()}
                 geminiSucceeded = true
                 draft = parseDraftJson(raw)
               } catch (err) {
-                // A quota error means the user's Gemini plan is rate-limiting
-                // the batch — every remaining plan will hit it too, so record
-                // it and report it once at end-of-stream rather than silently
-                // shipping a short batch.
+                // A quota error means the user's Gemini plan is out of requests.
+                // Every remaining plan would hit it too, so the rest of the
+                // round goes straight to Claude (Hani, 2026-10-08: "if there's
+                // no Gemini quota, write the hooks with Claude Sonnet and say
+                // so") — no more requests against a key that's already shut.
                 if (err instanceof GeminiError && err.code === "quota") {
                   quotaHit = true
+                  geminiOut = true
                   if (err.daily) {
                     dailyLimitHit = true
                     dailyRetryAfterMs = err.retryAfterMs ?? dailyRetryAfterMs
                   }
                 }
                 if (err instanceof GeminiError && err.code === "invalid_key") geminiKeyInvalid = true
-                skipped++
                 console.warn(`Homepage Hooks: Gemini writer failed for "${plan.specific_topic}":`, err)
-                return
+                if (!geminiOut) {
+                  skipped++
+                  return
+                }
               }
-            } else {
-              // Unchanged Claude path — Sonnet with a Haiku overload fallback.
+            }
+            if (!geminiCohort || (geminiOut && !draft)) {
+              // Claude writer — the original path, and the stand-in when the
+              // user's Gemini quota runs out mid-round.
+              const viaFallback = geminiCohort
               const doCall = async (model: string) => {
                 const res = await client.messages.create({
                   model,
@@ -697,6 +708,7 @@ ${formatTemplatesForPrompt()}
               }
               try {
                 await doCall(usedFallback ? FALLBACK_MODEL : PRIMARY_MODEL)
+                if (viaFallback) claudeStandIns++
               } catch (err) {
                 if (!isOverloadError(err) || usedFallback) {
                   skipped++
@@ -706,6 +718,7 @@ ${formatTemplatesForPrompt()}
                 usedFallback = true
                 safeEnqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
                 await doCall(FALLBACK_MODEL)
+                if (viaFallback) claudeStandIns++
               }
             }
 
@@ -826,7 +839,7 @@ ${formatTemplatesForPrompt()}
           const GEMINI_WINDOW_MS = 61_000
           let batchStartedAt = 0
           for (let i = 0; i < plans.length && hookCount < HOOK_COUNT; i += BATCH_SIZE) {
-            if (geminiCohort && batchStartedAt) {
+            if (geminiCohort && !geminiOut && batchStartedAt) {
               const wait = GEMINI_WINDOW_MS - (Date.now() - batchStartedAt)
               if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
             }
@@ -913,7 +926,9 @@ ${formatTemplatesForPrompt()}
               resolveNotice({ audience: "user", userId }, "gemini_key_invalid"),
             ])
           }
-          if (quotaHit) {
+          if (claudeStandIns > 0) {
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ gemini_quota_claude_fallback: claudeStandIns, daily: dailyLimitHit })}\n\n`))
+          } else if (quotaHit) {
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ gemini_quota_warning: true, daily: dailyLimitHit })}\n\n`))
           }
           safeEnqueue(encoder.encode("data: [DONE]\n\n"))

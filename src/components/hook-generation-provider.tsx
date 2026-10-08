@@ -67,6 +67,7 @@ const TOAST_ID = "hook-generation-status"
 // for the user's own project, so we link to it rather than quoting limits
 // Google changes.
 const GEMINI_LIMITS_URL = "https://aistudio.google.com/rate-limit"
+const GEMINI_USAGE_URL = "https://aistudio.google.com/usage"
 // Free-tier keys get ~20 requests a day per project; the window resets at
 // midnight Pacific, which is morning in Israel.
 const GEMINI_DAILY_MESSAGE =
@@ -263,6 +264,20 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
             // Partial failure, not fatal — some hooks got through before the
             // user's Gemini plan started rate-limiting. Warn, but let the
             // success path below run for the hooks that did land.
+            // Gemini ran out mid-round and Claude Sonnet wrote the rest —
+            // a heads-up, not an error: the hooks are all there.
+            if (typeof parsed.gemini_quota_claude_fallback === "number") {
+              const n = parsed.gemini_quota_claude_fallback
+              toast.message("המכסה של Gemini להוקים נגמרה", {
+                description: `${n === 1 ? "הוק אחד נוצר" : `${n} הוקים נוצרו`} ב-Claude Sonnet במקום (מהקרדיטים של Claude). המכסה של Gemini תתאפס ${parsed.daily ? "מחר בסביבות 10:00 בבוקר" : "בעוד דקה"}.`,
+                duration: 20000,
+                action: {
+                  label: "לצפייה בשימוש",
+                  onClick: () => window.open(GEMINI_USAGE_URL, "_blank", "noopener,noreferrer"),
+                },
+              })
+              continue
+            }
             if (parsed.gemini_quota_warning) {
               toast.error(
                 parsed.daily
