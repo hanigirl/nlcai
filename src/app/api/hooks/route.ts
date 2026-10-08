@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { buildHookGeneratorPrompt, buildHookGeneratorSystem, parseHooks } from "@/lib/agents/hook-generator"
-import { judgeHook, validateHookLocally, ownNamesFor, mentionsOwnName } from "@/lib/agents/hook-judge"
+import { judgeHook, validateHookLocally, ownNamesFor } from "@/lib/agents/hook-judge"
 import { findNearDuplicate } from "@/lib/agents/hook-similarity"
 import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
@@ -408,13 +408,6 @@ export async function POST(req: NextRequest) {
     // same convention homepage-hooks uses. status defaults to 'pending' in
     // schema; we mark these 'completed' explicitly since generation already
     // finished — there is no later stage that could still change the text.
-    // A hook that names the business isn't saved or shown, on either path.
-    const named = hookTexts.filter((t) => mentionsOwnName(t, ownNames))
-    if (named.length > 0) {
-      console.warn(`[api/hooks] dropped ${named.length} hook(s) that name the business: ${named.map((t) => `"${t.slice(0, 50)}"`).join(", ")}`)
-      hookTexts = hookTexts.filter((t) => !named.includes(t))
-    }
-
     const hooks = await Promise.all(
       hookTexts.map(async (text, idx) => {
         const { data, error } = await supabase

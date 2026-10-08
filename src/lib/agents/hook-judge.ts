@@ -287,12 +287,11 @@ export function validateHookLocally(hook: string, specificTopic: string): string
 // "זה הדבר שאנחנו עושים עם נועה כהן יעוץ עסקי" (Hani, 2026-10-08).
 
 /**
- * The names a hook must never contain: the business name and the user's own
+ * The names the prompt rule spells out: the business name and the user's own
  * name. `product_name` doubles as a free-text description for some users
- * ("אימוני כושר לאמהות אחרי לידה"); only a short value is treated as a name,
- * so a description can't block an honest hook that happens to share it.
- * Latin words inside a longer value ("UXTRA — עיצוב חוויה") are brand names
- * often enough to block on their own.
+ * ("אימוני כושר לאמהות אחרי לידה") — that's a topic, not a name, so only a
+ * short value is listed. Latin words inside a longer value ("UXTRA — עיצוב
+ * חוויה") are brand names often enough to list on their own.
  */
 export function ownNamesFor(opts: { productName?: string | null; fullName?: string | null }): string[] {
   const names = new Set<string>()
@@ -306,13 +305,7 @@ export function ownNamesFor(opts: { productName?: string | null; fullName?: stri
   return [...names]
 }
 
-/** The first of `names` that appears in `hook`, or null. */
-export function mentionsOwnName(hook: string, names: string[]): string | null {
-  const text = hook.toLowerCase().replace(/\s+/g, " ")
-  return names.find((n) => text.includes(n.toLowerCase())) ?? null
-}
-
-/** The prompt rule — also covers product names, which aren't hard-blocked. */
+/** The rule given to the hook writers up front — names, products and owner alike. */
 export function ownNameRule(names: string[], productNames: string[] = []): string {
   const all = [...new Set([...names, ...productNames])].filter(Boolean)
   return `
