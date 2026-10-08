@@ -329,13 +329,27 @@ export class HighLevelPublisher implements SocialPublisher {
     //
     // Verified live (2026-10-08): POSTing without that body answers 422, and
     // the fields it wants — `originId` and `name` — exist only in this GET.
+    type OAuthPage = { id?: string; originId?: string; name?: string; avatar?: string }
     const available = await ghlFetch<{
-      results?: {
-        pages?: { id?: string; originId?: string; name?: string; avatar?: string }[]
-      }
+      results?: { pages?: OAuthPage[]; accounts?: OAuthPage[] } | OAuthPage[]
     }>(path, { token })
 
-    const pages = available.results?.pages ?? []
+    // The docs name this `results.pages`, which is Facebook's vocabulary. Read
+    // the other two shapes too rather than betting the connect flow on which
+    // word this platform happens to use.
+    const results = available.results
+    const pages: OAuthPage[] = Array.isArray(results)
+      ? results
+      : (results?.pages ?? results?.accounts ?? [])
+
+    if (pages.length === 0) {
+      // The one case where the provider's own words are worth more than our
+      // guess at what they mean — an empty list here has several causes.
+      console.error(
+        "[social/finishConnect] no accounts returned",
+        JSON.stringify(available).slice(0, 600),
+      )
+    }
     if (pages.length === 0) {
       throw new SocialPublishError(
         "לא נמצא חשבון אינסטגרם מקצועי שמקושר לדף פייסבוק. צריך לקשר דף ולנסות שוב.",
