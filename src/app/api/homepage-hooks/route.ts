@@ -519,6 +519,8 @@ ${categoriesCatalog}
         // free-tier limits are low, so "fewer hooks than expected" is far more
         // often rate limiting than model quality — the client needs to be told.
         let quotaHit = false
+        // The DAILY cap specifically — "try again in a minute" would be a lie.
+        let dailyLimitHit = false
         // One engine announcement per batch, from the first writer that
         // actually succeeds — that's the only point where the model in use is
         // known for certain rather than assumed.
@@ -688,7 +690,10 @@ ${formatTemplatesForPrompt()}
                 // the batch — every remaining plan will hit it too, so record
                 // it and report it once at end-of-stream rather than silently
                 // shipping a short batch.
-                if (err instanceof GeminiError && err.code === "quota") quotaHit = true
+                if (err instanceof GeminiError && err.code === "quota") {
+                  quotaHit = true
+                  if (err.daily) dailyLimitHit = true
+                }
                 skipped++
                 console.warn(`Homepage Hooks: Gemini writer failed for "${plan.specific_topic}":`, err)
                 return
@@ -894,7 +899,7 @@ ${formatTemplatesForPrompt()}
           // listeners). A quota hit is partial — the hooks that did make it
           // through are real and must land normally.
           if (quotaHit) {
-            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ gemini_quota_warning: true })}\n\n`))
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ gemini_quota_warning: true, daily: dailyLimitHit })}\n\n`))
           }
           safeEnqueue(encoder.encode("data: [DONE]\n\n"))
           safeClose()

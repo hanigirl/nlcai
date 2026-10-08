@@ -454,7 +454,7 @@ export async function POST(req: NextRequest) {
     // Anthropic-shaped detection for anything else in the request path.
     const gemini = geminiErrorCode(error)
     if (gemini) {
-      const status = gemini === "gemini_quota_exceeded" ? 402 : gemini === "gemini_overloaded" ? 503 : 400
+      const status = gemini === "gemini_quota_exceeded" || gemini === "gemini_daily_limit" ? 402 : gemini === "gemini_overloaded" ? 503 : 400
       return NextResponse.json({ error: gemini }, { status })
     }
     const isCredits = /credit|billing|insufficient_quota|payment|402/.test(message)

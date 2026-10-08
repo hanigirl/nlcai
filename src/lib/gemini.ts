@@ -54,15 +54,30 @@ const MIN_RATE_LIMIT_WAIT_MS = 61_000
 const MAX_RATE_LIMIT_WAIT_MS = 75_000
 
 /**
- * Read Google's 429 body: `RetryInfo.retryDelay` ("37s") says when the
- * per-minute window frees up, and a `PerDay` quota id means the daily cap.
+ * Read Google's 429 body. Two shapes exist:
+ *   - google.rpc style: `RetryInfo.retryDelay` ("37s") + a `...PerDay...` quota id
+ *   - the Interactions API's plain message, verbatim from production
+ *     (2026-10-08): "Rate limit exceeded for model gemini-3.6-flash (limit: 20
+ *     requests per day on Free Tier). Please retry in 15h26m48s ..."
+ * Only the first shape was handled, so a daily cap read as per-minute: the
+ * call sat out a pointless minute and the user was told to retry in one.
  */
 function parseRateLimit(body: string): { retryAfterMs?: number; daily: boolean } {
-  const delay = body.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/)
-  return {
-    retryAfterMs: delay ? Math.ceil(parseFloat(delay[1]) * 1000) : undefined,
-    daily: /PerDay/i.test(body),
+  let retryAfterMs: number | undefined
+  const rpc = body.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/)
+  const text = body.match(/retry in\s+(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+(?:\.\d+)?)s)?/i)
+  if (rpc) {
+    retryAfterMs = Math.ceil(parseFloat(rpc[1]) * 1000)
+  } else if (text && (text[1] || text[2] || text[3])) {
+    retryAfterMs = Math.ceil(
+      ((Number(text[1] ?? 0) * 60 + Number(text[2] ?? 0)) * 60 + parseFloat(text[3] ?? "0")) * 1000,
+    )
   }
+  const daily =
+    /PerDay|per day/i.test(body) ||
+    // Anything longer than a few minutes is not a per-minute window.
+    (retryAfterMs !== undefined && retryAfterMs > 10 * 60_000)
+  return { retryAfterMs, daily }
 }
 
 /** Response shape we depend on — everything else in the payload is ignored. */
@@ -286,7 +301,7 @@ function extractText(data: InteractionResponse): string {
 export function geminiErrorCode(err: unknown): string {
   if (err instanceof GeminiError) {
     if (err.code === "invalid_key") return "gemini_key_invalid"
-    if (err.code === "quota") return "gemini_quota_exceeded"
+    if (err.code === "quota") return err.daily ? "gemini_daily_limit" : "gemini_quota_exceeded"
     if (err.code === "overloaded") return "gemini_overloaded"
   }
   return ""

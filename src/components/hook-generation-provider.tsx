@@ -67,6 +67,11 @@ const TOAST_ID = "hook-generation-status"
 // for the user's own project, so we link to it rather than quoting limits
 // Google changes.
 const GEMINI_LIMITS_URL = "https://aistudio.google.com/rate-limit"
+// Free-tier keys get ~20 requests a day per project; the window resets at
+// midnight Pacific, which is morning in Israel.
+const GEMINI_DAILY_MESSAGE =
+  "מפתח ה-Gemini שלכם הגיע למגבלה היומית של Google במסלול החינמי, ולכן ההוקים לא נוצרו. המגבלה מתאפסת פעם ביום, בסביבות 10:00 בבוקר."
+
 const geminiLimitsAction = {
   label: "לצפייה במגבלות שלי",
   onClick: () => window.open(GEMINI_LIMITS_URL, "_blank", "noopener,noreferrer"),
@@ -81,6 +86,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   // Not "you used it all up" — on a free key one round of hooks can hit the
   // per-minute limit with no prior use at all (Hani, 2026-10-08).
   gemini_quota_exceeded: "Google חסמה זמנית את מפתח ה-Gemini שלכם. מפתח במסלול החינמי של Google מוגבל למעט מאוד בקשות בדקה וביום, ולכן ההוקים לא נוצרו. נסו שוב בעוד דקה. אם זה חוזר, הגעתם למגבלה היומית, והיא מתאפסת מחר.",
+  gemini_daily_limit: GEMINI_DAILY_MESSAGE,
   gemini_overloaded: "השרתים של Gemini עמוסים כרגע. נסו שוב בעוד דקה.",
   anthropic_not_connected: "לא חובר מפתח Anthropic. צריך לחבר אותו בהגדרות.",
   anthropic_overloaded: "השרתים של Anthropic עמוסים כרגע. נסו שוב בעוד דקה.",
@@ -90,7 +96,7 @@ const ERROR_MESSAGES: Record<string, string> = {
 /** The error toast — with a way to top up when the cause is Claude credits. */
 function showHookError(code: unknown) {
   const outOfCredits = code === "credits_exhausted"
-  const geminiQuota = code === "gemini_quota_exceeded"
+  const geminiQuota = code === "gemini_quota_exceeded" || code === "gemini_daily_limit"
   toast.error(hookErrorMessage(code), {
     id: TOAST_ID,
     duration: outOfCredits ? 30000 : geminiQuota ? 20000 : 6000,
@@ -259,7 +265,9 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
             // success path below run for the hooks that did land.
             if (parsed.gemini_quota_warning) {
               toast.error(
-                "חלק מההוקים לא נוצרו: Google מגבילה מפתח Gemini במסלול החינמי למעט מאוד בקשות בדקה וביום. נסו שוב בעוד דקה.",
+                parsed.daily
+                  ? GEMINI_DAILY_MESSAGE
+                  : "חלק מההוקים לא נוצרו: Google מגבילה מפתח Gemini במסלול החינמי למעט מאוד בקשות בדקה וביום. נסו שוב בעוד דקה.",
                 { duration: 20000, action: geminiLimitsAction },
               )
               continue

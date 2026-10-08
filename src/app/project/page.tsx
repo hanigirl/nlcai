@@ -2052,10 +2052,12 @@ function ProjectPageInner() {
                           נסו שוב
                         </Button>
                       </>
-                    ) : error === "gemini_quota_exceeded" ? (
+                    ) : error === "gemini_quota_exceeded" || error === "gemini_daily_limit" ? (
                       <>
                         <span className="text-small text-text-primary-default text-center">
-                          Google חסמה זמנית את מפתח ה-Gemini שלכם. במסלול החינמי יש מעט מאוד בקשות בדקה וביום. נסו שוב בעוד דקה, ואם זה חוזר — מחר.
+                          {error === "gemini_daily_limit"
+                            ? "מפתח ה-Gemini שלכם הגיע למגבלה היומית של Google במסלול החינמי. היא מתאפסת פעם ביום, בסביבות 10:00 בבוקר."
+                            : "Google חסמה זמנית את מפתח ה-Gemini שלכם. במסלול החינמי יש מעט מאוד בקשות בדקה וביום. נסו שוב בעוד דקה, ואם זה חוזר — מחר."}
                         </span>
                         <a href="https://aistudio.google.com/rate-limit" target="_blank" rel="noopener noreferrer" className="text-small-bold text-text-primary-default hover:underline">
                           לצפייה במגבלות שלי ←
