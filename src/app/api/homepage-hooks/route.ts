@@ -311,6 +311,24 @@ ${trendIdeas.length > 0 ? `- **${trendQuota} זוויות יכולות להיו�
 - רק ${audienceOnly} זוויות מותר להבסיס אך ורק על מחקר הקהל ללא מקור מ-⭐/🔥/📈.
 ` : ""
 
+    // Knowledge sources — the user's own transcripts and documents. Without a
+    // quota they were background reading next to the favorites/creators/trends
+    // quotas, and a whole batch could ignore them (Hani, 2026-10-08: "make sure
+    // the hooks come from the meeting transcripts"). Half the batch must stand
+    // on a specific thing she actually said; the writer only sees the plan, so
+    // the concrete detail has to travel in angle_summary.
+    const knowledgeQuota = businessSourceInsights ? Math.ceil(HOOK_COUNT / 2) : 0
+    if (knowledgeQuota) console.log(`Homepage Hooks: quota — ${knowledgeQuota} from knowledge sources`)
+    const knowledgeSection = knowledgeQuota
+      ? `
+## 📚 חובה — הוקים מתוך מקורות הידע של העסק (רצפה, לא תקרה):
+- **לפחות ${knowledgeQuota} מתוך ${HOOK_COUNT} זוויות חייבות להיבנות על פריט ספציפי מ"חומר גלם מתוך המקורות"** — סיפור, ציטוט, נתון, כאב, עמדה או טיפ שבעל/ת העסק אמר/ה בפועל.
+- כל זווית על פריט אחר.
+- ב-angle_summary כתוב/י את הפרט הקונקרטי מהמקור (מה קרה, מה נאמר, המספר) — לא ניסוח כללי — וסיים/י ב-"(מתוך: שם המקור)".
+- זווית ממקור ידע יכולה להיספר גם במכסות האחרות אם היא מתאימה להן.
+`
+      : ""
+
     // Product focus — set when the user picked "לפי מוצר" on /hooks. Forces
     // every angle to orbit this product (soft promotion, not a hard sell).
     const selectedProduct = selectedProductId
@@ -339,6 +357,7 @@ ${(existingHooks as { hook_text: string }[]).slice(0, 50).map((h, i) => `${i + 1
 **זה קריטי**: עברתי על הרשימה. ה-${HOOK_COUNT} זוויות החדשות חייבות לפתוח **נושאים אחרים**, **זוויות אחרות**, **כאבים/רצונות אחרים** ממה שכבר קיים. אם זווית חדשה נראית דומה לאחת מהקיימות — תזרוק/י אותה ובחר/י משהו אחר. גיוון מהאינוונטר הקיים זה תנאי, לא המלצה.
 ` : ""}
 ${quotaSection}
+${knowledgeSection}
 ${productFocusSection}
 ## קטגוריות הוקים זמינות (תבחר אחת לכל זווית):
 ${categoriesCatalog}
