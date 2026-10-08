@@ -294,6 +294,11 @@ ${trendIdeas.length > 0 ? `- **${trendQuota} זוויות יכולות להיו�
     // on a specific thing she actually said; the writer only sees the plan, so
     // the concrete detail has to travel in angle_summary.
     const knowledgeQuota = businessSourceInsights ? Math.ceil(HOOK_COUNT / 2) : 0
+    // "מה ה-AI למד" was fetched here but never reached either prompt — every
+    // lesson from her own edits and approvals was silently dropped from hook
+    // rounds (Hani, 2026-10-08: "a shame, we worked on that a lot"). It now
+    // goes into the planner and, placed high, into every writer call.
+    console.log(`Homepage Hooks: learning insights ${learningInsights ? `injected (${learningInsights.split("\n- ").length - 1} lines)` : "— none yet"}`)
     if (knowledgeQuota) console.log(`Homepage Hooks: quota — ${knowledgeQuota} from knowledge sources`)
     const knowledgeSection = knowledgeQuota
       ? `
@@ -323,6 +328,7 @@ ${trendIdeas.length > 0 ? `- **${trendQuota} זוויות יכולות להיו�
 
 ${identitySection}
 ${audienceSection}
+${learningInsights || ""}
 ${productsSection}
 ${businessSourceInsights || ""}
 ${trendContext ? `## מחקר מהשטח:\n${trendContext}\n` : ""}
@@ -589,7 +595,7 @@ ${categoriesCatalog}
 - **כאב/רצון:** ${plan.target_pain_or_desire}
 - **איך הקהל מדבר על זה:** "${plan.audience_quote}"
 - **מה הסרטון יגלה (זה הפאנץ׳ — הוא לא נכנס להוק!):** ${plan.angle_summary}
-
+${learningInsights || ""}
 ## מה הופך הוק לטוב — שלוש העמודות
 ההוק חייב להחזיק את כל השלוש. אם הוא נכשל באחת — שכתב.
 
