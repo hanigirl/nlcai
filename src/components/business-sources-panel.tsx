@@ -23,19 +23,25 @@ import type { BusinessSource, BusinessSourceType } from "@/lib/supabase/types"
 const ACTIVE_LIMIT = 6
 
 const TYPE_LABEL: Record<BusinessSourceType, string> = {
-  meeting: "פגישה",
-  webinar: "וובינר",
+  meeting: "תמלול פגישה",
+  webinar: "תמלול וובינר",
   doc: "מסמך",
-  link: "קישור",
+  link: "קישור", // legacy rows only — no longer offered
   other: "אחר",
 }
 
-const TYPE_OPTIONS: BusinessSourceType[] = ["meeting", "webinar", "doc", "link", "other"]
+// Text only (Hani, 2026-10-08): transcripts and written documents. "קישור"
+// is how a source arrives, not what it is, so it's no longer a type.
+const TYPE_OPTIONS: BusinessSourceType[] = ["meeting", "webinar", "doc", "other"]
+
+// Mirrors ALLOWED_EXTENSIONS in /api/business-sources.
+const ACCEPT = ".docx,.doc,.pdf,.txt,.md,.vtt,.srt"
 
 const ADD_ERROR: Record<string, string> = {
-  invalid_drive_link: "לא זוהה קובץ בקישור.",
-  scrape_failed: "לא הצלחנו לקרוא את הקישור. ודאו שהוא ציבורי ונסו שוב.",
-  file_unreadable: "לא הצלחנו לקרוא את הקובץ. תומכים ב-pdf, docx, doc, txt, md.",
+  not_text_file: "אפשר להעלות רק קבצי טקסט: docx, pdf, txt, md, או קובץ תמלול (vtt, srt).",
+  link_not_supported: "אפשר להדביק רק קישור ל-Google Doc או לקובץ טקסט בגוגל דרייב.",
+  link_not_public: "לא הצלחנו לפתוח את הקובץ. שתפו אותו ל„כל מי שיש לו את הקישור” ונסו שוב.",
+  file_unreadable: "לא הצלחנו לקרוא את הקובץ. תומכים ב-docx, pdf, txt, md, vtt, srt.",
   file_too_large: "הקובץ גדול מדי (מקסימום 10MB).",
   url_required: "צריך להזין קישור.",
   file_required: "צריך לבחור קובץ.",
@@ -62,7 +68,7 @@ export function BusinessSourcesPanel() {
 
   // Add-source form
   const [type, setType] = useState<BusinessSourceType>("meeting")
-  const [mode, setMode] = useState<"link" | "file">("link")
+  const [mode, setMode] = useState<"link" | "file">("file")
   const [url, setUrl] = useState("")
   const [title, setTitle] = useState("")
   const [file, setFile] = useState<File | null>(null)
@@ -74,7 +80,7 @@ export function BusinessSourcesPanel() {
     const supabase = createClient()
     supabase
       .from("business_sources")
-      .select("*")
+      .select("id, user_id, source_type, title, source_url, summary, insights, status, active, created_at, updated_at")
       .order("created_at", { ascending: false })
       .then(({ data, error }) => {
         if (error) console.error("[business-sources] load", error)
@@ -85,7 +91,7 @@ export function BusinessSourcesPanel() {
 
   const resetForm = () => {
     setType("meeting")
-    setMode("link")
+    setMode("file")
     setUrl("")
     setTitle("")
     setFile(null)
@@ -172,7 +178,10 @@ export function BusinessSourcesPanel() {
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
         <p className="text-small text-text-neutral-default leading-relaxed">
-          רשות. הוסיפו פגישות, וובינרים ומסמכים כדי שה-AI יכיר את העסק שלכם לעומק ויכתוב הוקים ותכנים מדויקים יותר.
+          רשות. העלו תמלולים של פגישות ווובינרים, או מסמכים כתובים, וה-AI ישאב מהם סיפורים, ציטוטים ותובנות להוקים ולתכנים.
+        </p>
+        <p className="text-xs text-text-primary-disabled">
+          טקסט בלבד: קובץ (docx, pdf, txt, תמלול מזום) או קישור ל-Google Doc. אין העלאה של הקלטות אודיו או וידאו.
         </p>
         <p className="text-xs text-text-primary-disabled">
           ה-AI משתמש עד {ACTIVE_LIMIT} המקורות הפעילים האחרונים. סמנו „פעיל” כדי לבחור אילו מהם יוזנו.
@@ -208,6 +217,11 @@ export function BusinessSourcesPanel() {
                 <span className="shrink-0 rounded-full bg-white dark:bg-gray-10 px-2 py-0.5 text-xs text-text-neutral-default">
                   {TYPE_LABEL[src.source_type]}
                 </span>
+                {src.status === "ready" && (src.insights?.length ?? 0) > 0 && (
+                  <span className="shrink-0 text-xs text-text-neutral-default">
+                    {src.insights.length} תובנות
+                  </span>
+                )}
                 <StatusDot status={src.status} />
                 <button
                   type="button"
@@ -279,17 +293,17 @@ export function BusinessSourcesPanel() {
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => setMode("link")}
-                className={`flex-1 h-9 rounded-lg text-small transition-colors ${mode === "link" ? "bg-bg-surface-primary-default text-text-primary-default" : "bg-bg-surface text-text-neutral-default hover:bg-bg-surface-hover"}`}
-              >
-                <Link2 className="inline size-3.5 me-1" /> קישור
-              </button>
-              <button
-                type="button"
                 onClick={() => setMode("file")}
                 className={`flex-1 h-9 rounded-lg text-small transition-colors ${mode === "file" ? "bg-bg-surface-primary-default text-text-primary-default" : "bg-bg-surface text-text-neutral-default hover:bg-bg-surface-hover"}`}
               >
                 <Upload className="inline size-3.5 me-1" /> העלאת קובץ
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("link")}
+                className={`flex-1 h-9 rounded-lg text-small transition-colors ${mode === "link" ? "bg-bg-surface-primary-default text-text-primary-default" : "bg-bg-surface text-text-neutral-default hover:bg-bg-surface-hover"}`}
+              >
+                <Link2 className="inline size-3.5 me-1" /> קישור
               </button>
             </div>
 
@@ -298,7 +312,7 @@ export function BusinessSourcesPanel() {
                 dir="ltr"
                 value={url}
                 onChange={(e) => { setUrl(e.target.value); setAddError(null) }}
-                placeholder="https://docs.google.com/... או קישור למאמר"
+                placeholder="קישור ל-Google Doc או לקובץ טקסט בדרייב"
                 className="text-xs"
               />
             ) : (
@@ -306,14 +320,17 @@ export function BusinessSourcesPanel() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".pdf,.docx,.doc,.txt,.md"
+                  accept={ACCEPT}
                   onChange={(e) => { setFile(e.target.files?.[0] ?? null); setAddError(null) }}
                   className="hidden"
                 />
                 <Button variant="outline" onClick={() => fileInputRef.current?.click()} className="gap-2">
                   <Upload className="size-4" />
-                  {file ? file.name : "בחרו קובץ (pdf, docx, txt, md)"}
+                  {file ? file.name : "בחרו קובץ טקסט"}
                 </Button>
+                <p className="text-xs text-text-primary-disabled">
+                  docx, pdf, txt, md, או קובץ תמלול מזום / מיט (vtt, srt).
+                </p>
               </div>
             )}
 
@@ -330,7 +347,7 @@ export function BusinessSourcesPanel() {
           <DialogFooter className="flex flex-row-reverse gap-2 sm:justify-start">
             <Button onClick={handleAdd} disabled={adding} className="gap-1.5">
               {adding && <Loader2 className="size-4 animate-spin" />}
-              {adding ? "מעבד..." : "הוספה"}
+              {adding ? "קוראים את המקור..." : "הוספה"}
             </Button>
             <Button variant="outline" onClick={() => { setDialogOpen(false); resetForm() }} disabled={adding}>
               ביטול

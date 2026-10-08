@@ -234,6 +234,8 @@ export interface BusinessSource {
   source_url: string | null;
   summary: string | null;
   raw_text: string | null;
+  /** Hook material mined from the full text — see lib/knowledge-source-processing. */
+  insights: { kind: string; text: string }[];
   status: BusinessSourceStatus;
   active: boolean;
   created_at: string;
@@ -241,7 +243,7 @@ export interface BusinessSource {
 }
 
 export type BusinessSourceInsert = Pick<BusinessSource, "user_id" | "title"> &
-  Partial<Pick<BusinessSource, "source_type" | "source_url" | "summary" | "raw_text" | "status" | "active">>;
+  Partial<Pick<BusinessSource, "source_type" | "source_url" | "summary" | "raw_text" | "insights" | "status" | "active">>;
 
 export type UserMediaCategory = "font" | "element" | "cover" | "style_file" | "audience_file" | "brand_example";
 
@@ -498,7 +500,7 @@ export interface Database {
       business_sources: {
         Row: BusinessSource;
         Insert: BusinessSourceInsert;
-        Update: Partial<Pick<BusinessSource, "title" | "summary" | "raw_text" | "status" | "active">>;
+        Update: Partial<Pick<BusinessSource, "title" | "summary" | "raw_text" | "insights" | "status" | "active">>;
       };
       scheduled_posts: {
         Row: ScheduledPostRow;
