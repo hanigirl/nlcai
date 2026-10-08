@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { detectAudienceGender } from "@/lib/detect-addressing"
 import { TEMPLATE_LIBRARY, getTemplatesByCategorySorted, templateText, templatePriority, type TemplateCategory, type HookTemplate } from "@/lib/agents/hook-templates"
-import { judgeHook, validateHookLocally } from "@/lib/agents/hook-judge"
+import { judgeHook, validateHookLocally, ownNamesFor, mentionsOwnName, ownNameRule } from "@/lib/agents/hook-judge"
 import { findNearDuplicate } from "@/lib/agents/hook-similarity"
 import { classifyHooksByProduct } from "@/lib/agents/hook-product-classifier"
 import { GeminiError, generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const [{ data: coreIdentity }, { data: audienceIdentity }, { data: products }, { data: favoritedRows }, { data: existingHooks }, learningInsights, businessSourceInsights] = await Promise.all([
+    const [{ data: coreIdentity }, { data: audienceIdentity }, { data: products }, { data: favoritedRows }, { data: existingHooks }, learningInsights, businessSourceInsights, { data: userRow }] = await Promise.all([
       supabase.from("core_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("audience_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("products").select("id, name, type, page_summary").eq("user_id", user.id),
@@ -78,6 +78,7 @@ export async function POST(req: NextRequest) {
       supabase.from("hooks").select("hook_text").eq("user_id", user.id).order("created_at", { ascending: false }).limit(50),
       fetchLearningInsights(supabase, user.id, "hook"),
       fetchBusinessSourceInsights(supabase, user.id),
+      supabase.from("users").select("full_name").eq("id", user.id).maybeSingle(),
     ])
 
     // Build favorite-text lookup once, use it to flag incoming fieldIdeas.
@@ -316,6 +317,17 @@ ${trendIdeas.length > 0 ? `- **${trendQuota} זוויות יכולות להיו�
       ? `\n## 🎯 מיקוד במוצר ספציפי — חובה!\nכל ${HOOK_COUNT} ההוקים חייבים להיכתב סביב המוצר/שירות הבא ולקדם אותו בעקיפין — לדבר אל הקהל שלו, לגעת בכאב/רצון שהוא פותר, ולפתוח סקרנות סביב הנושא שלו (בלי מכירה בוטה):\n- **שם המוצר:** ${selectedProduct.name} (${selectedProduct.type === "front" ? "מוצר פרונט" : selectedProduct.type === "premium" ? "מוצר פרימיום" : "מגנט לידים"})\n${selectedProduct.page_summary ? `- **תיאור:** ${selectedProduct.page_summary}\n` : ""}`
       : ""
 
+    // Never sign a hook with the business (Hani, 2026-10-08). Told to both
+    // the planner and the writer, and enforced in code before a hook is saved.
+    const ownNames = ownNamesFor({
+      productName: (coreIdentity as { product_name?: string | null } | null)?.product_name,
+      fullName: (userRow as { full_name?: string | null } | null)?.full_name,
+    })
+    const ownNameSection = ownNameRule(
+      ownNames,
+      ((products as Array<{ name: string }> | null) ?? []).map((p) => p.name),
+    )
+
     const planningPrompt = `אתה אסטרטג שיווק שמתכנן זוויות תוכן עבור יוצרי קונטנט בישראל.
 
 ## המטרה
@@ -335,6 +347,7 @@ ${(existingHooks as { hook_text: string }[]).slice(0, 50).map((h, i) => `${i + 1
 ${quotaSection}
 ${knowledgeSection}
 ${productFocusSection}
+${ownNameSection}
 ## קטגוריות הוקים זמינות (תבחר אחת לכל זווית):
 ${categoriesCatalog}
 
@@ -589,7 +602,7 @@ ${categoriesCatalog}
 - **כאב/רצון:** ${plan.target_pain_or_desire}
 - **איך הקהל מדבר על זה:** "${plan.audience_quote}"
 - **מה הסרטון יגלה (זה הפאנץ׳ — הוא לא נכנס להוק!):** ${plan.angle_summary}
-
+${ownNameSection}
 ## מה הופך הוק לטוב — שלוש העמודות
 ההוק חייב להחזיק את כל השלוש. אם הוא נכשל באחת — שכתב.
 
@@ -747,6 +760,15 @@ ${formatTemplatesForPrompt()}
             const d = draft as DraftHook
             let hookText = cleanRawHook(d.hook!)
 
+            // Hard stop on both cohorts: a hook that names the business or
+            // its owner isn't saved, whatever else is right about it.
+            const namedOwn = mentionsOwnName(hookText, ownNames)
+            if (namedOwn) {
+              skipped++
+              console.warn(`Homepage Hooks: dropped "${hookText.slice(0, 60)}" — names the business ("${namedOwn}")`)
+              return
+            }
+
             // Programmatic check — deterministic, cheap, and code rather than
             // a model, so it runs on both paths. What differs is the
             // consequence: on the Claude path it feeds the judge and can drop
@@ -785,6 +807,7 @@ ${formatTemplatesForPrompt()}
                 console.log(`Homepage Hooks: judge rewrote "${hookText.slice(0, 40)}..." — issues: ${judgeResult.issues.join("; ")}`)
                 hookText = judgeResult.rewritten
                 issues = validateHookLocally(hookText, plan.specific_topic)
+                if (mentionsOwnName(hookText, ownNames)) issues.push("names_the_business")
                 if (issues.length > 0) {
                   skipped++
                   console.warn(`Homepage Hooks: skipping "${plan.specific_topic}" — judge rewrite still failed: ${issues.join(", ")}`)

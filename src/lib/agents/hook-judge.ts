@@ -279,3 +279,48 @@ export function validateHookLocally(hook: string, specificTopic: string): string
 
   return issues
 }
+
+/* ---- The user's own names stay out of hooks ------------------------------ */
+//
+// A hook is about the audience's problem, never about who solves it. Hooks
+// were coming out as "מה לא ידעתם על X ואיך אפשר לתקן את זה עם UXTRA" or
+// "זה הדבר שאנחנו עושים עם נועה כהן יעוץ עסקי" (Hani, 2026-10-08).
+
+/**
+ * The names a hook must never contain: the business name and the user's own
+ * name. `product_name` doubles as a free-text description for some users
+ * ("אימוני כושר לאמהות אחרי לידה"); only a short value is treated as a name,
+ * so a description can't block an honest hook that happens to share it.
+ * Latin words inside a longer value ("UXTRA — עיצוב חוויה") are brand names
+ * often enough to block on their own.
+ */
+export function ownNamesFor(opts: { productName?: string | null; fullName?: string | null }): string[] {
+  const names = new Set<string>()
+  const product = opts.productName?.trim().replace(/\s+/g, " ") ?? ""
+  if (product) {
+    if (product.split(" ").length <= 4) names.add(product)
+    for (const w of product.match(/[A-Za-z][A-Za-z0-9.&-]{3,}/g) ?? []) names.add(w)
+  }
+  const full = opts.fullName?.trim().replace(/\s+/g, " ") ?? ""
+  if (full.split(" ").length >= 2) names.add(full)
+  return [...names]
+}
+
+/** The first of `names` that appears in `hook`, or null. */
+export function mentionsOwnName(hook: string, names: string[]): string | null {
+  const text = hook.toLowerCase().replace(/\s+/g, " ")
+  return names.find((n) => text.includes(n.toLowerCase())) ?? null
+}
+
+/** The prompt rule — also covers product names, which aren't hard-blocked. */
+export function ownNameRule(names: string[], productNames: string[] = []): string {
+  const all = [...new Set([...names, ...productNames])].filter(Boolean)
+  return `
+## 🚫 בלי שם העסק בהוק
+לעולם אל תכתוב בהוק את שם העסק, שם של מוצר/שירות או את השם של בעל/ת העסק${all.length ? ` (${all.map((n) => `"${n}"`).join(", ")})` : ""}.
+ההוק מדבר על הבעיה, הכאב או הרצון של הקהל — לא על מי שפותר אותם.
+❌ "מה לא ידעתם על X ואיך אפשר לתקן את זה עם [שם העסק]"
+❌ "זה הדבר שאנחנו עושים עם [שם בעל/ת העסק]"
+✅ מה שהקהל מרגיש או לא יודע — בלי לחתום עליו.
+`
+}

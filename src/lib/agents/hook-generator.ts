@@ -1,5 +1,6 @@
 import { GREAT_HOOKS_EXAMPLES } from "./great-hooks"
 import { TEMPLATE_LIBRARY } from "./hook-templates"
+import { ownNameRule } from "./hook-judge"
 
 interface CoreIdentity {
   who_i_am: string
@@ -36,6 +37,8 @@ interface HookGeneratorInput {
   idea: string
   userResponse?: string
   productName?: string
+  /** The business / owner names a hook must not contain — see ownNamesFor. */
+  ownNames?: string[]
   coreIdentity?: CoreIdentity | null
   audienceIdentity?: AudienceIdentity | null
   count?: number
@@ -66,6 +69,7 @@ export function buildHookGeneratorPrompt({
   idea,
   userResponse,
   productName,
+  ownNames = [],
   coreIdentity,
   audienceIdentity,
   count = 3,
@@ -158,7 +162,7 @@ ${audienceIdentity.myths}
 
 ## המשימה שלך
 קח את **הרעיון של המשתמש** — זה הנושא המרכזי! כל ההוקים חייבים להיות **על הרעיון הזה ורק עליו**.
-${userResponse ? "התייחס גם לתיאור שהמשתמש נתן." : ""}${product ? ` שלב את המוצר "${product}" בצורה טבעית.` : ""}
+${userResponse ? "התייחס גם לתיאור שהמשתמש נתן." : ""}
 צור ${count} הוקים ויראליים שמדברים בקול ובשפה של המשתמש, מותאמים לקהל היעד שלו.
 **כל הוק חייב לגעת בזווית אחרת של הרעיון** — אל תחזור על אותה זווית פעמיים.
 
@@ -170,7 +174,8 @@ ${idea}
 
 ${userResponse ? `## מה המשתמש רוצה להגיד על זה\n${userResponse}` : ""}
 
-${product ? `## המוצר שהמשתמש מקדם\n${product}` : ""}
+${product ? `## המוצר שהמשתמש מקדם (רקע בלבד — לא נכנס להוק)\n${product}` : ""}
+${ownNameRule(ownNames, product ? [product] : [])}
 
 ${trendContext ? `## מחקר מהשטח — תוכן שהמשתמש חשוף אליו כבר
 הסקשן הזה מחולק לרעיונות מועדפים (⭐ — המשתמש סימן אותם), תוכן ויראלי מהיוצרים שלו (🔥), וטרנדים בנישה (📈). **כשרעיון מועדף או תוכן ויראלי מתכתב עם הרעיון למעלה — השתמש בו ככה ישירות לזווית של ההוק**, לא רק כרקע. אם הרעיון ב-⭐ נוגע באותו נושא של הרעיון הראשי, ההוק יכול לצטט/לענות/לאתגר את הזווית שהיוצר האחר הביא.
