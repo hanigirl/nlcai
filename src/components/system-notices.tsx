@@ -8,10 +8,10 @@ import { NOTICE_COPY, isNoticeCode } from "@/lib/system-notice-copy"
 
 /**
  * Home-page banners for "something ran out" — the user's own limits (Claude
- * credits, Gemini's daily cap, a dead Gemini key) and, for admins only, the
- * app's own accounts (Serper). Raised server-side where the failure happens
+ * credits, Gemini's daily cap, a dead Gemini key). Raised server-side where the failure happens
  * (lib/system-notices.ts), so it is still here when she comes back, unlike a
- * toast. Same card language as the Gemini connect notice.
+ * toast. Same card language as the Gemini connect notice. Admin-only notices
+ * (app accounts) are supported by the API; none are raised today.
  *
  * Renders nothing when there's nothing to say.
  */

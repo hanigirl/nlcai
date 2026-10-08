@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server"
-import { reportSerperStatus } from "@/lib/system-notices"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
@@ -7,7 +6,7 @@ import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-
 import { getAuthUser } from "@/lib/auth-user"
 
 // ── Types ──────────────────────────────────────────────
-interface SerperResult { title: string; link: string; snippet: string; date?: string }
+interface TrendResult { title: string; link: string; snippet: string; date?: string }
 interface CreatorCandidate { handle: string; platform: string }
 interface VerifiedCreator { handle: string; platform: string; followers: number; formatted: string; bio: string; profileUrl: string }
 interface ContentItem { creator: string; platform: string; url: string; caption: string; hashtags: string[] }
@@ -25,32 +24,10 @@ interface ApifyPost {
 }
 
 // ── Helpers ────────────────────────────────────────────
-class SearchQuotaExceededError extends Error {
-  constructor() { super("SEARCH_QUOTA_EXCEEDED") }
-}
-
 class ApifyQuotaExceededError extends Error {
   constructor() { super("APIFY_QUOTA_EXCEEDED") }
 }
 
-async function searchWeb(query: string, num = 10): Promise<SerperResult[]> {
-  const res = await fetch("https://google.serper.dev/search", {
-    method: "POST",
-    headers: { "X-API-KEY": process.env.SERPER_API_KEY!, "Content-Type": "application/json" },
-    body: JSON.stringify({ q: query, num }),
-  })
-  await reportSerperStatus(res)
-  // 402/403 from Serper = lifetime free credits exhausted (or key revoked).
-  // Surface as a distinct error so the UI can show a quota-specific message.
-  if (res.status === 402 || res.status === 403) {
-    throw new SearchQuotaExceededError()
-  }
-  if (!res.ok) return []
-  const data = await res.json()
-  return (data.organic ?? []).map((r: Record<string, string>) => ({
-    title: r.title, link: r.link, snippet: r.snippet, date: r.date,
-  }))
-}
 
 // One shared caller for all three Apify actors. Uses the run-sync-get-dataset-items
 // endpoint so we get parsed dataset items back in a single round-trip (no polling).
@@ -252,18 +229,6 @@ function fmtFollowers(n: number): string {
   return `${n}`
 }
 
-async function verifyYouTube(handle: string): Promise<{ followers: number; bio: string } | null> {
-  const results = await searchWeb(`site:youtube.com/@${handle}`, 1)
-  if (results.length === 0) return null
-  const text = `${results[0].title} ${results[0].snippet}`
-  const match = text.match(/([\d,.KkMm]+)\s*subscribers/i)
-  if (!match) return null
-  const raw = match[1].replace(/,/g, "")
-  let followers = parseInt(raw, 10)
-  if (/[Mm]/.test(raw)) followers = parseFloat(raw) * 1_000_000
-  else if (/[Kk]/.test(raw)) followers = parseFloat(raw) * 1_000
-  return { followers, bio: results[0].snippet.slice(0, 200) }
-}
 
 const MIN_FOLLOWERS = 10_000
 
@@ -359,7 +324,7 @@ export async function POST(req: NextRequest) {
     // as the raw material for ideas. This overrides the "platform" the user
     // originally saved in user_top_creators — that was just their entry point.
     //
-    // LinkedIn stays on Serper (worse Apify coverage, rare in user_top_creators).
+    // LinkedIn has no source since Serper was removed (2026-10-08).
     // ══════════════════════════════════════════════
     const contentItems: ContentItem[] = []
     // Hoisted so the SSE stream below can surface failures to the UI.
@@ -385,8 +350,8 @@ export async function POST(req: NextRequest) {
       const youtubeHandles = multiPlatformCreators.filter((c) => c.platform === "youtube").map((c) => c.handle)
 
       // BYOK — each user brings their own Apify token. If they haven't
-      // connected one yet, we skip IG/YT/TT silently: LinkedIn via Serper
-      // and trend-only ideas still produce useful output, and the onboarding /
+      // connected one yet, we skip IG/YT/TT silently: the LLM-only path
+      // still produces useful output, and the onboarding /
       // settings UI nudges them to connect.
       let apifyToken: string | null = null
       try {
@@ -492,29 +457,10 @@ export async function POST(req: NextRequest) {
         console.log(`Ideas API Step 5: @${c.handle} strongest on ${winner} (${winnerScore} eng) — ${sorted.length} posts available`)
       }
 
-      // LinkedIn still goes through Serper — narrow coverage on Apify side.
-      // Collect as a separate creator list so LinkedIn creators also participate in round-robin.
-      const linkedinResults = await Promise.all(
-        linkedinCreators.map(async (c) => {
-          const results = await searchWeb(`site:linkedin.com/posts ${c.handle}`, 3)
-          const items = results.slice(0, 2).map((r) => ({
-            creator: c.handle,
-            platform: "linkedin" as const,
-            url: r.link,
-            caption: r.snippet,
-            hashtags: [] as string[],
-          }))
-          return { handle: c.handle, items }
-        })
-      )
-      for (const { handle, items } of linkedinResults) {
-        if (items.length > 0) {
-          creatorLists.push(items)
-        } else {
-          console.log(`Ideas API Step 5: no LinkedIn results for @${handle}`)
-          missingCreators.push(handle)
-        }
-      }
+      // LinkedIn posts used to come from a web-search service (Serper),
+      // removed 2026-10-08. There is no LinkedIn source now, so those creators
+      // are reported as missing rather than silently dropped.
+      for (const c of linkedinCreators) missingCreators.push(c.handle)
 
       // Dedup FIRST, then cap. URL-dedup against everything the user has ever been
       // shown on this device is done PER-CREATOR here, before the diversity cap.
@@ -575,43 +521,17 @@ export async function POST(req: NextRequest) {
     // Pull more trend results when the user has no creators — trends are the
     // only source of ideas in that mode, so we need enough material for 9 ideas.
     // ══════════════════════════════════════════════
-    if (!process.env.SERPER_API_KEY) {
-      return NextResponse.json({ error: "search_not_configured" }, { status: 500 })
-    }
-
-    const trendQueries = hasCreators
-      ? [
-          searchWeb(`${niche} trending 2026`, 6),
-          searchWeb(`${niche} new tool method 2026`, 6),
-        ]
-      : [
-          searchWeb(`${niche} trending 2026`, 10),
-          searchWeb(`${niche} new tool method 2026`, 10),
-          searchWeb(`${niche} viral topic discussion 2026`, 10),
-          searchWeb(`${niche} latest news breakthrough 2026`, 10),
-        ]
-    let trendResults: SerperResult[] = []
-    try {
-      const trendResultsRaw = (await Promise.all(trendQueries)).flat()
-      const dedupWithinBatch = new Set<string>()
-      trendResults = trendResultsRaw.filter((r) => {
-        if (dedupWithinBatch.has(r.link)) return false
-        dedupWithinBatch.add(r.link)
-        // Also drop trend links the user has already been shown on this device.
-        if (seenUrls.has(normalizeUrl(r.link))) return false
-        return true
-      })
-    } catch (err) {
-      if (err instanceof SearchQuotaExceededError) throw err
-      console.error("Ideas API: trend search failed", err)
-      return NextResponse.json({ error: "trend_search_failed" }, { status: 502 })
-    }
+    // Web trend search (Serper) was removed 2026-10-08 — its account had sat
+    // at 0 credits for two weeks unnoticed, and Hani chose not to pay for it.
+    // Ideas come from creators' content; with none, the LLM-only path below
+    // takes over. Kept as an empty list so the prompt code stays untouched.
+    const trendResults: TrendResult[] = []
 
     // No external material (creator scraping empty AND trends empty) is no
     // longer a hard failure — we fall through to an LLM-only mission so the user
     // always gets ideas. The most common cause is a user who added creator links
     // but hasn't connected an Apify API key (BYOK), so IG/YT/TT scraping was
-    // silently skipped and Serper trends came back thin for their niche.
+    // silently skipped.
     if (contentItems.length === 0 && trendResults.length === 0) {
       console.log("Ideas API: no external material — falling back to LLM-only generation")
     }
@@ -982,10 +902,6 @@ JSONL:
     if (error instanceof ApifyQuotaExceededError) {
       console.error("Ideas generation error: Apify cross-platform quota exhausted")
       return NextResponse.json({ error: "apify_quota_exceeded" }, { status: 402 })
-    }
-    if (error instanceof SearchQuotaExceededError) {
-      console.error("Ideas generation error: Serper search quota exhausted")
-      return NextResponse.json({ error: "search_quota_exceeded" }, { status: 402 })
     }
     const msg = error instanceof Error ? error.message : String(error)
     console.error("Ideas generation error:", msg)

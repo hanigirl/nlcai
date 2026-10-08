@@ -21,7 +21,7 @@ import { fetchLearningInsights } from "@/lib/learning-insights"
 import { fetchBusinessSourceInsights } from "@/lib/business-source-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
 import { withRetry } from "@/lib/supabase/retry"
-import { raiseNotice, reportSerperStatus, resolveNotice } from "@/lib/system-notices"
+import { raiseNotice, resolveNotice } from "@/lib/system-notices"
 import { getAuthUser } from "@/lib/auth-user"
 
 // Streaming SSE pipeline (Claude plans the topics → Gemini writes one hook per
@@ -203,7 +203,7 @@ ${audienceIdentity.limiting_beliefs}
         }).join("\n")}\n`
       : ""
 
-    // Load verified creators + trends from cache and Serper
+    // Load verified creators from cache
     let trendContext = ""
     try {
       const niche = coreIdentity.niche
@@ -223,33 +223,6 @@ ${audienceIdentity.limiting_beliefs}
           trendContext = `יוצרי תוכן מובילים בנישה (מאומתים):\n${creatorsContext}`
         }
 
-        // Also add Serper trends
-        if (process.env.SERPER_API_KEY) {
-          const [trendRes1, trendRes2] = await Promise.all([
-            fetch("https://google.serper.dev/search", {
-              method: "POST",
-              headers: { "X-API-KEY": process.env.SERPER_API_KEY, "Content-Type": "application/json" },
-              body: JSON.stringify({ q: `${niche} trending tools methods 2026`, num: 5 }),
-            }),
-            fetch("https://google.serper.dev/search", {
-              method: "POST",
-              headers: { "X-API-KEY": process.env.SERPER_API_KEY, "Content-Type": "application/json" },
-              body: JSON.stringify({ q: `${niche} viral content topics 2026`, num: 5 }),
-            }),
-          ])
-          // Was silent for two weeks at 0 credits — now raises an admin notice.
-          await reportSerperStatus(trendRes1)
-          const results: { title: string; snippet: string }[] = []
-          if (trendRes1.ok) {
-            const d = await trendRes1.json()
-            results.push(...(d.organic ?? []).map((r: Record<string, string>) => ({ title: r.title, snippet: r.snippet })))
-          }
-          if (trendRes2.ok) {
-            const d = await trendRes2.json()
-            results.push(...(d.organic ?? []).map((r: Record<string, string>) => ({ title: r.title, snippet: r.snippet })))
-          }
-          trendContext += `\n\nטרנדים חמים בנישה:\n${results.map((r) => `- ${r.title}: ${r.snippet}`).join("\n")}`
-        }
       }
     } catch {
       // non-fatal

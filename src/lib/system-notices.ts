@@ -63,19 +63,3 @@ export async function resolveNotice(target: Target, code: NoticeCode): Promise<v
     console.error("[system-notices] resolve failed", code, err)
   }
 }
-
-/**
- * Report a Serper response. Serper answers 400 "Not enough credits" when the
- * app's account is empty (it did, for two weeks, silently); 401/402/403 are
- * a dead or unpaid key. Any of those raise the admin notice; a 2xx clears it.
- */
-export async function reportSerperStatus(res: Response): Promise<void> {
-  if (res.ok) return resolveNotice({ audience: "admin" }, "serper_credits")
-  if ([400, 401, 402, 403].includes(res.status)) {
-    const body = await res.clone().text().catch(() => "")
-    console.error(`[serper] ${res.status}: ${body.slice(0, 200)}`)
-    if (res.status !== 400 || /credit/i.test(body)) {
-      await raiseNotice({ audience: "admin" }, "serper_credits")
-    }
-  }
-}

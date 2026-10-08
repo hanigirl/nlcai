@@ -9,7 +9,6 @@ import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
 import { generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
-import { reportSerperStatus } from "@/lib/system-notices"
 import { detectAddressGender, detectAddressGenderFromText } from "@/lib/detect-addressing"
 import { getAuthUser } from "@/lib/auth-user"
 
@@ -190,30 +189,6 @@ export async function POST(req: NextRequest) {
           trendContext = `יוצרי תוכן מובילים בנישה (מאומתים):\n${creatorsContext}`
         }
 
-        // Search for trends ABOUT THE SPECIFIC IDEA, not generic niche trends
-        if (process.env.SERPER_API_KEY && idea) {
-          // Extract core topic from idea (first ~60 chars, strip creator mentions)
-          const ideaTopic = idea.replace(/@[\w.]+/g, "").replace(/\([\d,.KkMm]+\s*עוקבים.*?\)/g, "").trim().slice(0, 80)
-          const searches = await Promise.all([
-            fetch("https://google.serper.dev/search", {
-              method: "POST",
-              headers: { "X-API-KEY": process.env.SERPER_API_KEY, "Content-Type": "application/json" },
-              body: JSON.stringify({ q: `${ideaTopic} ${niche} 2026`, num: 5 }),
-            }).then(async (r) => { await reportSerperStatus(r); return r.ok ? r.json() : { organic: [] } }).catch(() => ({ organic: [] })),
-            fetch("https://google.serper.dev/search", {
-              method: "POST",
-              headers: { "X-API-KEY": process.env.SERPER_API_KEY, "Content-Type": "application/json" },
-              body: JSON.stringify({ q: `${ideaTopic} tips viral trending`, num: 5 }),
-            }).then((r) => r.ok ? r.json() : { organic: [] }).catch(() => ({ organic: [] })),
-          ])
-          const results = searches.flatMap((d) => (d.organic ?? []) as { title: string; snippet: string }[])
-          // Dedupe by title
-          const seen = new Set<string>()
-          const unique = results.filter((r) => { if (seen.has(r.title)) return false; seen.add(r.title); return true })
-          if (unique.length > 0) {
-            trendContext += `\n\nמה אומרים ברשת על הנושא הזה:\n${unique.slice(0, 8).map((r) => `- ${r.title}: ${r.snippet}`).join("\n")}`
-          }
-        }
       }
     } catch {
       // non-fatal

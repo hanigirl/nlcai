@@ -398,7 +398,7 @@ export default function IdeasPage() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "niche_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_fresh_content", "trend_search_failed", "search_not_configured", "search_quota_exceeded", "apify_quota_exceeded"]
+        const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "niche_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_fresh_content", "apify_quota_exceeded"]
         const raw = data.error
         setError(known.includes(raw) ? raw : (raw || "generic"))
         return
@@ -424,7 +424,7 @@ export default function IdeasPage() {
           try {
             const idea = JSON.parse(data)
             // Server-side notice when one of the user's configured creators
-            // returned zero posts from Apify (or LinkedIn via Serper). Lands
+            // returned zero posts from Apify. Lands
             // before any idea events so the banner is up while the cards
             // stream in.
             if (Array.isArray(idea.missing_creators)) {
@@ -714,7 +714,7 @@ export default function IdeasPage() {
           </div>
         </div>
 
-        {/* Per-creator failure banner — when Apify (or LinkedIn via Serper)
+        {/* Per-creator failure banner — when Apify
             returns 0 posts for a configured creator, the generation continues
             but the resulting ideas skew to whoever did return content. Surface
             the failed handles so the user knows which one to verify. */}
@@ -747,7 +747,7 @@ export default function IdeasPage() {
         )}
 
         {error && (() => {
-          const infoCodes = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "niche_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_fresh_content", "no_ideas_generated", "all_ideas_duplicate", "trend_search_failed", "search_not_configured", "search_quota_exceeded", "apify_quota_exceeded"]
+          const infoCodes = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "niche_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_fresh_content", "no_ideas_generated", "all_ideas_duplicate", "apify_quota_exceeded"]
           const isInfo = infoCodes.includes(error)
           const config: Record<string, { message: string; action?: { href: string; label: string; external?: boolean } }> = {
             credits_exhausted: {
@@ -789,9 +789,6 @@ export default function IdeasPage() {
             },
             no_ideas_generated: { message: "הסוכן סיים אבל לא החזיר אף רעיון. זה יכול לקרות כשאין מספיק חומר גלם — נסו שוב בעוד רגע" },
             all_ideas_duplicate: { message: "כל הרעיונות שהתקבלו כבר קיימים במחסן שלכם. נסו שוב — בדרך כלל ריצה חדשה מביאה נושאים חדשים" },
-            trend_search_failed: { message: "חיפוש הטרנדים ברשת נכשל. נסו שוב בעוד רגע — אם זה חוזר כנראה יש בעיה בשירות החיפוש שלנו" },
-            search_not_configured: { message: "שירות החיפוש לא מוגדר במערכת. צרו קשר עם התמיכה" },
-            search_quota_exceeded: { message: "נגמרה מכסת החיפושים של הרעיונות, פנו לשירות שלנו לטיפול בתקלה" },
             apify_quota_exceeded: {
               message: "נגמרה מכסת ה-Apify שלכם (האחראי על משיכת הפוסטים מהיוצרים). אפשר לבדוק את יתרת הקרדיטים ולשדרג ב-Apify או להמתין לחידוש החודשי",
               action: { href: "https://console.apify.com/billing", label: "לבדיקת יתרת Apify →", external: true },
