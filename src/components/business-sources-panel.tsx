@@ -178,10 +178,12 @@ export function BusinessSourcesPanel() {
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
         <p className="text-small text-text-neutral-default leading-relaxed">
-          רשות. העלו תמלולים של פגישות ווובינרים, או מסמכים כתובים, וה-AI ישאב מהם סיפורים, ציטוטים ותובנות להוקים ולתכנים.
+          העלו תמלולים של פגישות ווובינרים, או מסמכים כתובים (רק טקסט)
+          <br />
+          אנחנו נשאב מהם סיפורים, ציטוטים ותובנות להוקים ולתכנים.
         </p>
         <p className="text-xs text-text-primary-disabled">
-          טקסט בלבד: קובץ (docx, pdf, txt, תמלול מזום) או קישור ל-Google Doc. אין העלאה של הקלטות אודיו או וידאו.
+          טקסט בלבד: קובץ (docx, pdf, txt, תמלול מזום) או קישור ל-Google Doc.
         </p>
         <p className="text-xs text-text-primary-disabled">
           ה-AI משתמש עד {ACTIVE_LIMIT} המקורות הפעילים האחרונים. סמנו „פעיל” כדי לבחור אילו מהם יוזנו.
