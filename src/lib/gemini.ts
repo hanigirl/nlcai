@@ -49,8 +49,9 @@ export class GeminiError extends Error {
   }
 }
 
-/** Longest we'll sit out a per-minute limit before giving up on a call. */
-const MAX_RATE_LIMIT_WAIT_MS = 65_000
+/** Per-minute limits: wait at least a full window, at most a little more. */
+const MIN_RATE_LIMIT_WAIT_MS = 61_000
+const MAX_RATE_LIMIT_WAIT_MS = 75_000
 
 /**
  * Read Google's 429 body: `RetryInfo.retryDelay` ("37s") says when the
@@ -121,7 +122,13 @@ export async function generateWithGemini(
       err.code === "quota" &&
       !err.daily
     ) {
-      const waitMs = Math.min(err.retryAfterMs ?? 30_000, MAX_RATE_LIMIT_WAIT_MS) + 1_000
+      // Never less than a full minute. Google's retryDelay can be a few
+      // seconds while the window is still full of this round's other calls —
+      // a retry that early was rejected again (AI Studio: 7/5 RPM).
+      const waitMs = Math.min(
+        Math.max(err.retryAfterMs ?? 0, MIN_RATE_LIMIT_WAIT_MS),
+        MAX_RATE_LIMIT_WAIT_MS,
+      )
       console.log(`[gemini] ${opts.model ?? GEMINI_PRIMARY_MODEL} per-minute limit — retrying in ${Math.round(waitMs / 1000)}s`)
       await new Promise((resolve) => setTimeout(resolve, waitMs))
       return generateOnce(apiKey, opts)
