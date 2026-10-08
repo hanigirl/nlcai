@@ -119,7 +119,7 @@ export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onTog
         <div className="flex items-center gap-2">
           {sourceLabel && (
             <span
-              className="max-w-[55%] shrink truncate rounded-full bg-bg-surface px-2 py-0.5 text-[12px] text-text-neutral-default"
+              className="max-w-[55%] shrink truncate rounded-full bg-bg-surface px-2 py-0.5 text-[12px] text-text-neutral-default transition-colors group-hover:bg-yellow-90 group-hover:text-yellow-30"
               title={sourceLabel}
             >
               {sourceLabel}
