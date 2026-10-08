@@ -9,7 +9,7 @@ interface LearnedInsight {
   id: string
   insight: string
   content_type: "hook" | "core_post"
-  source: "manual_edit" | "chat_instruction" | "scheduled_post" | null
+  source: "manual_edit" | "chat_instruction" | "scheduled_post" | "liked_hook" | null
   outcome: "accepted" | "rejected" | null
   instruction: string | null
   created_at: string
@@ -190,7 +190,7 @@ function InsightGroup({
                     ) : (
                       <Pencil className="size-3" aria-hidden="true" />
                     )}
-                    {item.source === "scheduled_post" ? "מפוסט שתוזמן" : item.source === "chat_instruction" ? "מהצ'אט" : "מעריכה ידנית"}
+                    {item.source === "liked_hook" ? "מהוק שאהבת" : item.source === "scheduled_post" ? "מפוסט שתוזמן" : item.source === "chat_instruction" ? "מהצ'אט" : "מעריכה ידנית"}
                   </span>
                   <span aria-hidden="true">·</span>
                   <span>{formatDate(item.created_at)}</span>

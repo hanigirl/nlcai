@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextRequest, NextResponse, after } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
+import { recordLikedHookInsight } from "@/lib/learning-insights"
 
 interface CorePostRow {
   id: string
@@ -244,6 +245,21 @@ export async function POST(req: NextRequest) {
 
     if (postError || !postRow) {
       return NextResponse.json({ error: postError?.message ?? "Failed to save" }, { status: 500 })
+    }
+
+    // A hook that became a post is a "this works" signal — learn what worked
+    // in its form (not its topic). After the response, so saving isn't slower.
+    if (hookText) {
+      const learnUserId = user.id
+      const learnText = hookText
+      after(async () => {
+        try {
+          const apiKey = await getUserApiKey(supabase, "anthropic_api_key")
+          await recordLikedHookInsight(supabase, apiKey, { userId: learnUserId, hookText: learnText })
+        } catch (err) {
+          console.warn("[core-posts] liked-hook learning skipped:", err instanceof Error ? err.message : err)
+        }
+      })
     }
 
     // Mark the source hook as used. When we have a stable id, also sync the

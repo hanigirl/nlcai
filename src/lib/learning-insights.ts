@@ -3,7 +3,7 @@ import { SupabaseClient } from "@supabase/supabase-js"
 import { renderLineDiff } from "@/lib/learning-diff"
 
 export type LearningContentType = "hook" | "core_post"
-export type LearningSource = "manual_edit" | "chat_instruction"
+export type LearningSource = "manual_edit" | "chat_instruction" | "liked_hook"
 export type LearningOutcome = "accepted" | "rejected"
 
 /**
@@ -334,5 +334,79 @@ export async function recordLearningInsight(
     throw new Error(error.message)
   }
 
+  return { insight, duplicate: false }
+}
+
+/**
+ * A hook she starred, or turned into a post, is the clearest "this works"
+ * signal we get — but copying its CONTENT would wear the topic out fast
+ * (Hani, 2026-10-08: "learn that it's a good hook, use the template or
+ * understand what worked — don't repeat more of the same content"). So the
+ * lesson is about form only: structure, curiosity technique, voice, length,
+ * address — something that transfers to an unrelated topic.
+ *
+ * Same table, dedup and sanitising as recordLearningInsight; stored as
+ * source 'liked_hook', outcome 'accepted'.
+ */
+export async function recordLikedHookInsight(
+  supabase: SupabaseClient,
+  apiKey: string,
+  { userId, hookText }: { userId: string; hookText: string },
+): Promise<RecordInsightResult> {
+  const text = hookText.trim()
+  if (text.length < 8) return { insight: null, duplicate: false }
+
+  const { data: existingLogs } = await supabase
+    .from("learning_logs")
+    .select("insight")
+    .eq("user_id", userId)
+    .eq("content_type", "hook")
+    .order("created_at", { ascending: false })
+    .limit(MAX_DEDUP_ROWS)
+  const existing = ((existingLogs as { insight: string }[] | null) ?? []).map((l) => l.insight).filter(Boolean)
+  const existingList = existing.length ? existing.map((s, i) => `${i + 1}. ${s}`).join("\n") : "(אין תובנות קודמות)"
+
+  const prompt = `המשתמש סימן את ההוק הבא כהוק טוב (סימן אותו במועדפים או הפך אותו לפוסט):
+
+"${text}"
+
+## משימה
+נסח תובנה אחת קצרה בעברית (משפט אחד) על **מה בצורה של ההוק עובד** — כך שאפשר ליישם אותה על נושא אחר לגמרי:
+- המבנה (למשל: שאלה, ניגוד, הבטחה של רשימה, "הסיבה ש...")
+- טכניקת הסקרנות (מה נשאר פתוח, איך הפאנץ׳ נשמר לסרטון)
+- הקול והניסוח (מחשבה פנימית של הקהל, שפה מדוברת, פנייה ישירה)
+- אורך וקצב
+
+**אסור להזכיר את הנושא או התוכן של ההוק** (כלים, מושגים, שמות). התובנה היא על הצורה בלבד — הנושא כבר נוצל.
+
+## תובנות קיימות שכבר נשמרו על המשתמש הזה:
+${existingList}
+
+אם התובנה כבר קיימת ברשימה (מהותית, לא מילולית) → החזר בדיוק: DUPLICATE
+אחרת → החזר את התובנה עצמה, שורה אחת, בלי גרשיים, בלי מספור, בלי הסברים.`
+
+  const client = new Anthropic({ apiKey })
+  const message = await client.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 256,
+    messages: [{ role: "user", content: prompt }],
+  })
+  const textBlock = message.content.find((b) => b.type === "text")
+  const { insight, duplicate } = sanitizeInsight(textBlock?.text ?? "")
+  if (!insight) return { insight: null, duplicate }
+
+  const { error } = await supabase.from("learning_logs").insert({
+    user_id: userId,
+    content_type: "hook",
+    original_text: text,
+    edited_text: text,
+    insight,
+    source: "liked_hook",
+    outcome: "accepted",
+  })
+  if (error) {
+    console.error("[learning] liked-hook insert failed", error.message)
+    return { insight: null, duplicate: false }
+  }
   return { insight, duplicate: false }
 }

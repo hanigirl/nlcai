@@ -179,6 +179,16 @@ export default function HooksPage() {
     if (error) {
       setHooks((prev) => prev.map((h) => h.id === id ? { ...h, is_favorite: !next } : h))
       toast.error("שגיאה בשמירת המועדף")
+      return
+    }
+    // A star is the clearest "this works" — learn what worked in its form
+    // (not its topic) into "מה ה-AI למד". Fire-and-forget.
+    if (next) {
+      void fetch("/api/hooks/liked", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hookId: id }),
+      }).catch(() => {})
     }
   }
 
