@@ -29,6 +29,7 @@ import { formatPostDate, getDayKey } from "@/lib/format-date"
 import { toast } from "sonner"
 import { useHookGeneration } from "@/components/hook-generation-provider"
 import { getCurrentUser } from "@/lib/supabase/current-user"
+import { logLearningEdit } from "@/lib/learning-capture"
 
 interface HookItem {
   id: string
@@ -438,6 +439,12 @@ export default function HooksPage() {
           toast.warning("ההוק עודכן, אבל יישומים תלויים בו לא הצליחו להתעדכן.")
         }
       }
+    }
+    // Her rewrite of a hook is the strongest style signal there is — learn
+    // from the change (original → hers) into "מה ה-AI למד", same pipeline
+    // the /project canvas uses. Trivial edits are filtered inside.
+    if (oldText) {
+      logLearningEdit({ originalText: oldText, editedText: newText, contentType: "hook", source: "manual_edit" })
     }
     // Local state already reflects newText (optimistic set above).
     toast.success("ההוק עודכן בהצלחה")
