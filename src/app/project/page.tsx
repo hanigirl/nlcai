@@ -1029,6 +1029,7 @@ function ProjectPageInner() {
       .select("id, hook_text")
       .eq("user_id", userId)
       .eq("idea_text", anchorIdea)
+      .is("deleted_at", null)
       // Sort by display_order ASC so the user sees the same order they
       // picked from originally — the position they remember picking should
       // still be the position they see highlighted. created_at-DESC inverted

@@ -37,6 +37,8 @@ interface HookItem {
   is_favorite: boolean
   created_at: string
   product_ids?: string[]
+  source_kind?: string | null
+  source_ref?: string | null
 }
 
 function HookSkeleton() {
@@ -108,26 +110,61 @@ export default function HooksPage() {
   const [importing, setImporting] = useState(false)
   const [highlightIds, setHighlightIds] = useState<Set<string>>(new Set())
   const [importDialogOpen, setImportDialogOpen] = useState(false)
+  // business_sources id → title, for the "מתוך: ..." tag on knowledge hooks.
+  const [sourceTitles, setSourceTitles] = useState<Record<string, string>>({})
+
+  /** Where a hook came from, in her words — the tag on the card. */
+  const sourceLabel = (hook: HookItem): string | undefined => {
+    switch (hook.source_kind) {
+      case "knowledge": {
+        const sourceId = hook.source_ref?.split(":")[1]
+        const title = sourceId ? sourceTitles[sourceId] : undefined
+        return title ? `מתוך: ${title}` : "ממקורות הידע"
+      }
+      case "product": {
+        const name = products.find((p) => p.id === hook.source_ref)?.name
+        return name ? `מוצר: ${name}` : "מוצר"
+      }
+      case "audience":
+        return "כאב של הקהל"
+      case "creator":
+        return "מהשטח"
+      default:
+        return undefined
+    }
+  }
 
   const loadHooks = async () => {
     const supabase = createClient()
     const { data: { user } } = await getCurrentUser(supabase)
     if (!user) return
 
-    const [{ data: hooksData }, { data: prodsData }] = await Promise.all([
+    const [{ data: hooksData }, { data: prodsData }, { data: sourcesData }] = await Promise.all([
       supabase
         .from("hooks")
-        .select("id, hook_text, is_used, is_favorite, created_at, product_ids")
+        .select("id, hook_text, is_used, is_favorite, created_at, product_ids, source_kind, source_ref")
         .eq("user_id", user.id)
+        // Deleted hooks stay in the table as a "didn't like this" signal for
+        // the source mix (migration 040) — just never shown.
+        .is("deleted_at", null)
         .order("created_at", { ascending: false }),
       supabase
         .from("products")
         .select("id, name")
         .eq("user_id", user.id),
+      supabase
+        .from("business_sources")
+        .select("id, title")
+        .eq("user_id", user.id),
     ])
 
     if (hooksData) setHooks(hooksData as HookItem[])
     if (prodsData) setProducts(prodsData as { id: string; name: string }[])
+    if (sourcesData) {
+      setSourceTitles(
+        Object.fromEntries((sourcesData as { id: string; title: string }[]).map((s) => [s.id, s.title])),
+      )
+    }
     setLoading(false)
   }
 
@@ -346,8 +383,10 @@ export default function HooksPage() {
     // Wait for the actual delete before flipping UI state. Previously this
     // was fire-and-forget, so a failed delete left the row in the DB while
     // the user saw "deleted" — and on next load the hook came back.
+    // Soft delete: the row stays as a "didn't like this" signal for the
+    // source mix (lib/source-mix), hidden everywhere it's listed.
     const { error } = await withRetry(() =>
-      supabase.from("hooks").delete().eq("id", id),
+      supabase.from("hooks").update({ deleted_at: new Date().toISOString() } as never).eq("id", id),
     )
     if (error) {
       setDeletingId(null)
@@ -709,6 +748,7 @@ export default function HooksPage() {
                     onToggleFavorite={() => toggleFavorite(hook.id)}
                     isFavorite={hook.is_favorite}
                     used={hook.is_used}
+                    sourceLabel={sourceLabel(hook)}
                     highlighted={highlightIds.has(hook.id)}
                   />
                 </div>

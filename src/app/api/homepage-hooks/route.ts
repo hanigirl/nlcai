@@ -15,10 +15,15 @@ interface PlanItem {
   target_pain_or_desire: string
   audience_quote: string
   angle_summary: string
+  /** Which family the angle was built on — see lib/source-mix. */
+  source_kind?: string
+  /** The insight id (k:...) or product id the angle stands on, if any. */
+  source_ref?: string | null
 }
 import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
-import { fetchBusinessSourceInsights } from "@/lib/business-source-insights"
+import { fetchKnowledgeMaterial } from "@/lib/business-source-insights"
+import { SOURCE_KINDS, computeSourceMix, type SourceKind } from "@/lib/source-mix"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
 import { withRetry } from "@/lib/supabase/retry"
 import { raiseNotice, resolveNotice } from "@/lib/system-notices"
@@ -67,7 +72,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const [{ data: coreIdentity }, { data: audienceIdentity }, { data: products }, { data: favoritedRows }, { data: existingHooks }, learningInsights, businessSourceInsights] = await Promise.all([
+    const [{ data: coreIdentity }, { data: audienceIdentity }, { data: products }, { data: favoritedRows }, { data: existingHooks }, learningInsights, { data: knowledgeHookRows }, { data: likedHookRows }] = await Promise.all([
       supabase.from("core_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("audience_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("products").select("id, name, type, page_summary").eq("user_id", user.id),
@@ -77,8 +82,21 @@ export async function POST(req: NextRequest) {
       // batches without bloating the prompt.
       supabase.from("hooks").select("hook_text").eq("user_id", user.id).order("created_at", { ascending: false }).limit(50),
       fetchLearningInsights(supabase, user.id, "hook"),
-      fetchBusinessSourceInsights(supabase, user.id),
+      // Which knowledge insights already became hooks (and which of those she
+      // liked) — so the planner gets fresh material, not the same lines again.
+      supabase.from("hooks").select("source_ref, is_favorite, is_used").eq("user_id", user.id).eq("source_kind", "knowledge"),
+      // Hooks she starred or used: their FORM is learned (liked_hook lessons);
+      // their TOPICS go on the do-not-repeat list so they don't wear out.
+      supabase.from("hooks").select("hook_text").eq("user_id", user.id).or("is_favorite.eq.true,is_used.eq.true").order("created_at", { ascending: false }).limit(30),
     ])
+
+    const knowledgeRows = (knowledgeHookRows as { source_ref: string | null; is_favorite: boolean | null; is_used: boolean | null }[] | null) ?? []
+    const usedRefs = new Set(knowledgeRows.map((h) => h.source_ref).filter((x): x is string => !!x))
+    const likedRefs = new Set(
+      knowledgeRows.filter((h) => h.is_favorite || h.is_used).map((h) => h.source_ref).filter((x): x is string => !!x),
+    )
+    const knowledge = await fetchKnowledgeMaterial(supabase, user.id, { usedRefs, likedRefs })
+    const businessSourceInsights = knowledge.block
 
     // Build favorite-text lookup once, use it to flag incoming fieldIdeas.
     const favoritedTexts = new Set(
@@ -197,7 +215,7 @@ ${audienceIdentity.limiting_beliefs}
 
     const productsSection = products && products.length > 0
       ? `\n## המוצרים/שירותים של המשתמש\n${products.map((p, i) => {
-          let line = `${i + 1}. ${p.name} (${p.type === "front" ? "מוצר פרונט" : p.type === "premium" ? "מוצר פרימיום" : "מגנט לידים"})`
+          let line = `${i + 1}. [${p.id}] ${p.name} (${p.type === "front" ? "מוצר פרונט" : p.type === "premium" ? "מוצר פרימיום" : "מגנט לידים"})`
           if (p.page_summary) line += `\n   תיאור: ${p.page_summary}`
           return line
         }).join("\n")}\n`
@@ -273,40 +291,56 @@ ${audienceIdentity.limiting_beliefs}
     //   - Creator viral: fills whatever remains, up to their count.
     //   - Trends: pure top-up if creator content is thin.
     //   - Audience-only: the very last resort.
-    const favoriteQuota = Math.min(favoriteIdeas.length * 2, Math.max(HOOK_COUNT - 3, 0))
-    const creatorQuota = Math.min(creatorIdeas.length, Math.max(HOOK_COUNT - favoriteQuota - 2, 0))
-    const trendQuota = Math.min(trendIdeas.length, Math.max(HOOK_COUNT - favoriteQuota - creatorQuota, 0))
-    const audienceOnly = Math.max(HOOK_COUNT - favoriteQuota - creatorQuota - trendQuota, 0)
-    console.log(`Homepage Hooks: quota — ${favoriteQuota} favorites + ${creatorQuota} creators + ${trendQuota} trends + ${audienceOnly} audience-only (of ${HOOK_COUNT})`)
-    const quotaSection = (favoriteIdeas.length > 0 || creatorIdeas.length > 0 || trendIdeas.length > 0)
-      ? `
-## 🎯 חובה — מכסת הוקים ממחקר מהשטח (רצפה, לא תקרה — מותר יותר, אסור פחות):
-${favoriteIdeas.length > 0 ? `- **${favoriteQuota} מתוך ${HOOK_COUNT} זוויות חייבות להיות על הרעיונות המועדפים** ⭐ — המשתמש סימן אותם במפורש. תשתמש/י בנושא הספציפי של כל מועדף (לא בגרסה גנרית שלו) ותייצר/י ממנו כמה זוויות שונות.` : ""}
-${creatorIdeas.length > 0 ? `- **${creatorQuota} זוויות חייבות להיות על תוכן ויראלי מהיוצרים** 🔥 — קח/י פוסט ספציפי, הזווית שלו, ובנה/י ממנו הוק בקול של המשתמש. ציין/י ב-angle_summary "בהשראת @שם_היוצר".` : ""}
-${trendIdeas.length > 0 ? `- **${trendQuota} זוויות יכולות להיות על טרנדים** 📈 — רק אם לא נשאר מקום ממועדפים/יוצרים.` : ""}
-- רק ${audienceOnly} זוויות מותר להבסיס אך ורק על מחקר הקהל ללא מקור מ-⭐/🔥/📈.
-` : ""
-
-    // Knowledge sources — the user's own transcripts and documents. Without a
-    // quota they were background reading next to the favorites/creators/trends
-    // quotas, and a whole batch could ignore them (Hani, 2026-10-08: "make sure
-    // the hooks come from the meeting transcripts"). Half the batch must stand
-    // on a specific thing she actually said; the writer only sees the plan, so
-    // the concrete detail has to travel in angle_summary.
-    const knowledgeQuota = businessSourceInsights ? Math.ceil(HOOK_COUNT / 2) : 0
     // "מה ה-AI למד" was fetched here but never reached either prompt — every
     // lesson from her own edits and approvals was silently dropped from hook
     // rounds (Hani, 2026-10-08: "a shame, we worked on that a lot"). It now
     // goes into the planner and, placed high, into every writer call.
     console.log(`Homepage Hooks: learning insights ${learningInsights ? `injected (${learningInsights.split("\n- ").length - 1} lines)` : "— none yet"}`)
-    if (knowledgeQuota) console.log(`Homepage Hooks: quota — ${knowledgeQuota} from knowledge sources`)
-    const knowledgeSection = knowledgeQuota
+
+    // ---- Source mix (lib/source-mix) ----
+    // How many of the 6 angles come from each family, learned from what she
+    // stars, posts and deletes. Replaces the fixed favorites/creators/trends
+    // floors and "3 always from the transcripts".
+    const productList0 = (products as Array<{ id: string; name: string }> | null) ?? []
+    const available: Record<SourceKind, boolean> = {
+      knowledge: knowledge.unusedCount > 0 || likedRefs.size > 0,
+      product: productList0.length > 0,
+      audience: true,
+      creator: favoriteIdeas.length + creatorIdeas.length + trendIdeas.length > 0,
+    }
+    const mix = await computeSourceMix(supabase, user.id, available, HOOK_COUNT)
+    console.log(
+      `Homepage Hooks: source mix — ${SOURCE_KINDS.map((k) => `${k} ${mix.slots[k]} (score ${mix.scores[k].toFixed(2)})`).join(", ")}; knowledge unused=${knowledge.unusedCount}`,
+    )
+    // Running dry: tell her before the hooks start repeating themselves.
+    if (knowledge.hasSources && knowledge.unusedCount < mix.slots.knowledge + 3) {
+      void raiseNotice({ audience: "user", userId: user.id }, "knowledge_exhausted")
+    }
+
+    const mixLines: string[] = []
+    if (mix.slots.knowledge > 0) {
+      mixLines.push(`- **${mix.slots.knowledge} זוויות מ"חומר גלם מתוך המקורות"** 📚 — source_kind: "knowledge", source_ref: המזהה שבסוגריים המרובעים (למשל "k:..."). כל זווית על פריט אחר. ב-angle_summary כתוב/י את הפרט הקונקרטי מהמקור (מה קרה, מה נאמר, המספר) וסיים/י ב-"(מתוך: שם המקור)" — זה מה שהסרטון יגלה, ולכן ב-specific_topic **אל** תכתוב/י את הפרט/התשובה עצמם, רק את התחום (למשל "סוכן AI", לא "זיכרון לסוכן AI" כשהזיכרון הוא הגילוי).`)
+    }
+    if (mix.slots.product > 0) {
+      mixLines.push(`- **${mix.slots.product} זוויות על מוצר** 🛍️ — source_kind: "product", source_ref: ה-id של המוצר. כאב/רצון של הקהל שהמוצר פותר — בלי מכירה בוטה. אם יש כמה מוצרים, כל זווית על מוצר אחר.`)
+    }
+    if (mix.slots.audience > 0) {
+      mixLines.push(`- **${mix.slots.audience} זוויות על כאב/רצון מחקר הקהל** 🎯 — source_kind: "audience", source_ref: null.`)
+    }
+    if (mix.slots.creator > 0) {
+      mixLines.push(`- **${mix.slots.creator} זוויות מהמחקר מהשטח** — source_kind: "creator", source_ref: null. קודם הרעיונות המועדפים ⭐ (המשתמש סימן אותם במפורש — הנושא הספציפי, לא גרסה גנרית), אחר כך תוכן ויראלי מהיוצרים 🔥 (ציין/י ב-angle_summary "בהשראת @שם_היוצר"), ורק אחר כך טרנדים 📈.`)
+    }
+    const quotaSection = `
+## 🎯 חובה — חלוקת ${HOOK_COUNT} הזוויות בסבב הזה (בדיוק):
+${mixLines.join("\n")}
+- לכל זווית חובה למלא source_kind (ו-source_ref כשיש) לפי החלוקה הזו.
+`
+    const likedTexts = ((likedHookRows as { hook_text: string }[] | null) ?? []).map((h) => h.hook_text).filter(Boolean)
+    const likedHooksSection = likedTexts.length > 0
       ? `
-## 📚 חובה — הוקים מתוך מקורות הידע של העסק (רצפה, לא תקרה):
-- **לפחות ${knowledgeQuota} מתוך ${HOOK_COUNT} זוויות חייבות להיבנות על פריט ספציפי מ"חומר גלם מתוך המקורות"** — סיפור, ציטוט, נתון, כאב, עמדה או טיפ שבעל/ת העסק אמר/ה בפועל.
-- כל זווית על פריט אחר.
-- ב-angle_summary כתוב/י את הפרט הקונקרטי מהמקור (מה קרה, מה נאמר, המספר) — לא ניסוח כללי — וסיים/י ב-"(מתוך: שם המקור)". זה מה שהסרטון יגלה, ולכן ב-specific_topic **אל** תכתוב/י את הפרט/התשובה עצמם — רק את התחום (למשל "סוכן AI", לא "זיכרון לסוכן AI" כשהזיכרון הוא הגילוי).
-- זווית ממקור ידע יכולה להיספר גם במכסות האחרות אם היא מתאימה להן.
+## ⭐ הוקים שהמשתמש אהב (סימן או הפך לפוסט)
+הצורה שלהם כבר נלמדה (ב"מה שכבר למדנו") — השתמש/י בה. **אבל אסור לחזור על הנושאים והתוכן שלהם** — הם כבר נוצלו:
+${likedTexts.map((t, i) => `${i + 1}. ${t}`).join("\n")}
 `
       : ""
 
@@ -332,6 +366,7 @@ ${learningInsights || ""}
 ${productsSection}
 ${businessSourceInsights || ""}
 ${trendContext ? `## מחקר מהשטח:\n${trendContext}\n` : ""}
+${likedHooksSection}
 ${(existingHooks && existingHooks.length > 0) ? `
 ## 🚫 הוקים שכבר קיימים אצל המשתמש (אסור לחזור על אותם נושאים / זוויות!):
 ${(existingHooks as { hook_text: string }[]).slice(0, 50).map((h, i) => `${i + 1}. ${h.hook_text}`).join("\n")}
@@ -339,7 +374,6 @@ ${(existingHooks as { hook_text: string }[]).slice(0, 50).map((h, i) => `${i + 1
 **זה קריטי**: עברתי על הרשימה. ה-${HOOK_COUNT} זוויות החדשות חייבות לפתוח **נושאים אחרים**, **זוויות אחרות**, **כאבים/רצונות אחרים** ממה שכבר קיים. אם זווית חדשה נראית דומה לאחת מהקיימות — תזרוק/י אותה ובחר/י משהו אחר. גיוון מהאינוונטר הקיים זה תנאי, לא המלצה.
 ` : ""}
 ${quotaSection}
-${knowledgeSection}
 ${productFocusSection}
 ## קטגוריות הוקים זמינות (תבחר אחת לכל זווית):
 ${categoriesCatalog}
@@ -365,7 +399,9 @@ ${categoriesCatalog}
     "specific_topic": "הנושא הקונקרטי (כלי/שיטה/בעיה ספציפית)",
     "target_pain_or_desire": "הכאב/רצון של הקהל שהזווית נוגעת בו",
     "audience_quote": "ציטוט/ביטוי בשפת הקהל שיופיע בהוק",
-    "angle_summary": "מה הסרטון יגלה — התובנה/הסיפור/הפרט שהצופה יקבל (משפט). זה הפאנץ׳; ההוק עצמו לא חושף אותו"
+    "angle_summary": "מה הסרטון יגלה — התובנה/הסיפור/הפרט שהצופה יקבל (משפט). זה הפאנץ׳; ההוק עצמו לא חושף אותו",
+    "source_kind": "knowledge" | "product" | "audience" | "creator",
+    "source_ref": "k:... (מזהה תובנה) | id של מוצר | null"
   }
 ]`
 
@@ -819,6 +855,9 @@ ${formatTemplatesForPrompt()}
                 id: hookId,
                 user_id: userId,
                 hook_text: hookText,
+                source_kind: SOURCE_KINDS.includes(plan.source_kind as SourceKind) ? plan.source_kind : null,
+                source_ref: typeof plan.source_ref === "string" && plan.source_ref ? plan.source_ref : null,
+                angle_summary: plan.angle_summary || null,
                 display_order: planIdx, // plan order preserved even in parallel execution
                 status: "completed",
                 is_selected: false,

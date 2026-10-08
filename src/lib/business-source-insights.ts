@@ -93,3 +93,78 @@ export async function fetchBusinessSourceInsights(
   )
   return parts.join("\n\n")
 }
+
+/**
+ * Knowledge material for a hook ROUND, with ids, minus what's been used.
+ *
+ * Each insight gets a stable id `k:<business_source_id>:<index>` that the
+ * planner cites back (source_ref) and the hook stores, so an insight that
+ * became a hook isn't offered again — the transcripts stop wearing out by
+ * repetition. When few unused ones are left, insights behind hooks she
+ * LIKED come back, explicitly for a new angle (crossed with another pain or
+ * product), never the same hook again.
+ */
+export async function fetchKnowledgeMaterial(
+  supabase: SupabaseClient,
+  userId: string,
+  { usedRefs, likedRefs }: { usedRefs: Set<string>; likedRefs: Set<string> },
+): Promise<{ block: string; unusedCount: number; hasSources: boolean }> {
+  const { data } = await supabase
+    .from("business_sources")
+    .select("id, title, summary, insights")
+    .eq("user_id", userId)
+    .eq("status", "ready")
+    .eq("active", true)
+    .order("created_at", { ascending: false })
+    .limit(MAX_SOURCES)
+
+  const rows = ((data as (Row & { id: string })[] | null) ?? []).filter((r) => r.insights && r.insights.length > 0)
+  if (rows.length === 0) return { block: "", unusedCount: 0, hasSources: false }
+
+  type Item = { ref: string; title: string; insight: SourceInsight }
+  const all: Item[][] = rows.map((r) =>
+    (r.insights ?? []).map((insight, i) => ({ ref: `k:${r.id}:${i}`, title: r.title, insight })),
+  )
+  const unused = all.map((items) => shuffle(items.filter((it) => !usedRefs.has(it.ref))))
+  const unusedCount = unused.reduce((a, q) => a + q.length, 0)
+
+  const line = (it: Item) =>
+    `- [${it.ref}] [${KIND_LABEL[it.insight.kind] ?? it.insight.kind}] ${it.insight.text} (מתוך: ${it.title})`
+
+  // Round-robin across sources so one long webinar can't crowd out the rest.
+  const picked: string[] = []
+  let budget = MAX_INSIGHT_CHARS
+  let progressed = true
+  while (progressed && budget > 0) {
+    progressed = false
+    for (const q of unused) {
+      const next = q.shift()
+      if (!next) continue
+      progressed = true
+      const l = line(next)
+      if (l.length > budget) continue
+      picked.push(l)
+      budget -= l.length
+    }
+  }
+
+  const parts = [`\n## מקורות ידע על העסק`]
+  const summaries = rows
+    .filter((r) => r.summary && r.summary.trim())
+    .map((r) => `- ${r.title}: ${r.summary!.trim().slice(0, MAX_SUMMARY_CHARS)}`)
+  if (summaries.length > 0) parts.push(`על מה המקורות:\n${summaries.join("\n")}`)
+  if (picked.length > 0) {
+    parts.push(
+      `חומר גלם מתוך המקורות — עוד לא נוצל להוקים (סיפורים, ציטוטים, נתונים, כאבים, עמדות וטיפים שנאמרו בפועל). המזהה בסוגריים המרובעים הוא ה-source_ref:\n${picked.join("\n")}`,
+    )
+  }
+  if (unusedCount < 6) {
+    const liked = all.flat().filter((it) => likedRefs.has(it.ref)).slice(0, 8)
+    if (liked.length > 0) {
+      parts.push(
+        `תובנות שכבר הפכו להוק שהמשתמש אהב. מותר לחזור אליהן **רק** בזווית חדשה לגמרי — בשילוב כאב קהל אחר או מוצר אחר — ולא לחזור על ההוק הקודם:\n${liked.map(line).join("\n")}`,
+      )
+    }
+  }
+  return { block: parts.join("\n\n") + "\n", unusedCount, hasSources: true }
+}

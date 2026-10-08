@@ -10,6 +10,7 @@ import {
   type ProcessedSource,
 } from "@/lib/knowledge-source-processing"
 import { getAuthUser } from "@/lib/auth-user"
+import { resolveNotice } from "@/lib/system-notices"
 
 // A long transcript is read in parallel chunks (~30-60s); match the identity
 // flow so Vercel doesn't silently kill the request mid-read.
@@ -185,6 +186,10 @@ export async function POST(req: NextRequest) {
     })
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+    // Fresh material — the "transcripts almost used up" notice no longer holds.
+    if (processed.insights.length > 0) {
+      await resolveNotice({ audience: "user", userId: user.id }, "knowledge_exhausted")
     }
     return NextResponse.json({ source: data, warning: truncatedWarning })
   } catch (error) {

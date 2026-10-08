@@ -5,7 +5,7 @@ import { CLAUDE_BILLING_URL } from "@/lib/claude-credits"
  * code, so copy can change without touching rows already raised.
  */
 
-export type NoticeCode = "gemini_daily_limit" | "gemini_key_invalid" | "claude_credits"
+export type NoticeCode = "knowledge_exhausted" | "gemini_daily_limit" | "gemini_key_invalid" | "claude_credits"
 
 export type NoticeCopy = {
   title: string
@@ -14,6 +14,11 @@ export type NoticeCopy = {
 }
 
 export const NOTICE_COPY: Record<NoticeCode, NoticeCopy> = {
+  knowledge_exhausted: {
+    title: "התמלולים שלך כמעט מוצו",
+    body: "כמעט כל התובנות ממקורות הידע שלך כבר הפכו להוקים. כדי שההוקים ימשיכו להיות טריים, הוסיפי תמלול או מסמך חדש. עד אז נשלב תובנות שאהבת עם זוויות חדשות, ונשען יותר על המוצרים וכאבי הקהל.",
+    cta: { label: "להוספת מקור", href: "/settings?tab=business&sub=sources" },
+  },
   gemini_daily_limit: {
     title: "הגעתם למגבלה היומית של Gemini",
     body: "מפתח ה-Gemini שלכם במסלול החינמי של Google מאפשר מעט בקשות ביום, והן נגמרו להיום. עד שהמכסה תתאפס ({reset}), ההוקים נכתבים ב-Claude Sonnet (מהקרדיטים של Claude).",

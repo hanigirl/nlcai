@@ -195,6 +195,7 @@ function HomeContent() {
         .select("hook_text")
         .eq("user_id", user.id)
         .eq("is_used", false)
+        .is("deleted_at", null)
         .order("created_at", { ascending: false })
         .limit(4)
 

@@ -20,11 +20,13 @@ interface HookCardProps {
   onToggleFavorite?: () => void
   isFavorite?: boolean
   used?: boolean
+  /** Where the hook came from ("מתוך: מפגש סוכנים", "מוצר: ...") — a small tag. */
+  sourceLabel?: string
   /** Just arrived (e.g. imported from a file). Fades back to normal when unset. */
   highlighted?: boolean
 }
 
-export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onToggleFavorite, isFavorite, used, highlighted }: HookCardProps) {
+export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onToggleFavorite, isFavorite, used, sourceLabel, highlighted }: HookCardProps) {
   const [copied, setCopied] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState(hookText)
@@ -115,6 +117,14 @@ export function HookCard({ hookText, onNavigate, onCopy, onDelete, onEdit, onTog
             destructive button picks up `text-red-60` + `bg-red-95` on
             hover to match the danger-affordance pattern in /core_posts. */}
         <div className="flex items-center gap-2">
+          {sourceLabel && (
+            <span
+              className="max-w-[55%] shrink truncate rounded-full bg-bg-surface px-2 py-0.5 text-[12px] text-text-neutral-default"
+              title={sourceLabel}
+            >
+              {sourceLabel}
+            </span>
+          )}
           {/* Used indicator — always visible, with tooltip for full label. */}
           {used && (
             <Tooltip>
