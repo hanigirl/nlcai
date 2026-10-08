@@ -3,7 +3,7 @@
 import { useEffect } from "react"
 import { toast } from "sonner"
 import { NOTICE_COPY, isNoticeCode } from "@/lib/system-notice-copy"
-import { dismissNotice, formatResetTime, noticeToastId } from "@/lib/gemini-quota-toasts"
+import { NOTICE_TOAST_CLASSES, dismissNotice, formatResetTime, noticeToastId } from "@/lib/gemini-quota-toasts"
 
 /**
  * "Something ran out" notices (lib/system-notices) as bottom toasts, on
@@ -36,6 +36,7 @@ export function SystemNoticeToasts() {
             description: copy.body.replace("{reset}", formatResetTime(n.expires_at)),
             duration: Infinity,
             closeButton: true,
+            classNames: NOTICE_TOAST_CLASSES,
             action: {
               label: copy.cta.label,
               onClick: () => {

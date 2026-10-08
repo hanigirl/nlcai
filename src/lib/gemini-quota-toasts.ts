@@ -28,6 +28,9 @@ export function dismissNotice(target: { id: string } | { code: string }): void {
   }).catch(() => {})
 }
 
+/** The default description grey is unreadable on our near-black toast. */
+export const NOTICE_TOAST_CLASSES = { description: "!text-white/80 !text-[13px] !leading-relaxed" }
+
 const usageAction = {
   label: "לצפייה בשימוש",
   onClick: () => window.open(GEMINI_USAGE_URL, "_blank", "noopener,noreferrer"),
@@ -67,6 +70,7 @@ export function handleGeminiQuotaFrame(frame: Frame): boolean {
       description: `${n === 1 ? "הוק אחד נוצר" : `${n} הוקים נוצרו`} ב-Claude Sonnet במקום Gemini (מהקרדיטים של Claude), ולכן הם עשויים להיות שונים מהרגיל. המכסה של Gemini תתאפס ${reset}.`,
       duration: Infinity,
       closeButton: true,
+      classNames: NOTICE_TOAST_CLASSES,
       action: usageAction,
       onDismiss: frame.daily ? () => dismissNotice({ code: "gemini_daily_limit" }) : undefined,
     })
@@ -81,6 +85,7 @@ export function handleGeminiQuotaFrame(frame: Frame): boolean {
         id: frame.daily ? noticeToastId("gemini_daily_limit") : "gemini-quota",
         duration: Infinity,
         closeButton: true,
+        classNames: NOTICE_TOAST_CLASSES,
         action: usageAction,
         onDismiss: frame.daily ? () => dismissNotice({ code: "gemini_daily_limit" }) : undefined,
       },
