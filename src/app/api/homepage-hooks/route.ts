@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { detectAudienceGender } from "@/lib/detect-addressing"
 import { TEMPLATE_LIBRARY, getTemplatesByCategorySorted, templateText, templatePriority, type TemplateCategory, type HookTemplate } from "@/lib/agents/hook-templates"
-import { judgeHook, validateHookLocally } from "@/lib/agents/hook-judge"
+import { judgeHook, validateHookLocally, ownNamesFor, ownNameRule } from "@/lib/agents/hook-judge"
 import { findNearDuplicate } from "@/lib/agents/hook-similarity"
 import { classifyHooksByProduct } from "@/lib/agents/hook-product-classifier"
 import { GeminiError, generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const [{ data: coreIdentity }, { data: audienceIdentity }, { data: products }, { data: favoritedRows }, { data: existingHooks }, learningInsights, { data: knowledgeHookRows }, { data: likedHookRows }] = await Promise.all([
+    const [{ data: coreIdentity }, { data: audienceIdentity }, { data: products }, { data: favoritedRows }, { data: existingHooks }, learningInsights, { data: knowledgeHookRows }, { data: likedHookRows }, { data: userRow }] = await Promise.all([
       supabase.from("core_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("audience_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("products").select("id, name, type, page_summary").eq("user_id", user.id),
@@ -88,6 +88,7 @@ export async function POST(req: NextRequest) {
       // Hooks she starred or used: their FORM is learned (liked_hook lessons);
       // their TOPICS go on the do-not-repeat list so they don't wear out.
       supabase.from("hooks").select("hook_text").eq("user_id", user.id).or("is_favorite.eq.true,is_used.eq.true").order("created_at", { ascending: false }).limit(30),
+      supabase.from("users").select("full_name").eq("id", user.id).maybeSingle(),
     ])
 
     const knowledgeRows = (knowledgeHookRows as { source_ref: string | null; is_favorite: boolean | null; is_used: boolean | null }[] | null) ?? []
@@ -355,6 +356,17 @@ ${likedTexts.map((t, i) => `${i + 1}. ${t}`).join("\n")}
       ? `\n## 🎯 מיקוד במוצר ספציפי — חובה!\nכל ${HOOK_COUNT} ההוקים חייבים להיכתב סביב המוצר/שירות הבא ולקדם אותו בעקיפין — לדבר אל הקהל שלו, לגעת בכאב/רצון שהוא פותר, ולפתוח סקרנות סביב הנושא שלו (בלי מכירה בוטה):\n- **שם המוצר:** ${selectedProduct.name} (${selectedProduct.type === "front" ? "מוצר פרונט" : selectedProduct.type === "premium" ? "מוצר פרימיום" : "מגנט לידים"})\n${selectedProduct.page_summary ? `- **תיאור:** ${selectedProduct.page_summary}\n` : ""}`
       : ""
 
+    // Never sign a hook with the business (Hani, 2026-10-08). A rule given
+    // up front to both the planner and the writer — not a filter after.
+    const ownNames = ownNamesFor({
+      productName: (coreIdentity as { product_name?: string | null } | null)?.product_name,
+      fullName: (userRow as { full_name?: string | null } | null)?.full_name,
+    })
+    const ownNameSection = ownNameRule(
+      ownNames,
+      ((products as Array<{ name: string }> | null) ?? []).map((p) => p.name),
+    )
+
     const planningPrompt = `אתה אסטרטג שיווק שמתכנן זוויות תוכן עבור יוצרי קונטנט בישראל.
 
 ## המטרה
@@ -375,6 +387,7 @@ ${(existingHooks as { hook_text: string }[]).slice(0, 50).map((h, i) => `${i + 1
 ` : ""}
 ${quotaSection}
 ${productFocusSection}
+${ownNameSection}
 ## קטגוריות הוקים זמינות (תבחר אחת לכל זווית):
 ${categoriesCatalog}
 
@@ -632,6 +645,7 @@ ${categoriesCatalog}
 - **איך הקהל מדבר על זה:** "${plan.audience_quote}"
 - **מה הסרטון יגלה (זה הפאנץ׳ — הוא לא נכנס להוק!):** ${plan.angle_summary}
 ${learningInsights || ""}
+${ownNameSection}
 ## מה הופך הוק לטוב — שלוש העמודות
 ההוק חייב להחזיק את כל השלוש. אם הוא נכשל באחת — שכתב.
 

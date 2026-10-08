@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { buildHookGeneratorPrompt, buildHookGeneratorSystem, parseHooks } from "@/lib/agents/hook-generator"
-import { judgeHook, validateHookLocally } from "@/lib/agents/hook-judge"
+import { judgeHook, validateHookLocally, ownNamesFor } from "@/lib/agents/hook-judge"
 import { findNearDuplicate } from "@/lib/agents/hook-similarity"
 import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Fetch core identity, audience identity, favorites & trending context
-    const [{ data: coreIdentity }, { data: audienceIdentity }, { data: favoritedRows }, { data: recentRows }, learningInsights] = await Promise.all([
+    const [{ data: coreIdentity }, { data: audienceIdentity }, { data: favoritedRows }, { data: recentRows }, learningInsights, { data: userRow }] = await Promise.all([
       supabase.from("core_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("audience_identities").select("*").eq("user_id", user.id).single(),
       supabase.from("idea_favorites").select("idea_text").eq("user_id", user.id),
@@ -100,7 +100,13 @@ export async function POST(req: NextRequest) {
         .order("created_at", { ascending: false })
         .limit(30),
       fetchLearningInsights(supabase, user.id, "hook"),
+      supabase.from("users").select("full_name").eq("id", user.id).maybeSingle(),
     ])
+    // Never sign a hook with the business or its owner (Hani, 2026-10-08).
+    const ownNames = ownNamesFor({
+      productName: productName || (coreIdentity as { product_name?: string | null } | null)?.product_name,
+      fullName: (userRow as { full_name?: string | null } | null)?.full_name,
+    })
 
     // Same-idea hooks first: those are the ones the user just rejected, so
     // they carry the most signal about what not to write again. Deduped by
@@ -231,6 +237,7 @@ export async function POST(req: NextRequest) {
       idea,
       userResponse,
       productName,
+      ownNames,
       coreIdentity,
       audienceIdentity,
       count,
