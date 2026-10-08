@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { Plus, Trash2, Loader2, Link2, FileText, Upload, AlertCircle } from "lucide-react"
 import { toast } from "sonner"
 
@@ -16,6 +16,13 @@ import {
 } from "@/components/ui/dialog"
 import { createClient } from "@/lib/supabase/client"
 import type { BusinessSource, BusinessSourceType } from "@/lib/supabase/types"
+import {
+  getKnowledgeJobs,
+  getServerKnowledgeJobs,
+  onKnowledgeSourceAdded,
+  startKnowledgeSourceJob,
+  subscribeKnowledgeJobs,
+} from "@/lib/knowledge-source-jobs"
 
 // How many active sources the AI actually reads per generation (matches the
 // cap in src/lib/business-source-insights.ts). Surfaced so the limit is never
@@ -72,7 +79,6 @@ export function BusinessSourcesPanel() {
   const [url, setUrl] = useState("")
   const [title, setTitle] = useState("")
   const [file, setFile] = useState<File | null>(null)
-  const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -89,6 +95,17 @@ export function BusinessSourcesPanel() {
       })
   }, [])
 
+  // Sources being read in the background (see lib/knowledge-source-jobs).
+  // Shown as rows at the top of the list until they land.
+  const jobs = useSyncExternalStore(subscribeKnowledgeJobs, getKnowledgeJobs, getServerKnowledgeJobs)
+  useEffect(
+    () =>
+      onKnowledgeSourceAdded((source) =>
+        setSources((prev) => [source, ...prev.filter((s) => s.id !== source.id)]),
+      ),
+    [],
+  )
+
   const resetForm = () => {
     setType("meeting")
     setMode("file")
@@ -98,7 +115,7 @@ export function BusinessSourcesPanel() {
     setAddError(null)
   }
 
-  const handleAdd = async () => {
+  const handleAdd = () => {
     setAddError(null)
     if (mode === "link" && !url.trim()) {
       setAddError(ADD_ERROR.url_required)
@@ -108,38 +125,43 @@ export function BusinessSourcesPanel() {
       setAddError(ADD_ERROR.file_required)
       return
     }
-    setAdding(true)
-    try {
-      let res: Response
-      if (mode === "file" && file) {
-        const fd = new FormData()
-        fd.append("file", file)
-        fd.append("type", type)
-        if (title.trim()) fd.append("title", title.trim())
-        res = await fetch("/api/business-sources", { method: "POST", body: fd })
-      } else {
-        res = await fetch("/api/business-sources", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type, url: url.trim(), title: title.trim() || undefined }),
-        })
-      }
-      const data = await res.json()
-      if (!res.ok || data.error) {
-        setAddError(ADD_ERROR[data.error] ?? data.message ?? "ההוספה נכשלה. נסו שוב.")
+    // Checked here too so a wrong file type is caught in the dialog, not in
+    // a toast after it has closed.
+    if (mode === "file" && file) {
+      const name = file.name.toLowerCase()
+      if (!ACCEPT.split(",").some((ext) => name.endsWith(ext))) {
+        setAddError(ADD_ERROR.not_text_file)
         return
       }
-      if (data.source) setSources((prev) => [data.source as BusinessSource, ...prev])
-      if (data.warning) toast.message("המקור נשמר, אבל הסיכום לא הושלם", { description: data.warning })
-      else toast.success("המקור נוסף")
-      setDialogOpen(false)
-      resetForm()
-    } catch (err) {
-      console.error("[business-sources] add", err)
-      setAddError("שגיאת רשת. נסו שוב.")
-    } finally {
-      setAdding(false)
     }
+
+    let displayTitle = title.trim()
+    if (!displayTitle) {
+      if (mode === "file" && file) displayTitle = file.name.replace(/\.[^.]+$/, "")
+      else {
+        try {
+          displayTitle = new URL(url.trim()).hostname
+        } catch {
+          displayTitle = "המקור"
+        }
+      }
+    }
+
+    let body: FormData | { type: BusinessSourceType; url: string; title?: string }
+    if (mode === "file" && file) {
+      const fd = new FormData()
+      fd.append("file", file)
+      fd.append("type", type)
+      if (title.trim()) fd.append("title", title.trim())
+      body = fd
+    } else {
+      body = { type, url: url.trim(), title: title.trim() || undefined }
+    }
+
+    // Read in the background — the dialog closes now and a toast tracks it.
+    startKnowledgeSourceJob({ title: displayTitle, sourceType: type, body })
+    setDialogOpen(false)
+    resetForm()
   }
 
   const toggleActive = async (src: BusinessSource) => {
@@ -194,7 +216,7 @@ export function BusinessSourcesPanel() {
         <div className="flex items-center gap-2 py-6 text-small text-text-neutral-default">
           <Loader2 className="size-4 animate-spin" /> טוען מקורות...
         </div>
-      ) : sources.length === 0 ? (
+      ) : sources.length === 0 && jobs.length === 0 ? (
         <div className="flex flex-col items-center gap-2 rounded-2xl bg-bg-surface py-8 text-center">
           <FileText className="size-7 text-text-neutral-default" aria-hidden />
           <p className="text-small text-text-neutral-default">עדיין לא הוספתם מקורות</p>
@@ -202,6 +224,18 @@ export function BusinessSourcesPanel() {
         </div>
       ) : (
         <div className="flex flex-col gap-2">
+          {jobs.map((job) => (
+            <div key={job.id} className="flex items-center gap-2 rounded-2xl bg-bg-surface px-3 py-3">
+              <Loader2 className="size-4 shrink-0 animate-spin text-text-neutral-default" aria-hidden />
+              <span className="flex-1 truncate text-small-bold text-text-primary-default" title={job.title}>
+                {job.title}
+              </span>
+              <span className="shrink-0 rounded-full bg-white dark:bg-gray-10 px-2 py-0.5 text-xs text-text-neutral-default">
+                {TYPE_LABEL[job.sourceType]}
+              </span>
+              <span className="shrink-0 text-xs text-text-neutral-default">קוראים...</span>
+            </div>
+          ))}
           {sources.map((src) => (
             <div
               key={src.id}
@@ -267,7 +301,7 @@ export function BusinessSourcesPanel() {
         הוספת מקור
       </Button>
 
-      <Dialog open={dialogOpen} onOpenChange={(o) => { if (!adding) { setDialogOpen(o); if (!o) resetForm() } }}>
+      <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) resetForm() }}>
         <DialogContent dir="rtl" className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>הוספת מקור ידע</DialogTitle>
@@ -347,11 +381,8 @@ export function BusinessSourcesPanel() {
           </div>
 
           <DialogFooter className="flex flex-row-reverse gap-2 sm:justify-start">
-            <Button onClick={handleAdd} disabled={adding} className="gap-1.5">
-              {adding && <Loader2 className="size-4 animate-spin" />}
-              {adding ? "קוראים את המקור..." : "הוספה"}
-            </Button>
-            <Button variant="outline" onClick={() => { setDialogOpen(false); resetForm() }} disabled={adding}>
+            <Button onClick={handleAdd}>הוספה</Button>
+            <Button variant="outline" onClick={() => { setDialogOpen(false); resetForm() }}>
               ביטול
             </Button>
           </DialogFooter>
