@@ -5,6 +5,7 @@ import Link from "next/link"
 import { AlertTriangle, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { NOTICE_COPY, isNoticeCode } from "@/lib/system-notice-copy"
+import { formatResetTime } from "@/lib/gemini-quota-toasts"
 
 /**
  * Home-page banners for "something ran out" — the user's own limits (Claude
@@ -16,7 +17,7 @@ import { NOTICE_COPY, isNoticeCode } from "@/lib/system-notice-copy"
  * Renders nothing when there's nothing to say.
  */
 
-type Notice = { id: string; audience: "user" | "admin"; code: string }
+type Notice = { id: string; audience: "user" | "admin"; code: string; expires_at?: string | null }
 
 export function SystemNotices() {
   const [notices, setNotices] = useState<Notice[]>([])
@@ -76,7 +77,7 @@ export function SystemNotices() {
                 <X className="size-4" />
               </button>
             </div>
-            <p className="text-small text-text-primary-default">{copy.body}</p>
+            <p className="text-small text-text-primary-default">{copy.body.replace("{reset}", formatResetTime(n.expires_at))}</p>
             <div className="flex justify-start pt-1">
               <Button asChild size="sm">
                 {copy.cta.external ? (

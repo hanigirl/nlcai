@@ -9,6 +9,7 @@
 
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
+import { GEMINI_USAGE_URL, handleGeminiQuotaFrame } from "@/lib/gemini-quota-toasts"
 import { createClient } from "@/lib/supabase/client"
 import { userKey } from "@/lib/user-scoped-storage"
 import { getCurrentUser } from "@/lib/supabase/current-user"
@@ -61,21 +62,15 @@ export function useHookGeneration(): HookGenContextValue {
 const TOTAL_HOOKS = 6
 const TOAST_ID = "hook-generation-status"
 
-// Google's own page for the key's per-model limits and current usage. A
-// free-tier key gets a handful of requests a minute and a few dozen a day —
-// less than a busy afternoon of hooks — and that page shows the real numbers
-// for the user's own project, so we link to it rather than quoting limits
-// Google changes.
-const GEMINI_LIMITS_URL = "https://aistudio.google.com/rate-limit"
-const GEMINI_USAGE_URL = "https://aistudio.google.com/usage"
-// Free-tier keys get ~20 requests a day per project; the window resets at
-// midnight Pacific, which is morning in Israel.
+// A free-tier Gemini key gets ~20 requests a day per project. Its reset hour
+// is whatever Google reports (it was ~03:00 Israel time, not the morning we
+// first assumed), so the copy points at the usage page instead of guessing.
 const GEMINI_DAILY_MESSAGE =
-  "מפתח ה-Gemini שלכם הגיע למגבלה היומית של Google במסלול החינמי, ולכן ההוקים לא נוצרו. המגבלה מתאפסת פעם ביום, בסביבות 10:00 בבוקר."
+  "מפתח ה-Gemini שלכם הגיע למגבלה היומית של Google במסלול החינמי, ולכן ההוקים לא נוצרו. המגבלה מתאפסת פעם ביום — השעה המדויקת מופיעה בעמוד השימוש."
 
 const geminiLimitsAction = {
-  label: "לצפייה במגבלות שלי",
-  onClick: () => window.open(GEMINI_LIMITS_URL, "_blank", "noopener,noreferrer"),
+  label: "לצפייה בשימוש",
+  onClick: () => window.open(GEMINI_USAGE_URL, "_blank", "noopener,noreferrer"),
 }
 
 // The route streams raw error codes. Without this map the user sees English
@@ -261,32 +256,9 @@ export function HookGenerationProvider({ children }: { children: React.ReactNode
               toast("⚡ נוצר במודל קל יותר — האיכות עשויה להיות נמוכה מהרגיל", { duration: 10000 })
               continue
             }
-            // Partial failure, not fatal — some hooks got through before the
-            // user's Gemini plan started rate-limiting. Warn, but let the
-            // success path below run for the hooks that did land.
-            // Gemini ran out mid-round and Claude Sonnet wrote the rest —
-            // a heads-up, not an error: the hooks are all there.
-            if (typeof parsed.gemini_quota_claude_fallback === "number") {
-              const n = parsed.gemini_quota_claude_fallback
-              toast.message("המכסה של Gemini להוקים נגמרה", {
-                description: `${n === 1 ? "הוק אחד נוצר" : `${n} הוקים נוצרו`} ב-Claude Sonnet במקום (מהקרדיטים של Claude). המכסה של Gemini תתאפס ${parsed.daily ? "מחר בסביבות 10:00 בבוקר" : "בעוד דקה"}.`,
-                duration: 20000,
-                action: {
-                  label: "לצפייה בשימוש",
-                  onClick: () => window.open(GEMINI_USAGE_URL, "_blank", "noopener,noreferrer"),
-                },
-              })
-              continue
-            }
-            if (parsed.gemini_quota_warning) {
-              toast.error(
-                parsed.daily
-                  ? GEMINI_DAILY_MESSAGE
-                  : "חלק מההוקים לא נוצרו: Google מגבילה מפתח Gemini במסלול החינמי למעט מאוד בקשות בדקה וביום. נסו שוב בעוד דקה.",
-                { duration: 20000, action: geminiLimitsAction },
-              )
-              continue
-            }
+            // Gemini quota frames — Claude stood in, or hooks were lost.
+            // Shared with the home page (lib/gemini-quota-toasts).
+            if (handleGeminiQuotaFrame(parsed)) continue
             if (typeof parsed.save_failures === "number" && parsed.save_failures > 0) {
               toast.error(
                 `${parsed.save_failures} הוקים לא נשמרו עקב תקלת רשת. נסי לג'נרט שוב.`,

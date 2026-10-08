@@ -9,6 +9,7 @@ import { AppLink } from "@/components/ui/app-link"
 import { AppShell } from "@/components/app-shell"
 import { GeminiConnectNotice } from "@/components/gemini-connect-notice"
 import { SystemNotices } from "@/components/system-notices"
+import { handleGeminiQuotaFrame } from "@/lib/gemini-quota-toasts"
 import { Typewriter } from "@/components/typewriter"
 import { StickyNote } from "@/components/sticky-note"
 import { HookCard } from "@/components/hook-card"
@@ -250,6 +251,9 @@ function HomeContent() {
             try {
               const h = JSON.parse(d)
               if (h.model_fallback) { setModelFallback(true); continue }
+              // Gemini ran out → Claude wrote the hooks (or some were lost).
+              // This loop used to drop these frames entirely.
+              if (handleGeminiQuotaFrame(h)) continue
               if (typeof h.save_failures === "number" && h.save_failures > 0) {
                 toast.error(
                   `${h.save_failures} הוקים לא נשמרו עקב תקלת רשת. נסי לרענן בעוד רגע.`,

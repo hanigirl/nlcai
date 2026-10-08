@@ -926,10 +926,13 @@ ${formatTemplatesForPrompt()}
               resolveNotice({ audience: "user", userId }, "gemini_key_invalid"),
             ])
           }
+          // When Google said how long until the daily cap resets, pass the
+          // moment on — the client shows it in local time, never a guess.
+          const reset_at = dailyRetryAfterMs ? new Date(Date.now() + dailyRetryAfterMs).toISOString() : null
           if (claudeStandIns > 0) {
-            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ gemini_quota_claude_fallback: claudeStandIns, daily: dailyLimitHit })}\n\n`))
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ gemini_quota_claude_fallback: claudeStandIns, daily: dailyLimitHit, reset_at })}\n\n`))
           } else if (quotaHit) {
-            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ gemini_quota_warning: true, daily: dailyLimitHit })}\n\n`))
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ gemini_quota_warning: true, daily: dailyLimitHit, reset_at })}\n\n`))
           }
           safeEnqueue(encoder.encode("data: [DONE]\n\n"))
           safeClose()
