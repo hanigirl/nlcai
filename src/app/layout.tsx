@@ -3,6 +3,7 @@ import { Rubik } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "sonner";
 import { HookGenerationProvider } from "@/components/hook-generation-provider";
+import { SystemNoticeToasts } from "@/components/system-notice-toasts";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
@@ -50,6 +51,7 @@ export default function RootLayout({
             <HookGenerationProvider>
               {children}
             </HookGenerationProvider>
+            <SystemNoticeToasts />
           </TooltipProvider>
           <Toaster
             position="bottom-center"

@@ -44,10 +44,23 @@ export async function POST(req: NextRequest) {
   const user = await getAuthUser(supabase)
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const { id } = (await req.json().catch(() => ({}))) as { id?: string }
-  if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 })
-
+  const { id, code } = (await req.json().catch(() => ({}))) as { id?: string; code?: string }
   const db = createAdminClient()
+
+  // By code: the caller's own open notice of that kind (the end-of-round
+  // toast doesn't know the row id).
+  if (!id && code) {
+    await db
+      .from("system_notices")
+      .update({ dismissed_at: new Date().toISOString() } as never)
+      .eq("user_id", user.id)
+      .eq("code", code)
+      .is("resolved_at", null)
+      .is("dismissed_at", null)
+    return NextResponse.json({ ok: true })
+  }
+  if (!id) return NextResponse.json({ error: "id or code is required" }, { status: 400 })
+
   const { data } = await db
     .from("system_notices")
     .select("audience, user_id")

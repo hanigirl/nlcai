@@ -13,6 +13,21 @@ import { toast } from "sonner"
 
 export const GEMINI_USAGE_URL = "https://aistudio.google.com/usage"
 
+/** One toast per notice code, shared with SystemNoticeToasts, so the
+ *  end-of-round toast and the page-load one replace each other. */
+export function noticeToastId(code: string): string {
+  return `notice:${code}`
+}
+
+/** Dismiss server-side — by row id, or the user's open notice of a code. */
+export function dismissNotice(target: { id: string } | { code: string }): void {
+  void fetch("/api/notices", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(target),
+  }).catch(() => {})
+}
+
 const usageAction = {
   label: "לצפייה בשימוש",
   onClick: () => window.open(GEMINI_USAGE_URL, "_blank", "noopener,noreferrer"),
@@ -45,10 +60,15 @@ export function handleGeminiQuotaFrame(frame: Frame): boolean {
   if (typeof frame.gemini_quota_claude_fallback === "number") {
     const n = frame.gemini_quota_claude_fallback
     const reset = frame.daily ? formatResetTime(frame.reset_at) : "בעוד דקה"
+    // Sticky until she closes it: she may be looking at weaker hooks right
+    // now and needs to know why. Closing also dismisses the home notice.
     toast.message("המכסה של Gemini להוקים נגמרה", {
-      description: `${n === 1 ? "הוק אחד נוצר" : `${n} הוקים נוצרו`} ב-Claude Sonnet במקום (מהקרדיטים של Claude). המכסה של Gemini תתאפס ${reset}.`,
-      duration: 20000,
+      id: frame.daily ? noticeToastId("gemini_daily_limit") : "gemini-quota",
+      description: `${n === 1 ? "הוק אחד נוצר" : `${n} הוקים נוצרו`} ב-Claude Sonnet במקום Gemini (מהקרדיטים של Claude), ולכן הם עשויים להיות שונים מהרגיל. המכסה של Gemini תתאפס ${reset}.`,
+      duration: Infinity,
+      closeButton: true,
       action: usageAction,
+      onDismiss: frame.daily ? () => dismissNotice({ code: "gemini_daily_limit" }) : undefined,
     })
     return true
   }
@@ -57,7 +77,13 @@ export function handleGeminiQuotaFrame(frame: Frame): boolean {
       frame.daily
         ? `מפתח ה-Gemini שלכם הגיע למגבלה היומית של Google במסלול החינמי, ולכן חלק מההוקים לא נוצרו. המכסה תתאפס ${formatResetTime(frame.reset_at)}.`
         : "חלק מההוקים לא נוצרו: Google מגבילה מפתח Gemini במסלול החינמי למעט מאוד בקשות בדקה. נסו שוב בעוד דקה.",
-      { duration: 20000, action: usageAction },
+      {
+        id: frame.daily ? noticeToastId("gemini_daily_limit") : "gemini-quota",
+        duration: Infinity,
+        closeButton: true,
+        action: usageAction,
+        onDismiss: frame.daily ? () => dismissNotice({ code: "gemini_daily_limit" }) : undefined,
+      },
     )
     return true
   }
