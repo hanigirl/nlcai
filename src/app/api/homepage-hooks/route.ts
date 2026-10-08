@@ -21,6 +21,7 @@ import { fetchLearningInsights } from "@/lib/learning-insights"
 import { fetchBusinessSourceInsights } from "@/lib/business-source-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
 import { withRetry } from "@/lib/supabase/retry"
+import { raiseNotice, reportSerperStatus, resolveNotice } from "@/lib/system-notices"
 import { getAuthUser } from "@/lib/auth-user"
 
 // Streaming SSE pipeline (Claude plans the topics → Gemini writes one hook per
@@ -236,6 +237,8 @@ ${audienceIdentity.limiting_beliefs}
               body: JSON.stringify({ q: `${niche} viral content topics 2026`, num: 5 }),
             }),
           ])
+          // Was silent for two weeks at 0 credits — now raises an admin notice.
+          await reportSerperStatus(trendRes1)
           const results: { title: string; snippet: string }[] = []
           if (trendRes1.ok) {
             const d = await trendRes1.json()
@@ -521,6 +524,9 @@ ${categoriesCatalog}
         let quotaHit = false
         // The DAILY cap specifically — "try again in a minute" would be a lie.
         let dailyLimitHit = false
+        let dailyRetryAfterMs: number | undefined
+        let geminiKeyInvalid = false
+        let geminiSucceeded = false
         // One engine announcement per batch, from the first writer that
         // actually succeeds — that's the only point where the model in use is
         // known for certain rather than assumed.
@@ -550,6 +556,8 @@ ${categoriesCatalog}
         try {
           // ============= STEP 1: PLANNING =============
           const { plans, fallback } = await planWithFallback()
+          // Planning is the Claude step — it worked, so credits are fine.
+          void resolveNotice({ audience: "user", userId }, "claude_credits")
           if (fallback) {
             usedFallback = true
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
@@ -684,6 +692,7 @@ ${formatTemplatesForPrompt()}
                   safeEnqueue(encoder.encode(`data: ${JSON.stringify({ model_fallback: true })}\n\n`))
                 }
                 rawText = raw
+                geminiSucceeded = true
                 draft = parseDraftJson(raw)
               } catch (err) {
                 // A quota error means the user's Gemini plan is rate-limiting
@@ -692,8 +701,12 @@ ${formatTemplatesForPrompt()}
                 // shipping a short batch.
                 if (err instanceof GeminiError && err.code === "quota") {
                   quotaHit = true
-                  if (err.daily) dailyLimitHit = true
+                  if (err.daily) {
+                    dailyLimitHit = true
+                    dailyRetryAfterMs = err.retryAfterMs ?? dailyRetryAfterMs
+                  }
                 }
+                if (err instanceof GeminiError && err.code === "invalid_key") geminiKeyInvalid = true
                 skipped++
                 console.warn(`Homepage Hooks: Gemini writer failed for "${plan.specific_topic}":`, err)
                 return
@@ -912,6 +925,21 @@ ${formatTemplatesForPrompt()}
           // frame as fatal and skips the success path (cache clear + done
           // listeners). A quota hit is partial — the hooks that did make it
           // through are real and must land normally.
+          // Home-page notices (lib/system-notices): these outlive the toast.
+          if (dailyLimitHit) {
+            await raiseNotice({ audience: "user", userId }, "gemini_daily_limit", {
+              expiresInMs: dailyRetryAfterMs ?? 24 * 60 * 60 * 1000,
+            })
+          }
+          if (geminiKeyInvalid && !geminiSucceeded) {
+            await raiseNotice({ audience: "user", userId }, "gemini_key_invalid")
+          }
+          if (geminiSucceeded) {
+            await Promise.all([
+              resolveNotice({ audience: "user", userId }, "gemini_daily_limit"),
+              resolveNotice({ audience: "user", userId }, "gemini_key_invalid"),
+            ])
+          }
           if (quotaHit) {
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ gemini_quota_warning: true, daily: dailyLimitHit })}\n\n`))
           }
@@ -921,6 +949,7 @@ ${formatTemplatesForPrompt()}
           const msg = err instanceof Error ? err.message : String(err)
           console.error(`Homepage Hooks: generation failed at hook ${hookCount} —`, msg)
           const isCredits = /credit|billing|insufficient_quota|payment|402/i.test(msg)
+          if (isCredits) await raiseNotice({ audience: "user", userId }, "claude_credits")
           const isOverloaded = /overloaded|529|503/i.test(msg)
           const errCode =
             geminiErrorCode(err) ||

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { reportSerperStatus } from "@/lib/system-notices"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
@@ -38,6 +39,7 @@ async function searchWeb(query: string, num = 10): Promise<SerperResult[]> {
     headers: { "X-API-KEY": process.env.SERPER_API_KEY!, "Content-Type": "application/json" },
     body: JSON.stringify({ q: query, num }),
   })
+  await reportSerperStatus(res)
   // 402/403 from Serper = lifetime free credits exhausted (or key revoked).
   // Surface as a distinct error so the UI can show a quota-specific message.
   if (res.status === 402 || res.status === 403) {

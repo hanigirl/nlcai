@@ -9,6 +9,7 @@ import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
 import { generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
+import { reportSerperStatus } from "@/lib/system-notices"
 import { detectAddressGender, detectAddressGenderFromText } from "@/lib/detect-addressing"
 import { getAuthUser } from "@/lib/auth-user"
 
@@ -198,7 +199,7 @@ export async function POST(req: NextRequest) {
               method: "POST",
               headers: { "X-API-KEY": process.env.SERPER_API_KEY, "Content-Type": "application/json" },
               body: JSON.stringify({ q: `${ideaTopic} ${niche} 2026`, num: 5 }),
-            }).then((r) => r.ok ? r.json() : { organic: [] }).catch(() => ({ organic: [] })),
+            }).then(async (r) => { await reportSerperStatus(r); return r.ok ? r.json() : { organic: [] } }).catch(() => ({ organic: [] })),
             fetch("https://google.serper.dev/search", {
               method: "POST",
               headers: { "X-API-KEY": process.env.SERPER_API_KEY, "Content-Type": "application/json" },

@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { AppLink } from "@/components/ui/app-link"
 import { AppShell } from "@/components/app-shell"
 import { GeminiConnectNotice } from "@/components/gemini-connect-notice"
+import { SystemNotices } from "@/components/system-notices"
 import { Typewriter } from "@/components/typewriter"
 import { StickyNote } from "@/components/sticky-note"
 import { HookCard } from "@/components/hook-card"
@@ -715,6 +716,8 @@ function HomeContent() {
               user who never opens the warehouse still has to see it. Renders
               nothing once a Gemini key is connected. */}
           <GeminiConnectNotice />
+          {/* "Something ran out" — her own limits, plus app accounts for admins. */}
+          <SystemNotices />
 
           {/* Section 1: Hooks */}
           <div
