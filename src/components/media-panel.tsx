@@ -79,6 +79,7 @@ import {
   type FormatId,
 } from "@/lib/timing-storage"
 import { getCurrentUser } from "@/lib/supabase/current-user"
+import { carouselErrorInfo } from "@/lib/carousel-errors"
 
 // Every format the panel can open MUST have an entry here: the header block
 // (title + close button) is gated on `meta`, so a missing key renders a panel
@@ -1665,34 +1666,28 @@ function CarouselFlow({
         },
       )
 
-      if (!res.ok) throw new Error(`status ${res.status}`)
-      const data = await res.json()
-      if (data.error) {
-        // AI route returns a Hebrew user-facing `message` alongside the
-        // machine `error` code (e.g. openai_not_connected).
-        setError(data.message || data.error)
-        {
-          const msg = String(data.message || data.error)
-          const isBilling = /תקרת החיוב|קרדיט|billing|quota/i.test(msg)
-          toast.error(msg, {
-            id: genToast,
-            duration: isBilling ? 30000 : 8000,
-            // A billing failure is the one error the user can actually fix,
-            // and only from somewhere else — so the toast carries the way
-            // there rather than making her hunt for it.
-            action: isBilling
-              ? {
-                  label: "הטענת קרדיט",
-                  onClick: () =>
-                    window.open(
-                      "https://platform.openai.com/settings/organization/billing/overview",
-                      "_blank",
-                      "noopener,noreferrer",
-                    ),
-                }
-              : undefined,
-          })
-        }
+      // Read the body whatever the status: every failure the routes report
+      // (OpenAI not connected, no visual language, the OpenAI error itself)
+      // comes with an error status, and throwing on !res.ok used to turn all
+      // of them into a bare "שגיאה ביצירת הקרוסלה".
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data || data.error) {
+        const info = carouselErrorInfo(res.status, data)
+        setError(info.message)
+        toast.error(info.message, {
+          id: genToast,
+          duration: info.action ? 30000 : 12000,
+          action: info.action
+            ? {
+                label: info.action.label,
+                onClick: () => {
+                  const href = info.action!.href
+                  if (href.startsWith("/")) window.location.href = href
+                  else window.open(href, "_blank", "noopener,noreferrer")
+                },
+              }
+            : undefined,
+        })
       } else if (!data.images) {
         // A 200 with neither `error` nor `images` used to fall straight through
         // to `finally`, leaving the `duration: Infinity` loading toast on screen
@@ -1726,9 +1721,11 @@ function CarouselFlow({
         })
       }
     } catch (err) {
+      // Network drop, or the platform cut a long AI run off mid-response.
       console.error("[media-panel][generate-carousel]", err)
-      setError("שגיאה ביצירת הקרוסלה")
-      toast.error("שגיאה ביצירת הקרוסלה", { id: genToast, duration: 8000 })
+      const info = carouselErrorInfo(0, null)
+      setError(info.message)
+      toast.error(info.message, { id: genToast, duration: 12000 })
     } finally {
       setGenerating(false)
       onBusyChange?.("carousel", false)
