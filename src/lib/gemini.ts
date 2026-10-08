@@ -37,11 +37,30 @@ export type GeminiErrorCode =
 export class GeminiError extends Error {
   code: GeminiErrorCode
   status?: number
+  /** On a 429: how long Google says to wait before retrying, if it said. */
+  retryAfterMs?: number
+  /** On a 429: the DAILY cap was hit — waiting a minute won't help. */
+  daily?: boolean
   constructor(code: GeminiErrorCode, message: string, status?: number) {
     super(message)
     this.name = "GeminiError"
     this.code = code
     this.status = status
+  }
+}
+
+/** Longest we'll sit out a per-minute limit before giving up on a call. */
+const MAX_RATE_LIMIT_WAIT_MS = 65_000
+
+/**
+ * Read Google's 429 body: `RetryInfo.retryDelay` ("37s") says when the
+ * per-minute window frees up, and a `PerDay` quota id means the daily cap.
+ */
+function parseRateLimit(body: string): { retryAfterMs?: number; daily: boolean } {
+  const delay = body.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/)
+  return {
+    retryAfterMs: delay ? Math.ceil(parseFloat(delay[1]) * 1000) : undefined,
+    daily: /PerDay/i.test(body),
   }
 }
 
@@ -63,6 +82,19 @@ interface GenerateOptions {
    * interaction with zero text blocks.
    */
   maxOutputTokens?: number
+  /**
+   * On a per-minute 429, wait the delay Google names and try once more.
+   *
+   * A free-tier key gets 5 Flash requests a minute, and one round of hooks
+   * sends 6 at once — so the 6th was rejected on EVERY round, with no prior
+   * use at all, and the user was told she had "exceeded her quota" (Hani,
+   * 2026-10-08; AI Studio showed 6/5 RPM, 6/20 RPD). Waiting out the window
+   * turns that into a slower 6th hook instead of a missing one.
+   *
+   * Off by default: on Pro a free key's limit is ZERO, and waiting a minute
+   * for a call that can never succeed only delays the Flash fallback.
+   */
+  retryOnRateLimit?: boolean
   /** Pro defaults to "high"; drop to "low" for mechanical, non-reasoning calls. */
   thinkingLevel?: "minimal" | "low" | "medium" | "high"
   systemInstruction?: string
@@ -77,6 +109,28 @@ interface GenerateOptions {
  * user-facing errors the Anthropic path uses.
  */
 export async function generateWithGemini(
+  apiKey: string,
+  opts: GenerateOptions,
+): Promise<string> {
+  try {
+    return await generateOnce(apiKey, opts)
+  } catch (err) {
+    if (
+      opts.retryOnRateLimit &&
+      err instanceof GeminiError &&
+      err.code === "quota" &&
+      !err.daily
+    ) {
+      const waitMs = Math.min(err.retryAfterMs ?? 30_000, MAX_RATE_LIMIT_WAIT_MS) + 1_000
+      console.log(`[gemini] ${opts.model ?? GEMINI_PRIMARY_MODEL} per-minute limit — retrying in ${Math.round(waitMs / 1000)}s`)
+      await new Promise((resolve) => setTimeout(resolve, waitMs))
+      return generateOnce(apiKey, opts)
+    }
+    throw err
+  }
+}
+
+async function generateOnce(
   apiKey: string,
   {
     prompt,
@@ -125,7 +179,11 @@ export async function generateWithGemini(
       throw new GeminiError("invalid_key", `Gemini rejected the key (${res.status}): ${detail}`, res.status)
     }
     if (res.status === 429) {
-      throw new GeminiError("quota", `Gemini quota exceeded: ${detail}`, res.status)
+      const err = new GeminiError("quota", `Gemini quota exceeded: ${detail}`, res.status)
+      const limit = parseRateLimit(body)
+      err.retryAfterMs = limit.retryAfterMs
+      err.daily = limit.daily
+      throw err
     }
     if (res.status >= 500) {
       throw new GeminiError("overloaded", `Gemini returned ${res.status}: ${detail}`, res.status)
@@ -190,6 +248,9 @@ export async function generateWithGeminiFallback(
     const text = await generateWithGemini(apiKey, {
       ...opts,
       model: GEMINI_FALLBACK_MODEL,
+      // Flash is the model a free key actually runs on — sit out its
+      // per-minute window rather than drop the hook.
+      retryOnRateLimit: true,
       ...(fallbackTimeoutMs ? { timeoutMs: fallbackTimeoutMs } : {}),
     })
     return { text, fallback: true, model: GEMINI_FALLBACK_MODEL }
