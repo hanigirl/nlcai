@@ -604,6 +604,11 @@ function ProjectPageInner() {
   useEffect(() => {
     if (restoredRef.current) return
     if (!userId) return
+    // Review links (?approve=a|b) show the seeded sample post. Restoring the
+    // reviewer's own saved canvas here would overwrite it — for a logged-in
+    // reviewer the cards came up empty. Leaving restoredRef unset also keeps
+    // the autosave below off, so the sample never lands in her real draft.
+    if (approveSeeded) return
     restoredRef.current = true
     try {
       const raw = localStorage.getItem(userKey(CANVAS_KEY, userId))
@@ -664,6 +669,7 @@ function ProjectPageInner() {
   useEffect(() => {
     if (!restoredRef.current) return
     if (!userId) return
+    if (approveSeeded) return
     const t = setTimeout(() => {
       try {
         const state = {
