@@ -23,7 +23,15 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { toast } from "sonner"
-import { QueuePanel } from "@/components/queue-panel"
+import { QueuePanel, type QueueApprovalMode } from "@/components/queue-panel"
+import {
+  ApprovalReviewBar,
+  buildReviewSeed,
+  readApprovalParam,
+  seedMediaFor,
+  type ApprovalVariant,
+  type ReviewState,
+} from "./approval-review-harness"
 import { CorePostSheet, type CorePostSheetData } from "@/components/core-post-sheet"
 import { FormatThumbnail } from "@/components/format-thumbnail"
 import {
@@ -599,6 +607,99 @@ export default function CalendarPage() {
 
   const days = useMemo(() => buildWeekGrid(weekStart), [weekStart])
   const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart])
+
+  // --- Approval review harness (`?approved=a|b`) — DELETE BEFORE SHIPPING ---
+  // With no param, `approvalVariant` stays null and nothing below changes the
+  // page. With it, the rail renders from seeded posts and every grid action
+  // (drop, move, return to queue) stays in this component's state: no
+  // schedulePost, no server mirror, no DB write, no credits.
+  const [approvalVariant, setApprovalVariant] =
+    useState<ApprovalVariant | null>(null)
+  const [reviewState, setReviewState] = useState<ReviewState>("mixed")
+  const [reviewApproved, setReviewApproved] = useState<Set<string>>(new Set())
+  const [reviewScheduled, setReviewScheduled] = useState<ScheduledPost[]>([])
+  const [reviewSeed, setReviewSeed] = useState<
+    NonNullable<QueueApprovalMode["seed"]> | undefined
+  >(undefined)
+  useEffect(() => {
+    setApprovalVariant(readApprovalParam())
+  }, [])
+  const applyReviewState = useCallback(
+    (state: ReviewState) => {
+      const seed = buildReviewSeed(
+        state,
+        buildWeekGrid(startOfWeek(today))
+          .filter((d) => !isPastDate(d, today))
+          .map(toDateKey),
+      )
+      setReviewState(state)
+      setReviewApproved(seed.approved)
+      setReviewScheduled(seed.scheduled)
+      setReviewSeed({
+        posts: seed.posts,
+        loading: seed.loading,
+        error: seed.error,
+        excludeCardIds: new Set(
+          seed.scheduled.map((p) => `${p.corePostId}:${p.format}`),
+        ),
+      })
+    },
+    [today],
+  )
+  useEffect(() => {
+    if (approvalVariant) applyReviewState("mixed")
+  }, [approvalVariant, applyReviewState])
+  // Keep the rail's exclusion set in step with what was dropped on the grid.
+  useEffect(() => {
+    setReviewSeed((prev) =>
+      prev
+        ? {
+            ...prev,
+            excludeCardIds: new Set(
+              reviewScheduled.map((p) => `${p.corePostId}:${p.format}`),
+            ),
+          }
+        : prev,
+    )
+  }, [reviewScheduled])
+  const reviewMode = approvalVariant !== null
+  const upsertReviewRow = (
+    corePostId: string,
+    format: FormatId,
+    date: string,
+    hook?: string,
+  ) => {
+    setReviewScheduled((rows) => [
+      ...rows.filter(
+        (p) => !(p.corePostId === corePostId && p.format === format),
+      ),
+      {
+        corePostId,
+        format,
+        scheduledDate: date,
+        scheduledTime: DEFAULT_SCHEDULED_TIME,
+        publishedAt: null,
+        hook,
+      },
+    ])
+  }
+  const approvalMode = useMemo<QueueApprovalMode | undefined>(() => {
+    if (!approvalVariant) return undefined
+    return {
+      variant: approvalVariant,
+      isApproved: (corePostId, format) =>
+        reviewApproved.has(`${corePostId}:${format}`),
+      onApprove: (corePostId, format) => {
+        setReviewApproved((prev) => new Set(prev).add(`${corePostId}:${format}`))
+        toast.success("הפורמט אושר ועבר ל״מוכנים לתזמון״")
+      },
+      // Where approval lives is decided by the sibling task ("שלב אישור מדיה
+      // לפני תזמון"). Until then: the core-posts library.
+      pendingHref: "/core_posts",
+      seed: reviewSeed,
+    }
+  }, [approvalVariant, reviewApproved, reviewSeed])
+  // --- /review harness ---
   const isCurrentWeek = isSameDay(weekStart, startOfWeek(today))
 
   // Group scheduled posts by day (YYYY-MM-DD) so each day-cell lookup is
@@ -606,7 +707,7 @@ export default function CalendarPage() {
   // time is still tracked even though the board no longer shows an hour grid.
   const postsByDay = useMemo(() => {
     const map = new Map<string, ScheduledPost[]>()
-    for (const post of scheduled) {
+    for (const post of reviewMode ? reviewScheduled : scheduled) {
       const list = map.get(post.scheduledDate) ?? []
       list.push(post)
       map.set(post.scheduledDate, list)
@@ -617,7 +718,7 @@ export default function CalendarPage() {
       )
     }
     return map
-  }, [scheduled])
+  }, [scheduled, reviewMode, reviewScheduled])
 
   const goPrev = () => setWeekStart((d) => addDays(d, -7))
   const goNext = () => setWeekStart((d) => addDays(d, 7))
@@ -664,6 +765,13 @@ export default function CalendarPage() {
           corePostId: string
           format: FormatId
         }
+        if (reviewMode) {
+          const row = reviewScheduled.find(
+            (p) => p.corePostId === corePostId && p.format === format,
+          )
+          upsertReviewRow(corePostId, format, dayKey, row?.hook ?? undefined)
+          return
+        }
         const existing = scheduled.find(
           (p) => p.corePostId === corePostId && p.format === format,
         )
@@ -689,6 +797,10 @@ export default function CalendarPage() {
           hook?: string | null
         }
         const trimmed = hook?.trim()
+        if (reviewMode) {
+          upsertReviewRow(corePostId, format, dayKey, trimmed)
+          return
+        }
         schedulePost(
           corePostId,
           format,
@@ -825,6 +937,13 @@ export default function CalendarPage() {
           {/* Header at the standard page width — keeps the title aligned
               with the rest of the system. */}
           <div className="max-w-[1200px] w-full mx-auto">
+            {approvalVariant && (
+              <ApprovalReviewBar
+                variant={approvalVariant}
+                state={reviewState}
+                onStateChange={applyReviewState}
+              />
+            )}
             {/* Level 1 — page identity. Title + leading illustration,
                 matching /core_posts + /hooks. Subtitle intentionally
                 omitted per Hani. */}
@@ -937,9 +1056,11 @@ export default function CalendarPage() {
                             post.hook ||
                             ""
                           ).trim() || "פוסט מתוזמן"
-                        const mediaUrl = formatMediaByPost.get(
-                          post.corePostId,
-                        )?.[post.format]
+                        const mediaUrl = reviewMode
+                          ? seedMediaFor(post.corePostId)[post.format]
+                          : formatMediaByPost.get(post.corePostId)?.[
+                              post.format
+                            ]
                         return (
                           <FormatCard
                             key={`${post.corePostId}:${post.format}`}
@@ -948,13 +1069,28 @@ export default function CalendarPage() {
                             mediaUrl={mediaUrl}
                             isPublished={isPublished}
                             onCardClick={() =>
-                              openSheetForCorePost(
-                                post.corePostId,
-                                post.format,
-                                "preview",
-                              )
+                              reviewMode
+                                ? toast("בסביבת הבדיקה הפוסטים לדוגמה — הפאנל לא נפתח")
+                                : openSheetForCorePost(
+                                    post.corePostId,
+                                    post.format,
+                                    "preview",
+                                  )
                             }
                             onUnschedule={() => {
+                              if (reviewMode) {
+                                setReviewScheduled((rows) =>
+                                  rows.filter(
+                                    (p) =>
+                                      !(
+                                        p.corePostId === post.corePostId &&
+                                        p.format === post.format
+                                      ),
+                                  ),
+                                )
+                                toast.success("הפורמט הוחזר לתור")
+                                return
+                              }
                               // Send THIS format back to the queue and drop
                               // its stale published mark (returning a format
                               // means "it isn't done yet").
@@ -964,6 +1100,16 @@ export default function CalendarPage() {
                               toast.success("הפורמט הוחזר לתור")
                             }}
                             onReschedule={(newDate) => {
+                              if (reviewMode) {
+                                upsertReviewRow(
+                                  post.corePostId,
+                                  post.format,
+                                  newDate,
+                                  hook,
+                                )
+                                toast.success("התזמון עודכן")
+                                return
+                              }
                               // Move THIS format to the picked date, keeping
                               // its current time.
                               const time =
@@ -999,8 +1145,11 @@ export default function CalendarPage() {
           collapsed={panelCollapsed}
           onToggleCollapse={() => setPanelCollapsed((v) => !v)}
           onItemClick={(corePostId, format) =>
-            openSheetForCorePost(corePostId, format, "preview")
+            reviewMode
+              ? toast("בסביבת הבדיקה הפוסטים לדוגמה — הפאנל לא נפתח")
+              : openSheetForCorePost(corePostId, format, "preview")
           }
+          approval={approvalMode}
         />
 
         {/* Reopen affordance — shown only while the rail is collapsed. Pinned
