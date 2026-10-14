@@ -6,6 +6,7 @@ import { detectAudienceGender } from "@/lib/detect-addressing"
 import { TEMPLATE_LIBRARY, getTemplatesByCategorySorted, templateText, templatePriority, type TemplateCategory, type HookTemplate } from "@/lib/agents/hook-templates"
 import { judgeHook, validateHookLocally, ownNamesFor, ownNameRule } from "@/lib/agents/hook-judge"
 import { findNearDuplicate } from "@/lib/agents/hook-similarity"
+import { buildHookVoiceSection } from "@/lib/agents/hook-voice"
 import { classifyHooksByProduct } from "@/lib/agents/hook-product-classifier"
 import { GeminiError, generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
 
@@ -367,6 +368,17 @@ ${likedTexts.map((t, i) => `${i + 1}. ${t}`).join("\n")}
       ((products as Array<{ name: string }> | null) ?? []).map((p) => p.name),
     )
 
+    // Her voice, for the writer. The planner already sees identity and the
+    // liked hooks; the writer — the model that produces the sentence — saw
+    // neither, and wrote in a translated register (see lib/agents/hook-voice).
+    // Costs prompt tokens only: still one request per hook.
+    const voiceSection = buildHookVoiceSection({
+      howISound: (coreIdentity as { how_i_sound?: string | null }).how_i_sound,
+      slangExamples: (coreIdentity as { slang_examples?: string | null }).slang_examples,
+      whatINeverDo: (coreIdentity as { what_i_never_do?: string | null }).what_i_never_do,
+      likedHooks: likedTexts,
+    })
+
     const planningPrompt = `אתה אסטרטג שיווק שמתכנן זוויות תוכן עבור יוצרי קונטנט בישראל.
 
 ## המטרה
@@ -644,6 +656,7 @@ ${categoriesCatalog}
 - **כאב/רצון:** ${plan.target_pain_or_desire}
 - **איך הקהל מדבר על זה:** "${plan.audience_quote}"
 - **מה הסרטון יגלה (זה הפאנץ׳ — הוא לא נכנס להוק!):** ${plan.angle_summary}
+${voiceSection}
 ${learningInsights || ""}
 ${ownNameSection}
 ## מה הופך הוק לטוב — שלוש העמודות
@@ -771,11 +784,18 @@ ${formatTemplatesForPrompt()}
                 rawText = res.content.find((b) => b.type === "text")?.text ?? ""
                 draft = parseDraftJson(rawText)
               }
+              // Sonnet first for EVERY hook. This used to read
+              // `usedFallback ? FALLBACK_MODEL : PRIMARY_MODEL`, so one
+              // overload anywhere — including the planner's — sent the rest
+              // of the round straight to Haiku without ever retrying Sonnet.
+              // A single busy second quietly downgraded a whole round. The
+              // fallback is now per hook: Haiku only for the hook whose own
+              // Sonnet call was refused.
               try {
-                await doCall(usedFallback ? FALLBACK_MODEL : PRIMARY_MODEL)
+                await doCall(PRIMARY_MODEL)
                 if (viaFallback) claudeStandIns++
               } catch (err) {
-                if (!isOverloadError(err) || usedFallback) {
+                if (!isOverloadError(err)) {
                   skipped++
                   console.warn(`Homepage Hooks: writer crashed for "${plan.specific_topic}":`, err)
                   return
