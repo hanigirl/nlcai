@@ -330,9 +330,7 @@ function ProjectPageInner() {
   const canvasRef = useRef<InfiniteCanvasHandle>(null)
 
   // Carousel state (lifted for panel persistence)
-  const [carouselImages, setCarouselImages] = useState<string[] | null>(
-    approveSeeded ? APPROVAL_SAMPLE.carouselImages : null,
-  )
+  const [carouselImages, setCarouselImages] = useState<string[] | null>(null)
   const [carouselSlides, setCarouselSlides] = useState<SlideData[] | null>(null)
   // Per-slide Drive links behind an imported carousel, in slide order. Lives
   // on the post (migration 027), not in this browser — so the list follows the
@@ -360,18 +358,14 @@ function ProjectPageInner() {
   // workflow card below the image_post format card — same pattern as the
   // talking_head video/cover cards). Holds the persisted storage URL; set
   // on DB hydration and again when the panel reports a fresh save.
-  const [imagePostUrl, setImagePostUrl] = useState<string | null>(
-    approveSeeded ? APPROVAL_SAMPLE.imagePostUrl : null,
-  )
+  const [imagePostUrl, setImagePostUrl] = useState<string | null>(null)
   const imagePostCardRef = useRef<HTMLDivElement>(null)
 
   // Story state — the saved AI frame set (1-3 frames) lifted so it renders
   // as its own workflow card below the story format card, same pattern as
   // image_post/carousel. Frames are storage URLs on hydration, or base64
   // right after a panel save (both handled by the card's src helper).
-  const [storyImages, setStoryImages] = useState<string[] | null>(
-    approveSeeded ? APPROVAL_SAMPLE.storyImages : null,
-  )
+  const [storyImages, setStoryImages] = useState<string[] | null>(null)
   const storyCardRef = useRef<HTMLDivElement>(null)
   // Story VIDEO counterpart — the user's clip with the hook burned in, lifted
   // from the panel so it renders as its own workflow card like the frame set.
@@ -427,7 +421,7 @@ function ProjectPageInner() {
   // Review harness: which scenario is showing. A scenario resets the sample
   // media first, then seeds the approvals once the new signatures are in.
   const [approvalScenario, setApprovalScenario] = useState<ApprovalScenario>("none")
-  const pendingApprovalSeedRef = useRef<ApprovalScenario | null>(approveSeeded ? "none" : null)
+  const pendingApprovalSeedRef = useRef<ApprovalScenario | null>(null)
   const approvalSigKey = Object.values(approvalMediaSigs).join("\n")
   useEffect(() => {
     const pending = pendingApprovalSeedRef.current
@@ -452,7 +446,7 @@ function ProjectPageInner() {
     } else if (fid === "image_post") {
       setImagePostUrl((prev) =>
         prev === APPROVAL_SAMPLE.imagePostUrl
-          ? "/images/carousel-templates/ai-collage.png"
+          ? APPROVAL_SAMPLE.altImageUrl
           : APPROVAL_SAMPLE.imagePostUrl,
       )
     } else if (fid === "story") {
@@ -1928,6 +1922,18 @@ function ProjectPageInner() {
   // further chat edits would silently diverge from the format variants. Lock
   // the "chat about the post" affordance and force the panel shut.
   const formatsLocked = duplicatedFormats.length > 0
+
+  // Review links: seed the sample media (client-side, so SSR and hydration
+  // agree), then land on the media cards rather than the top of the canvas.
+  useEffect(() => {
+    if (!approveSeeded) return
+    applyApprovalScenario("none")
+    const t = setTimeout(() => {
+      if (imagePostCardRef.current) canvasRef.current?.focusOn(imagePostCardRef.current)
+    }, 1200)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   useEffect(() => {
     if (formatsLocked && chatOpen) setChatOpen(false)
   }, [formatsLocked, chatOpen])

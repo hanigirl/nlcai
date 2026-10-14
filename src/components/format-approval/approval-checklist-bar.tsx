@@ -172,6 +172,15 @@ export function ApprovalChecklistBar({
               })}
             </ul>
 
+            {approvals.approvableCount > 0 && approvedCount === approvals.approvableCount && calendarHref ? (
+              // Everything that has media is approved — the next step is the calendar.
+              <Button asChild className="w-full gap-2">
+                <Link href={calendarHref}>
+                  <CalendarPlus className="size-4" aria-hidden />
+                  ללוח התזמון
+                </Link>
+              </Button>
+            ) : (
             <div className="flex items-center gap-2">
               <Button
                 className="flex-1"
@@ -195,6 +204,7 @@ export function ApprovalChecklistBar({
                 </Button>
               )}
             </div>
+            )}
           </div>
         )}
       </div>

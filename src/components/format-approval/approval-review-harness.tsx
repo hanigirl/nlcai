@@ -17,6 +17,13 @@ import { FormatStatusChip } from "@/components/format-status-chip"
 import type { FormatReadiness } from "@/lib/timing-storage"
 import type { ApprovalSeed, FormatApprovals } from "./use-format-approvals"
 
+// Absolute URLs: the story/carousel players treat anything that isn't
+// http(s)/data as a base64 payload.
+// Resolved at call time, on the client only — the page seeds its media in a
+// mount effect so server and client HTML agree.
+const asset = (name: string) =>
+  `${typeof window !== "undefined" ? window.location.origin : ""}/images/carousel-templates/${name}`
+
 export const APPROVAL_SAMPLE = {
   hook: "למה הלקוחות שלכם לא חוזרים (וזה לא המחיר)",
   corePost:
@@ -30,16 +37,18 @@ export const APPROVAL_SAMPLE = {
     story:
       "פריים 1: \"הורדתי מחיר והיא עדיין נעלמה\"\nפריים 2: זה לא המחיר\nפריים 3: כתבו לי \"סוף\"",
   } as Record<string, string>,
-  carouselImages: [
-    "/images/carousel-templates/ai-light.png",
-    "/images/carousel-templates/ai-amber.png",
-    "/images/carousel-templates/ai-minimal.png",
-  ],
-  imagePostUrl: "/images/carousel-templates/soft.png",
-  storyImages: [
-    "/images/carousel-templates/ai-vibrant.png",
-    "/images/carousel-templates/ai-ice.png",
-  ],
+  get carouselImages() {
+    return [asset("ai-light.png"), asset("ai-amber.png"), asset("ai-minimal.png")]
+  },
+  get imagePostUrl() {
+    return asset("soft.png")
+  },
+  get storyImages() {
+    return [asset("ai-vibrant.png"), asset("ai-ice.png")]
+  },
+  get altImageUrl() {
+    return asset("ai-collage.png")
+  },
 }
 
 export type ApprovalScenario = "none" | "partial" | "all" | "edited" | "missing"
@@ -88,7 +97,7 @@ export function ApprovalReviewHarness({
   return (
     <div
       dir="rtl"
-      className="fixed top-4 start-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2"
+      className="fixed top-3 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2"
     >
       <div className="flex items-center gap-2 rounded-[12px] border border-border-neutral-default bg-white dark:bg-gray-10 p-1 shadow-[0_8px_24px_rgb(0_0_0_/_0.08)]">
         <span className="px-2 text-xs text-text-neutral-default whitespace-nowrap">
