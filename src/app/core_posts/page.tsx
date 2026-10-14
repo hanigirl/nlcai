@@ -716,8 +716,12 @@ function CorePostCard({
                 : state === "scheduled"
                   ? getScheduledByPostAndFormat(post.id, format)?.scheduledDate
                   : undefined
+            // Approved formats wear the green chip, so they keep it on hover
+            // too — same treatment as the retained "set" palette.
             const isSetState =
-              state === "scheduled" || state === "published"
+              state === "scheduled" ||
+              state === "published" ||
+              state === "approved"
             const hoverTintClass = isSetState
               ? undefined
               : state === "ready"

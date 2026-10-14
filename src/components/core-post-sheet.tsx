@@ -235,7 +235,9 @@ function pickInitialTab(
 
   const firstReady = HEADER_CHIP_FORMATS.find(
     (f) =>
-      readinessByFormat[f] === "ready" || readinessByFormat[f] === "published",
+      readinessByFormat[f] === "ready" ||
+      readinessByFormat[f] === "approved" ||
+      readinessByFormat[f] === "published",
   )
   if (firstReady) return firstReady
 
@@ -1315,7 +1317,9 @@ function FormatTabsList({
             ? `${label}, מתוזמן`
             : state === "published" && dateValue
               ? `${label}, פורסם`
-              : state === "ready"
+              : state === "approved"
+                ? `${label}, מאושר`
+                : state === "ready"
                 ? `${label}, מוכן`
                 : `${label}, ריק`
 
@@ -1814,7 +1818,7 @@ function ScheduleStatusBlock({
 }) {
   if (state === "empty") return null
 
-  if (state === "ready") {
+  if (state === "ready" || state === "approved") {
     return (
       <div className="flex items-center justify-between gap-3 rounded-xl bg-bg-surface px-4 py-3">
         <span className="text-small text-text-neutral-default">
