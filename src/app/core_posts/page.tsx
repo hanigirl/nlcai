@@ -58,19 +58,19 @@ const CARD_CHIP_FORMATS: FormatId[] = [
 ]
 
 /**
- * Status filter — "where is this post in its life". A post matches a status
- * when ANY of its formats is in it (a post can be scheduled on Instagram and
- * still waiting for approval as a story). `?status=pending` opens on
+ * Status filter — the stages a FORMAT moves through: בכתיבה (no media yet) →
+ * ממתין לאישור → מאושר → תוזמן → פורסם. A post shows under every stage one of
+ * its formats is in, so a post with a story still missing media and a
+ * carousel waiting for approval appears under both. `?status=pending` opens on
  * "ממתין לאישור" — that's where the calendar rail's "מעבר לאישור" lands.
  */
-type StatusFilter = "all" | "writing" | "media" | "approved" | "pending" | "scheduled" | "published"
+type StatusFilter = "all" | "writing" | "pending" | "approved" | "scheduled" | "published"
 
 const STATUS_FILTERS: { id: StatusFilter; label: string }[] = [
   { id: "all", label: "הכל" },
   { id: "writing", label: "בכתיבה" },
-  { id: "media", label: "עם מדיה" },
-  { id: "approved", label: "מאושר" },
   { id: "pending", label: "ממתין לאישור" },
+  { id: "approved", label: "מאושר" },
   { id: "scheduled", label: "תוזמן" },
   { id: "published", label: "פורסם" },
 ]
@@ -97,15 +97,15 @@ function matchesStatus(post: SavedPost, status: StatusFilter): boolean {
     formatsWithMedia: post.formats_with_media,
     hasBody: !!post.body?.trim(),
   }
-  const states = CARD_CHIP_FORMATS.map((f) => ({ f, s: getFormatReadiness(input, f) }))
-  const hasMedia =
-    (post.formats_with_media?.length ?? 0) > 0 ||
-    states.some(({ s }) => s === "ready" || s === "scheduled" || s === "published")
+  const formats = [...new Set([...CARD_CHIP_FORMATS, ...(post.formats as FormatId[])])]
+  const states = formats.map((f) => ({ f, s: getFormatReadiness(input, f) }))
   switch (status) {
     case "writing":
-      return !hasMedia
-    case "media":
-      return hasMedia
+      // No formats duplicated yet, or a duplicated format still without media.
+      return (
+        post.formats.length === 0 ||
+        states.some(({ f, s }) => post.formats.includes(f) && (s === "empty" || s === "incomplete"))
+      )
     case "approved":
       return states.some(({ f, s }) => s === "ready" && isFormatApproved(post.id, f))
     case "pending":
