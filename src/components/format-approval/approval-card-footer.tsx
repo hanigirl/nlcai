@@ -51,19 +51,20 @@ export function ApprovalCardFooter({
         </div>
       ) : (
         <>
-          {status === "edited" ? (
+          {status === "edited" && (
             <p className="rounded-lg bg-yellow-95 px-3 py-2 text-xs leading-relaxed text-yellow-20" role="status">
               ערכתם את {formatNoun} אחרי שאישרתם, אז האישור בוטל. אשרו שוב כשזה מוכן.
-            </p>
-          ) : (
-            <p className="text-xs leading-relaxed text-text-neutral-default">
-              רק פורמטים מאושרים יופיעו ביומן לתזמון.
             </p>
           )}
           <Button onClick={onApprove} className="w-full gap-2">
             <Check className="size-4" strokeWidth={3} aria-hidden />
             {status === "edited" ? "אישור מחדש" : "אישור לתזמון"}
           </Button>
+          {status !== "edited" && (
+            <p className="-mt-1 text-xs leading-relaxed text-text-neutral-default">
+              רק פורמטים מאושרים יופיעו ביומן לתזמון.
+            </p>
+          )}
         </>
       )}
 
