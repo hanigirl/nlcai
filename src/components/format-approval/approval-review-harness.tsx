@@ -51,12 +51,13 @@ export const APPROVAL_SAMPLE = {
   },
 }
 
-export type ApprovalScenario = "none" | "partial" | "all" | "edited" | "missing"
+export type ApprovalScenario = "none" | "partial" | "all" | "scheduled" | "edited" | "missing"
 
 const SCENARIOS: { id: ApprovalScenario; label: string }[] = [
   { id: "none", label: "טרם אושר" },
   { id: "partial", label: "חלק מאושר" },
   { id: "all", label: "הכל מאושר" },
+  { id: "scheduled", label: "חלק תוזמן" },
   { id: "edited", label: "נערך אחרי אישור" },
   { id: "missing", label: "חסרה מדיה" },
 ]
@@ -70,6 +71,8 @@ export function seedForScenario(s: ApprovalScenario): ApprovalSeed {
       return { approved: ["carousel"], edited: [] }
     case "all":
       return { approved: ["carousel", "image_post", "story"], edited: [] }
+    case "scheduled":
+      return { approved: ["carousel", "image_post"], edited: [], scheduled: ["carousel"] }
     case "edited":
       return { approved: ["carousel"], edited: ["image_post"] }
   }
@@ -91,7 +94,7 @@ export function ApprovalReviewHarness({
   // Project the live approval state onto the readiness the list card reads.
   const readinessFor = (f: string): FormatReadiness => {
     const s = approvals.statusOf(f)
-    return s === "approved" ? "approved" : s === "no-media" ? "incomplete" : "ready"
+    return s === "scheduled" ? "scheduled" : s === "approved" ? "approved" : s === "no-media" ? "incomplete" : "ready"
   }
 
   return (

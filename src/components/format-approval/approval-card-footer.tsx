@@ -35,7 +35,7 @@ export function ApprovalCardFooter({
       className="flex flex-col gap-3 border-t border-border-neutral-default pt-4 w-full"
       onMouseDown={(e) => e.stopPropagation()}
     >
-      {status === "approved" ? (
+      {status === "approved" || status === "scheduled" ? (
         // Half / half: the way forward (calendar) and the way back (revoke).
         <div className="flex items-center gap-3">
           <span className="sr-only" role="status">מאושר לתזמון</span>

@@ -10,7 +10,7 @@
  * palette: it is work in progress again.
  */
 
-import { Check, PencilLine } from "lucide-react"
+import { CalendarCheck, Check, PencilLine } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { ApprovalStatus } from "./use-format-approvals"
 
@@ -24,6 +24,21 @@ export function ApprovedTag({ className, label = "מאושר" }: { className?: s
     >
       <Check className="size-3 shrink-0" strokeWidth={3} aria-hidden />
       {label}
+    </span>
+  )
+}
+
+/** Approved AND on the calendar — the solid, darkest step of the green family. */
+export function ScheduledTag({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 h-6 px-2 rounded-full bg-green-success-50 text-white text-xs leading-none whitespace-nowrap",
+        className,
+      )}
+    >
+      <CalendarCheck className="size-3 shrink-0" aria-hidden />
+      תוזמן
     </span>
   )
 }
@@ -55,20 +70,27 @@ export function PendingTag({ className }: { className?: string }) {
   )
 }
 
-/** Card border for a format's media card — green once approved. */
+/**
+ * Card border for a format's media card. Approved keeps the regular border
+ * (the green header + tag say it); only scheduled gets the green frame, so
+ * "approved" and "on the calendar" read apart at a glance.
+ */
 export function approvalCardBorder(status: ApprovalStatus | undefined): string {
-  return status === "approved"
+  return status === "scheduled"
     ? "border-green-success-50 ring-1 ring-green-success-50"
     : "border-border-neutral-default"
 }
 
-/** Card header fill — green once approved, the usual yellow otherwise. */
+/** Card header fill — green once approved or scheduled, the usual yellow otherwise. */
 export function approvalHeaderFill(status: ApprovalStatus | undefined): string {
-  return status === "approved" ? "bg-green-success-97" : "bg-bg-surface-primary-default-80"
+  return status === "approved" || status === "scheduled"
+    ? "bg-green-success-97"
+    : "bg-bg-surface-primary-default-80"
 }
 
 /** The tag that sits at the far end of a media card's header. */
 export function ApprovalHeaderTag({ status }: { status: ApprovalStatus | undefined }) {
+  if (status === "scheduled") return <ScheduledTag className="ms-auto" />
   if (status === "approved") return <ApprovedTag className="ms-auto" />
   if (status === "edited") return <EditedTag className="ms-auto" />
   return null

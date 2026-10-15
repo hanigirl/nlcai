@@ -24,17 +24,21 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   approveFormat,
   getFormatMeta,
+  getScheduledByPostId,
   revokeFormatApproval,
   type FormatId,
 } from "@/lib/timing-storage"
 
-export type ApprovalStatus = "no-media" | "pending" | "approved" | "edited"
+/** "scheduled" = approved AND already on the calendar. */
+export type ApprovalStatus = "no-media" | "pending" | "approved" | "scheduled" | "edited"
 
 type Entry = { approvedAt: string; sig: string }
 
 export type ApprovalSeed = {
   approved: FormatId[]
   edited: FormatId[]
+  /** Approved formats that are also on the calendar. */
+  scheduled?: FormatId[]
 }
 
 export type FormatApprovals = {
@@ -62,6 +66,7 @@ export function useFormatApprovals({
 }): FormatApprovals {
   const [entries, setEntries] = useState<Record<string, Entry>>({})
   const [edited, setEdited] = useState<Record<string, boolean>>({})
+  const [scheduled, setScheduled] = useState<Record<string, boolean>>({})
 
   const formatsKey = formats.join(",")
   const sigKey = formats.map((f) => `${f}=${mediaSigs[f] ?? ""}`).join("\n")
@@ -77,6 +82,9 @@ export function useFormatApprovals({
       }
     }
     setEntries(next)
+    const onCalendar: Record<string, boolean> = {}
+    for (const row of getScheduledByPostId(postId)) onCalendar[row.format] = true
+    setScheduled(onCalendar)
   }, [persist, postId, formatsKey])
 
   // Media changed after approval → the approval no longer describes what is
@@ -137,12 +145,12 @@ export function useFormatApprovals({
     (format: FormatId): ApprovalStatus => {
       const sig = mediaSigs[format] ?? ""
       if (!sig) return "no-media"
-      if (entries[format]) return "approved"
+      if (entries[format]) return scheduled[format] ? "scheduled" : "approved"
       if (edited[format]) return "edited"
       return "pending"
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sigKey, entries, edited],
+    [sigKey, entries, edited, scheduled],
   )
 
   const seed = useCallback(
@@ -154,8 +162,11 @@ export function useFormatApprovals({
       }
       const nextEdited: Record<string, boolean> = {}
       for (const f of s.edited) nextEdited[f] = true
+      const nextScheduled: Record<string, boolean> = {}
+      for (const f of s.scheduled ?? []) nextScheduled[f] = true
       setEntries(nextEntries)
       setEdited(nextEdited)
+      setScheduled(nextScheduled)
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sigKey],
@@ -166,7 +177,7 @@ export function useFormatApprovals({
     let approvable = 0
     for (const f of formats) {
       const s = statusOf(f)
-      if (s === "approved") approved++
+      if (s === "approved" || s === "scheduled") approved++
       if (s !== "no-media") approvable++
     }
     return { approvedCount: approved, approvableCount: approvable }
