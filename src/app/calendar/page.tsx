@@ -12,9 +12,12 @@ import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import { Select } from "@/components/ui/select"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -177,8 +180,8 @@ function FormatCard({
   onCardClick: () => void
   /** Kebab → "הסרת הפורמט". Unschedules THIS format at THIS slot. */
   onUnschedule: () => void
-  /** Kebab → "תזמון לתאריך". Re-schedules THIS format to the picked date. */
-  onReschedule: (newDate: string) => void
+  /** Kebab → "תזמון לתאריך". Re-schedules THIS format to the picked date + time. */
+  onReschedule: (newDate: string, newTime: string) => void
 }) {
   const formatLabel = getFormatChipLabel(post.format)
   const publishedTitle = post.publishedAt
@@ -188,6 +191,14 @@ function FormatCard({
   // Local UI state for the date-picker dialog — only the picked date bubbles
   // up via onReschedule, so the parent doesn't need to know it exists.
   const [dateDialogOpen, setDateDialogOpen] = useState(false)
+  const currentTime = post.scheduledTime ?? DEFAULT_SCHEDULED_TIME
+  const [pickedDate, setPickedDate] = useState(post.scheduledDate)
+  const [pickedTime, setPickedTime] = useState(currentTime)
+  const openDateDialog = () => {
+    setPickedDate(post.scheduledDate)
+    setPickedTime(currentTime)
+    setDateDialogOpen(true)
+  }
 
   return (
     <div
@@ -256,7 +267,7 @@ function FormatCard({
             className="min-w-[180px]"
             onClick={(e) => e.stopPropagation()}
           >
-            <DropdownMenuItem className="text-xs" onSelect={() => setDateDialogOpen(true)}>
+            <DropdownMenuItem className="text-xs" onSelect={openDateDialog}>
               תזמון לתאריך
             </DropdownMenuItem>
             <DropdownMenuItem
@@ -290,11 +301,44 @@ function FormatCard({
           </DialogHeader>
           <MiniMonthCalendar
             currentDate={post.scheduledDate}
-            onPick={(newDate) => {
-              setDateDialogOpen(false)
-              onReschedule(newDate)
-            }}
+            selectedDate={pickedDate}
+            onPick={setPickedDate}
           />
+          {/* Time sits under the month grid — a date without a time isn't a
+              schedule (Hani, 2026-10-15). Same hourly options as the weekly
+              schedule; an off-grid saved time stays selectable. */}
+          <div className="flex items-center gap-3 border-t border-border-neutral-default pt-3">
+            <Label htmlFor={`time-${post.corePostId}-${post.format}`} className="text-small shrink-0">
+              שעה
+            </Label>
+            <Select
+              id={`time-${post.corePostId}-${post.format}`}
+              selectSize="small"
+              value={pickedTime}
+              onChange={(e) => setPickedTime(e.target.value)}
+              className="tabular-nums"
+            >
+              {(RESCHEDULE_HOURS.includes(pickedTime) ? RESCHEDULE_HOURS : [pickedTime, ...RESCHEDULE_HOURS]).map((h) => (
+                <option key={h} value={h}>
+                  {h}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <DialogFooter className="gap-2 sm:justify-start">
+            <Button
+              onClick={() => {
+                setDateDialogOpen(false)
+                onReschedule(pickedDate, pickedTime)
+              }}
+              disabled={pickedDate === post.scheduledDate && pickedTime === currentTime}
+            >
+              שמירה
+            </Button>
+            <Button variant="outline" onClick={() => setDateDialogOpen(false)}>
+              ביטול
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
@@ -323,10 +367,13 @@ function FormatCard({
  */
 function MiniMonthCalendar({
   currentDate,
+  selectedDate,
   onPick,
 }: {
-  /** YYYY-MM-DD currently scheduled — initial visible month + highlight. */
+  /** YYYY-MM-DD currently scheduled — initial visible month. */
   currentDate: string
+  /** YYYY-MM-DD picked in the dialog (not saved yet) — the filled day. */
+  selectedDate: string
   /** Called with YYYY-MM-DD when the user clicks a valid day. */
   onPick: (newDate: string) => void
 }) {
@@ -421,7 +468,7 @@ function MiniMonthCalendar({
         {days.map((day) => {
           const inMonth = day.getMonth() === viewMonth.getMonth()
           const past = isPastDate(day, today)
-          const isCurrent = toDateKey(day) === currentDate
+          const isCurrent = toDateKey(day) === selectedDate
           const isToday = isSameDay(day, today)
           const disabled = past
 
@@ -463,6 +510,12 @@ function MiniMonthCalendar({
     </div>
   )
 }
+
+/** Hourly, 07:00–23:00 — the same options the weekly posting schedule offers. */
+const RESCHEDULE_HOURS: string[] = Array.from(
+  { length: 17 },
+  (_, i) => `${String(i + 7).padStart(2, "0")}:00`,
+)
 
 // --- page ----------------------------------------------------------------
 
@@ -668,6 +721,7 @@ export default function CalendarPage() {
     format: FormatId,
     date: string,
     hook?: string,
+    time: string = DEFAULT_SCHEDULED_TIME,
   ) => {
     setReviewScheduled((rows) => [
       ...rows.filter(
@@ -677,7 +731,7 @@ export default function CalendarPage() {
         corePostId,
         format,
         scheduledDate: date,
-        scheduledTime: DEFAULT_SCHEDULED_TIME,
+        scheduledTime: time,
         publishedAt: null,
         hook,
       },
@@ -1099,26 +1153,24 @@ export default function CalendarPage() {
                               reloadBoard()
                               toast.success("הפורמט הוחזר לתור")
                             }}
-                            onReschedule={(newDate) => {
+                            onReschedule={(newDate, newTime) => {
                               if (reviewMode) {
                                 upsertReviewRow(
                                   post.corePostId,
                                   post.format,
                                   newDate,
                                   hook,
+                                  newTime,
                                 )
                                 toast.success("התזמון עודכן")
                                 return
                               }
-                              // Move THIS format to the picked date, keeping
-                              // its current time.
-                              const time =
-                                post.scheduledTime ?? DEFAULT_SCHEDULED_TIME
+                              // Move THIS format to the picked date + time.
                               schedulePost(
                                 post.corePostId,
                                 post.format,
                                 newDate,
-                                time,
+                                newTime,
                                 { hook },
                               )
                               reloadBoard()
