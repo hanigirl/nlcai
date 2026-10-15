@@ -642,6 +642,40 @@ export function QueuePanel({
         )}
       </div>
 
+      {/* Variant A — the rail stays strictly "approved only"; formats that
+          still wait for approval are one quiet row right under the header
+          (Hani, 2026-10-15), routing out to where approval happens. Hidden
+          when nothing waits, and when the empty state already says it. */}
+      {approval?.variant === "a" &&
+        !loading &&
+        !error &&
+        pendingCards.length > 0 &&
+        approvedCards.length > 0 && (
+          <div className="shrink-0 px-4 pt-3">
+            <Link
+              href={approval.pendingHref}
+              className="group flex items-center gap-2 rounded-lg bg-bg-surface px-3 py-2 text-right transition-colors hover:bg-gray-95 dark:hover:bg-gray-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+            >
+              <Clock
+                className="size-4 shrink-0 text-text-neutral-default"
+                aria-hidden
+              />
+              <span className="flex-1 text-small text-text-primary-default">
+                <span className="tabular-nums font-medium">
+                  {pendingCards.length}
+                </span>{" "}
+                {pendingCards.length === 1
+                  ? "פורמט ממתין לאישור"
+                  : "פורמטים ממתינים לאישור"}
+              </span>
+              <span className="flex items-center gap-0.5 text-xs-body text-text-neutral-default group-hover:text-text-primary-default">
+                מעבר לאישור
+                <ChevronLeft className="size-3.5" aria-hidden />
+              </span>
+            </Link>
+          </div>
+        )}
+
       {/* Variant B — two lists, one rail. "מוכנים" is always the default:
           the rail's job is scheduling, so it opens on what can be dragged. */}
       {approval?.variant === "b" &&
@@ -840,39 +874,6 @@ export function QueuePanel({
         )}
       </div>
 
-      {/* Variant A — the rail stays strictly "approved only"; formats that
-          still wait for approval are one quiet row pinned to the bottom,
-          routing out to where approval happens. Hidden when nothing waits,
-          and when the empty state above already says the same thing. */}
-      {approval?.variant === "a" &&
-        !loading &&
-        !error &&
-        pendingCards.length > 0 &&
-        approvedCards.length > 0 && (
-          <div className="shrink-0 border-t border-border-neutral-default px-4 py-3">
-            <Link
-              href={approval.pendingHref}
-              className="group flex items-center gap-2 rounded-lg px-3 py-2 text-right transition-colors hover:bg-gray-95 dark:hover:bg-gray-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-            >
-              <Clock
-                className="size-4 shrink-0 text-text-neutral-default"
-                aria-hidden
-              />
-              <span className="flex-1 text-small text-text-primary-default">
-                <span className="tabular-nums font-medium">
-                  {pendingCards.length}
-                </span>{" "}
-                {pendingCards.length === 1
-                  ? "פורמט ממתין לאישור"
-                  : "פורמטים ממתינים לאישור"}
-              </span>
-              <span className="flex items-center gap-0.5 text-xs-body text-text-neutral-default group-hover:text-text-primary-default">
-                מעבר לאישור
-                <ChevronLeft className="size-3.5" aria-hidden />
-              </span>
-            </Link>
-          </div>
-        )}
     </aside>
   )
 }
