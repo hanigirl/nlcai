@@ -695,7 +695,7 @@ export default function CalendarPage() {
       },
       // Where approval lives is decided by the sibling task ("שלב אישור מדיה
       // לפני תזמון"). Until then: the core-posts library.
-      pendingHref: "/core_posts",
+      pendingHref: "/core_posts?status=pending",
       seed: reviewSeed,
     }
   }, [approvalVariant, reviewApproved, reviewSeed])
