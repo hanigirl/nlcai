@@ -36,15 +36,21 @@ export function ApprovalCardFooter({
       onMouseDown={(e) => e.stopPropagation()}
     >
       {status === "approved" ? (
-        <div className="flex items-center gap-2" role="status">
-          <span className="inline-flex items-center gap-1.5 text-small text-green-success-50">
-            <Check className="size-4 shrink-0" strokeWidth={3} aria-hidden />
-            מאושר — יופיע ביומן לתזמון
-          </span>
+        // Half / half: the way forward (calendar) and the way back (revoke).
+        <div className="flex items-center gap-3">
+          <span className="sr-only" role="status">מאושר לתזמון</span>
+          {calendarHref && (
+            <Button asChild variant="outline" className="flex-1 gap-2">
+              <Link href={calendarHref}>
+                <CalendarPlus className="size-4" aria-hidden />
+                ללוח התזמון
+              </Link>
+            </Button>
+          )}
           <button
             type="button"
             onClick={onRevoke}
-            className="ms-auto text-xs text-text-neutral-default underline underline-offset-2 hover:text-text-primary-default rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 cursor-pointer"
+            className="flex-1 text-center text-small text-text-neutral-default underline underline-offset-2 hover:text-text-primary-default rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 cursor-pointer"
           >
             ביטול אישור
           </button>
@@ -68,14 +74,6 @@ export function ApprovalCardFooter({
         </>
       )}
 
-      {status === "approved" && calendarHref && (
-        <Button asChild variant="outline" className="w-full gap-2">
-          <Link href={calendarHref}>
-            <CalendarPlus className="size-4" aria-hidden />
-            ללוח התזמון
-          </Link>
-        </Button>
-      )}
     </div>
   )
 }
