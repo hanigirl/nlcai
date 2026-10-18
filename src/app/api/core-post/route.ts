@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { hook, userResponse, productName: productNameInput, productId, triggerWord } = await req.json()
+    const { hook, userResponse, productName: productNameInput, productId, triggerWord, isFromRecording } = await req.json()
 
     if (!hook || !userResponse) {
       return NextResponse.json(
@@ -83,6 +83,7 @@ export async function POST(req: NextRequest) {
       learningInsights,
       businessSourceInsights,
       addressGender,
+      isFromRecording: !!isFromRecording,
     })
 
     const client = new Anthropic({ apiKey })
@@ -95,6 +96,12 @@ export async function POST(req: NextRequest) {
     const textBlock = message.content.find((b) => b.type === "text")
     // Prompt rule 7 asks for no long dashes; this makes sure of it.
     const post = stripDashes(textBlock?.text?.trim() ?? "")
+
+    // לוג השוואה בפיתוח — עוזר לבדוק מה נשמט מהקלטה לעומת הפוסט הסופי
+    if (process.env.NODE_ENV === "development" && isFromRecording) {
+      console.log("[voice-recording] userResponse:", userResponse)
+      console.log("[voice-recording] generated post:", post)
+    }
 
     return NextResponse.json({ post })
   } catch (error) {

@@ -36,6 +36,9 @@ interface WorkflowCardProps {
   onProductChange?: (id: string | null) => void
   triggerWord?: string
   onTriggerWordChange?: (value: string) => void
+  /** Whether the current textarea value originated from a voice recording. */
+  isFromRecording?: boolean
+  onIsFromRecordingChange?: (value: boolean) => void
 }
 
 export function WorkflowCard({
@@ -56,6 +59,8 @@ export function WorkflowCard({
   onProductChange,
   triggerWord,
   onTriggerWordChange,
+  isFromRecording,
+  onIsFromRecordingChange,
 }: WorkflowCardProps) {
   const [showMicDialog, setShowMicDialog] = useState(false)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
@@ -112,6 +117,8 @@ export function WorkflowCard({
         const base = valueRef.current ?? ""
         const separator = base && !base.endsWith(" ") ? " " : ""
         onChange?.(base + separator + text)
+        // Mark that the textarea content now originates from a voice recording
+        onIsFromRecordingChange?.(true)
       },
       onFatalError: (message) => {
         stopRecording()
@@ -134,6 +141,15 @@ export function WorkflowCard({
     const m = Math.floor(seconds / 60)
     const s = seconds % 60
     return `${m}:${s.toString().padStart(2, "0")}`
+  }
+
+  const handleManualChange = (newValue: string) => {
+    // If the user manually edits the textarea, the content is no longer
+    // purely from a voice recording, so we reset the flag.
+    onChange?.(newValue)
+    if (isFromRecording) {
+      onIsFromRecordingChange?.(false)
+    }
   }
 
   return (
@@ -163,7 +179,7 @@ export function WorkflowCard({
       <div className="flex flex-col gap-6 px-6">
         <Textarea
           value={value}
-          onChange={(e) => onChange?.(e.target.value)}
+          onChange={(e) => handleManualChange(e.target.value)}
           onFocus={onFocus}
           className="min-h-[156px] rounded-[10px] border-border-neutral-default bg-white dark:bg-gray-10 resize-none shadow-none"
         />
