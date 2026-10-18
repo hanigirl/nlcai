@@ -16,8 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Label } from "@/components/ui/label"
-import { Select } from "@/components/ui/select"
+import { ScheduleDateTimePicker } from "@/components/schedule-date-time-picker"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,6 +34,18 @@ import {
   type ApprovalVariant,
   type ReviewState,
 } from "./approval-review-harness"
+import {
+  PreviewReviewBar,
+  buildPreviewData,
+  buildPreviewScheduled,
+  previewThumbFor,
+  readPreviewParam,
+  type ContentPick,
+  type PreviewVariant,
+  type StatusPick,
+} from "./format-preview-harness"
+import { FormatPreviewDialog } from "@/components/format-preview/format-preview-dialog"
+import { FormatPreviewInspector } from "@/components/format-preview/format-preview-inspector"
 import { CorePostSheet, type CorePostSheetData } from "@/components/core-post-sheet"
 import { FormatThumbnail } from "@/components/format-thumbnail"
 import {
@@ -166,6 +177,7 @@ function FormatCard({
   hook,
   mediaUrl,
   isPublished,
+  selected,
   onCardClick,
   onUnschedule,
   onReschedule,
@@ -176,6 +188,8 @@ function FormatCard({
   /** Per-(post, format) media URL for the thumbnail. Undefined → icon fallback. */
   mediaUrl?: string
   isPublished: boolean
+  /** Format preview (`?preview=b`) — this card's preview is the one open. */
+  selected?: boolean
   /** Click on the card body — open the preview Sheet for the core post. */
   onCardClick: () => void
   /** Kebab → "הסרת הפורמט". Unschedules THIS format at THIS slot. */
@@ -225,7 +239,8 @@ function FormatCard({
       aria-label={`${formatLabel} מתוזמן: ${hook}`}
       className={`group/chip relative w-full min-w-0 flex flex-col gap-1.5 rounded-lg border border-border-neutral-default bg-white dark:bg-gray-10 p-1.5 cursor-grab active:cursor-grabbing transition-all hover:bg-bg-surface-hover hover:border-gray-80 hover:ring-2 hover:ring-gray-80/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
         isPublished ? "opacity-60" : ""
-      }`}
+      }${selected ? " ring-2 ring-yellow-50 border-yellow-50" : ""}`}
+      aria-current={selected || undefined}
     >
       {/* Media — a small portrait slot mirroring the queue / core-post card
           (aspect 4:5). Carousel (square) assets show fully (contain + padding);
@@ -299,32 +314,14 @@ function FormatCard({
           <DialogHeader>
             <DialogTitle>תזמון לתאריך</DialogTitle>
           </DialogHeader>
-          <MiniMonthCalendar
-            currentDate={post.scheduledDate}
-            selectedDate={pickedDate}
-            onPick={setPickedDate}
+          <ScheduleDateTimePicker
+            idBase={`${post.corePostId}-${post.format}`}
+            anchorDate={post.scheduledDate}
+            date={pickedDate}
+            time={pickedTime}
+            onDateChange={setPickedDate}
+            onTimeChange={setPickedTime}
           />
-          {/* Time sits under the month grid — a date without a time isn't a
-              schedule (Hani, 2026-10-15). Same hourly options as the weekly
-              schedule; an off-grid saved time stays selectable. */}
-          <div className="flex items-center gap-3 border-t border-border-neutral-default pt-3">
-            <Label htmlFor={`time-${post.corePostId}-${post.format}`} className="text-small shrink-0">
-              שעה
-            </Label>
-            <Select
-              id={`time-${post.corePostId}-${post.format}`}
-              selectSize="small"
-              value={pickedTime}
-              onChange={(e) => setPickedTime(e.target.value)}
-              className="tabular-nums"
-            >
-              {(RESCHEDULE_HOURS.includes(pickedTime) ? RESCHEDULE_HOURS : [pickedTime, ...RESCHEDULE_HOURS]).map((h) => (
-                <option key={h} value={h}>
-                  {h}
-                </option>
-              ))}
-            </Select>
-          </div>
           <DialogFooter className="gap-2 sm:justify-start">
             <Button
               onClick={() => {
@@ -344,178 +341,6 @@ function FormatCard({
     </div>
   )
 }
-
-/* ------------------------------------------------------------------ */
-/*  MiniMonthCalendar                                                   */
-/* ------------------------------------------------------------------ */
-
-/**
- * Compact month grid used inside the FormatCard's "תזמון לתאריך"
- * dialog. We keep it inline (not a shared component) because it's
- * tightly coupled to the chip's reschedule UX:
- *   - Picks ONE date (not a range, not a date+time).
- *   - Past days are disabled — re-scheduling to yesterday makes no
- *     sense; the existing isPastDate helper draws the line.
- *   - The currently scheduled date is highlighted as the anchor so
- *     the user sees "where it is now → where it will move".
- *   - Today gets a softer secondary ring so the user can find it
- *     when they jumped months ahead.
- * RTL is handled by the parent DialogContent's `dir="rtl"` — we
- * flip Sunday to the right by rendering the weekday array in order
- * and letting RTL CSS direction reverse it visually, same trick used
- * in the main weekly grid above.
- */
-function MiniMonthCalendar({
-  currentDate,
-  selectedDate,
-  onPick,
-}: {
-  /** YYYY-MM-DD currently scheduled — initial visible month. */
-  currentDate: string
-  /** YYYY-MM-DD picked in the dialog (not saved yet) — the filled day. */
-  selectedDate: string
-  /** Called with YYYY-MM-DD when the user clicks a valid day. */
-  onPick: (newDate: string) => void
-}) {
-  // Parse the current date as local time so the visible month matches
-  // what the rest of the calendar shows (toDateKey writes local YYYY-MM-DD).
-  const parsed = (() => {
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(currentDate)
-    if (m) {
-      return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10))
-    }
-    return new Date()
-  })()
-
-  const [viewMonth, setViewMonth] = useState<Date>(() => {
-    const d = new Date(parsed)
-    d.setDate(1)
-    d.setHours(0, 0, 0, 0)
-    return d
-  })
-
-  const today = startOfDay(new Date())
-
-  // Build the 6-week grid for the visible month. We always render 6
-  // rows × 7 cols so the dialog height is stable across months — short
-  // months don't make the picker jump. Days from the prev/next month
-  // are rendered as ghost cells (disabled, faded).
-  const firstOfMonth = new Date(viewMonth)
-  firstOfMonth.setDate(1)
-  const gridStart = startOfWeek(firstOfMonth) // Sunday on/before the 1st
-  const days: Date[] = Array.from({ length: 42 }, (_, i) => addDays(gridStart, i))
-
-  const monthLabel = new Intl.DateTimeFormat("he-IL", {
-    year: "numeric",
-    month: "long",
-  }).format(viewMonth)
-
-  const goPrev = () => {
-    const d = new Date(viewMonth)
-    d.setMonth(d.getMonth() - 1)
-    setViewMonth(d)
-  }
-  const goNext = () => {
-    const d = new Date(viewMonth)
-    d.setMonth(d.getMonth() + 1)
-    setViewMonth(d)
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      {/* Month nav. In RTL, ChevronRight visually points to the
-          previous month and ChevronLeft to the next — matching the
-          main weekly grid's nav arrows. */}
-      <div className="flex items-center justify-between">
-        <button
-          type="button"
-          onClick={goPrev}
-          aria-label="חודש קודם"
-          className="size-7 inline-flex items-center justify-center rounded-md text-text-primary-default hover:bg-bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-        >
-          <ChevronRight className="size-4" />
-        </button>
-        <span className="text-small-bold text-text-primary-default tabular-nums">
-          {monthLabel}
-        </span>
-        <button
-          type="button"
-          onClick={goNext}
-          aria-label="חודש הבא"
-          className="size-7 inline-flex items-center justify-center rounded-md text-text-primary-default hover:bg-bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-        >
-          <ChevronLeft className="size-4" />
-        </button>
-      </div>
-
-      {/* Weekday header. Sunday-first to match the main weekly grid;
-          RTL flips it visually so Sunday lands on the right. */}
-      <div className="grid grid-cols-7 gap-1">
-        {WEEKDAY_LABELS.map((label) => (
-          <div
-            key={label}
-            className="text-center text-xs-body text-text-neutral-default"
-          >
-            {label.slice(0, 1)}
-          </div>
-        ))}
-      </div>
-
-      {/* Day grid. Past days disabled. Current scheduled date gets the
-          primary fill; today gets a softer ring so the user can locate
-          it at a glance across months. */}
-      <div className="grid grid-cols-7 gap-1">
-        {days.map((day) => {
-          const inMonth = day.getMonth() === viewMonth.getMonth()
-          const past = isPastDate(day, today)
-          const isCurrent = toDateKey(day) === selectedDate
-          const isToday = isSameDay(day, today)
-          const disabled = past
-
-          const base =
-            "h-8 inline-flex items-center justify-center rounded-md text-small tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-          const state = disabled
-            ? "text-text-primary-disabled cursor-not-allowed"
-            : isCurrent
-              ? "bg-button-primary-default text-white hover:bg-button-primary-hover cursor-pointer"
-              : isToday
-                ? "ring-1 ring-yellow-50 text-text-primary-default hover:bg-bg-surface-hover cursor-pointer"
-                : inMonth
-                  ? "text-text-primary-default hover:bg-bg-surface-hover cursor-pointer"
-                  : "text-text-primary-disabled hover:bg-bg-surface-hover cursor-pointer"
-
-          return (
-            <button
-              key={toDateKey(day)}
-              type="button"
-              disabled={disabled}
-              onClick={() => {
-                if (disabled) return
-                onPick(toDateKey(day))
-              }}
-              aria-label={day.toLocaleDateString("he-IL", {
-                weekday: "long",
-                day: "numeric",
-                month: "long",
-                year: "numeric",
-              })}
-              aria-pressed={isCurrent || undefined}
-              className={`${base} ${state}`}
-            >
-              {day.getDate()}
-            </button>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-/** Hourly, 07:00–23:00 — the same options the weekly posting schedule offers. */
-const RESCHEDULE_HOURS: string[] = Array.from(
-  { length: 17 },
-  (_, i) => `${String(i + 7).padStart(2, "0")}:00`,
-)
 
 // --- page ----------------------------------------------------------------
 
@@ -674,8 +499,18 @@ export default function CalendarPage() {
   const [reviewSeed, setReviewSeed] = useState<
     NonNullable<QueueApprovalMode["seed"]> | undefined
   >(undefined)
+  // --- Format preview harness (`?preview=a|b`) — DELETE BEFORE SHIPPING ---
+  // Rides on the approval harness's sample rail and local-only board, then
+  // seeds four scheduled formats and opens the preview on card click.
+  const [previewVariant, setPreviewVariant] = useState<PreviewVariant | null>(null)
+  const [previewKey, setPreviewKey] = useState<string | null>(null)
+  const [previewStatus, setPreviewStatus] = useState<StatusPick>("mixed")
+  const [previewContent, setPreviewContent] = useState<ContentPick>("ready")
+  const [previewCaptions, setPreviewCaptions] = useState<Map<string, string>>(new Map())
   useEffect(() => {
-    setApprovalVariant(readApprovalParam())
+    const pv = readPreviewParam()
+    setPreviewVariant(pv)
+    setApprovalVariant(readApprovalParam() ?? (pv ? "a" : null))
   }, [])
   const applyReviewState = useCallback(
     (state: ReviewState) => {
@@ -701,7 +536,18 @@ export default function CalendarPage() {
   )
   useEffect(() => {
     if (approvalVariant) applyReviewState("mixed")
-  }, [approvalVariant, applyReviewState])
+    // Declared after the approval seed on purpose: it runs second and puts
+    // the preview's sample formats on the board.
+    if (approvalVariant && previewVariant) {
+      setReviewScheduled(
+        buildPreviewScheduled(
+          buildWeekGrid(startOfWeek(today))
+            .filter((d) => !isPastDate(d, today))
+            .map(toDateKey),
+        ),
+      )
+    }
+  }, [approvalVariant, previewVariant, applyReviewState, today])
   // Keep the rail's exclusion set in step with what was dropped on the grid.
   useEffect(() => {
     setReviewSeed((prev) =>
@@ -959,6 +805,53 @@ export default function CalendarPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // --- Format preview (`?preview=a|b`) — review data + handlers ---
+  // Everything stays in this component's state: no schedulePost, no caption
+  // write, no canvas navigation. DELETE the harness half before shipping; the
+  // handlers are where the real writes go once a variant is picked.
+  const previewRow =
+    previewVariant && previewKey
+      ? reviewScheduled.find((p) => `${p.corePostId}:${p.format}` === previewKey) ?? null
+      : null
+  const previewData = previewRow
+    ? buildPreviewData(
+        previewRow,
+        (hookByPostId.get(previewRow.corePostId) || previewRow.hook || "").trim() ||
+          "פוסט מתוזמן",
+        previewStatus,
+        previewContent,
+        previewCaptions,
+      )
+    : null
+  const previewContentState = previewContent === "too-long" ? "ready" : previewContent
+  const inspectorOpen = previewVariant === "b" && !!previewData
+  const previewHandlers = previewRow
+    ? {
+        onReschedule: (date: string, time: string) => {
+          upsertReviewRow(previewRow.corePostId, previewRow.format, date, previewRow.hook ?? undefined, time)
+          toast.success("התזמון עודכן — הכרטיס זז בלוח")
+        },
+        onCaptionSave: (caption: string) => {
+          setPreviewCaptions((m) => new Map(m).set(`${previewRow.corePostId}:${previewRow.format}`, caption))
+          toast.success("הכיתוב נשמר על הפורמט")
+        },
+        onUnschedule: () => {
+          setReviewScheduled((rows) =>
+            rows.filter((p) => !(p.corePostId === previewRow.corePostId && p.format === previewRow.format)),
+          )
+          setPreviewKey(null)
+          toast.success("הפורמט הוחזר לתור")
+        },
+        onOpenCanvas: () => toast("בסביבת הבדיקה הקנבס לא נפתח — בפועל זה עובר לעריכת הפורמט"),
+        onStatusAction: (action: string) =>
+          toast(
+            action === "open_post"
+              ? "בסביבת הבדיקה אין פוסט אמיתי לפתוח"
+              : "בסביבת הבדיקה הפעולה לא רצה — בפועל היא של המשימה של בן",
+          ),
+      }
+    : null
+
   return (
     <AppShell>
       {/*
@@ -981,7 +874,7 @@ export default function CalendarPage() {
         // the padding animates to 0 (in lockstep with the rail's slide-out)
         // so the week grid expands to full width.
         className={`w-full flex gap-5 h-[calc(100vh-2rem-3rem)] min-h-0 transition-[padding] duration-300 ease-in-out ${
-          panelCollapsed ? "pe-0" : "pe-[480px]"
+          panelCollapsed && !inspectorOpen ? "pe-0" : "pe-[480px]"
         }`}
         dir="rtl"
       >
@@ -991,7 +884,16 @@ export default function CalendarPage() {
           {/* Header at the standard page width — keeps the title aligned
               with the rest of the system. */}
           <div className="max-w-[1200px] w-full mx-auto">
-            {approvalVariant && (
+            {previewVariant && (
+              <PreviewReviewBar
+                variant={previewVariant}
+                status={previewStatus}
+                onStatus={setPreviewStatus}
+                content={previewContent}
+                onContent={setPreviewContent}
+              />
+            )}
+            {approvalVariant && !previewVariant && (
               <ApprovalReviewBar
                 variant={approvalVariant}
                 state={reviewState}
@@ -1111,7 +1013,10 @@ export default function CalendarPage() {
                             ""
                           ).trim() || "פוסט מתוזמן"
                         const mediaUrl = reviewMode
-                          ? seedMediaFor(post.corePostId)[post.format]
+                          ? (previewVariant
+                              ? previewThumbFor(post.corePostId, post.format)
+                              : undefined) ??
+                            seedMediaFor(post.corePostId)[post.format]
                           : formatMediaByPost.get(post.corePostId)?.[
                               post.format
                             ]
@@ -1122,8 +1027,14 @@ export default function CalendarPage() {
                             hook={hook}
                             mediaUrl={mediaUrl}
                             isPublished={isPublished}
+                            selected={
+                              previewVariant === "b" &&
+                              previewKey === `${post.corePostId}:${post.format}`
+                            }
                             onCardClick={() =>
-                              reviewMode
+                              previewVariant
+                                ? setPreviewKey(`${post.corePostId}:${post.format}`)
+                                : reviewMode
                                 ? toast("בסביבת הבדיקה הפוסטים לדוגמה — הפאנל לא נפתח")
                                 : openSheetForCorePost(
                                     post.corePostId,
@@ -1194,7 +1105,7 @@ export default function CalendarPage() {
             The panel itself uses `h-full` so its inner list scrolls
             independently of the calendar grid. */}
         <QueuePanel
-          collapsed={panelCollapsed}
+          collapsed={panelCollapsed || inspectorOpen}
           onToggleCollapse={() => setPanelCollapsed((v) => !v)}
           onItemClick={(corePostId, format) =>
             reviewMode
@@ -1208,7 +1119,17 @@ export default function CalendarPage() {
             to the end edge (left in RTL) just below the topbar, where the
             rail's collapse button sat, so the open/close controls live on
             the same edge. z-40 keeps it above the grid's dragOver ring. */}
-        {panelCollapsed && (
+        {/* Variant B — the preview borrows the rail's slot while it's open. */}
+        {inspectorOpen && previewData && previewHandlers && (
+          <FormatPreviewInspector
+            data={previewData}
+            content={previewContentState}
+            onClose={() => setPreviewKey(null)}
+            {...previewHandlers}
+          />
+        )}
+
+        {panelCollapsed && !inspectorOpen && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -1233,6 +1154,19 @@ export default function CalendarPage() {
           Now we always render CorePostSheet and hide the "תזמון פוסט"
           CTA when the user is in preview mode — they're already on
           /calendar, so the schedule affordance would loop. */}
+      {/* Variant A — the preview as a modal over the board. */}
+      {previewVariant === "a" && previewHandlers && (
+        <FormatPreviewDialog
+          open={!!previewData}
+          onOpenChange={(open) => {
+            if (!open) setPreviewKey(null)
+          }}
+          data={previewData}
+          content={previewContentState}
+          {...previewHandlers}
+        />
+      )}
+
       <CorePostSheet
         open={sheetOpen}
         onOpenChange={(open) => {
