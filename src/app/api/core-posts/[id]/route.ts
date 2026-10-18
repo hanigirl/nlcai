@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
+import { cancelSlots } from "@/lib/social/bridge"
 
 interface FormatVariantRow {
   format: string
@@ -790,6 +791,22 @@ export async function DELETE(
     const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    // Out of the Instagram queue before anything is deleted. Its calendar
+    // slots cascade away with the post, and a slot that vanishes while its
+    // post is still queued goes out anyway with nothing left on the board to
+    // show it. If the cancel fails, the post is not deleted.
+    const { stuck } = await cancelSlots(supabase, user.id, { corePostId: id })
+    if (stuck.length > 0) {
+      return NextResponse.json(
+        {
+          error: "cancel_failed",
+          message:
+            "לא הצלחנו להוציא את הפוסט מהתור באינסטגרם, ולכן הוא לא נמחק. אפשר לנסות שוב.",
+        },
+        { status: 502 },
+      )
     }
 
     // Best-effort cleanup of dependent rows in case the schema doesn't have

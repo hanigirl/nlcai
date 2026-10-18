@@ -738,7 +738,17 @@ export function CorePostSheet({
       // fall through to the same "it worked" path: the post vanished from the
       // list, the Sheet closed, and it was back on the next refresh. Treat a
       // failed response as a failure and say so.
-      if (!res.ok) throw new Error(`status ${res.status}`)
+      if (!res.ok) {
+        // A post still queued for Instagram is not deleted when the queue
+        // can't be cleared — the server says why, and that reason is the one
+        // she needs.
+        const json = await res.json().catch(() => null)
+        if (typeof json?.message === "string") {
+          toast.error(json.message)
+          return
+        }
+        throw new Error(`status ${res.status}`)
+      }
       removeFromTiming(postId)
       onDeleted?.(postId)
       onOpenChange(false)

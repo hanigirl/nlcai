@@ -93,6 +93,30 @@ export interface ScheduleResult {
   providerPostId: string
 }
 
+/**
+ * What the provider currently holds for a post we created, read back from it.
+ *
+ * Read back rather than assumed: a reschedule that "didn't fail" is not proof
+ * that the provider moved the post, and a post that "should have gone out" is
+ * not proof that it did.
+ */
+export interface ProviderPostState {
+  /**
+   *   scheduled — still waiting for its time.
+   *   published — went live; `permalink` and `publishedAt` are set when known.
+   *   failed    — the provider tried and failed; `error` carries its words.
+   *   missing   — the provider no longer has it (cancelled elsewhere, or never
+   *               existed).
+   */
+  outcome: "scheduled" | "published" | "failed" | "missing"
+  /** The instant the provider will publish at. Null once it has gone out. */
+  scheduledAt: Date | null
+  publishedAt?: Date | null
+  permalink?: string | null
+  /** The provider's own error text — for logs, never shown verbatim. */
+  error?: string | null
+}
+
 /** Where a connect flow should be opened, and what to listen for when it finishes. */
 export interface ConnectHandoff {
   /**
@@ -118,8 +142,17 @@ export class SocialPublishError extends Error {
       | "needs_reconnect"
       | "media_rejected"
       | "rate_limited"
+      | "too_soon"
       | "provider_error",
-    readonly userActionable: boolean = true
+    readonly userActionable: boolean = true,
+    /**
+     * True only when the provider told us the *account itself* is gone (it is
+     * no longer attached to the workspace). That is the one signal strong
+     * enough to flip the user's connection to `needs_reconnect` and paint the
+     * calendar's badge red. A 401 on our own credentials is not it — that is
+     * ours to fix, and telling every user to reconnect would not fix it.
+     */
+    readonly accountLost: boolean = false,
   ) {
     super(message)
     this.name = "SocialPublishError"
@@ -165,8 +198,16 @@ export interface SocialPublisher {
   /** Hand the post to the provider's queue. */
   schedulePost(input: SchedulePostInput): Promise<ScheduleResult>
 
-  /** The calendar is drag-and-drop, so a moved slot has to move at the provider too. */
-  reschedulePost(userId: string, providerPostId: string, publishAt: Date): Promise<void>
+  /**
+   * The calendar is drag-and-drop, so a moved slot has to move at the provider
+   * too. Takes the whole post, not just the new time: providers that replace
+   * on edit (ours does) need it, and it keeps the provider's copy current.
+   */
+  reschedulePost(input: SchedulePostInput, providerPostId: string): Promise<void>
 
+  /** Idempotent: cancelling something the provider no longer has is success. */
   cancelPost(userId: string, providerPostId: string): Promise<void>
+
+  /** Read a post back from the provider — the only proof of what it holds. */
+  getPost(userId: string, providerPostId: string): Promise<ProviderPostState>
 }

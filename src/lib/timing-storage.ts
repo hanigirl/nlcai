@@ -47,6 +47,9 @@
  * grid would not stay in sync without a hard reload.
  */
 
+import { toast } from "sonner"
+import type { PublishState } from "@/lib/social/publish-state"
+
 export type FormatId = "talking_head" | "carousel" | "image_post" | string
 
 /**
@@ -77,6 +80,13 @@ export type ScheduledPost = {
   publishedAt: string | null
   /** Optional cached fields for the day-cell chip so we don't need a join. */
   hook?: string
+  /**
+   * Where this slot stands with Instagram — the data hook every publish-status
+   * UI reads (calendar card, canvas card, format preview). Server-computed;
+   * see `src/lib/social/publish-state.ts` for the states and their meaning.
+   * Absent on rows the server hasn't answered for yet.
+   */
+  publish?: PublishState
 }
 
 /**
@@ -302,30 +312,159 @@ function mirrorFailed(action: string, detail: unknown): void {
   console.warn(`[timing-storage] server mirror failed (${action})`, detail)
 }
 
-/** Upsert one row or a batch on the server. Fire-and-forget. */
-function mirrorUpsert(rows: ScheduledPost[]): void {
+/** The wire never carries `publish` upward — the server owns it. */
+function forWire(row: ScheduledPost): Omit<ScheduledPost, "publish"> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { publish, ...rest } = row
+  return rest
+}
+
+/**
+ * Upsert one row or a batch on the server. Fire-and-forget for the caller,
+ * but the answer is not thrown away: the server pushes each written slot to
+ * the Instagram queue and replies with where it landed, which is merged back
+ * into the cache so the card can say "תוזמן" — or why not.
+ */
+function mirrorUpsert(rows: ScheduledPost[], opts?: { backfill?: boolean }): void {
   if (typeof window === "undefined" || rows.length === 0) return
+  const wire = rows.map(forWire)
+  const body =
+    rows.length === 1 && !opts?.backfill
+      ? wire[0]
+      : { rows: wire, ...(opts?.backfill ? { backfill: true } : {}) }
   void fetch(SCHEDULE_API, {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(rows.length === 1 ? rows[0] : { rows }),
+    body: JSON.stringify(body),
   })
-    .then((res) => {
-      if (!res.ok) mirrorFailed("upsert", res.status)
+    .then(async (res) => {
+      if (!res.ok) {
+        mirrorFailed("upsert", res.status)
+        return
+      }
+      const json = (await res.json().catch(() => null)) as {
+        publish?: Record<string, PublishState>
+      } | null
+      if (json?.publish) applyPublishStates(json.publish)
     })
     .catch((err) => mirrorFailed("upsert", err))
 }
 
-/** Delete a slot (or every slot of a post when `format` is omitted). */
+/**
+ * Delete a slot (or every slot of a post when `format` is omitted).
+ *
+ * The server cancels the slot's Instagram post before deleting the row, and
+ * refuses to delete what it couldn't cancel. When that happens the board is
+ * re-read from the server — the card comes back, marked — and she is told
+ * why, because a slot that silently disappears while still queued is a post
+ * going out with nowhere left to see it.
+ */
 function mirrorDelete(corePostId: string, format?: FormatId): void {
   if (typeof window === "undefined") return
   const qs = new URLSearchParams({ corePostId })
   if (format) qs.set("format", format)
   void fetch(`${SCHEDULE_API}?${qs.toString()}`, { method: "DELETE" })
-    .then((res) => {
-      if (!res.ok) mirrorFailed("delete", res.status)
+    .then(async (res) => {
+      if (res.ok) return
+      mirrorFailed("delete", res.status)
+      const json = (await res.json().catch(() => null)) as { message?: string } | null
+      if (json?.message) toast.error(json.message)
+      await syncScheduledFromServer()
     })
     .catch((err) => mirrorFailed("delete", err))
+}
+
+// --- Publish status (the Instagram queue) ---------------------------------
+
+const slotKeyOf = (corePostId: string, format: FormatId) => `${corePostId}:${format}`
+
+/**
+ * Merge server-computed publish states into the cached board.
+ *
+ * Permalinks aren't stored server-side yet, so a later answer without one
+ * keeps the link an earlier answer gave.
+ */
+function applyPublishStates(states: Record<string, PublishState>): void {
+  const rows = readScheduledRaw()
+  let changed = false
+  const next = rows.map((row) => {
+    const state = states[slotKeyOf(row.corePostId, row.format)]
+    if (!state) return row
+    changed = true
+    const permalink = state.permalink ?? row.publish?.permalink ?? null
+    return {
+      ...row,
+      publish: { ...state, permalink },
+      publishedAt: state.status === "published" ? (state.publishedAt ?? row.publishedAt) : row.publishedAt,
+    }
+  })
+  if (changed) writeArray(SCHEDULED_KEY, next)
+}
+
+/** The publish state of one slot, from the cache. Undefined when not on the board. */
+export function getPublishState(corePostId: string, format: FormatId): PublishState | undefined {
+  return getScheduledByPostAndFormat(corePostId, format)?.publish
+}
+
+/**
+ * Ask the server what happened since: outcomes of slots whose time passed,
+ * edits made after a slot was queued, a lapsed connection. Call when a
+ * surface that shows publish status opens (the calendar does, on mount).
+ */
+export async function refreshPublishStatus(): Promise<void> {
+  if (typeof window === "undefined") return
+  try {
+    const res = await fetch(`${SCHEDULE_API}/publish`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "refresh" }),
+    })
+    if (!res.ok) return
+    const json = (await res.json().catch(() => null)) as {
+      publish?: Record<string, PublishState>
+    } | null
+    if (json?.publish) applyPublishStates(json.publish)
+  } catch (err) {
+    mirrorFailed("publish-refresh", err)
+  }
+}
+
+/**
+ * The card's action buttons. `retry` re-runs the push; `update` replaces the
+ * provider's copy with the current caption and media. Resolves to the new
+ * state so the caller can toast on it.
+ */
+export async function retryPublish(
+  corePostId: string,
+  format: FormatId,
+  mode: "retry" | "update" = "retry",
+): Promise<PublishState | undefined> {
+  if (typeof window === "undefined") return undefined
+  applyPublishStates({ [slotKeyOf(corePostId, format)]: { status: "pending" } })
+  try {
+    const res = await fetch(`${SCHEDULE_API}/publish`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: mode, corePostId, format }),
+    })
+    const json = (await res.json().catch(() => null)) as {
+      publish?: Record<string, PublishState>
+    } | null
+    if (json?.publish) {
+      applyPublishStates(json.publish)
+      return json.publish[slotKeyOf(corePostId, format)]
+    }
+  } catch (err) {
+    mirrorFailed("publish-retry", err)
+  }
+  // Nothing came back: say so rather than leave it spinning as "בתהליך".
+  const failed: PublishState = {
+    status: "failed",
+    code: "provider_error",
+    message: "לא הצלחנו להגיע לשרת. אפשר לנסות שוב.",
+  }
+  applyPublishStates({ [slotKeyOf(corePostId, format)]: failed })
+  return failed
 }
 
 /**
@@ -391,12 +530,22 @@ export async function syncScheduledFromServer(): Promise<void> {
     const local = readScheduledRaw()
 
     if (!alreadyBackfilled && server.length === 0 && local.length > 0) {
-      mirrorUpsert(local)
+      mirrorUpsert(local, { backfill: true })
       window.localStorage.setItem(BACKFILL_FLAG, "1")
       return
     }
 
     window.localStorage.setItem(BACKFILL_FLAG, "1")
+    // Keep a permalink an earlier refresh found — the server doesn't store it.
+    const linkByKey = new Map(
+      local
+        .filter((r) => r.publish?.permalink)
+        .map((r) => [slotKeyOf(r.corePostId, r.format), r.publish?.permalink]),
+    )
+    for (const row of server) {
+      const link = linkByKey.get(slotKeyOf(row.corePostId, row.format))
+      if (link && row.publish && !row.publish.permalink) row.publish = { ...row.publish, permalink: link }
+    }
     writeArray(SCHEDULED_KEY, server)
     rebuildPublishedFromScheduled(server)
   } catch (err) {
@@ -512,6 +661,14 @@ export function schedulePost(
   const existing = scheduled.find(
     (p) => p.corePostId === corePostId && p.format === format,
   )
+  // A slot that moves (or is new, or failed last time) is on its way to the
+  // provider again: "בתהליך" until the server answers. One that is re-saved
+  // in place keeps what it had — the server won't re-push it.
+  const moved =
+    !existing ||
+    existing.scheduledDate !== date ||
+    (existing.scheduledTime ?? DEFAULT_SCHEDULED_TIME) !== time ||
+    existing.publish?.status === "failed"
   const next: ScheduledPost = {
     corePostId,
     format,
@@ -519,6 +676,7 @@ export function schedulePost(
     scheduledTime: time,
     publishedAt: existing?.publishedAt ?? null,
     hook: cached?.hook ?? existing?.hook,
+    publish: moved ? { status: "pending" } : existing?.publish,
   }
   const others = scheduled.filter(
     (p) => !(p.corePostId === corePostId && p.format === format),

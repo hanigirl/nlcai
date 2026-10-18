@@ -33,6 +33,7 @@ import { getLocationToken, locationsToken } from "./highlevel-auth"
 import {
   SocialPublishError,
   type ConnectHandoff,
+  type ProviderPostState,
   type ScheduleResult,
   type SchedulePostInput,
   type SocialAccount,
@@ -81,6 +82,12 @@ type GhlFetchOptions = {
    * way that reads like a permissions bug.
    */
   token: string
+  /**
+   * Answer null on 404 instead of throwing. For reads and cancels of a post
+   * the provider may already have dropped — "it isn't there" is an answer,
+   * not a failure.
+   */
+  notFoundOk?: boolean
 }
 
 async function ghlFetch<T>(path: string, opts: GhlFetchOptions): Promise<T> {
@@ -103,6 +110,8 @@ async function ghlFetch<T>(path: string, opts: GhlFetchOptions): Promise<T> {
   if (!res.ok) {
     const detail = await res.text().catch(() => "")
 
+    if (res.status === 404 && opts.notFoundOk) return null as T
+
     // 401 from an agency token is our misconfiguration. A *connection* going
     // stale shows up as 4xx on the posting endpoints instead, which is the
     // case worth telling her about — a lapsed Instagram token is the single
@@ -113,9 +122,11 @@ async function ghlFetch<T>(path: string, opts: GhlFetchOptions): Promise<T> {
         "needs_reconnect"
       )
     }
-    if (res.status === 429) {
+    if (res.status === 429 || /limit/i.test(detail) && /24|day|daily/i.test(detail)) {
+      // Nothing re-queues it for tomorrow on its own — saying so would be the
+      // exact quiet lie this whole status model exists to prevent.
       throw new SocialPublishError(
-        "הגעת למגבלת הפרסומים היומית של אינסטגרם (25 ביממה). הפוסט יידחה למחר.",
+        "הגעתם למגבלת הפרסומים היומית של אינסטגרם. הפוסט לא תוזמן. אפשר לבחור מועד אחר או לנסות שוב מחר.",
         "rate_limited"
       )
     }
@@ -126,8 +137,30 @@ async function ghlFetch<T>(path: string, opts: GhlFetchOptions): Promise<T> {
     // request body. This cost an afternoon on 2026-10-08.
     if (res.status === 422) {
       if (path.includes("/posts")) {
+        // The provider's floor: it refuses anything under ~6 minutes ahead,
+        // and says so in these words (verified live 2026-10-08). That is a
+        // timing problem, not a media one — sending her to fix her images
+        // for it would cost her an afternoon too.
+        if (/schedule\s*date/i.test(detail)) {
+          throw new SocialPublishError(
+            "השעה שנבחרה כבר עברה או קרובה מדי. צריך לבחור מועד מאוחר יותר.",
+            "too_soon"
+          )
+        }
+        console.error(`[social] provider refused ${path}: ${detail.slice(0, 300)}`)
+        // Schema complaints ("property x should not exist", "accountIds must
+        // be an array") are about OUR request body, not her media. Sending her
+        // to re-check aspect ratios for them is a wild-goose chase — this one
+        // was found on 2026-10-18 exactly that way.
+        if (/should not exist|must be an array|should not be empty|must be one of/i.test(detail)) {
+          throw new SocialPublishError(
+            `provider refused the request body for ${path}: ${detail.slice(0, 300)}`,
+            "provider_error",
+            false
+          )
+        }
         throw new SocialPublishError(
-          "אינסטגרם דחתה את המדיה. בדקי שיחס הגובה-רוחב בין 4:5 ל-1.91:1 ושהקובץ קטן מ-8MB.",
+          "אינסטגרם דחתה את המדיה. צריך לוודא שיחס הגובה-רוחב בין 4:5 ל-1.91:1 ושהקובץ קטן מ-8MB.",
           "media_rejected"
         )
       }
@@ -173,7 +206,7 @@ function mimeFor(media: SocialMedia): string {
  *   - `media[].type` is a MIME type ("image/png"), not a category ("image").
  *   - `userId` is required for OAuth-channel posts and was missing entirely.
  *
- * `thumbnail` remains a guess — reels were not part of that run.
+ * The reel cover (`thumbnail`) is accepted but not kept — see below.
  */
 function buildPostBody(
   input: SchedulePostInput,
@@ -184,13 +217,19 @@ function buildPostBody(
     accountIds: [plannerAccountId],
     userId,
     summary: input.caption,
-    media: input.media.map((m) => ({ url: m.url, type: mimeFor(m) })),
+    // Reel cover. Verified live (2026-10-18): a top-level `thumbnail` is
+    // refused outright ("property thumbnail should not exist") and failed
+    // every reel that had a cover. Per media item it is accepted — but read
+    // back, the provider has stored it EMPTY (same for `defaultThumb`). So
+    // reels queue and publish, but our generated cover does not reach
+    // Instagram through this API yet; Instagram picks a frame. Kept here so
+    // the day the provider honours it, nothing else changes.
+    media: input.media.map((m) => ({
+      url: m.url,
+      type: mimeFor(m),
+      ...(input.coverUrl && m.type === "video" ? { thumbnail: input.coverUrl } : {}),
+    })),
     type: input.kind,
-    // Reel cover. HighLevel documents thumbnail support for reels but not the
-    // field name, so this is one of the guesses — omitted entirely rather than
-    // sent as null, since a stray null is likelier to be rejected than a
-    // missing key.
-    ...(input.coverUrl ? { thumbnail: input.coverUrl } : {}),
     // ISO-8601. `publishAt` is already an absolute instant by contract — the
     // calendar's local-day-plus-hour has been resolved before it gets here.
     scheduleDate: input.publishAt.toISOString(),
@@ -412,7 +451,7 @@ export class HighLevelPublisher implements SocialPublisher {
         JSON.stringify(page).slice(0, 600),
       )
       throw new SocialPublishError(
-        "החשבון שאינסטגרם החזירה חסר פרטים. נסי לחבר שוב.",
+        "החשבון שאינסטגרם החזירה חסר פרטים. נסו לחבר שוב.",
         "provider_error",
         false
       )
@@ -507,17 +546,20 @@ export class HighLevelPublisher implements SocialPublisher {
     return row
   }
 
-  async schedulePost(input: SchedulePostInput): Promise<ScheduleResult> {
-    validate(input)
-
+  /**
+   * Where a post for this input goes: the sub-account, a token for it, and
+   * the planner's own id for the account.
+   *
+   * The id we stored at connect time is the OAuth grant's. The posting
+   * endpoints want the *planner's* id for the same account, which is a
+   * different string, so resolve it from the provider rather than storing a
+   * second id that can drift out of step with the first.
+   */
+  private async plannerTarget(input: SchedulePostInput) {
     const account = await this.accountRow(input.userId, input.socialAccountId)
     const locationId = account.external_tenant_id ?? (await this.tenantId(input.userId))
     const token = await getLocationToken(locationId)
 
-    // The id we stored at connect time is the OAuth grant's. The posting
-    // endpoints want the *planner's* id for the same account, which is a
-    // different string, so resolve it from the provider rather than storing a
-    // second id that can drift out of step with the first.
     const connected = await ghlFetch<{
       results?: { accounts?: { id?: string; oauthId?: string }[] }
     }>(`/social-media-posting/${locationId}/accounts`, { token })
@@ -526,11 +568,22 @@ export class HighLevelPublisher implements SocialPublisher {
       (a) => a.oauthId === account.external_account_id,
     )
     if (!match?.id || !match.oauthId) {
+      // The account is no longer attached to her workspace. This is the
+      // strongest "reconnect" signal we get, so it is the one flagged as
+      // account-level (see SocialPublishError.accountLost).
       throw new SocialPublishError(
         "החיבור לאינסטגרם פג. צריך לחבר מחדש כדי שהפוסטים ימשיכו לצאת.",
-        "needs_reconnect"
+        "needs_reconnect",
+        true,
+        true,
       )
     }
+    return { locationId, token, plannerAccountId: match.id, plannerUserId: match.oauthId }
+  }
+
+  async schedulePost(input: SchedulePostInput): Promise<ScheduleResult> {
+    validate(input)
+    const { locationId, token, plannerAccountId, plannerUserId } = await this.plannerTarget(input)
 
     const created = await ghlFetch<{
       id?: string
@@ -538,7 +591,7 @@ export class HighLevelPublisher implements SocialPublisher {
       results?: { post?: { id?: string; _id?: string } }
     }>(`/social-media-posting/${locationId}/posts`, {
       method: "POST",
-      body: buildPostBody(input, match.id, match.oauthId),
+      body: buildPostBody(input, plannerAccountId, plannerUserId),
       token,
     })
 
@@ -562,16 +615,22 @@ export class HighLevelPublisher implements SocialPublisher {
     return { providerPostId }
   }
 
-  async reschedulePost(
-    userId: string,
-    providerPostId: string,
-    publishAt: Date
-  ): Promise<void> {
-    const locationId = await this.tenantId(userId)
+  /**
+   * Move a queued post, carrying the current content with it.
+   *
+   * Verified live (2026-10-18): the edit endpoint refuses a partial body —
+   * a PUT with only `scheduleDate` answers 422 listing `accountIds`, `media`
+   * and `type` as required. So a move is a full replace, built exactly like
+   * the create, which also means the provider's copy is never older than the
+   * board's content after a move.
+   */
+  async reschedulePost(input: SchedulePostInput, providerPostId: string): Promise<void> {
+    validate(input)
+    const { locationId, token, plannerAccountId, plannerUserId } = await this.plannerTarget(input)
     await ghlFetch(`/social-media-posting/${locationId}/posts/${providerPostId}`, {
       method: "PUT",
-      body: { scheduleDate: publishAt.toISOString() },
-      token: await getLocationToken(locationId),
+      body: buildPostBody(input, plannerAccountId, plannerUserId),
+      token,
     })
   }
 
@@ -580,6 +639,97 @@ export class HighLevelPublisher implements SocialPublisher {
     await ghlFetch(`/social-media-posting/${locationId}/posts/${providerPostId}`, {
       method: "DELETE",
       token: await getLocationToken(locationId),
+      notFoundOk: true,
     })
+  }
+
+  /**
+   * Read a post back — including whether it actually went out.
+   *
+   * Verified live (2026-10-18) against the 8.10 test reel. The post we create
+   * is a *parent*: while it waits it is `status: "scheduled"`, `deleted:
+   * false`. When its time comes the provider marks the parent `deleted: true`
+   * (its `status` stays "scheduled" and `publishedAt` stays null forever — the
+   * trap) and spawns one child per platform whose `parentPostId` is our id.
+   * The child carries the truth: `status: "published"`, `publishedAt`,
+   * `postId` (the Instagram media id) and `previewLink` (the permalink) — or
+   * `status: "failed"` with `error`.
+   *
+   * The child is only reachable through the list endpoint, so a parent that
+   * has gone out costs one extra call. A parent still waiting costs none.
+   */
+  async getPost(userId: string, providerPostId: string): Promise<ProviderPostState> {
+    const locationId = await this.tenantId(userId)
+    const token = await getLocationToken(locationId)
+
+    type GhlPost = {
+      _id?: string
+      deleted?: boolean
+      status?: string
+      scheduleDate?: string | null
+      publishedAt?: string | null
+      previewLink?: string | null
+      parentPostId?: string | null
+      error?: unknown
+    }
+
+    const got = await ghlFetch<{ results?: { post?: GhlPost } } | null>(
+      `/social-media-posting/${locationId}/posts/${providerPostId}`,
+      { token, notFoundOk: true },
+    )
+    const parent = got?.results?.post
+    if (!parent) return { outcome: "missing", scheduledAt: null }
+
+    const scheduledAt = parent.scheduleDate ? new Date(parent.scheduleDate) : null
+    if (!parent.deleted) {
+      return { outcome: "scheduled", scheduledAt }
+    }
+    // Deleted before its time came: cancelled, not published. (A cancelled
+    // post still answers 200 here, just with `deleted: true` — verified live.)
+    if (scheduledAt && scheduledAt.getTime() > Date.now()) {
+      return { outcome: "missing", scheduledAt }
+    }
+
+    // Gone out (or cancelled). Look for the child that carries the outcome,
+    // in a window around the slot — the list filters on schedule date.
+    const around = scheduledAt?.getTime() ?? Date.now()
+    const listed = await ghlFetch<{ results?: { posts?: GhlPost[] } }>(
+      `/social-media-posting/${locationId}/posts/list`,
+      {
+        method: "POST",
+        token,
+        body: {
+          type: "all",
+          skip: "0",
+          limit: "50",
+          fromDate: new Date(around - 2 * 86400_000).toISOString(),
+          toDate: new Date(around + 2 * 86400_000).toISOString(),
+          includeUsers: "false",
+        },
+      },
+    )
+    const child = (listed.results?.posts ?? []).find(
+      (p) => p.parentPostId === providerPostId,
+    )
+
+    if (!child) return { outcome: "missing", scheduledAt }
+
+    if (child.status === "published") {
+      return {
+        outcome: "published",
+        scheduledAt: null,
+        publishedAt: child.publishedAt ? new Date(child.publishedAt) : null,
+        permalink: child.previewLink ?? null,
+      }
+    }
+    if (child.status === "failed" || child.error) {
+      return {
+        outcome: "failed",
+        scheduledAt,
+        error: typeof child.error === "string" ? child.error : JSON.stringify(child.error ?? null),
+      }
+    }
+    // "in_progress" and anything new: still on its way.
+    return { outcome: "scheduled", scheduledAt }
   }
 }
