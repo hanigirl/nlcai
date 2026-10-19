@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { ThumbsDown, ThumbsUp } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -10,6 +10,12 @@ import { getAiStyle, recordAiStyleVote } from "@/lib/ai-style-provenance"
 import { getFormatMeta } from "@/lib/timing-storage"
 import { BRAND_TEMPLATE_ID } from "@/lib/carousel-templates"
 import { DISLIKE_REASONS, type DislikeReason } from "@/lib/visual-language/types"
+import {
+  getLikeCount,
+  hasReachedThreshold,
+  incrementLikeCount,
+  resetLikeCount,
+} from "@/lib/style-feedback-count"
 
 type FeedbackStyle = "brand" | "ai-dark" | "ai-light"
 
@@ -38,16 +44,20 @@ export function CardStyleFeedback({
 
   let style: FeedbackStyle | null = null
   let vote: "like" | "dislike" | undefined
+  let visualLanguage: string | undefined
   if (format === "carousel") {
     const tid = getFormatMeta(postId, "carousel").templateId
     style = tid === BRAND_TEMPLATE_ID ? "brand" : tid === "ai-dark" || tid === "ai-light" ? tid : null
-    vote = getAiStyle(postId, "carousel")?.vote
+    const rec = getAiStyle(postId, "carousel")
+    vote = rec?.vote
+    visualLanguage = rec?.visualLanguageSignature
   } else {
     const rec = getAiStyle(postId, format)
     // Story sets have no stable URL until reload — tracked per format only.
     if (rec && rec.style !== "niche" && (format === "story" || rec.mediaKey === mediaUrl)) {
       style = rec.style
       vote = rec.vote
+      visualLanguage = rec.visualLanguageSignature
     }
   }
   if (!style) return null
@@ -60,6 +70,7 @@ export function CardStyleFeedback({
       style={style}
       mediaUrl={mediaUrl}
       initialVote={vote}
+      visualLanguage={visualLanguage}
     />
   )
 }
@@ -70,17 +81,33 @@ function StyleFeedbackRow({
   style,
   mediaUrl,
   initialVote,
+  visualLanguage,
 }: {
   postId: string
   format: string
   style: FeedbackStyle
   mediaUrl?: string | null
   initialVote?: "like" | "dislike"
+  visualLanguage?: string
 }) {
+  const sig = visualLanguage ?? `${postId}:${format}`
+
   const [vote, setVote] = useState<"like" | "dislike" | null>(initialVote ?? null)
   const [askingWhy, setAskingWhy] = useState(false)
   const [reasons, setReasons] = useState<DislikeReason[]>([])
   const [note, setNote] = useState("")
+  const [collapsed, setCollapsed] = useState(() => hasReachedThreshold(sig))
+  const [fadingOut, setFadingOut] = useState(false)
+
+  const prevSigRef = useRef(sig)
+  useEffect(() => {
+    const prevSig = prevSigRef.current
+    if (prevSig !== sig) {
+      resetLikeCount(prevSig)
+      prevSigRef.current = sig
+      setCollapsed(hasReachedThreshold(sig))
+    }
+  }, [sig])
 
   const httpUrl = mediaUrl?.startsWith("http") ? mediaUrl : undefined
 
@@ -131,8 +158,18 @@ function StyleFeedbackRow({
       setVoteEverywhere(prev)
       setAskingWhy(false)
       toast.error(res.message ?? "הפידבק לא נשמר. נסו שוב.")
-    } else if (next === "like" && res.message) {
-      toast.success(res.message, { duration: 5000 })
+    } else if (next === "like") {
+      const newCount = incrementLikeCount(sig)
+      if (res.message) {
+        toast.success(res.message, { duration: 5000 })
+      }
+      if (newCount >= 5) {
+        setFadingOut(true)
+        setTimeout(() => {
+          setCollapsed(true)
+          setFadingOut(false)
+        }, 300)
+      }
     }
   }
 
@@ -147,8 +184,30 @@ function StyleFeedbackRow({
     setNote("")
   }
 
+  if (collapsed) {
+    return (
+      <div className="relative flex w-full flex-col" onMouseDown={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          aria-label="פידבק על הסגנון"
+          onClick={() => {
+            setCollapsed(false)
+            setAskingWhy(true)
+          }}
+          className="absolute top-1 end-1 flex size-5 items-center justify-center rounded-full text-gray-300 hover:text-gray-400 cursor-pointer"
+        >
+          <ThumbsUp className="size-3" />
+        </button>
+        <div className="h-px w-full bg-border-neutral-default" role="separator" />
+      </div>
+    )
+  }
+
   return (
-    <div className="flex w-full flex-col gap-3" onMouseDown={(e) => e.stopPropagation()}>
+    <div
+      className={`flex w-full flex-col gap-3 transition-all duration-300 ${fadingOut ? "opacity-0 translate-y-1" : "opacity-100 translate-y-0"}`}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
       {/* The whole row is the tooltip trigger, so hovering anywhere on it —
           the text or either button — explains what the vote does. */}
       <Tooltip>
