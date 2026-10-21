@@ -210,6 +210,7 @@ export function buildPreviewData(
   statusPick: StatusPick,
   content: PreviewContentState | "too-long",
   captionOverrides: Map<string, string>,
+  isPast = false,
 ): FormatPreviewData {
   const k = key(post.corePostId, post.format)
   // Rail items aren't in SEED_FORMATS — borrow a same-format sample caption
@@ -234,9 +235,12 @@ export function buildPreviewData(
     handle: PREVIEW_HANDLE,
     scheduledDate: post.scheduledDate,
     scheduledTime: post.scheduledDate ? (post.scheduledTime ?? "09:00") : "",
+    isPast,
     publish: !post.scheduledDate
       ? { kind: "unscheduled" }
-      : statusPick === "mixed"
+      : isPast && statusPick === "mixed"
+        ? { kind: "sent" }
+        : statusPick === "mixed"
         ? (MIXED[k] ?? STATUS.scheduled)
         : STATUS[statusPick],
   }

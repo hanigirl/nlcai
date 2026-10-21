@@ -183,6 +183,7 @@ function FormatCard({
   isPublished,
   selected,
   timeTag,
+  past = false,
   onCardClick,
   onUnschedule,
   onReschedule,
@@ -197,6 +198,8 @@ function FormatCard({
   selected?: boolean
   /** `?timeview=b` — show the slot's time as a tag on the media. */
   timeTag?: boolean
+  /** The slot's time has passed — disabled: faded, no drag, no menu. */
+  past?: boolean
   /** Click on the card body — open the preview Sheet for the core post. */
   onCardClick: () => void
   /** Kebab → "הסרת הפורמט". Unschedules THIS format at THIS slot. */
@@ -227,8 +230,9 @@ function FormatCard({
     <div
       // Whole card is the drag handle — stamps the (post, format) tuple so a
       // drop re-schedules exactly this format's row (upsert-keyed in storage).
-      draggable
+      draggable={!past}
       onDragStart={(e) => {
+        if (past) return
         e.dataTransfer.setData(
           "application/x-scheduled-chip",
           JSON.stringify({ corePostId: post.corePostId, format: post.format }),
@@ -246,9 +250,12 @@ function FormatCard({
       }}
       title={publishedTitle}
       aria-label={`${formatLabel} מתוזמן: ${hook}`}
-      className={`group/chip relative w-full min-w-0 flex flex-col gap-1.5 rounded-lg border border-border-neutral-default bg-white dark:bg-gray-10 p-1.5 cursor-grab active:cursor-grabbing transition-all hover:bg-bg-surface-hover hover:border-gray-80 hover:ring-2 hover:ring-gray-80/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
-        isPublished ? "opacity-60" : ""
-      }${selected ? " ring-2 ring-yellow-50 border-yellow-50" : ""}`}
+      aria-disabled={past || undefined}
+      className={`group/chip relative w-full min-w-0 flex flex-col gap-1.5 rounded-lg border border-border-neutral-default bg-white dark:bg-gray-10 p-1.5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+        past
+          ? "opacity-50 grayscale cursor-pointer"
+          : "cursor-grab active:cursor-grabbing hover:bg-bg-surface-hover hover:border-gray-80 hover:ring-2 hover:ring-gray-80/30"
+      } ${isPublished && !past ? "opacity-60" : ""}${selected ? " ring-2 ring-yellow-50 border-yellow-50" : ""}`}
       aria-current={selected || undefined}
     >
       {/* Media — a small portrait slot mirroring the queue / core-post card
@@ -276,6 +283,7 @@ function FormatCard({
         {/* Kebab — hover/focus revealed, top-end over the media. Swallows
             click + pointer + keydown so the outer card's onClick / dragstart
             never fire while the menu is in use. */}
+        {!past && (
         <DropdownMenu dir="rtl">
           <DropdownMenuTrigger asChild>
             <button
@@ -311,6 +319,7 @@ function FormatCard({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        )}
       </div>
 
       {/* Text — hook + format chip, mirroring the queue card (compact). */}
@@ -375,6 +384,19 @@ function FormatCard({
   )
 }
 
+/**
+ * The slot's moment has passed (Hani, 2026-10-22, Later-style): the card on
+ * the board goes disabled — faded, not draggable, no actions menu. Click still
+ * opens the preview, read-only.
+ */
+function isSlotPast(post: ScheduledPost, now: Date): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(post.scheduledDate)
+  if (!m) return false
+  const [h, min] = (post.scheduledTime ?? DEFAULT_SCHEDULED_TIME).split(":").map(Number)
+  const at = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), h || 0, min || 0)
+  return at.getTime() <= now.getTime()
+}
+
 // --- timeview a: hour rows ------------------------------------------------
 // Review option (`?timeview=a`, Hani 2026-10-22): the times sit in a gutter on
 // the right and each post lands in its time's row. Only times that have a post
@@ -424,7 +446,7 @@ function HourRowsBoard({
           filler ? "" : "border-b"
         } ${isToday ? "bg-yellow-95/40" : "bg-white dark:bg-gray-10"} ${
           isDragOver ? "ring-2 ring-inset ring-yellow-50 bg-bg-surface-primary-default" : ""
-        } ${past ? "opacity-60 cursor-not-allowed" : ""}`}
+        } ${past ? "cursor-not-allowed" : ""}`}
       >
         {content}
       </div>
@@ -664,6 +686,19 @@ export default function CalendarPage() {
           .filter((d) => !isPastDate(d, today))
           .map(toDateKey),
       )
+      // One slot that has already passed — yesterday 18:00 — to show the
+      // disabled state. Only when yesterday is still in this week.
+      const yesterday = addDays(today, -1)
+      if (isSameDay(startOfWeek(yesterday), startOfWeek(today))) {
+        rows.push({
+          corePostId: "seed-1",
+          format: "carousel",
+          scheduledDate: toDateKey(yesterday),
+          scheduledTime: "18:00",
+          publishedAt: null,
+          hook: seedHookFor("seed-1"),
+        })
+      }
       setReviewScheduled(rows)
       // On the board = already approved. Without this, removing one sent it
       // to "ממתינים לאישור" instead of back to "מוכנים לתזמון".
@@ -958,6 +993,7 @@ export default function CalendarPage() {
         previewStatus,
         previewContent,
         previewCaptions,
+        isSlotPast(previewRow, new Date()),
       )
     : null
   const previewContentState = previewContent === "too-long" ? "ready" : previewContent
@@ -1018,6 +1054,7 @@ export default function CalendarPage() {
         key={`${post.corePostId}:${post.format}`}
         post={post}
         timeTag={timeView === "b"}
+        past={isSlotPast(post, new Date())}
         hook={hook}
         mediaUrl={mediaUrl}
         isPublished={isPublished}
@@ -1247,7 +1284,7 @@ export default function CalendarPage() {
                     aria-label={`${WEEKDAY_LABELS[dayOfWeek]} ${day.getDate()}${isToday ? " — היום" : ""}${past ? " — תאריך שעבר" : ""}`}
                     className={`relative overflow-y-auto scrollbar-subtle min-w-0 transition-colors ${isLastCol ? "" : "border-l"} border-border-neutral-default ${dayBg} ${
                       isDragOver ? "ring-2 ring-inset ring-yellow-50 bg-bg-surface-primary-default z-10" : ""
-                    } ${past ? "opacity-60 cursor-not-allowed" : ""}`}
+                    } ${past ? "cursor-not-allowed" : ""}`}
                   >
                     {/* Cards stack from the top. `min-h-full` keeps the whole
                         column a drop target even when it's nearly empty. */}

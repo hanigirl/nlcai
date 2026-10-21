@@ -69,6 +69,8 @@ export type PublishStatus =
       action: "reconnect" | "retry" | "fix_media"
     }
   | { kind: "published"; permalink?: string }
+  /** The time passed but no "published" signal yet — Ben's "יצא לפרסום". */
+  | { kind: "sent" }
 
 export type PreviewSlide = { url: string; type: "image" | "video" }
 
@@ -87,6 +89,8 @@ export type FormatPreviewData = {
   scheduledDate: string
   scheduledTime: string
   publish: PublishStatus
+  /** The slot's time has passed — the preview is read-only. */
+  isPast?: boolean
 }
 
 export type PreviewContentState = "ready" | "loading" | "no-media"
@@ -182,6 +186,11 @@ export function PublishStatusSlot({
       title = "לא תוזמן"
       body = status.reason
       action = { label: FAILED_ACTION_LABEL[status.action], id: status.action }
+      break
+    case "sent":
+      icon = <CalendarCheck className="size-4 text-text-neutral-default" aria-hidden />
+      title = `יצא לפרסום · ${formatSlotShort(date, time)}`
+      body = "עוד לא קיבלנו מאינסטגרם אישור שהפוסט עלה."
       break
     case "published":
       icon = <CheckCircle2 className="size-4 text-green-50" aria-hidden />

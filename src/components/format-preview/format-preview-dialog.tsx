@@ -125,7 +125,8 @@ function DialogBody({
 
   const kind = destinationForFormat(data.format)
   const isStory = kind === "story"
-  const isPublished = data.publish.kind === "published"
+  // Published, or its time has passed: read-only (nothing left to schedule).
+  const isPublished = data.publish.kind === "published" || !!data.isPast
   const loading = content === "loading"
 
   return (
