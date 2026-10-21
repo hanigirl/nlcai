@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { ArrowUp, Check, Loader2, Sparkles, X } from "lucide-react"
+import { ArrowUp, Check, Loader2, X } from "lucide-react"
+import { AiSparkle } from "@/components/ai-refine-button"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { startBRollEdit } from "@/lib/broll-generation-store"
@@ -82,7 +83,7 @@ export function BRollAiChat({
     >
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">
-        <Sparkles className="size-4 text-yellow-40" aria-hidden />
+        <AiSparkle />
         <span className="text-small-bold text-text-primary-default">עריכת בי-רול עם AI</span>
         <button
           type="button"
