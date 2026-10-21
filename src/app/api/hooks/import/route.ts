@@ -5,7 +5,7 @@ import { getAuthUser } from "@/lib/auth-user"
 import { getUserApiKey } from "@/lib/api-keys"
 import { extractFileContent } from "@/lib/extract-file-content"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
-import { generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
+import { GeminiError, generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
 import {
   buildHookExtractionPrompt,
   dedupeHooks,
@@ -127,20 +127,30 @@ async function extractWithModel(
 ): Promise<string[] | null> {
   const prompt = buildHookExtractionPrompt(text)
 
+  const anthropicKey = await getUserApiKey(supabase, "anthropic_api_key").catch(() => "")
+
   const geminiKey = await getUserApiKey(supabase, "gemini_api_key").catch(() => "")
   if (geminiKey) {
-    const { text: raw } = await generateWithGeminiFallback(geminiKey, {
-      prompt,
-      maxOutputTokens: 8192,
-      // Copying lines out of a document needs no deep reasoning.
-      thinkingLevel: "low",
-      timeoutMs: 60_000,
-      fallbackTimeoutMs: 45_000,
-    })
-    return parseExtractedHooks(raw)
+    try {
+      const { text: raw } = await generateWithGeminiFallback(geminiKey, {
+        prompt,
+        maxOutputTokens: 8192,
+        // Copying lines out of a document needs no deep reasoning.
+        thinkingLevel: "low",
+        timeoutMs: 60_000,
+        fallbackTimeoutMs: 45_000,
+      })
+      return parseExtractedHooks(raw)
+    } catch (err) {
+      // Same stand-in as the hook writers: when Google refuses the key for
+      // quota, Claude reads the file instead of the import failing outright.
+      // No notice — copying lines out of a document comes out the same
+      // either way, unlike writing new hooks.
+      if (!(err instanceof GeminiError && err.code === "quota" && anthropicKey)) throw err
+      console.warn("[api/hooks/import] Gemini quota hit — Claude extracts instead:", err.message)
+    }
   }
 
-  const anthropicKey = await getUserApiKey(supabase, "anthropic_api_key").catch(() => "")
   if (!anthropicKey) return null
 
   const client = new Anthropic({ apiKey: anthropicKey })

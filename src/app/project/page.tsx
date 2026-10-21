@@ -44,6 +44,7 @@ import { userKey } from "@/lib/user-scoped-storage"
 import { logLearningEdit } from "@/lib/learning-capture"
 import { BROLL_SCRIPT_CTA } from "@/lib/broll-copy"
 import { getCurrentUser } from "@/lib/supabase/current-user"
+import { handleGeminiQuotaFrame } from "@/lib/gemini-quota-toasts"
 
 type Flow = "idea" | "hook" | "saved"
 
@@ -1454,6 +1455,8 @@ function ProjectPageInner() {
           setHooks(texts)
           setOriginalHooks(texts)
           setHookIds(ids)
+          // Gemini's quota ran out and Claude wrote these — say so.
+          handleGeminiQuotaFrame(data)
         }
       })
       .catch(() => setError("שגיאה ביצירת הוקים"))

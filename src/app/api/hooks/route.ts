@@ -8,7 +8,7 @@ import { findNearDuplicate } from "@/lib/agents/hook-similarity"
 import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
-import { generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
+import { GeminiError, generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
 import { detectAddressGender, detectAddressGenderFromText } from "@/lib/detect-addressing"
 import { getAuthUser } from "@/lib/auth-user"
 
@@ -252,8 +252,14 @@ export async function POST(req: NextRequest) {
     // it can be cached; see buildHookGeneratorSystem.
     const systemPrompt = buildHookGeneratorSystem({ count, addressGender })
 
-    let hookTexts: string[]
+    let hookTexts: string[] = []
     let modelFallback = false
+    // Set when Google refused the Gemini call for quota and Claude wrote the
+    // round instead — the same stand-in /api/homepage-hooks got on
+    // 2026-10-08. This route was missed then, so on /project a blocked key
+    // still ended in "Google חסמה זמנית" and zero hooks (Rivki, 2026-10-21).
+    let geminiQuotaFallback: { daily: boolean; resetAt: string | null } | null = null
+    let writeWithClaude = !geminiCohort
 
     if (geminiCohort) {
       // One Gemini call, the exact same prompt the Claude writer receives
@@ -271,21 +277,40 @@ export async function POST(req: NextRequest) {
       // routinely runs past a minute, so it gets 180s; Flash is fast enough
       // that 60s is already generous. Worst case both fire back to back at
       // 240s, still inside this route's maxDuration of 300.
-      const { text: rawText, fallback } = await generateWithGeminiFallback(geminiKey, {
-        prompt: `${systemPrompt}\n\n${prompt}`,
-        maxOutputTokens: count > 5 ? 24576 : 16384,
-        thinkingLevel: "high",
-        timeoutMs: 180_000,
-        fallbackTimeoutMs: 60_000,
-      })
-      modelFallback = fallback
-      hookTexts = parseHooks(rawText, count)
-
-      if (hookTexts.length === 0) {
-        console.error(`[api/hooks] Gemini returned nothing parseable. First 300 chars: ${rawText.slice(0, 300)}`)
-        return NextResponse.json({ error: "no_hooks_generated" }, { status: 502 })
+      let rawText: string | null = null
+      try {
+        const res = await generateWithGeminiFallback(geminiKey, {
+          prompt: `${systemPrompt}\n\n${prompt}`,
+          maxOutputTokens: count > 5 ? 24576 : 16384,
+          thinkingLevel: "high",
+          timeoutMs: 180_000,
+          fallbackTimeoutMs: 60_000,
+        })
+        rawText = res.text
+        modelFallback = res.fallback
+      } catch (err) {
+        // Quota is the one Gemini failure Claude can stand in for — the key
+        // works, Google just won't serve it right now. Without a Claude key
+        // there's nothing to fall back to, so the quota error stands.
+        if (!(err instanceof GeminiError && err.code === "quota" && anthropicKey)) throw err
+        console.warn(`[api/hooks] Gemini quota hit (daily=${!!err.daily}) — Claude writes this round:`, err.message)
+        geminiQuotaFallback = {
+          daily: !!err.daily,
+          resetAt: err.retryAfterMs ? new Date(Date.now() + err.retryAfterMs).toISOString() : null,
+        }
+        writeWithClaude = true
       }
-    } else {
+
+      if (rawText !== null) {
+        hookTexts = parseHooks(rawText, count)
+        if (hookTexts.length === 0) {
+          console.error(`[api/hooks] Gemini returned nothing parseable. First 300 chars: ${rawText.slice(0, 300)}`)
+          return NextResponse.json({ error: "no_hooks_generated" }, { status: 502 })
+        }
+      }
+    }
+
+    if (writeWithClaude) {
       // Unchanged Claude path: write → judge every hook → polish the ones the
       // judge accepted.
       const client = new Anthropic({ apiKey: anthropicKey })
@@ -429,7 +454,19 @@ export async function POST(req: NextRequest) {
       }),
     )
 
-    return NextResponse.json({ hooks, model_fallback: modelFallback })
+    return NextResponse.json({
+      hooks,
+      model_fallback: modelFallback,
+      // Same frame shape the home page streams, so the client reuses
+      // handleGeminiQuotaFrame for the "Claude wrote these" toast.
+      ...(geminiQuotaFallback
+        ? {
+            gemini_quota_claude_fallback: hooks.length,
+            daily: geminiQuotaFallback.daily,
+            reset_at: geminiQuotaFallback.resetAt,
+          }
+        : {}),
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error("Hook generation error:", message)
