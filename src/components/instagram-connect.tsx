@@ -57,6 +57,13 @@ const PROVIDER_ORIGIN = "https://services.leadconnectorhq.com"
 const FACEBOOK_PAGE_NOTE =
   "חיבור אינסטגרם לתזמון אפשרי לחשבון שמקושר לדף פייסבוק. אם החשבון שלכם לא מקושר, צריך ליצור דף פייסבוק עסקי ולקשר אותו לחשבון האינסטגרם. אחרת התזמון לא יעבוד."
 
+/** One account the Facebook login exposes, when there are several to pick from. */
+type AccountOption = { originId: string; name: string; avatar: string | null }
+
+/** Where the picker goes when Facebook keeps handing back the old account. */
+const WRONG_ACCOUNT_HELP =
+  "בפייסבוק: הגדרות ← אינטגרציות עסקיות ← LeadConnector ← ״הצג וערוך״. מסמנים שם את החשבון והדף שרוצים, ואז חוזרים לכאן ולוחצים ״חיבור מחדש״."
+
 /** The shape the provider's popup posts back when it closes. */
 type ConnectMessage = {
   page?: string
@@ -95,7 +102,38 @@ async function afterConnectionChange() {
 function useConnectFlow() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Set when the login exposes several accounts: the grant to attach from,
+  // and the accounts to choose between.
+  const [choice, setChoice] = useState<{ accountId: string; options: AccountOption[] } | null>(null)
   const popupRef = useRef<Window | null>(null)
+
+  /** Attach the grant — and, the second time round, the account she picked. */
+  const save = useCallback(async (accountId: string, originId?: string) => {
+    setBusy(true)
+    try {
+      const res = await fetch("/api/social/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId, ...(originId ? { originId } : {}) }),
+      })
+      const json = await res.json()
+      if (res.status === 409 && json.error === "choose_account" && Array.isArray(json.choose)) {
+        setError(null)
+        setChoice({ accountId, options: json.choose as AccountOption[] })
+      } else if (!res.ok) {
+        setError(json.message ?? "לא הצלחנו לשמור את החיבור.")
+      } else {
+        setError(null)
+        setChoice(null)
+        await afterConnectionChange()
+        toast.success("אינסטגרם מחובר")
+      }
+    } catch {
+      setError("לא הצלחנו לשמור את החיבור.")
+    } finally {
+      setBusy(false)
+    }
+  }, [])
 
   useEffect(() => {
     async function onMessage(e: MessageEvent) {
@@ -125,33 +163,16 @@ function useConnectFlow() {
         return
       }
 
-      try {
-        const res = await fetch("/api/social/accounts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ accountId }),
-        })
-        const json = await res.json()
-        if (!res.ok) {
-          setError(json.message ?? "לא הצלחנו לשמור את החיבור.")
-        } else {
-          setError(null)
-          await afterConnectionChange()
-          toast.success("אינסטגרם מחובר")
-        }
-      } catch {
-        setError("לא הצלחנו לשמור את החיבור.")
-      } finally {
-        setBusy(false)
-      }
+      await save(accountId)
     }
 
     window.addEventListener("message", onMessage)
     return () => window.removeEventListener("message", onMessage)
-  }, [])
+  }, [save])
 
   const connect = useCallback(async () => {
     setError(null)
+    setChoice(null)
     setBusy(true)
 
     // Opened FIRST, synchronously — see the note at the top of the file.
@@ -182,7 +203,14 @@ function useConnectFlow() {
     }
   }, [])
 
-  return { busy, error, setError, connect }
+  const choose = useCallback(
+    (originId: string) => {
+      if (choice) void save(choice.accountId, originId)
+    },
+    [choice, save],
+  )
+
+  return { busy, error, setError, connect, choice, setChoice, choose }
 }
 
 // ---------------------------------------------------------------------------
@@ -265,9 +293,13 @@ function InstagramConnectDialog({
   const isLapsed = !!account && account.status === "needs_reconnect"
   const queued = account?.queuedCount ?? 0
 
+  const { setChoice } = flow
   useEffect(() => {
-    if (!open) setConfirmingDisconnect(false)
-  }, [open])
+    if (!open) {
+      setConfirmingDisconnect(false)
+      setChoice(null)
+    }
+  }, [open, setChoice])
 
   async function disconnect() {
     if (!account) return
@@ -308,7 +340,35 @@ function InstagramConnectDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {connection.status === "unavailable" ? (
+        {flow.choice ? (
+          <div className="flex flex-col gap-2">
+            <span className="text-small-bold text-text-primary-default">לאיזה חשבון לחבר?</span>
+            <div role="list" className="flex flex-col gap-1.5">
+              {flow.choice.options.map((o) => (
+                <button
+                  key={o.originId}
+                  type="button"
+                  role="listitem"
+                  onClick={() => flow.choose(o.originId)}
+                  disabled={flow.busy}
+                  className="flex items-center gap-3 rounded-xl border border-border-neutral-default p-3 text-start transition-colors hover:bg-bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 disabled:opacity-60"
+                >
+                  {o.avatar ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- Facebook CDN URL, short-lived and not in next/image's allow-list
+                    <img src={o.avatar} alt="" className="size-9 shrink-0 rounded-full object-cover" />
+                  ) : (
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-bg-surface">
+                      <Instagram className="size-4 text-text-neutral-default" aria-hidden />
+                    </span>
+                  )}
+                  <span className="truncate text-small-bold text-text-primary-default">
+                    <bdi>@{o.name.replace(/^@/, "")}</bdi>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : connection.status === "unavailable" ? (
           <p className="text-small text-text-neutral-default">
             החיבור לאינסטגרם ייפתח בקרוב. נעדכן ברגע שיהיה זמין.
           </p>
@@ -370,7 +430,7 @@ function InstagramConnectDialog({
           </p>
         )}
 
-        {connection.status !== "unavailable" && !confirmingDisconnect && (
+        {connection.status !== "unavailable" && !confirmingDisconnect && !flow.choice && (
           <DialogFooter className="gap-2 sm:justify-start">
             {isLive ? (
               <>
@@ -395,6 +455,13 @@ function InstagramConnectDialog({
               </Button>
             )}
           </DialogFooter>
+        )}
+
+        {connection.status !== "unavailable" && (
+          <p className="text-xs-body text-text-neutral-default">
+            <span className="font-semibold text-text-primary-default">לא רואה את החשבון הנכון? </span>
+            {WRONG_ACCOUNT_HELP}
+          </p>
         )}
       </DialogContent>
     </Dialog>

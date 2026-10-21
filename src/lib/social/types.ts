@@ -134,6 +134,26 @@ export interface ConnectHandoff {
  * out. Anything marked `userActionable` is something worth interrupting her
  * for — everything else is ours to fix.
  */
+/** One Instagram account a Facebook grant exposes — what the picker lists. */
+export interface ConnectOption {
+  originId: string
+  name: string
+  avatar: string | null
+}
+
+/**
+ * The grant exposes more than one account and none was named. Not a failure:
+ * the UI lists `options`, she picks one, and the connect is re-run with it.
+ * Taking the first silently is how a user who switched accounts kept landing
+ * back on the old one (Hani, 2026-10-22: uxtra vs manot171).
+ */
+export class AccountChoiceRequired extends Error {
+  constructor(readonly options: ConnectOption[]) {
+    super("account choice required")
+    this.name = "AccountChoiceRequired"
+  }
+}
+
 export class SocialPublishError extends Error {
   constructor(
     message: string,
@@ -188,7 +208,9 @@ export interface SocialPublisher {
   finishConnect(
     userId: string,
     platform: SocialPlatform,
-    externalAccountId: string
+    externalAccountId: string,
+    /** Which of the grant's accounts to attach. Required when it has several. */
+    chosenOriginId?: string
   ): Promise<SocialAccount>
 
   listAccounts(userId: string): Promise<SocialAccount[]>

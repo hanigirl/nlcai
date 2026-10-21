@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
-import { getSocialPublisher, SocialPublishError } from "@/lib/social"
+import { AccountChoiceRequired, getSocialPublisher, SocialPublishError } from "@/lib/social"
 import { isProviderInstalled } from "@/lib/social/highlevel-auth"
 import { cancelSlots, countQueuedForAccount, resumeAfterConnect } from "@/lib/social/bridge"
 
@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
   const user = await getAuthUser(supabase)
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  let body: { accountId?: unknown }
+  let body: { accountId?: unknown; originId?: unknown }
   try {
     body = await req.json()
   } catch {
@@ -97,17 +97,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "accountId is required" }, { status: 400 })
   }
 
+  // Set on the second call, after she picked one of several accounts.
+  const originId = typeof body.originId === "string" && body.originId.trim() ? body.originId.trim() : undefined
+
   try {
     const account = await getSocialPublisher(supabase).finishConnect(
       user.id,
       "instagram",
       accountId,
+      originId,
     )
     // Slots that failed only because the connection was down get another go:
     // reconnecting should restore the queue, not just turn the badge green.
     const resumed = await resumeAfterConnect(supabase, user.id)
     return NextResponse.json({ account, resumed })
   } catch (err) {
+    // Several accounts behind one login: hand the list to the modal, which
+    // calls back with the one she chose.
+    if (err instanceof AccountChoiceRequired) {
+      return NextResponse.json({ error: "choose_account", choose: err.options }, { status: 409 })
+    }
     return fail(err, "POST")
   }
 }

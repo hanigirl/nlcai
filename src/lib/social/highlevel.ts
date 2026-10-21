@@ -31,8 +31,10 @@ import type {
 import { MAX_CAPTION_CHARS, MAX_CAROUSEL_ITEMS } from "./media-spec"
 import { getLocationToken, locationsToken } from "./highlevel-auth"
 import {
+  AccountChoiceRequired,
   SocialPublishError,
   type ConnectHandoff,
+  type ConnectOption,
   type ProviderPostState,
   type ScheduleResult,
   type SchedulePostInput,
@@ -383,7 +385,8 @@ export class HighLevelPublisher implements SocialPublisher {
   async finishConnect(
     userId: string,
     platform: SocialPlatform,
-    externalAccountId: string
+    externalAccountId: string,
+    chosenOriginId?: string
   ): Promise<SocialAccount> {
     const locationId = await this.tenantId(userId)
 
@@ -425,25 +428,50 @@ export class HighLevelPublisher implements SocialPublisher {
       )
     }
 
-    // One grant, one account, in the overwhelming majority of cases. When
-    // there are several we take the first rather than inventing a chooser —
-    // a picker is a product decision, not a fix for this bug.
-    const page = pages[0]
-
     // The field names here are the provider's, not a standard, and they differ
     // per platform. Fall back through the plausible spellings instead of
     // failing on the first one that happens to be absent.
-    const raw = page as Record<string, unknown>
-    const str = (...keys: string[]): string | undefined => {
-      for (const k of keys) {
-        const v = raw[k]
-        if (typeof v === "string" && v) return v
+    const fields = (page: OAuthPage) => {
+      const raw = page as Record<string, unknown>
+      const str = (...keys: string[]): string | undefined => {
+        for (const k of keys) {
+          const v = raw[k]
+          if (typeof v === "string" && v) return v
+        }
+        return undefined
       }
-      return undefined
+      return {
+        originId: str("originId", "id", "pageId", "accountId", "originalId"),
+        name: str("name", "username", "pageName", "accountName", "title"),
+        avatar: str("avatar", "avatarUrl", "picture", "profilePicture", "image"),
+      }
     }
-    const originId = str("originId", "id", "pageId", "accountId", "originalId")
-    const name = str("name", "username", "pageName", "accountName", "title")
-    const avatar = str("avatar", "avatarUrl", "picture", "profilePicture", "image")
+
+    // One grant can expose several accounts. With one, attach it; with
+    // several, she picks — never silently the first (it kept reattaching the
+    // account she had moved away from).
+    let page: OAuthPage
+    if (chosenOriginId) {
+      const picked = pages.find((p) => fields(p).originId === chosenOriginId)
+      if (!picked) {
+        throw new SocialPublishError(
+          "החשבון שבחרתם כבר לא זמין בחיבור הזה. נסו לחבר שוב.",
+          "not_connected"
+        )
+      }
+      page = picked
+    } else if (pages.length > 1) {
+      const options: ConnectOption[] = pages.flatMap((p) => {
+        const f = fields(p)
+        return f.originId && f.name ? [{ originId: f.originId, name: f.name, avatar: f.avatar ?? null }] : []
+      })
+      if (options.length > 1) throw new AccountChoiceRequired(options)
+      page = pages.find((p) => fields(p).originId === options[0]?.originId) ?? pages[0]
+    } else {
+      page = pages[0]
+    }
+
+    const { originId, name, avatar } = fields(page)
 
     if (!originId || !name) {
       console.error(
@@ -561,12 +589,20 @@ export class HighLevelPublisher implements SocialPublisher {
     const token = await getLocationToken(locationId)
 
     const connected = await ghlFetch<{
-      results?: { accounts?: { id?: string; oauthId?: string }[] }
+      results?: { accounts?: { id?: string; oauthId?: string; name?: string }[] }
     }>(`/social-media-posting/${locationId}/accounts`, { token })
 
-    const match = (connected.results?.accounts ?? []).find(
+    // One grant can have several accounts attached (she switched from one to
+    // another under the same Facebook login), and they share an oauthId. The
+    // handle we stored is the one she picked, so it breaks the tie.
+    const sameGrant = (connected.results?.accounts ?? []).filter(
       (a) => a.oauthId === account.external_account_id,
     )
+    const handle = account.handle?.replace(/^@/, "").toLowerCase()
+    const match =
+      (sameGrant.length > 1 && handle
+        ? sameGrant.find((a) => a.name?.toLowerCase() === handle)
+        : undefined) ?? sameGrant[0]
     if (!match?.id || !match.oauthId) {
       // The account is no longer attached to her workspace. This is the
       // strongest "reconnect" signal we get, so it is the one flagged as
