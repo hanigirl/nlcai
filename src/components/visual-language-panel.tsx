@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { HexColorPicker } from "react-colorful"
-import { AlertTriangle, Check, Link2, Loader2, Plus, Sparkles, Upload, X } from "lucide-react"
+import { AlertTriangle, Check, ChevronDown, Link2, Loader2, Plus, Sparkles, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
@@ -74,6 +75,8 @@ interface VisualLanguagePanelProps {
   view: "visual" | "examples"
   /** The fonts block, owned by the settings page (shown as section 2). */
   fontsSection?: ReactNode
+  /** How many fonts she has, for the closed fonts row. */
+  fontsCount?: number
   /** The covers block (own uploads + style analysis), shown in the קאברים tab. */
   coversSection?: ReactNode
   examplesTab?: ExamplesTab
@@ -93,6 +96,7 @@ type MediaRow = {
 export function VisualLanguagePanel({
   view,
   fontsSection,
+  fontsCount = 0,
   coversSection,
   examplesTab = "carousel",
   onExamplesTabChange,
@@ -103,6 +107,9 @@ export function VisualLanguagePanel({
   const [loading, setLoading] = useState(true)
 
   const [colors, setColors] = useState<string[]>([])
+  // One input group open at a time keeps the page short and her attention on
+  // one thing. Colours first: it's the quickest win.
+  const [openSection, setOpenSection] = useState<"colors" | "fonts" | "elements" | null>("colors")
   const [elements, setElements] = useState<ElementItem[]>([])
   const [examples, setExamples] = useState<ExampleItem[]>([])
   const [visualLanguage, setVisualLanguage] = useState<VisualLanguage | null>(null)
@@ -555,11 +562,24 @@ export function VisualLanguagePanel({
       </div>
 
       {/* ── 1. Brand colours ── */}
-      <section className="flex flex-col gap-3" aria-labelledby="vl-colors">
-        <div>
-          <h4 id="vl-colors" className="text-small-bold text-text-primary-default">1. צבעי מותג</h4>
-          <p className="text-small text-text-neutral-default mt-0.5">עד {MAX_BRAND_COLORS} צבעים, לפי סדר החשיבות.</p>
-        </div>
+      <div className="flex flex-col gap-3">
+      <AccordionSection
+        title="צבעי מותג"
+        open={openSection === "colors"}
+        onOpenChange={(o) => setOpenSection(o ? "colors" : null)}
+        summary={
+          colors.length > 0 ? (
+            <span className="flex items-center gap-1">
+              {colors.map((c, i) => (
+                <span key={`${i}-${c}`} className="size-4 rounded-full border border-border-neutral-default" style={{ backgroundColor: c }} />
+              ))}
+            </span>
+          ) : (
+            "עוד לא נבחרו צבעים"
+          )
+        }
+      >
+        <p className="text-small text-text-neutral-default">עד {MAX_BRAND_COLORS} צבעים, לפי סדר החשיבות.</p>
         <div className="flex flex-wrap items-center gap-3">
           {colors.map((color, i) => (
             <BrandColorField
@@ -583,19 +603,30 @@ export function VisualLanguagePanel({
             </Button>
           )}
         </div>
-      </section>
+      </AccordionSection>
 
       {/* ── 2. Fonts (owned by the settings page) ── */}
-      {fontsSection && <section aria-label="פונטים">{fontsSection}</section>}
+      {fontsSection && (
+        <AccordionSection
+          title="פונטים"
+          open={openSection === "fonts"}
+          onOpenChange={(o) => setOpenSection(o ? "fonts" : null)}
+          summary={fontsCount > 0 ? `${fontsCount} ${fontsCount === 1 ? "פונט" : "פונטים"}` : "עוד לא נוספו פונטים"}
+        >
+          {fontsSection}
+        </AccordionSection>
+      )}
 
       {/* ── 3. Graphic elements ── */}
-      <section className="flex flex-col gap-3" aria-labelledby="vl-elements">
-        <div>
-          <h4 id="vl-elements" className="text-small-bold text-text-primary-default">3. אלמנטים גרפיים</h4>
-          <p className="text-small text-text-neutral-default mt-0.5">
-            לוגו, אייקונים, צורות או מדבקות שחוזרים אצלכם. לכל אלמנט כתבו מה הוא ומתי אתם משתמשים בו.
-          </p>
-        </div>
+      <AccordionSection
+        title="אלמנטים גרפיים"
+        open={openSection === "elements"}
+        onOpenChange={(o) => setOpenSection(o ? "elements" : null)}
+        summary={elements.length > 0 ? `${elements.length} ${elements.length === 1 ? "אלמנט" : "אלמנטים"}` : "עוד לא הועלו אלמנטים"}
+      >
+        <p className="text-small text-text-neutral-default">
+          לוגו, אייקונים, צורות או מדבקות שחוזרים אצלכם. לכל אלמנט כתבו מה הוא ומתי אתם משתמשים בו.
+        </p>
 
         <input
           ref={elementInputRef}
@@ -660,7 +691,8 @@ export function VisualLanguagePanel({
             />
           </div>
         ))}
-      </section>
+      </AccordionSection>
+      </div>
 
       {/* ── Analysis (reads the examples too) ── */}
       <section className="flex flex-col gap-3" aria-label="ניתוח השפה הוויזואלית">
@@ -939,5 +971,39 @@ function RemoveButton({ label, onClick }: { label: string; onClick: () => void }
     >
       <X className="size-4" />
     </button>
+  )
+}
+
+/** One row of the visual-language inputs: a header that shows what's already
+ *  there while closed, and opens to the full editor. */
+function AccordionSection({
+  title,
+  summary,
+  open,
+  onOpenChange,
+  children,
+}: {
+  title: string
+  summary: ReactNode
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  children: ReactNode
+}) {
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={onOpenChange}
+      className="rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10"
+    >
+      <CollapsibleTrigger className="flex w-full items-center gap-3 rounded-2xl px-4 py-3.5 text-start transition-colors hover:bg-bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50">
+        <span className="text-small-bold text-text-primary-default">{title}</span>
+        <span className="ms-auto flex min-w-0 items-center truncate text-xs-body text-text-neutral-default">{summary}</span>
+        <ChevronDown
+          className={`size-4 shrink-0 text-text-neutral-default transition-transform ${open ? "rotate-180" : ""}`}
+          aria-hidden
+        />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="flex flex-col gap-3 px-4 pb-4">{children}</CollapsibleContent>
+    </Collapsible>
   )
 }

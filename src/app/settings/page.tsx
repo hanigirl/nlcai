@@ -1509,12 +1509,10 @@ function SettingsPageInner() {
                     <VisualLanguagePanel
                       view="visual"
                       onOpenExamples={() => { setActiveMediaSection("examples"); setActiveSubSection("examples") }}
+                      fontsCount={fontItems.length}
                       fontsSection={
                         <div className="flex flex-col gap-3">
-                          <div>
-                            <h4 className="text-small-bold text-text-primary-default">2. פונטים</h4>
-                            <p className="text-small text-text-neutral-default mt-0.5">העלו את הפונטים שאתם עובדים איתם, או בחרו מ-Google Fonts. עד 5 פונטים.</p>
-                          </div>
+                          <p className="text-small text-text-neutral-default">העלו את הפונטים שאתם עובדים איתם, או בחרו מ-Google Fonts. עד 5 פונטים.</p>
 
                           {fontItems.length >= 5 ? (
                             <p className="text-sm text-text-neutral-default">הגעת למקסימום 5 פונטים להעלאה</p>
