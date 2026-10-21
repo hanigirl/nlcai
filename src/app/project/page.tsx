@@ -5,7 +5,8 @@ import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
-import { isEditableBRollUrl, requestBRollAiEditOpen } from "@/components/broll-ai-edit"
+import { BRollAiEditDialog, isEditableBRollUrl } from "@/components/broll-ai-edit"
+import { clearBRollUrl } from "@/lib/broll-generation-store"
 import { CaptionControls } from "@/components/image-caption-block"
 import { useCarouselCaption } from "@/lib/carousel-caption"
 import { useStillCaption } from "@/lib/still-caption"
@@ -280,6 +281,8 @@ function ProjectPageInner() {
   // actual delete only fires after the user clicks "כן, למחוק". The cover has
   // no standalone delete action; it lives and dies with the video.
   const [pendingVideoDelete, setPendingVideoDelete] = useState(false)
+  const [pendingBRollDelete, setPendingBRollDelete] = useState(false)
+  const [bRollAiEditOpen, setBRollAiEditOpen] = useState(false)
   // Format id whose script the user asked to regenerate, awaiting confirmation.
   // Regeneration overwrites text they may have hand-edited, so the card's
   // button only arms this — the actual agent call happens on confirm.
@@ -2572,6 +2575,8 @@ function ProjectPageInner() {
                           bRollUrl={bRollUrl}
                           bRollCardRef={bRollCardRef}
                           onBRollEdit={() => setSelectedFormatCard("b_roll")}
+                          onBRollAiEdit={() => setBRollAiEditOpen(true)}
+                          onBRollDelete={() => setPendingBRollDelete(true)}
                           onBRollUrlChange={setBRollUrl}
                         />
                       </div>
@@ -2622,6 +2627,40 @@ function ProjectPageInner() {
           const fid = pendingFormatRegen
           setPendingFormatRegen(null)
           if (fid) await generateFormatVariants([fid])
+        }}
+      />
+
+      {savedPostId && (
+        <BRollAiEditDialog
+          postId={savedPostId}
+          open={bRollAiEditOpen}
+          onOpenChange={setBRollAiEditOpen}
+        />
+      )}
+
+      <ConfirmModal
+        open={pendingBRollDelete}
+        onOpenChange={(open) => { if (!open) setPendingBRollDelete(false) }}
+        title="למחוק את הבי-רול?"
+        description="הבי-רול יוסר מהפוסט, ואפשר יהיה ליצור או להעלות חדש במקומו."
+        confirmLabel="כן, למחוק"
+        cancelLabel="ביטול"
+        confirmVariant="destructive"
+        onConfirm={async () => {
+          setPendingBRollDelete(false)
+          if (!savedPostId || !bRollUrl) return
+          const assetType = isStillUrl(bRollUrl) ? "image" : "video"
+          const res = await fetch(
+            `/api/core-posts/${savedPostId}/media?format=b_roll&assetType=${assetType}`,
+            { method: "DELETE" },
+          ).catch(() => null)
+          if (!res?.ok) {
+            toast.error("מחיקת הבי-רול נכשלה", { duration: 8000 })
+            return
+          }
+          clearBRollUrl(savedPostId)
+          setBRollUrl(null)
+          toast.success("הבי-רול נמחק", { duration: 3000 })
         }}
       />
 
@@ -2756,6 +2795,8 @@ function FormatTree({
   bRollUrl,
   bRollCardRef,
   onBRollEdit,
+  onBRollAiEdit,
+  onBRollDelete,
   onBRollUrlChange,
 }: {
   formats: string[]
@@ -2807,6 +2848,10 @@ function FormatTree({
   onBRollUrlChange: (url: string) => void
   bRollCardRef: React.RefObject<HTMLDivElement | null>
   onBRollEdit: () => void
+  /** "עריכה עם AI" on the b-roll result card — opens the instruction dialog. */
+  onBRollAiEdit: () => void
+  /** Trash on the b-roll result card — confirm, then remove the clip. */
+  onBRollDelete: () => void
 }) {
   const count = formats.length
   const totalWidth = count * CARD_WIDTH + (count - 1) * CARD_GAP
@@ -2928,7 +2973,6 @@ function FormatTree({
                     />
                     <CopyButton text={formatPosts[fid] ?? ""} />
                   </div>
-                  <div className="flex items-center gap-2">
                   <Button
                     variant="outline"
                     // For talking_head, we disable the button once a video
@@ -2942,29 +2986,11 @@ function FormatTree({
                       if (fid === "talking_head" && thVideoUrl) return
                       onSelectFormat(fid)
                     }}
-                    className="flex-1 rounded-[10px] border-border-neutral-default text-text-primary-default text-small gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full rounded-[10px] border-border-neutral-default text-text-primary-default text-small gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Icon className="size-4" />
                     הוספת מדיה ל{format.label}
                   </Button>
-                  {/* Next to it, "עריכה עם AI" — only when the media was
-                      made with AI and has something to edit (Hani,
-                      2026-10-22). Today that's the Opus b-roll. */}
-                  {fid === "b_roll" && isEditableBRollUrl(bRollUrl) && (
-                    <Button
-                      variant="outline"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        requestBRollAiEditOpen()
-                        onSelectFormat(fid)
-                      }}
-                      className="rounded-[10px] border-border-neutral-default text-text-primary-default text-small gap-2"
-                    >
-                      <Sparkles className="size-4" />
-                      עריכה עם AI
-                    </Button>
-                  )}
-                  </div>
                 </div>
               </div>
 
@@ -3326,9 +3352,37 @@ function FormatTree({
                         />
                       )}
 
-                      <Button variant="outline" className="w-full" onClick={onBRollEdit}>
-                        עריכת בי-רול
-                      </Button>
+                      {/* The AI edit acts on the clip, so it lives here on the
+                          result card, with a trash to start over (Hani,
+                          2026-10-22). A clip the Opus engine didn't make has no
+                          composition to revise — it keeps the plain edit. */}
+                      <div className="flex items-center gap-2">
+                        {isEditableBRollUrl(bRollUrl) ? (
+                          <span className="flex flex-1" onClick={(e) => e.stopPropagation()}>
+                            <AiRefineButton
+                              onClick={onBRollAiEdit}
+                              className="w-full"
+                            />
+                          </span>
+                        ) : (
+                          <Button variant="outline" className="flex-1" onClick={onBRollEdit}>
+                            עריכת בי-רול
+                          </Button>
+                        )}
+                        <TooltipLabel label="מחיקת הבי-רול">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onBRollDelete()
+                            }}
+                            aria-label="מחיקת הבי-רול"
+                            className="flex items-center justify-center size-9 shrink-0 rounded-lg hover:bg-red-95 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="size-4 text-button-destructive-default" />
+                          </button>
+                        </TooltipLabel>
+                      </div>
                     </div>
                   </div>
                 </>

@@ -1,20 +1,17 @@
 "use client"
 
 import { useState } from "react"
-import { Loader2, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { startBRollEdit } from "@/lib/broll-generation-store"
-
-/**
- * The canvas card's "עריכה עם AI" opens the media panel straight into the
- * edit box. The panel mounts on open, so a one-shot flag read on mount is
- * enough — no shared state to keep in sync.
- */
-let openOnMount = false
-export function requestBRollAiEditOpen(): void {
-  openOnMount = true
-}
 
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
@@ -22,72 +19,66 @@ export function isEditableBRollUrl(url: string | null | undefined): boolean {
 }
 
 /**
- * "עריכה עם AI" under the b-roll (Hani, 2026-10-22): she writes what to change
- * in this specific b-roll — size, colour, how the words come in, timing — and
- * Opus revises the animation. Collapsed to one button until she opens it.
+ * "עריכה עם AI" on the b-roll result card (Hani, 2026-10-22): she writes what
+ * to change in this specific clip — size, colour, how the words come in,
+ * timing — and Opus revises the animation. Opened from the card, not the media
+ * panel: the edit acts on the clip, so it lives with the clip.
+ *
+ * Sending closes the dialog right away. The revision takes about a minute;
+ * the card shows its skeleton meanwhile and a toast reports the result.
  */
-export function BRollAiEdit({ postId, busy }: { postId: string; busy: boolean }) {
-  const [open, setOpen] = useState(() => {
-    const requested = openOnMount
-    openOnMount = false
-    return requested
-  })
+export function BRollAiEditDialog({
+  postId,
+  open,
+  onOpenChange,
+}: {
+  postId: string
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
   const [instruction, setInstruction] = useState("")
 
-  if (!open) {
-    return (
-      <Button
-        variant="outline"
-        size="sm"
-        className="w-[200px] gap-1.5 bg-white dark:bg-gray-10"
-        disabled={busy}
-        onClick={() => setOpen(true)}
-      >
-        <Sparkles className="size-3.5" aria-hidden />
-        עריכה עם AI
-      </Button>
-    )
-  }
-
-  const submit = async () => {
-    const ok = await startBRollEdit(postId, instruction)
-    if (ok) {
-      setInstruction("")
-      setOpen(false)
-    }
+  const submit = () => {
+    const text = instruction.trim()
+    if (!text) return
+    onOpenChange(false)
+    void startBRollEdit(postId, text).then((ok) => {
+      if (ok) setInstruction("")
+    })
   }
 
   return (
-    <div className="flex w-full flex-col gap-2">
-      <label htmlFor={`broll-edit-${postId}`} className="text-small-bold text-text-primary-default">
-        מה לשנות בבי-רול?
-      </label>
-      <Textarea
-        id={`broll-edit-${postId}`}
-        value={instruction}
-        onChange={(e) => setInstruction(e.target.value)}
-        rows={3}
-        dir="rtl"
-        autoFocus
-        disabled={busy}
-        placeholder="למשל: הכותרת גדולה יותר, בצבע הכתום של המותג, ושהמילים ייכנסו אחת אחרי השנייה"
-        className="bg-white text-small dark:bg-gray-10"
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && instruction.trim() && !busy) {
-            e.preventDefault()
-            void submit()
-          }
-        }}
-      />
-      <div className="flex items-center gap-2">
-        <Button size="sm" disabled={!instruction.trim() || busy} onClick={() => void submit()} className="gap-1.5">
-          {busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
-          עדכון הבי-רול
-        </Button>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => setOpen(false)}>
-          ביטול
-        </Button>
-      </div>
-    </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent dir="rtl" className="sm:max-w-md" onClick={(e) => e.stopPropagation()}>
+        <DialogHeader>
+          <DialogTitle>עריכה עם AI</DialogTitle>
+          <DialogDescription>כתבו מה לשנות בבי-רול, ו-AI יעדכן את האנימציה.</DialogDescription>
+        </DialogHeader>
+        <Textarea
+          value={instruction}
+          onChange={(e) => setInstruction(e.target.value)}
+          rows={4}
+          dir="rtl"
+          autoFocus
+          aria-label="מה לשנות בבי-רול"
+          placeholder="למשל: הכותרת גדולה יותר, בצבע הכתום של המותג, ושהמילים ייכנסו אחת אחרי השנייה"
+          className="text-small"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault()
+              submit()
+            }
+          }}
+        />
+        <DialogFooter className="gap-2 sm:justify-start">
+          <Button disabled={!instruction.trim()} onClick={submit}>
+            עדכון הבי-רול
+          </Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            ביטול
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

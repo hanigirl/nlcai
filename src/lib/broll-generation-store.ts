@@ -173,6 +173,11 @@ export function startBRollGeneration(
   })()
 }
 
+/** The b-roll was deleted from the canvas — forget the last finished clip. */
+export function clearBRollUrl(postId: string): void {
+  update(postId, (s) => ({ ...s, url: null }))
+}
+
 /**
  * "עריכה עם AI" — Opus revises the current b-roll's animation per her
  * instruction and the clip is re-rendered. Shares `inFlight` with generation:
