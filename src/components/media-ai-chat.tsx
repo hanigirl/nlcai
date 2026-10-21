@@ -20,13 +20,37 @@ interface ChatMessage {
   error?: boolean
 }
 
-const INTRO: ChatMessage = {
-  role: "assistant",
-  content: "מה לשנות בבי-רול? למשל גודל הכותרת, צבעים, איך המילים נכנסות או התזמון. אעדכן את האנימציה והסרטון יתחלף בכרטיס.",
+export type AiEditFormat = "b_roll" | "carousel" | "story" | "image_post"
+
+const COPY: Record<AiEditFormat, { title: string; intro: string; done: string; busy: string }> = {
+  b_roll: {
+    title: "עריכת בי-רול עם AI",
+    intro: "מה לשנות בבי-רול? למשל גודל הכותרת, צבעים, איך המילים נכנסות או התזמון. אעדכן את האנימציה והסרטון יתחלף בכרטיס.",
+    done: "עדכנתי את הבי-רול. הסרטון החדש מופיע בכרטיס.",
+    busy: "מעדכנים את הבי-רול... זה לוקח כדקה",
+  },
+  carousel: {
+    title: "עריכת קרוסלה עם AI",
+    intro: "מה לשנות בקרוסלה? אפשר לבקש על כל השקופיות או על שקופית מסוימת, למשל ״בשקופית 3 הכותרת בצבע המותג״.",
+    done: "עדכנתי את הקרוסלה. השקופיות החדשות מופיעות בכרטיס.",
+    busy: "מעדכנים את השקופיות... זה יכול לקחת עד שתי דקות",
+  },
+  story: {
+    title: "עריכת סטורי עם AI",
+    intro: "מה לשנות בסטורי? אפשר לבקש על כל הפריימים או על פריים מסוים.",
+    done: "עדכנתי את הסטורי. הפריימים החדשים מופיעים בכרטיס.",
+    busy: "מעדכנים את הסטורי... זה יכול לקחת עד שתי דקות",
+  },
+  image_post: {
+    title: "עריכת תמונה עם AI",
+    intro: "מה לשנות בתמונה? למשל צבעים, גודל הכותרת, רקע או אלמנט מסוים.",
+    done: "עדכנתי את התמונה. היא מופיעה בכרטיס.",
+    busy: "מעדכנים את התמונה... זה יכול לקחת כדקה",
+  },
 }
 
 /**
- * "עריכת בי-רול עם AI" (Hani, 2026-10-22) — the same floating side panel as
+ * "עריכת [פורמט] עם AI" (Hani, 2026-10-22) — the same floating side panel as
  * the core post's "עריכת פוסט ליבה" (CorePostChat): her instruction in, Opus
  * revises the animation, the new clip replaces the one on the result card.
  * Each turn builds on the last (the server keeps the edits with the clip).
@@ -38,16 +62,28 @@ const INTRO: ChatMessage = {
  * Fixed-position sibling of the canvas, like CorePostChat, so pan/zoom don't
  * move it.
  */
-export function BRollAiChat({
+export function MediaAiChat({
   postId,
+  format,
   open,
   onOpenChange,
+  onUpdated,
 }: {
   postId: string
+  format: AiEditFormat
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** Image formats: the saved set, in order, after an edit. */
+  onUpdated?: (format: AiEditFormat, urls: string[]) => void
 }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([INTRO])
+  const copy = COPY[format]
+  const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: copy.intro }])
+  // A different format's chat starts its own conversation.
+  const [chatFormat, setChatFormat] = useState(format)
+  if (chatFormat !== format) {
+    setChatFormat(format)
+    setMessages([{ role: "assistant", content: copy.intro }])
+  }
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -62,14 +98,30 @@ export function BRollAiChat({
     setInput("")
     setMessages((prev) => [...prev, { role: "user", content: text }])
     setLoading(true)
-    const result = await startBRollEdit(postId, text, { quiet: true })
+    const result = format === "b_roll" ? await startBRollEdit(postId, text, { quiet: true }) : await editImages(text)
     setLoading(false)
     setMessages((prev) => [
       ...prev,
       result.ok
-        ? { role: "assistant", content: "עדכנתי את הבי-רול. הסרטון החדש מופיע בכרטיס.", done: true }
+        ? { role: "assistant", content: copy.done, done: true }
         : { role: "assistant", content: result.message || "העריכה לא הצליחה. נסו שוב.", error: true },
     ])
+  }
+
+  async function editImages(text: string): Promise<{ ok: true } | { ok: false; message: string }> {
+    try {
+      const res = await fetch("/api/media/ai-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId, format, instruction: text }),
+      })
+      const data = (await res.json().catch(() => ({}))) as { urls?: string[]; message?: string; error?: string }
+      if (!res.ok || !data.urls) return { ok: false, message: data.message ?? data.error ?? "העריכה לא הצליחה" }
+      onUpdated?.(format, data.urls)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, message: err instanceof Error ? err.message : String(err) }
+    }
   }
 
   if (!open) return null
@@ -78,13 +130,13 @@ export function BRollAiChat({
     <div
       dir="rtl"
       role="dialog"
-      aria-label="עריכת בי-רול עם AI"
+      aria-label={copy.title}
       className="fixed bottom-6 right-6 z-40 flex max-h-[72vh] w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl"
     >
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">
         <AiSparkle />
-        <span className="text-small-bold text-text-primary-default">עריכת בי-רול עם AI</span>
+        <span className="text-small-bold text-text-primary-default">{copy.title}</span>
         <button
           type="button"
           onClick={() => onOpenChange(false)}
@@ -113,7 +165,7 @@ export function BRollAiChat({
             {m.done && (
               <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
                 <Check className="size-3.5 text-yellow-30" />
-                הוחל על הבי-רול
+                הוחל
               </span>
             )}
           </div>
@@ -122,7 +174,7 @@ export function BRollAiChat({
         {loading && (
           <div className="flex items-center gap-2 text-small text-text-neutral-default">
             <Loader2 className="size-4 animate-spin text-yellow-50" />
-            <span>מעדכנים את הבי-רול... זה לוקח כדקה</span>
+            <span>{copy.busy}</span>
           </div>
         )}
       </div>

@@ -5,7 +5,7 @@ import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
-import { BRollAiChat, isEditableBRollUrl } from "@/components/broll-ai-edit"
+import { MediaAiChat, isEditableBRollUrl, type AiEditFormat } from "@/components/media-ai-chat"
 import { clearBRollUrl } from "@/lib/broll-generation-store"
 import { CaptionControls } from "@/components/image-caption-block"
 import { useCarouselCaption } from "@/lib/carousel-caption"
@@ -281,8 +281,9 @@ function ProjectPageInner() {
   // actual delete only fires after the user clicks "כן, למחוק". The cover has
   // no standalone delete action; it lives and dies with the video.
   const [pendingVideoDelete, setPendingVideoDelete] = useState(false)
-  const [pendingBRollDelete, setPendingBRollDelete] = useState(false)
-  const [bRollAiEditOpen, setBRollAiEditOpen] = useState(false)
+  // "עריכה עם AI" / trash on the result cards (Hani, 2026-10-22).
+  const [pendingMediaDelete, setPendingMediaDelete] = useState<AiEditFormat | null>(null)
+  const [aiChatFormat, setAiChatFormat] = useState<AiEditFormat | null>(null)
   // Format id whose script the user asked to regenerate, awaiting confirmation.
   // Regeneration overwrites text they may have hand-edited, so the card's
   // button only arms this — the actual agent call happens on confirm.
@@ -2575,8 +2576,8 @@ function ProjectPageInner() {
                           bRollUrl={bRollUrl}
                           bRollCardRef={bRollCardRef}
                           onBRollEdit={() => setSelectedFormatCard("b_roll")}
-                          onBRollAiEdit={() => setBRollAiEditOpen(true)}
-                          onBRollDelete={() => setPendingBRollDelete(true)}
+                          onAiEdit={setAiChatFormat}
+                          onDeleteMedia={setPendingMediaDelete}
                           onBRollUrlChange={setBRollUrl}
                         />
                       </div>
@@ -2630,37 +2631,60 @@ function ProjectPageInner() {
         }}
       />
 
-      {savedPostId && (
-        <BRollAiChat
+      {savedPostId && aiChatFormat && (
+        <MediaAiChat
           postId={savedPostId}
-          open={bRollAiEditOpen}
-          onOpenChange={setBRollAiEditOpen}
+          format={aiChatFormat}
+          open
+          onOpenChange={(open) => { if (!open) setAiChatFormat(null) }}
+          onUpdated={(format, urls) => {
+            if (format === "image_post") setImagePostUrl(urls[0] ?? null)
+            if (format === "carousel") setCarouselImages(urls)
+            if (format === "story") setStoryImages(urls)
+          }}
         />
       )}
 
       <ConfirmModal
-        open={pendingBRollDelete}
-        onOpenChange={(open) => { if (!open) setPendingBRollDelete(false) }}
-        title="למחוק את הבי-רול?"
-        description="הבי-רול יוסר מהפוסט, ואפשר יהיה ליצור או להעלות חדש במקומו."
+        open={!!pendingMediaDelete}
+        onOpenChange={(open) => { if (!open) setPendingMediaDelete(null) }}
+        title={pendingMediaDelete ? `למחוק את ה${MEDIA_NOUN[pendingMediaDelete]}?` : ""}
+        description="המדיה תוסר מהפוסט, ואפשר יהיה ליצור או להעלות חדשה במקומה."
         confirmLabel="כן, למחוק"
         cancelLabel="ביטול"
         confirmVariant="destructive"
         onConfirm={async () => {
-          setPendingBRollDelete(false)
-          if (!savedPostId || !bRollUrl) return
-          const assetType = isStillUrl(bRollUrl) ? "image" : "video"
-          const res = await fetch(
-            `/api/core-posts/${savedPostId}/media?format=b_roll&assetType=${assetType}`,
-            { method: "DELETE" },
-          ).catch(() => null)
-          if (!res?.ok) {
-            toast.error("מחיקת הבי-רול נכשלה", { duration: 8000 })
-            return
+          const format = pendingMediaDelete
+          setPendingMediaDelete(null)
+          if (!savedPostId || !format) return
+          const assetTypes: ("image" | "video")[] =
+            format === "b_roll"
+              ? [bRollUrl && isStillUrl(bRollUrl) ? "image" : "video"]
+              : format === "story" && storyVideoUrl
+                ? ["image", "video"]
+                : ["image"]
+          for (const assetType of assetTypes) {
+            const res = await fetch(
+              `/api/core-posts/${savedPostId}/media?format=${format}&assetType=${assetType}`,
+              { method: "DELETE" },
+            ).catch(() => null)
+            if (!res?.ok) {
+              toast.error("המחיקה נכשלה", { duration: 8000 })
+              return
+            }
           }
-          clearBRollUrl(savedPostId)
-          setBRollUrl(null)
-          toast.success("הבי-רול נמחק", { duration: 3000 })
+          if (format === "b_roll") {
+            clearBRollUrl(savedPostId)
+            setBRollUrl(null)
+          }
+          if (format === "image_post") setImagePostUrl(null)
+          if (format === "carousel") setCarouselImages(null)
+          if (format === "story") {
+            setStoryImages(null)
+            setStoryVideoUrl(null)
+          }
+          if (aiChatFormat === format) setAiChatFormat(null)
+          toast.success("נמחק", { duration: 3000 })
         }}
       />
 
@@ -2749,6 +2773,37 @@ function ProjectPageInner() {
   )
 }
 
+const MEDIA_NOUN: Record<AiEditFormat, string> = {
+  b_roll: "בי-רול",
+  carousel: "קרוסלה",
+  story: "סטורי",
+  image_post: "תמונה",
+}
+
+/** Our own stored images (not a Drive link, not an unsaved base64) — AI can edit them. */
+function isStoredImageUrl(url: string | null | undefined): boolean {
+  return !!url && /\/storage\/v1\/object\/public\//.test(url) && !/\.(mp4|mov|webm)(?:[?#]|$)/i.test(url)
+}
+
+/** Trash button for a result card — same look as the b-roll's. */
+function MediaTrashButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <TooltipLabel label={label}>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onClick()
+        }}
+        aria-label={label}
+        className="flex items-center justify-center size-9 shrink-0 rounded-lg hover:bg-red-95 transition-colors cursor-pointer"
+      >
+        <Trash2 className="size-4 text-button-destructive-default" />
+      </button>
+    </TooltipLabel>
+  )
+}
+
 function FormatTree({
   savedPostId,
   carouselDriveLinks,
@@ -2795,8 +2850,8 @@ function FormatTree({
   bRollUrl,
   bRollCardRef,
   onBRollEdit,
-  onBRollAiEdit,
-  onBRollDelete,
+  onAiEdit,
+  onDeleteMedia,
   onBRollUrlChange,
 }: {
   formats: string[]
@@ -2848,10 +2903,10 @@ function FormatTree({
   onBRollUrlChange: (url: string) => void
   bRollCardRef: React.RefObject<HTMLDivElement | null>
   onBRollEdit: () => void
-  /** "עריכה עם AI" on the b-roll result card — opens the instruction dialog. */
-  onBRollAiEdit: () => void
-  /** Trash on the b-roll result card — confirm, then remove the clip. */
-  onBRollDelete: () => void
+  /** "עריכה עם AI" on a result card — opens that format's AI side panel. */
+  onAiEdit: (format: AiEditFormat) => void
+  /** Trash on a result card — confirm, then remove that format's media. */
+  onDeleteMedia: (format: AiEditFormat) => void
 }) {
   const count = formats.length
   const totalWidth = count * CARD_WIDTH + (count - 1) * CARD_GAP
@@ -3245,6 +3300,8 @@ function FormatTree({
                   images={carouselImages}
                   cardRef={carouselCardRef}
                   onEdit={onCarouselEdit}
+                  onAiEdit={() => onAiEdit("carousel")}
+                  onDelete={() => onDeleteMedia("carousel")}
                   postId={savedPostId}
                   driveLinks={carouselDriveLinks}
                   onImagesChange={onCarouselImagesChange}
@@ -3277,6 +3334,8 @@ function FormatTree({
                     frames={frames}
                     cardRef={storyCardRef}
                     onEdit={onStoryEdit}
+                    onAiEdit={() => onAiEdit("story")}
+                    onDelete={() => onDeleteMedia("story")}
                     postId={savedPostId}
                   />
                 )
@@ -3360,7 +3419,7 @@ function FormatTree({
                         {isEditableBRollUrl(bRollUrl) ? (
                           <span className="flex flex-1" onClick={(e) => e.stopPropagation()}>
                             <AiRefineButton
-                              onClick={onBRollAiEdit}
+                              onClick={() => onAiEdit("b_roll")}
                               className="w-full"
                             />
                           </span>
@@ -3374,7 +3433,7 @@ function FormatTree({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation()
-                              onBRollDelete()
+                              onDeleteMedia("b_roll")
                             }}
                             aria-label="מחיקת הבי-רול"
                             className="flex items-center justify-center size-9 shrink-0 rounded-lg hover:bg-red-95 transition-colors cursor-pointer"
@@ -3427,9 +3486,15 @@ function FormatTree({
                       />
 
                       <div className="flex gap-3 w-full items-center">
-                        <Button variant="outline" className="flex-1" onClick={onImagePostEdit}>
-                          עריכת תמונה
-                        </Button>
+                        {isStoredImageUrl(imagePostUrl) ? (
+                          <span className="flex flex-1" onClick={(e) => e.stopPropagation()}>
+                            <AiRefineButton onClick={() => onAiEdit("image_post")} className="w-full" />
+                          </span>
+                        ) : (
+                          <Button variant="outline" className="flex-1" onClick={onImagePostEdit}>
+                            עריכת תמונה
+                          </Button>
+                        )}
                         <TooltipLabel label="הורד תמונה">
                           <Button
                             variant="outline"
@@ -3460,6 +3525,7 @@ function FormatTree({
                             <Download className="size-4" />
                           </Button>
                         </TooltipLabel>
+                        <MediaTrashButton label="מחיקת התמונה" onClick={() => onDeleteMedia("image_post")} />
                       </div>
                     </div>
                   </div>
@@ -3535,6 +3601,8 @@ function CarouselResultCard({
   images,
   cardRef,
   onEdit,
+  onAiEdit,
+  onDelete,
   postId,
   driveLinks,
   onImagesChange,
@@ -3543,6 +3611,10 @@ function CarouselResultCard({
   cardRef: React.RefObject<HTMLDivElement | null>
   /** Opens the media panel. Non-destructive — see `onCarouselEdit`. */
   onEdit: () => void
+  /** "עריכה עם AI" — the carousel's AI side panel. */
+  onAiEdit: () => void
+  /** Trash — confirm, then remove the slides. */
+  onDelete: () => void
   postId: string | null
   /** The per-slide Drive links, so the originals can be re-pulled. */
   driveLinks: string[] | null
@@ -3668,7 +3740,7 @@ function CarouselResultCard({
           )}
 
           {/* Actions */}
-          <div className="flex gap-3 w-full">
+          <div className="flex gap-3 w-full items-center">
             <Button onClick={handleDownloadAll} disabled={downloading} className="flex-1 gap-2">
               <Download className="size-4" />
               {downloading ? "מוריד..." : "הורד הכל"}
@@ -3676,9 +3748,19 @@ function CarouselResultCard({
             {/* "עריכת קרוסלה", not "צור מחדש" — the label now matches what
                 the click does. Same wording + behaviour as the image_post and
                 story result cards. */}
-            <Button variant="outline" className="flex-1" onClick={onEdit}>
-              עריכת קרוסלה
-            </Button>
+            {/* The card holds the slides as base64 (for the caption tools),
+                so "saved" is judged by the source: anything not pulled from
+                Drive links is a stored set the AI route can read back. */}
+            {postId && images.length > 0 && !(driveLinks?.length) ? (
+              <span className="flex flex-1" onClick={(e) => e.stopPropagation()}>
+                <AiRefineButton onClick={onAiEdit} className="w-full" />
+              </span>
+            ) : (
+              <Button variant="outline" className="flex-1" onClick={onEdit}>
+                עריכת קרוסלה
+              </Button>
+            )}
+            <MediaTrashButton label="מחיקת הקרוסלה" onClick={onDelete} />
           </div>
         </div>
       </div>
@@ -3694,11 +3776,17 @@ function StoryResultCard({
   frames,
   cardRef,
   onEdit,
+  onAiEdit,
+  onDelete,
   postId,
 }: {
   frames: string[]
   cardRef: React.RefObject<HTMLDivElement | null>
   onEdit: () => void
+  /** "עריכה עם AI" — the story's AI side panel. */
+  onAiEdit: () => void
+  /** Trash — confirm, then remove the frames. */
+  onDelete: () => void
   postId: string | null
 }) {
   const [downloading, setDownloading] = useState(false)
@@ -3756,9 +3844,15 @@ function StoryResultCard({
           />
 
           <div className="flex gap-3 w-full items-center">
-            <Button variant="outline" className="flex-1" onClick={onEdit}>
-              עריכת סטורי
-            </Button>
+            {frames.every(isStoredImageUrl) ? (
+              <span className="flex flex-1" onClick={(e) => e.stopPropagation()}>
+                <AiRefineButton onClick={onAiEdit} className="w-full" />
+              </span>
+            ) : (
+              <Button variant="outline" className="flex-1" onClick={onEdit}>
+                עריכת סטורי
+              </Button>
+            )}
             <TooltipLabel label={frames.length > 1 ? "הורד הכל" : "הורד סטורי"}>
               <Button
                 variant="outline"
@@ -3775,6 +3869,7 @@ function StoryResultCard({
                 )}
               </Button>
             </TooltipLabel>
+            <MediaTrashButton label="מחיקת הסטורי" onClick={onDelete} />
           </div>
         </div>
       </div>

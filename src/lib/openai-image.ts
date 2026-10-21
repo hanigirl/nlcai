@@ -138,6 +138,26 @@ export async function generateImage(
 }
 
 /**
+ * Edit ONE existing image per an instruction — "עריכה עם AI" on a carousel
+ * slide, story frame or image post (Hani, 2026-10-22). Unlike generateImage's
+ * reference path, this never falls back to generating from scratch: a fresh
+ * image in place of an edit would silently throw her design away.
+ */
+export async function editImage(
+  apiKey: string,
+  prompt: string,
+  image: ModelImage,
+  shape: ImageShape,
+): Promise<string> {
+  try {
+    return await edit(apiKey, prompt, [image], SHAPE_SIZE[shape])
+  } catch (err) {
+    if (!(err instanceof SizeRejectedError)) throw err
+    return edit(apiKey, prompt, [image], FALLBACK_SIZE)
+  }
+}
+
+/**
  * Prompt rule shared by every generator: nothing touches or crosses the
  * edge. Hani, 2026-10-07 — a badge in the bottom-left or a tab in the
  * top-right corner must arrive whole.
