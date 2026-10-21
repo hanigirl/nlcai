@@ -6,6 +6,7 @@ import { AiSparkle } from "@/components/ai-refine-button"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { startBRollEdit } from "@/lib/broll-generation-store"
+import { getAiStyle, recordAiStyleVote, rememberAiStyle } from "@/lib/ai-style-provenance"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
@@ -18,6 +19,23 @@ interface ChatMessage {
   /** Assistant turn that landed a new clip. */
   done?: boolean
   error?: boolean
+  /** A lasting preference distilled from her instruction (Hebrew). */
+  remembered?: string | null
+}
+
+/**
+ * After an edit the card shows new media — move this format's AI provenance
+ * to it, so the 👍 / 👎 strip appears for the edited version and her verdict
+ * teaches the style (the strip only shows on media the AI made).
+ */
+function markAiMade(postId: string, format: AiEditFormat, mediaKey: string) {
+  if (format === "carousel") {
+    // The carousel's provenance is its template; just clear the old verdict.
+    recordAiStyleVote(postId, "carousel", null)
+    return
+  }
+  const prev = getAiStyle(postId, format)
+  rememberAiStyle(postId, format, prev?.style && prev.style !== "niche" ? prev.style : "brand", mediaKey)
 }
 
 export type AiEditFormat = "b_roll" | "carousel" | "story" | "image_post"
@@ -98,27 +116,41 @@ export function MediaAiChat({
     setInput("")
     setMessages((prev) => [...prev, { role: "user", content: text }])
     setLoading(true)
-    const result = format === "b_roll" ? await startBRollEdit(postId, text, { quiet: true }) : await editImages(text)
+    const result =
+      format === "b_roll"
+        ? await startBRollEdit(postId, text, { quiet: true }).then((r) => {
+            if (r.ok) markAiMade(postId, "b_roll", r.url)
+            return r
+          })
+        : await editImages(text)
     setLoading(false)
     setMessages((prev) => [
       ...prev,
       result.ok
-        ? { role: "assistant", content: copy.done, done: true }
+        ? { role: "assistant", content: copy.done, done: true, remembered: result.remembered }
         : { role: "assistant", content: result.message || "העריכה לא הצליחה. נסו שוב.", error: true },
     ])
   }
 
-  async function editImages(text: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  async function editImages(
+    text: string,
+  ): Promise<{ ok: true; remembered?: string | null } | { ok: false; message: string }> {
     try {
       const res = await fetch("/api/media/ai-edit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ postId, format, instruction: text }),
       })
-      const data = (await res.json().catch(() => ({}))) as { urls?: string[]; message?: string; error?: string }
+      const data = (await res.json().catch(() => ({}))) as {
+        urls?: string[]
+        message?: string
+        error?: string
+        remembered?: string | null
+      }
       if (!res.ok || !data.urls) return { ok: false, message: data.message ?? data.error ?? "העריכה לא הצליחה" }
+      if (data.urls[0]) markAiMade(postId, format, data.urls[0])
       onUpdated?.(format, data.urls)
-      return { ok: true }
+      return { ok: true, remembered: data.remembered ?? null }
     } catch (err) {
       return { ok: false, message: err instanceof Error ? err.message : String(err) }
     }
@@ -165,7 +197,12 @@ export function MediaAiChat({
             {m.done && (
               <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
                 <Check className="size-3.5 text-yellow-30" />
-                הוחל
+                הוחל. אהבתם? סמנו 👍 או 👎 בכרטיס, כדי שה-AI ילמד את הסגנון שלכם.
+              </span>
+            )}
+            {m.remembered && (
+              <span className="max-w-[85%] rounded-xl border border-border-neutral-default px-3 py-1.5 text-xs-body text-text-neutral-default">
+                אזכור את זה גם להבא, בכל הפורמטים: {m.remembered}
               </span>
             )}
           </div>

@@ -7,6 +7,7 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { editImage, type ImageShape } from "@/lib/openai-image"
 import { loadImageForModels } from "@/lib/visual-language/image-input"
 import { replaceImageAssetSet } from "@/lib/media-asset-set"
+import { learnFromInstruction } from "@/lib/style-memory"
 
 // Planning + up to 10 parallel image edits (30–120s each).
 export const maxDuration = 300
@@ -173,6 +174,7 @@ export async function POST(req: NextRequest) {
       throw e
     }
 
+    const learning = learnFromInstruction(supabase, user.id, anthropicKey, text, NOUN[format])
     const { targets, edit } = await plan(anthropicKey, format, urls.length, text)
     const prompt = editPrompt(edit)
 
@@ -198,6 +200,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       urls: ((after ?? []) as { url: string }[]).map((a) => a.url),
       edited: targets,
+      remembered: await learning,
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)

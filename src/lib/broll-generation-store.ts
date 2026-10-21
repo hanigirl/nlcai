@@ -189,7 +189,7 @@ export function startBRollEdit(
   instruction: string,
   /** The chat panel reports progress itself — no toasts then. */
   opts: { quiet?: boolean } = {},
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<{ ok: true; url: string; remembered?: string | null } | { ok: false; message: string }> {
   if (!postId || !instruction.trim()) return Promise.resolve({ ok: false, message: "" })
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   const toastId = `broll-edit-${++toastSeq}`
@@ -210,6 +210,7 @@ export function startBRollEdit(
         url?: string
         error?: string
         message?: string
+        remembered?: string | null
       }
       if (!res.ok || !data.url) {
         const message = data.message ?? data.error ?? "עריכת הבי-רול נכשלה"
@@ -218,7 +219,7 @@ export function startBRollEdit(
       }
       update(postId, (s) => ({ ...s, url: data.url as string }))
       if (!opts.quiet) toast.success("הבי-רול עודכן", { id: toastId, duration: 4000 })
-      return { ok: true as const }
+      return { ok: true as const, url: data.url, remembered: data.remembered ?? null }
     } catch (err) {
       const message = `עריכת הבי-רול נכשלה: ${err instanceof Error ? err.message : String(err)}`
       if (!opts.quiet) toast.error(message, { id: toastId, duration: 10000 })

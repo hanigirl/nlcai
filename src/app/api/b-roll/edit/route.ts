@@ -5,6 +5,7 @@ import { getAuthUser } from "@/lib/auth-user"
 import { finalizeHtml, reviseBRoll } from "@/lib/broll-animation/compose"
 import { renderComposition } from "@/lib/broll-animation/render"
 import { loadComposition, saveBRoll } from "@/lib/broll-animation/store"
+import { learnFromInstruction } from "@/lib/style-memory"
 
 // Opus revision + frame-by-frame render.
 export const maxDuration = 300
@@ -85,7 +86,12 @@ export async function POST(req: NextRequest) {
       throw e
     }
 
-    const template = await reviseBRoll(anthropicKey, composition.brief, composition.template, text)
+    // Learning runs alongside the edit: a lasting preference in her words
+    // ("the brush thin and yellow") applies to every format from now on.
+    const [template, remembered] = await Promise.all([
+      reviseBRoll(anthropicKey, composition.brief, composition.template, text),
+      learnFromInstruction(supabase, user.id, anthropicKey, text, "b-roll"),
+    ])
 
     const stamp = crypto.randomUUID()
     const os = await import("os")
@@ -104,7 +110,7 @@ export async function POST(req: NextRequest) {
       template,
       edits: [...composition.edits, text],
     })
-    return NextResponse.json({ url })
+    return NextResponse.json({ url, remembered })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("[b-roll/edit]", msg)
