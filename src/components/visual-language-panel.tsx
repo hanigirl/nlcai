@@ -763,17 +763,16 @@ export function VisualLanguagePanel({
         )}
 
         <Button
-          size="sm"
           onClick={analyze}
           disabled={!hasInputs || analyzing || busy}
-          className="w-fit gap-2"
+          className="w-full gap-2"
         >
           {analyzing ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
           {analyzing
             ? "מנתח את השפה הוויזואלית..."
             : visualLanguage
-              ? "ניתוח מחדש"
-              : "ניתוח השפה הוויזואלית"}
+              ? "ניתוח מחדש של שפה ויזואלית"
+              : "ניתוח שפה ויזואלית"}
         </Button>
         {analyzing && (
           <p className="text-xs text-text-neutral-default" aria-live="polite">
