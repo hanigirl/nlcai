@@ -47,7 +47,7 @@ const ACCEPT = ".docx,.doc,.pdf,.txt,.md,.vtt,.srt"
 const ADD_ERROR: Record<string, string> = {
   not_text_file: "אפשר להעלות רק קבצי טקסט: docx, pdf, txt, md, או קובץ תמלול (vtt, srt).",
   link_not_supported: "אפשר להדביק רק קישור ל-Google Doc או לקובץ טקסט בגוגל דרייב.",
-  link_not_public: "לא הצלחנו לפתוח את הקובץ. שתפו אותו ל„כל מי שיש לו את הקישור” ונסו שוב.",
+  link_not_public: "לא הצלחנו לפתוח את הקובץ. שתפו אותו ל„כל מי שיש לו את הקישור" ונסו שוב.",
   file_unreadable: "לא הצלחנו לקרוא את הקובץ. תומכים ב-docx, pdf, txt, md, vtt, srt.",
   file_too_large: "הקובץ גדול מדי (מקסימום 10MB).",
   url_required: "צריך להזין קישור.",
@@ -208,7 +208,7 @@ export function BusinessSourcesPanel() {
           טקסט בלבד: קובץ (docx, pdf, txt, תמלול מזום) או קישור ל-Google Doc.
         </p>
         <p className="text-xs text-text-primary-disabled">
-          ה-AI משתמש עד {ACTIVE_LIMIT} המקורות הפעילים האחרונים. סמנו „פעיל” כדי לבחור אילו מהם יוזנו.
+          ה-AI משתמש עד {ACTIVE_LIMIT} המקורות הפעילים האחרונים. סמנו „פעיל" כדי לבחור אילו מהם יוזנו.
         </p>
       </div>
 
@@ -344,13 +344,19 @@ export function BusinessSourcesPanel() {
             </div>
 
             {mode === "link" ? (
-              <Input
-                dir="ltr"
-                value={url}
-                onChange={(e) => { setUrl(e.target.value); setAddError(null) }}
-                placeholder="קישור ל-Google Doc או לקובץ טקסט בדרייב"
-                className="text-xs"
-              />
+              <div className="flex flex-col gap-1.5">
+                <Input
+                  dir="ltr"
+                  value={url}
+                  onChange={(e) => { setUrl(e.target.value); setAddError(null) }}
+                  placeholder="הדביקו קישור ל-Google Doc, תיקיית Drive או כל קישור ציבורי"
+                  className="text-xs"
+                />
+                <p className="flex items-center gap-1 text-xs text-text-neutral-default">
+                  <Link2 className="size-3.5 shrink-0" aria-hidden />
+                  לפני שמדביקים קישור Drive — שתפו את הקובץ/תיקיה ל&quot;כל מי שיש לו קישור&quot;
+                </p>
+              </div>
             ) : (
               <div className="flex flex-col gap-1.5">
                 <input
