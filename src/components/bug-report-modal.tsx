@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { Paperclip, X, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { Select } from "@/components/ui/select"
-import { Radio } from "@/components/ui/radio"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 
@@ -40,7 +40,7 @@ export type ReportKind = "bug" | "idea"
 
 const KINDS: { value: ReportKind; label: string }[] = [
   { value: "bug", label: "נתקלתי בבאג" },
-  { value: "idea", label: "יש לי רעיון או בקשה לשיפור" },
+  { value: "idea", label: "רעיון או שיפור" },
 ]
 
 const COPY: Record<ReportKind, { field: string; placeholder: string; empty: string }> = {
@@ -213,21 +213,15 @@ export function BugReportModal({ open, onOpenChange, defaultPage = "בית" }: B
         {/* Content */}
         <div className="flex w-full flex-col gap-5">
           {/* Bug or idea — same fields either way, only the destination tab differs */}
-          <div role="radiogroup" aria-label="סוג הפנייה" className="flex w-full flex-col gap-2.5">
-            {KINDS.map((k) => (
-              <button
-                key={k.value}
-                type="button"
-                role="radio"
-                aria-checked={kind === k.value}
-                onClick={() => setKind(k.value)}
-                className="flex items-center gap-2 text-right text-sm text-text-primary-default focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 rounded"
-              >
-                <Radio checked={kind === k.value} />
-                {k.label}
-              </button>
-            ))}
-          </div>
+          <Tabs value={kind} onValueChange={(v) => setKind(v as ReportKind)} dir="rtl">
+            <TabsList className="w-full" aria-label="סוג הפנייה">
+              {KINDS.map((k) => (
+                <TabsTrigger key={k.value} value={k.value}>
+                  {k.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
 
           {/* Description */}
           <div className="flex w-full flex-col gap-2">
