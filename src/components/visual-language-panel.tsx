@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { HexColorPicker } from "react-colorful"
-import { AlertTriangle, Check, ChevronDown, Link2, Loader2, Plus, Sparkles, Upload, X } from "lucide-react"
+import { AlertTriangle, ChevronDown, Link2, Loader2, Plus, Sparkles, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
