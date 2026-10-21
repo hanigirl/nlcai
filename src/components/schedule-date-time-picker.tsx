@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Select } from "@/components/ui/select"
@@ -130,10 +131,10 @@ function clampPart(raw: string, max: number): string | null {
 /**
  * Date + time as one field (Hani, 2026-10-21, format preview A): the slot reads
  * like a select; clicking it opens a datepicker popover with the time as an
- * editable HH:MM field under the grid. No "שינוי" / "שמירה" buttons — picking
- * is the edit, and closing the popover commits it to the board (the board is
- * the source of truth). A time that's already passed, or too close to go out,
- * keeps the popover open with the reason; Escape reverts.
+ * editable HH:MM field under the grid, and a primary "תזמון פוסט" button
+ * (Hani, same day) that commits to the board — the board is the source of
+ * truth. Closing without it discards the edit. A time that's already passed,
+ * or too close to go out, keeps the popover open with the reason.
  */
 export function ScheduleDateTimeField({
   idBase,
@@ -181,12 +182,15 @@ export function ScheduleDateTimeField({
     return `${h}:${m}`
   }
 
+  // Closing without the button discards the edit — only "תזמון פוסט" commits.
   const onOpenChange = (next: boolean) => {
-    if (next) {
-      reset()
-      setOpen(true)
-      return
-    }
+    if (next) reset()
+    setOpen(next)
+  }
+
+  const dirty = draftDate !== date || `${hh.padStart(2, "0")}:${mm.padStart(2, "0")}` !== time
+
+  const commit = () => {
     const committed = validate()
     if (committed === null) return // stay open, reason is showing
     if (draftDate !== date || committed !== time) onCommit(draftDate, committed)
@@ -211,10 +215,6 @@ export function ScheduleDateTimeField({
       <PopoverContent
         // Same width as the field, so it opens like a select in either direction.
         className="flex w-(--radix-popover-trigger-width) min-w-72 flex-col gap-3"
-        onEscapeKeyDown={() => {
-          reset()
-          setOpen(false)
-        }}
       >
         <MiniMonthCalendar
           currentDate={date}
@@ -267,6 +267,9 @@ export function ScheduleDateTimeField({
             </p>
           )}
         </div>
+        <Button className="w-full" disabled={!dirty} onClick={commit}>
+          תזמון פוסט
+        </Button>
       </PopoverContent>
     </Popover>
   )
