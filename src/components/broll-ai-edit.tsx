@@ -6,6 +6,16 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { startBRollEdit } from "@/lib/broll-generation-store"
 
+/**
+ * The canvas card's "עריכה עם AI" opens the media panel straight into the
+ * edit box. The panel mounts on open, so a one-shot flag read on mount is
+ * enough — no shared state to keep in sync.
+ */
+let openOnMount = false
+export function requestBRollAiEditOpen(): void {
+  openOnMount = true
+}
+
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
   return !!url && /\/b_roll\/[0-9a-f-]{36}\.mp4(?:[?#].*)?$/i.test(url)
@@ -17,7 +27,11 @@ export function isEditableBRollUrl(url: string | null | undefined): boolean {
  * Opus revises the animation. Collapsed to one button until she opens it.
  */
 export function BRollAiEdit({ postId, busy }: { postId: string; busy: boolean }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(() => {
+    const requested = openOnMount
+    openOnMount = false
+    return requested
+  })
   const [instruction, setInstruction] = useState("")
 
   if (!open) {

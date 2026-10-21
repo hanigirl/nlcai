@@ -5,6 +5,7 @@ import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
+import { isEditableBRollUrl, requestBRollAiEditOpen } from "@/components/broll-ai-edit"
 import { CaptionControls } from "@/components/image-caption-block"
 import { useCarouselCaption } from "@/lib/carousel-caption"
 import { useStillCaption } from "@/lib/still-caption"
@@ -2927,6 +2928,7 @@ function FormatTree({
                     />
                     <CopyButton text={formatPosts[fid] ?? ""} />
                   </div>
+                  <div className="flex items-center gap-2">
                   <Button
                     variant="outline"
                     // For talking_head, we disable the button once a video
@@ -2940,11 +2942,29 @@ function FormatTree({
                       if (fid === "talking_head" && thVideoUrl) return
                       onSelectFormat(fid)
                     }}
-                    className="w-full rounded-[10px] border-border-neutral-default text-text-primary-default text-small gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 rounded-[10px] border-border-neutral-default text-text-primary-default text-small gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Icon className="size-4" />
-                    עריכת מדיה ל{format.label}
+                    הוספת מדיה ל{format.label}
                   </Button>
+                  {/* Next to it, "עריכה עם AI" — only when the media was
+                      made with AI and has something to edit (Hani,
+                      2026-10-22). Today that's the Opus b-roll. */}
+                  {fid === "b_roll" && isEditableBRollUrl(bRollUrl) && (
+                    <Button
+                      variant="outline"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        requestBRollAiEditOpen()
+                        onSelectFormat(fid)
+                      }}
+                      className="rounded-[10px] border-border-neutral-default text-text-primary-default text-small gap-2"
+                    >
+                      <Sparkles className="size-4" />
+                      עריכה עם AI
+                    </Button>
+                  )}
+                  </div>
                 </div>
               </div>
 
