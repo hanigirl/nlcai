@@ -81,8 +81,6 @@ interface VisualLanguagePanelProps {
   coversSection?: ReactNode
   examplesTab?: ExamplesTab
   onExamplesTabChange?: (tab: ExamplesTab) => void
-  /** Switches the settings sub-nav to דוגמאות לשימוש. */
-  onOpenExamples?: () => void
 }
 
 type MediaRow = {
@@ -100,7 +98,6 @@ export function VisualLanguagePanel({
   coversSection,
   examplesTab = "carousel",
   onExamplesTabChange,
-  onOpenExamples,
 }: VisualLanguagePanelProps) {
   const supabase = useMemo(() => createClient(), [])
   const [userId, setUserId] = useState<string | null>(null)
@@ -696,27 +693,9 @@ export function VisualLanguagePanel({
 
       {/* ── Analysis (reads the examples too) ── */}
       <section className="flex flex-col gap-3" aria-label="ניתוח השפה הוויזואלית">
-        <p className="text-small text-text-neutral-default">
-          {examples.length > 0
-            ? `הניתוח לוקח בחשבון גם ${examples.length === 1 ? "דוגמה אחת" : `${examples.length} דוגמאות`} לשימוש.`
-            : "כדאי להוסיף גם דוגמאות לשימוש: הן מראות לניתוח איך המותג נראה בפועל."}{" "}
-          {onOpenExamples && (
-            <button
-              type="button"
-              onClick={onOpenExamples}
-              className="font-semibold text-text-primary-default hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 rounded"
-            >
-              לדוגמאות לשימוש
-            </button>
-          )}
-        </p>
 
         {visualLanguage?.status === "ok" && (
           <div className="flex flex-col gap-3 rounded-xl bg-bg-surface p-4">
-            <div className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400">
-              <Check className="size-4" />
-              נמצאה שפה ויזואלית אחידה. התמונות החדשות ייוצרו לפיה.
-            </div>
             <p className="text-sm text-text-primary-default leading-relaxed">{visualLanguage.summary_he}</p>
             {visualLanguage.palette.length > 0 && (
               <div className="flex flex-wrap gap-2">

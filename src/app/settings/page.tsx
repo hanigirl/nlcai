@@ -1508,7 +1508,6 @@ function SettingsPageInner() {
                   {activeMediaSection === "visual" && (
                     <VisualLanguagePanel
                       view="visual"
-                      onOpenExamples={() => { setActiveMediaSection("examples"); setActiveSubSection("examples") }}
                       fontsCount={fontItems.length}
                       fontsSection={
                         <div className="flex flex-col gap-3">
