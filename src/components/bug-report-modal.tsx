@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { Paperclip, X, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { Select } from "@/components/ui/select"
+import { Radio } from "@/components/ui/radio"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 
@@ -34,6 +35,27 @@ export function pageForPathname(pathname: string | null): BugReportPage {
   return "אחר"
 }
 
+// "סוג" in the Notion DB: a bug lands in the באגים tab, an idea in בקשות.
+export type ReportKind = "bug" | "idea"
+
+const KINDS: { value: ReportKind; label: string }[] = [
+  { value: "bug", label: "נתקלתי בבאג" },
+  { value: "idea", label: "יש לי רעיון או בקשה לשיפור" },
+]
+
+const COPY: Record<ReportKind, { field: string; placeholder: string; empty: string }> = {
+  bug: {
+    field: "תיאור הבאג",
+    placeholder: "תארו את התקלה כאן, מה קרה ומה היית מצפה שיקרה...",
+    empty: "נא לכתוב תיאור של הבאג",
+  },
+  idea: {
+    field: "תיאור הרעיון",
+    placeholder: "תארו את הרעיון או השיפור, ומה הוא יעזור לכם לעשות...",
+    empty: "נא לכתוב תיאור של הרעיון",
+  },
+}
+
 const MEDIA_BUCKET = "user-media"
 const MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024 // 10MB
 const MAX_SCREENSHOTS = 5
@@ -46,6 +68,7 @@ interface BugReportModalProps {
 }
 
 export function BugReportModal({ open, onOpenChange, defaultPage = "בית" }: BugReportModalProps) {
+  const [kind, setKind] = useState<ReportKind>("bug")
   const [description, setDescription] = useState("")
   const [page, setPage] = useState<string>(defaultPage)
   const [files, setFiles] = useState<File[]>([])
@@ -53,6 +76,7 @@ export function BugReportModal({ open, onOpenChange, defaultPage = "בית" }: B
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const reset = () => {
+    setKind("bug")
     setDescription("")
     setPage(defaultPage)
     setFiles([])
@@ -96,7 +120,7 @@ export function BugReportModal({ open, onOpenChange, defaultPage = "בית" }: B
   const handleSubmit = async () => {
     if (submitting) return
     if (!description.trim()) {
-      toast.error("נא לכתוב תיאור של הבאג")
+      toast.error(COPY[kind].empty)
       return
     }
     setSubmitting(true)
@@ -129,6 +153,7 @@ export function BugReportModal({ open, onOpenChange, defaultPage = "בית" }: B
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          kind,
           description: description.trim(),
           page: PAGES.includes(page as (typeof PAGES)[number]) ? page : "אחר",
           screenshotUrls,
@@ -169,12 +194,12 @@ export function BugReportModal({ open, onOpenChange, defaultPage = "בית" }: B
         dir="rtl"
         role="dialog"
         aria-modal="false"
-        aria-label="דיווח על באג"
+        aria-label="דיווח על באג או רעיון"
         className="fixed bottom-20 right-6 z-50 flex max-h-[calc(100vh-7rem)] w-[calc(100vw-3rem)] max-w-[358px] flex-col gap-6 overflow-y-auto rounded-2xl bg-white p-6 shadow-[0px_12px_24px_rgba(0,0,0,0.18)] origin-bottom-left animate-in fade-in zoom-in-95 duration-150 md:right-[4.5rem]"
       >
         {/* Header — title on the right, close button on the left (RTL) */}
         <div className="flex w-full items-center justify-between">
-          <h2 className="text-lg font-bold text-text-primary-default">נתקלת בבאג?</h2>
+          <h2 className="text-lg font-bold text-text-primary-default">יש באג / רעיון?</h2>
           <button
             type="button"
             onClick={close}
@@ -187,17 +212,34 @@ export function BugReportModal({ open, onOpenChange, defaultPage = "בית" }: B
 
         {/* Content */}
         <div className="flex w-full flex-col gap-5">
+          {/* Bug or idea — same fields either way, only the destination tab differs */}
+          <div role="radiogroup" aria-label="סוג הפנייה" className="flex w-full flex-col gap-2.5">
+            {KINDS.map((k) => (
+              <button
+                key={k.value}
+                type="button"
+                role="radio"
+                aria-checked={kind === k.value}
+                onClick={() => setKind(k.value)}
+                className="flex items-center gap-2 text-right text-sm text-text-primary-default focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 rounded"
+              >
+                <Radio checked={kind === k.value} />
+                {k.label}
+              </button>
+            ))}
+          </div>
+
           {/* Description */}
           <div className="flex w-full flex-col gap-2">
             <label htmlFor="bug-description" className="w-full text-right text-sm font-semibold text-text-primary-default">
-              תיאור הבאג
+              {COPY[kind].field}
             </label>
             <div className="flex min-h-[120px] w-full flex-col gap-2 rounded-lg border border-border-neutral-default bg-bg-surface p-3">
               <textarea
                 id="bug-description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="תארו את התקלה כאן, מה קרה ומה היית מצפה שיקרה..."
+                placeholder={COPY[kind].placeholder}
                 className="min-h-0 flex-1 resize-none border-0 bg-transparent text-right text-base outline-none placeholder:text-text-neutral-default md:text-sm"
               />
               <div className="flex flex-wrap items-center justify-start gap-1.5">

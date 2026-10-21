@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
 
-// Bug reports submitted from the in-app "נתקלת בבאג?" widget land in a Notion
+// Bug reports and ideas submitted from the in-app "יש באג / רעיון?" widget land in a Notion
 // database. The app authenticates to Notion with an internal integration token
 // (NOTION_API_KEY) that must be shared with the target database.
 const NOTION_API = "https://api.notion.com/v1/pages"
@@ -27,6 +27,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}))
     const description = typeof body.description === "string" ? body.description.trim() : ""
     const page = PAGES.has(body.page) ? body.page : "אחר"
+    // "סוג" decides the Notion tab: באג → באגים, בקשה → בקשות.
+    const kind = body.kind === "idea" ? "בקשה" : "באג"
     // Accept an array of screenshot URLs (back-compat: also accept a single screenshotUrl).
     const screenshotUrls: string[] = Array.isArray(body.screenshotUrls)
       ? body.screenshotUrls.filter((u: unknown): u is string => typeof u === "string" && u.trim().length > 0).map((u: string) => u.trim())
@@ -49,6 +51,7 @@ export async function POST(req: NextRequest) {
       "תיאור הבאג": { rich_text: [{ text: { content: safeDescription } }] },
       "עמוד": { select: { name: page } },
       "סטטוס": { select: { name: "חדש" } },
+      "סוג": { select: { name: kind } },
     }
     if (user.email) properties["מדווח/ת"] = { email: user.email }
     // The URL property holds a quick-access link (first shot); all shots go in the body.

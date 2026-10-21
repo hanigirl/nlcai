@@ -978,7 +978,7 @@ function HomeContent() {
         className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-full bg-button-primary-default px-3.5 py-2.5 text-sm font-semibold text-white shadow-[0px_6px_8px_rgba(0,0,0,0.1)] transition hover:brightness-90 md:right-[4.5rem]"
       >
         <Bug className="size-[18px]" />
-        נתקלת בבאג?
+        יש באג / רעיון?
       </button>
 
       <BugReportModal open={bugModalOpen} onOpenChange={setBugModalOpen} />

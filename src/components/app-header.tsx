@@ -98,7 +98,7 @@ export function AppHeader({ idea }: AppHeaderProps) {
         onClick={() => setBugModalOpen(true)}
       >
         <Bug className="size-4" />
-        נתקלת בבאג?
+        יש באג / רעיון?
       </Button>
       <BugReportModal
         open={bugModalOpen}
