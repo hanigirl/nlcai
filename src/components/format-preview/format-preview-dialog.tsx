@@ -22,10 +22,10 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { FormatStatusChip } from "@/components/format-status-chip"
 import { checkSlot, ScheduleDateTimeField } from "@/components/schedule-date-time-picker"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Textarea } from "@/components/ui/textarea"
 import { destinationForFormat } from "@/lib/social/media-spec"
 import {
   CaptionCounter,
-  CaptionEditor,
   CaptionTooLong,
   FormatMedia,
   InstagramActionRow,
@@ -86,10 +86,10 @@ function DialogBody({
   onClose: () => void
 } & FormatPreviewHandlers) {
   const [slide, setSlide] = useState(0)
-  const [editingCaption, setEditingCaption] = useState(false)
   // Draft slot — "תזמון פוסט" in the footer commits it to the board.
   const [draftDate, setDraftDate] = useState(data.scheduledDate)
   const [draftTime, setDraftTime] = useState(data.scheduledTime)
+  const [captionDraft, setCaptionDraft] = useState(data.caption)
   const [slotError, setSlotError] = useState<string | null>(null)
   const slotKey = `${data.corePostId}:${data.format} ${data.scheduledDate} ${data.scheduledTime}`
   const [syncedSlot, setSyncedSlot] = useState(slotKey)
@@ -99,15 +99,28 @@ function DialogBody({
     setDraftTime(data.scheduledTime)
     setSlotError(null)
   }
+  const [syncedCaption, setSyncedCaption] = useState(`${data.corePostId}:${data.format} ${data.caption}`)
+  if (syncedCaption !== `${data.corePostId}:${data.format} ${data.caption}`) {
+    setSyncedCaption(`${data.corePostId}:${data.format} ${data.caption}`)
+    setCaptionDraft(data.caption)
+  }
   const slotDirty =
     !!draftDate && (draftDate !== data.scheduledDate || draftTime !== data.scheduledTime)
-  const commitSlot = () => {
-    const check = checkSlot(draftDate, draftTime)
-    if (!check.ok) {
-      setSlotError(check.reason)
-      return
+  const captionDirty = captionDraft !== data.caption
+  // One button for every edit here (Hani, 2026-10-21): "תזמון פוסט" saves the
+  // caption and the slot together. No separate caption save.
+  const commit = () => {
+    if (slotDirty || !data.scheduledDate) {
+      const check = draftDate
+        ? checkSlot(draftDate, draftTime)
+        : ({ ok: false, reason: "בחרו תאריך ושעה" } as const)
+      if (!check.ok) {
+        setSlotError(check.reason)
+        return
+      }
     }
-    onReschedule(draftDate, draftTime)
+    if (captionDirty) onCaptionSave(captionDraft)
+    if (slotDirty) onReschedule(draftDate, draftTime)
   }
 
   const kind = destinationForFormat(data.format)
@@ -190,12 +203,6 @@ function DialogBody({
               <h4 id="pv-caption" className="flex-1 text-small-bold text-text-primary-default">
                 כיתוב
               </h4>
-              {!isStory && !editingCaption && !isPublished && !loading && (
-                <Button size="sm" variant="ghost" onClick={() => setEditingCaption(true)}>
-                  <Pencil className="size-3.5" aria-hidden />
-                  עריכה
-                </Button>
-              )}
             </div>
             {loading ? (
               <div className="flex flex-col gap-1.5">
@@ -205,25 +212,25 @@ function DialogBody({
               </div>
             ) : isStory ? (
               <StoryCaptionNote />
-            ) : editingCaption ? (
-              <CaptionEditor
-                value={data.caption}
-                autoFocus
-                onCancel={() => setEditingCaption(false)}
-                onSave={(next) => {
-                  onCaptionSave(next)
-                  setEditingCaption(false)
-                }}
-              />
+            ) : isPublished ? (
+              <p className="whitespace-pre-wrap text-small leading-relaxed text-text-primary-default">
+                {data.caption}
+              </p>
             ) : (
+              // Editable from the start — saved by "תזמון פוסט" in the footer.
               <>
-                <p className="whitespace-pre-wrap text-small leading-relaxed text-text-primary-default">
-                  {data.caption}
-                </p>
+                <Textarea
+                  value={captionDraft}
+                  onChange={(e) => setCaptionDraft(e.target.value)}
+                  rows={8}
+                  dir="rtl"
+                  aria-labelledby="pv-caption"
+                  className="min-h-40 text-small leading-relaxed"
+                />
                 <div className="flex justify-end">
-                  <CaptionCounter length={data.caption.length} />
+                  <CaptionCounter length={captionDraft.length} />
                 </div>
-                <CaptionTooLong length={data.caption.length} />
+                <CaptionTooLong length={captionDraft.length} />
               </>
             )}
           </section>
@@ -249,7 +256,7 @@ function DialogBody({
             עריכה בקנבס
           </Button>
           {!isPublished && (
-            <Button size="sm" disabled={!slotDirty || loading} onClick={commitSlot}>
+            <Button size="sm" disabled={!(slotDirty || captionDirty) || loading} onClick={commit}>
               תזמון פוסט
             </Button>
           )}

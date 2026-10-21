@@ -871,7 +871,7 @@ export default function CalendarPage() {
         },
         onCaptionSave: (caption: string) => {
           setPreviewCaptions((m) => new Map(m).set(`${previewRow.corePostId}:${previewRow.format}`, caption))
-          toast.success("הכיתוב נשמר על הפורמט")
+          toast.success("הכיתוב עודכן")
         },
         onUnschedule: () => {
           setReviewScheduled((rows) =>
