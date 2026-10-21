@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   ChevronRight,
   ChevronLeft,
@@ -42,8 +42,6 @@ import {
   buildPreviewScheduled,
   previewThumbFor,
   readPreviewParam,
-  readTimeViewParam,
-  type TimeView,
   type ContentPick,
   type PreviewVariant,
   type StatusPick,
@@ -182,7 +180,6 @@ function FormatCard({
   mediaUrl,
   isPublished,
   selected,
-  timeTag,
   past = false,
   onCardClick,
   onUnschedule,
@@ -196,8 +193,6 @@ function FormatCard({
   isPublished: boolean
   /** Format preview (`?preview=b`) — this card's preview is the one open. */
   selected?: boolean
-  /** `?timeview=b` — show the slot's time as a tag on the media. */
-  timeTag?: boolean
   /** The slot's time has passed — disabled: faded, no drag, no menu. */
   past?: boolean
   /** Click on the card body — open the preview Sheet for the core post. */
@@ -272,13 +267,12 @@ function FormatCard({
           fit={post.format === "carousel" ? "contain" : "cover"}
         />
 
-        {/* Time tag (timeview b) — the app's Badge in the primary-button
-            colour, top-start; the kebab owns top-end. */}
-        {timeTag && (
-          <Badge className="absolute top-1 start-1 z-10 bg-button-primary-default text-white dark:text-gray-10 tabular-nums">
-            {post.scheduledTime ?? DEFAULT_SCHEDULED_TIME}
-          </Badge>
-        )}
+        {/* The slot's time, readable without opening the post (Hani,
+            2026-10-22): the app's Badge in the primary-button colour, white
+            text, time only. Top-start; the kebab owns top-end. */}
+        <Badge className="absolute top-1 start-1 z-10 bg-button-primary-default text-white dark:text-gray-10 tabular-nums">
+          {post.scheduledTime ?? DEFAULT_SCHEDULED_TIME}
+        </Badge>
 
         {/* Kebab — hover/focus revealed, top-end over the media. Swallows
             click + pointer + keydown so the outer card's onClick / dragstart
@@ -395,91 +389,6 @@ function isSlotPast(post: ScheduledPost, now: Date): boolean {
   const [h, min] = (post.scheduledTime ?? DEFAULT_SCHEDULED_TIME).split(":").map(Number)
   const at = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), h || 0, min || 0)
   return at.getTime() <= now.getTime()
-}
-
-// --- timeview a: hour rows ------------------------------------------------
-// Review option (`?timeview=a`, Hani 2026-10-22): the times sit in a gutter on
-// the right and each post lands in its time's row. Only times that have a post
-// this week get a row, so the board stays as short as it is today. Every cell
-// is still a drop target for its day; the filler row keeps the empty space
-// droppable. DELETE whichever option isn't picked.
-
-function HourRowsBoard({
-  days,
-  today,
-  postsByDay,
-  dragOverDay,
-  onDragOver,
-  onDragLeave,
-  onDrop,
-  renderCard,
-}: {
-  days: Date[]
-  today: Date
-  postsByDay: Map<string, ScheduledPost[]>
-  dragOverDay: string | null
-  onDragOver: (e: React.DragEvent<HTMLDivElement>, day: Date, dayKey: string) => void
-  onDragLeave: (dayKey: string) => void
-  onDrop: (e: React.DragEvent<HTMLDivElement>, day: Date, dayKey: string) => void
-  renderCard: (post: ScheduledPost) => React.ReactNode
-}) {
-  const times = Array.from(
-    new Set(
-      days.flatMap((d) =>
-        (postsByDay.get(toDateKey(d)) ?? []).map((p) => p.scheduledTime ?? DEFAULT_SCHEDULED_TIME),
-      ),
-    ),
-  ).sort()
-
-  const cell = (day: Date, i: number, content: React.ReactNode, filler = false) => {
-    const dayKey = toDateKey(day)
-    const isToday = isSameDay(day, today)
-    const past = isPastDate(day, today)
-    const isDragOver = dragOverDay === dayKey
-    return (
-      <div
-        key={`${dayKey}-${filler ? "fill" : "row"}`}
-        onDragOver={(e) => onDragOver(e, day, dayKey)}
-        onDragLeave={() => onDragLeave(dayKey)}
-        onDrop={(e) => onDrop(e, day, dayKey)}
-        className={`min-w-0 p-2 ${i === days.length - 1 ? "" : "border-l"} border-border-neutral-default ${
-          filler ? "" : "border-b"
-        } ${isToday ? "bg-yellow-95/40" : "bg-white dark:bg-gray-10"} ${
-          isDragOver ? "ring-2 ring-inset ring-yellow-50 bg-bg-surface-primary-default" : ""
-        } ${past ? "cursor-not-allowed" : ""}`}
-      >
-        {content}
-      </div>
-    )
-  }
-
-  return (
-    <div
-      className="grid flex-1 min-h-0 overflow-y-auto scrollbar-subtle grid-cols-[56px_repeat(7,minmax(0,1fr))]"
-      style={{ gridTemplateRows: `${times.map(() => "auto").join(" ")} minmax(120px,1fr)` }}
-    >
-      {times.map((t) => (
-        <Fragment key={t}>
-          <div className="border-l border-b border-border-neutral-default bg-bg-surface px-1.5 pt-2 text-center text-xs-body text-text-neutral-default tabular-nums">
-            {t}
-          </div>
-          {days.map((day, i) =>
-            cell(
-              day,
-              i,
-              <div className="flex flex-col gap-1.5">
-                {(postsByDay.get(toDateKey(day)) ?? [])
-                  .filter((p) => (p.scheduledTime ?? DEFAULT_SCHEDULED_TIME) === t)
-                  .map(renderCard)}
-              </div>,
-            ),
-          )}
-        </Fragment>
-      ))}
-      <div className="border-l border-border-neutral-default bg-bg-surface" aria-hidden />
-      {days.map((day, i) => cell(day, i, null, true))}
-    </div>
-  )
 }
 
 // --- page ----------------------------------------------------------------
@@ -643,7 +552,6 @@ export default function CalendarPage() {
   // Rides on the approval harness's sample rail and local-only board, then
   // seeds four scheduled formats and opens the preview on card click.
   const [previewVariant, setPreviewVariant] = useState<PreviewVariant | null>(null)
-  const [timeView, setTimeView] = useState<TimeView | null>(null)
   const [previewKey, setPreviewKey] = useState<string | null>(null)
   const [previewStatus, setPreviewStatus] = useState<StatusPick>("mixed")
   const [previewContent, setPreviewContent] = useState<ContentPick>("ready")
@@ -651,7 +559,6 @@ export default function CalendarPage() {
   useEffect(() => {
     const pv = readPreviewParam()
     setPreviewVariant(pv)
-    setTimeView(readTimeViewParam())
     setApprovalVariant(readApprovalParam() ?? (pv ? "a" : null))
   }, [])
   const applyReviewState = useCallback(
@@ -1053,7 +960,6 @@ export default function CalendarPage() {
       <FormatCard
         key={`${post.corePostId}:${post.format}`}
         post={post}
-        timeTag={timeView === "b"}
         past={isSlotPast(post, new Date())}
         hook={hook}
         mediaUrl={mediaUrl}
@@ -1212,11 +1118,7 @@ export default function CalendarPage() {
             {/* Top strip — 7 day labels, one per column. No hours column:
                 the board is a day-grid now, each day a single tall cell.
                 `z-20` keeps the headers above the dragOver ring (z-10). */}
-            <div
-              className={`shrink-0 z-20 grid ${timeView === "a" ? "grid-cols-[56px_repeat(7,minmax(0,1fr))]" : "grid-cols-7"} bg-bg-surface border-b border-border-neutral-default`}
-            >
-              {/* timeview a — the hours gutter on the right (first column in RTL). */}
-              {timeView === "a" && <div className="border-l border-border-neutral-default" aria-hidden />}
+            <div className="shrink-0 z-20 grid grid-cols-7 bg-bg-surface border-b border-border-neutral-default">
               {days.map((day, i) => {
                 const isToday = isSameDay(day, today)
                 const isLastCol = i === days.length - 1
@@ -1246,18 +1148,6 @@ export default function CalendarPage() {
                 scrolls its own stack of cards. No hour rows: a card is just
                 "this format, scheduled on this day". Dropping anywhere in a
                 column schedules to that day (the time is kept under the hood). */}
-            {timeView === "a" ? (
-              <HourRowsBoard
-                days={days}
-                today={today}
-                postsByDay={postsByDay}
-                dragOverDay={dragOverDay}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                renderCard={renderCard}
-              />
-            ) : (
             <div className="grid grid-cols-7 flex-1 min-h-0">
               {days.map((day, i) => {
                 const dayKey = toDateKey(day)
@@ -1295,7 +1185,6 @@ export default function CalendarPage() {
                 )
               })}
             </div>
-            )}
           </div>
         </div>
         {/* /Calendar column */}

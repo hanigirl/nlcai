@@ -31,19 +31,6 @@ export function readPreviewParam(): PreviewVariant | null {
   return v === "a" || v === "b" ? v : null
 }
 
-export type TimeView = "a" | "b"
-
-/**
- * `?timeview=a|b` — how the board shows a post's time (Hani, 2026-10-22).
- * a = hour rows with the times on the right; b = a time tag on each card.
- * DELETE with the rest of the harness once one is picked.
- */
-export function readTimeViewParam(): TimeView | null {
-  if (typeof window === "undefined") return null
-  const v = new URLSearchParams(window.location.search).get("timeview")
-  return v === "a" || v === "b" ? v : null
-}
-
 const IMG = (name: string) => `/images/carousel-templates/${name}.png`
 
 export const PREVIEW_HANDLE = "noa.cohen.consulting"
