@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
 import {
   ChevronRight,
   ChevronLeft,
@@ -8,6 +8,7 @@ import {
   PanelLeftOpen,
 } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -41,6 +42,8 @@ import {
   buildPreviewScheduled,
   previewThumbFor,
   readPreviewParam,
+  readTimeViewParam,
+  type TimeView,
   type ContentPick,
   type PreviewVariant,
   type StatusPick,
@@ -179,6 +182,7 @@ function FormatCard({
   mediaUrl,
   isPublished,
   selected,
+  timeTag,
   onCardClick,
   onUnschedule,
   onReschedule,
@@ -191,6 +195,8 @@ function FormatCard({
   isPublished: boolean
   /** Format preview (`?preview=b`) — this card's preview is the one open. */
   selected?: boolean
+  /** `?timeview=b` — show the slot's time as a tag on the media. */
+  timeTag?: boolean
   /** Click on the card body — open the preview Sheet for the core post. */
   onCardClick: () => void
   /** Kebab → "הסרת הפורמט". Unschedules THIS format at THIS slot. */
@@ -258,6 +264,14 @@ function FormatCard({
           fallbackClassName="bg-gray-95"
           fit={post.format === "carousel" ? "contain" : "cover"}
         />
+
+        {/* Time tag (timeview b) — the app's Badge in the primary-button
+            colour, top-start; the kebab owns top-end. */}
+        {timeTag && (
+          <Badge className="absolute top-1 start-1 z-10 bg-button-primary-default text-white dark:text-gray-10 tabular-nums">
+            {post.scheduledTime ?? DEFAULT_SCHEDULED_TIME}
+          </Badge>
+        )}
 
         {/* Kebab — hover/focus revealed, top-end over the media. Swallows
             click + pointer + keydown so the outer card's onClick / dragstart
@@ -357,6 +371,91 @@ function FormatCard({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  )
+}
+
+// --- timeview a: hour rows ------------------------------------------------
+// Review option (`?timeview=a`, Hani 2026-10-22): the times sit in a gutter on
+// the right and each post lands in its time's row. Only times that have a post
+// this week get a row, so the board stays as short as it is today. Every cell
+// is still a drop target for its day; the filler row keeps the empty space
+// droppable. DELETE whichever option isn't picked.
+
+function HourRowsBoard({
+  days,
+  today,
+  postsByDay,
+  dragOverDay,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  renderCard,
+}: {
+  days: Date[]
+  today: Date
+  postsByDay: Map<string, ScheduledPost[]>
+  dragOverDay: string | null
+  onDragOver: (e: React.DragEvent<HTMLDivElement>, day: Date, dayKey: string) => void
+  onDragLeave: (dayKey: string) => void
+  onDrop: (e: React.DragEvent<HTMLDivElement>, day: Date, dayKey: string) => void
+  renderCard: (post: ScheduledPost) => React.ReactNode
+}) {
+  const times = Array.from(
+    new Set(
+      days.flatMap((d) =>
+        (postsByDay.get(toDateKey(d)) ?? []).map((p) => p.scheduledTime ?? DEFAULT_SCHEDULED_TIME),
+      ),
+    ),
+  ).sort()
+
+  const cell = (day: Date, i: number, content: React.ReactNode, filler = false) => {
+    const dayKey = toDateKey(day)
+    const isToday = isSameDay(day, today)
+    const past = isPastDate(day, today)
+    const isDragOver = dragOverDay === dayKey
+    return (
+      <div
+        key={`${dayKey}-${filler ? "fill" : "row"}`}
+        onDragOver={(e) => onDragOver(e, day, dayKey)}
+        onDragLeave={() => onDragLeave(dayKey)}
+        onDrop={(e) => onDrop(e, day, dayKey)}
+        className={`min-w-0 p-2 ${i === days.length - 1 ? "" : "border-l"} border-border-neutral-default ${
+          filler ? "" : "border-b"
+        } ${isToday ? "bg-yellow-95/40" : "bg-white dark:bg-gray-10"} ${
+          isDragOver ? "ring-2 ring-inset ring-yellow-50 bg-bg-surface-primary-default" : ""
+        } ${past ? "opacity-60 cursor-not-allowed" : ""}`}
+      >
+        {content}
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className="grid flex-1 min-h-0 overflow-y-auto scrollbar-subtle grid-cols-[56px_repeat(7,minmax(0,1fr))]"
+      style={{ gridTemplateRows: `${times.map(() => "auto").join(" ")} minmax(120px,1fr)` }}
+    >
+      {times.map((t) => (
+        <Fragment key={t}>
+          <div className="border-l border-b border-border-neutral-default bg-bg-surface px-1.5 pt-2 text-center text-xs-body text-text-neutral-default tabular-nums">
+            {t}
+          </div>
+          {days.map((day, i) =>
+            cell(
+              day,
+              i,
+              <div className="flex flex-col gap-1.5">
+                {(postsByDay.get(toDateKey(day)) ?? [])
+                  .filter((p) => (p.scheduledTime ?? DEFAULT_SCHEDULED_TIME) === t)
+                  .map(renderCard)}
+              </div>,
+            ),
+          )}
+        </Fragment>
+      ))}
+      <div className="border-l border-border-neutral-default bg-bg-surface" aria-hidden />
+      {days.map((day, i) => cell(day, i, null, true))}
     </div>
   )
 }
@@ -522,6 +621,7 @@ export default function CalendarPage() {
   // Rides on the approval harness's sample rail and local-only board, then
   // seeds four scheduled formats and opens the preview on card click.
   const [previewVariant, setPreviewVariant] = useState<PreviewVariant | null>(null)
+  const [timeView, setTimeView] = useState<TimeView | null>(null)
   const [previewKey, setPreviewKey] = useState<string | null>(null)
   const [previewStatus, setPreviewStatus] = useState<StatusPick>("mixed")
   const [previewContent, setPreviewContent] = useState<ContentPick>("ready")
@@ -529,6 +629,7 @@ export default function CalendarPage() {
   useEffect(() => {
     const pv = readPreviewParam()
     setPreviewVariant(pv)
+    setTimeView(readTimeViewParam())
     setApprovalVariant(readApprovalParam() ?? (pv ? "a" : null))
   }, [])
   const applyReviewState = useCallback(
@@ -891,6 +992,102 @@ export default function CalendarPage() {
       }
     : null
 
+  // One board card — shared by the day-column board and the hour-rows board.
+  const renderCard = (post: ScheduledPost) => {
+    const isPublished = publishedSet.has(
+      `${post.corePostId}:${post.format}`,
+    )
+    // Prefer the live hook over the snapshot persisted at
+    // schedule time, then a placeholder.
+    const hook =
+      (
+        hookByPostId.get(post.corePostId) ||
+        post.hook ||
+        ""
+      ).trim() || "פוסט מתוזמן"
+    const mediaUrl = reviewMode
+      ? (previewVariant
+          ? previewThumbFor(post.corePostId, post.format)
+          : undefined) ??
+        seedMediaFor(post.corePostId)[post.format]
+      : formatMediaByPost.get(post.corePostId)?.[
+          post.format
+        ]
+    return (
+      <FormatCard
+        key={`${post.corePostId}:${post.format}`}
+        post={post}
+        timeTag={timeView === "b"}
+        hook={hook}
+        mediaUrl={mediaUrl}
+        isPublished={isPublished}
+        selected={
+          previewVariant === "b" &&
+          previewKey === `${post.corePostId}:${post.format}`
+        }
+        onCardClick={() =>
+          previewVariant
+            ? setPreviewKey(`${post.corePostId}:${post.format}`)
+            : reviewMode
+            ? toast("בסביבת הבדיקה הפוסטים לדוגמה — הפאנל לא נפתח")
+            : openSheetForCorePost(
+                post.corePostId,
+                post.format,
+                "preview",
+              )
+        }
+        onUnschedule={() => {
+          if (reviewMode) {
+            setReviewScheduled((rows) =>
+              rows.filter(
+                (p) =>
+                  !(
+                    p.corePostId === post.corePostId &&
+                    p.format === post.format
+                  ),
+              ),
+            )
+            setReviewApproved((prev) =>
+              new Set(prev).add(`${post.corePostId}:${post.format}`),
+            )
+            toast.success("הפורמט חזר ל״מוכנים לתזמון״")
+            return
+          }
+          // Send THIS format back to the queue and drop
+          // its stale published mark (returning a format
+          // means "it isn't done yet").
+          unschedulePost(post.corePostId, post.format)
+          unmarkPublished(post.corePostId, post.format)
+          reloadBoard()
+          toast.success("הפורמט חזר ל״מוכנים לתזמון״")
+        }}
+        onReschedule={(newDate, newTime) => {
+          if (reviewMode) {
+            upsertReviewRow(
+              post.corePostId,
+              post.format,
+              newDate,
+              hook,
+              newTime,
+            )
+            toast.success("התזמון עודכן")
+            return
+          }
+          // Move THIS format to the picked date + time.
+          schedulePost(
+            post.corePostId,
+            post.format,
+            newDate,
+            newTime,
+            { hook },
+          )
+          reloadBoard()
+          toast.success("התזמון עודכן")
+        }}
+      />
+    )
+  }
+
   return (
     <AppShell>
       {/*
@@ -978,7 +1175,11 @@ export default function CalendarPage() {
             {/* Top strip — 7 day labels, one per column. No hours column:
                 the board is a day-grid now, each day a single tall cell.
                 `z-20` keeps the headers above the dragOver ring (z-10). */}
-            <div className="shrink-0 z-20 grid grid-cols-7 bg-bg-surface border-b border-border-neutral-default">
+            <div
+              className={`shrink-0 z-20 grid ${timeView === "a" ? "grid-cols-[56px_repeat(7,minmax(0,1fr))]" : "grid-cols-7"} bg-bg-surface border-b border-border-neutral-default`}
+            >
+              {/* timeview a — the hours gutter on the right (first column in RTL). */}
+              {timeView === "a" && <div className="border-l border-border-neutral-default" aria-hidden />}
               {days.map((day, i) => {
                 const isToday = isSameDay(day, today)
                 const isLastCol = i === days.length - 1
@@ -1008,6 +1209,18 @@ export default function CalendarPage() {
                 scrolls its own stack of cards. No hour rows: a card is just
                 "this format, scheduled on this day". Dropping anywhere in a
                 column schedules to that day (the time is kept under the hood). */}
+            {timeView === "a" ? (
+              <HourRowsBoard
+                days={days}
+                today={today}
+                postsByDay={postsByDay}
+                dragOverDay={dragOverDay}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                renderCard={renderCard}
+              />
+            ) : (
             <div className="grid grid-cols-7 flex-1 min-h-0">
               {days.map((day, i) => {
                 const dayKey = toDateKey(day)
@@ -1039,104 +1252,13 @@ export default function CalendarPage() {
                     {/* Cards stack from the top. `min-h-full` keeps the whole
                         column a drop target even when it's nearly empty. */}
                     <div className="flex flex-col gap-1.5 p-2 min-h-full">
-                      {dayPosts.map((post) => {
-                        const isPublished = publishedSet.has(
-                          `${post.corePostId}:${post.format}`,
-                        )
-                        // Prefer the live hook over the snapshot persisted at
-                        // schedule time, then a placeholder.
-                        const hook =
-                          (
-                            hookByPostId.get(post.corePostId) ||
-                            post.hook ||
-                            ""
-                          ).trim() || "פוסט מתוזמן"
-                        const mediaUrl = reviewMode
-                          ? (previewVariant
-                              ? previewThumbFor(post.corePostId, post.format)
-                              : undefined) ??
-                            seedMediaFor(post.corePostId)[post.format]
-                          : formatMediaByPost.get(post.corePostId)?.[
-                              post.format
-                            ]
-                        return (
-                          <FormatCard
-                            key={`${post.corePostId}:${post.format}`}
-                            post={post}
-                            hook={hook}
-                            mediaUrl={mediaUrl}
-                            isPublished={isPublished}
-                            selected={
-                              previewVariant === "b" &&
-                              previewKey === `${post.corePostId}:${post.format}`
-                            }
-                            onCardClick={() =>
-                              previewVariant
-                                ? setPreviewKey(`${post.corePostId}:${post.format}`)
-                                : reviewMode
-                                ? toast("בסביבת הבדיקה הפוסטים לדוגמה — הפאנל לא נפתח")
-                                : openSheetForCorePost(
-                                    post.corePostId,
-                                    post.format,
-                                    "preview",
-                                  )
-                            }
-                            onUnschedule={() => {
-                              if (reviewMode) {
-                                setReviewScheduled((rows) =>
-                                  rows.filter(
-                                    (p) =>
-                                      !(
-                                        p.corePostId === post.corePostId &&
-                                        p.format === post.format
-                                      ),
-                                  ),
-                                )
-                                setReviewApproved((prev) =>
-                                  new Set(prev).add(`${post.corePostId}:${post.format}`),
-                                )
-                                toast.success("הפורמט חזר ל״מוכנים לתזמון״")
-                                return
-                              }
-                              // Send THIS format back to the queue and drop
-                              // its stale published mark (returning a format
-                              // means "it isn't done yet").
-                              unschedulePost(post.corePostId, post.format)
-                              unmarkPublished(post.corePostId, post.format)
-                              reloadBoard()
-                              toast.success("הפורמט חזר ל״מוכנים לתזמון״")
-                            }}
-                            onReschedule={(newDate, newTime) => {
-                              if (reviewMode) {
-                                upsertReviewRow(
-                                  post.corePostId,
-                                  post.format,
-                                  newDate,
-                                  hook,
-                                  newTime,
-                                )
-                                toast.success("התזמון עודכן")
-                                return
-                              }
-                              // Move THIS format to the picked date + time.
-                              schedulePost(
-                                post.corePostId,
-                                post.format,
-                                newDate,
-                                newTime,
-                                { hook },
-                              )
-                              reloadBoard()
-                              toast.success("התזמון עודכן")
-                            }}
-                          />
-                        )
-                      })}
+                      {dayPosts.map(renderCard)}
                     </div>
                   </div>
                 )
               })}
             </div>
+            )}
           </div>
         </div>
         {/* /Calendar column */}
