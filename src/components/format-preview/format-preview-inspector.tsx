@@ -177,7 +177,6 @@ function InspectorBody({
                 time={pickedTime}
                 onDateChange={setPickedDate}
                 onTimeChange={setPickedTime}
-                disablePastHours
               />
               {whenDirty && (
                 <div className="flex items-center gap-2">

@@ -22,6 +22,7 @@ import {
   AlertCircle,
   Bookmark,
   CalendarCheck,
+  CalendarPlus,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -56,6 +57,8 @@ import type { FormatId } from "@/lib/timing-storage"
  * The rule from that task holds here too: never "scheduled" without an id.
  */
 export type PublishStatus =
+  /** Opened from the "ready to schedule" rail — not on the board yet. */
+  | { kind: "unscheduled" }
   | { kind: "not_connected" }
   | { kind: "pending" }
   | { kind: "scheduled" }
@@ -154,6 +157,11 @@ export function PublishStatusSlot({
   let action: { label: string; id: Parameters<typeof onAction>[0]; external?: boolean } | null = null
 
   switch (status.kind) {
+    case "unscheduled":
+      icon = <CalendarPlus className="size-4 text-text-neutral-default" aria-hidden />
+      title = "עוד לא על הלוח"
+      body = "בחרו תאריך ושעה ולחצו ״תזמון פוסט״."
+      break
     case "not_connected":
       icon = <Unplug className="size-4 text-text-neutral-default" aria-hidden />
       title = "לא יפורסם — אינסטגרם לא מחובר"

@@ -2,10 +2,8 @@
 
 import { useState } from "react"
 import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Select } from "@/components/ui/select"
 import { toDateKey } from "@/lib/timing-storage"
 
 /**
@@ -59,59 +57,27 @@ export function ScheduleDateTimePicker({
   time,
   onDateChange,
   onTimeChange,
-  disablePastHours = false,
 }: {
-  /** Unique per instance — wires the time label to its select. */
+  /** Unique per instance — wires the time label to its input. */
   idBase: string
   /** YYYY-MM-DD currently on the board — decides which month opens first. */
   anchorDate: string
   /** YYYY-MM-DD picked (not saved yet). */
   date: string
-  /** "HH:00" picked (not saved yet). */
+  /** "HH:MM" picked (not saved yet). */
   time: string
   onDateChange: (date: string) => void
   onTimeChange: (time: string) => void
-  /**
-   * When the picked day is today, hide hours that have already passed. The
-   * publisher refuses anything less than a few minutes ahead, so offering
-   * 09:00 at 14:30 only sets up a failure.
-   */
-  disablePastHours?: boolean
 }) {
-  const now = new Date()
-  const isTodayPicked = date === toDateKey(now)
-  const hours = SCHEDULE_HOURS.filter(
-    (h) => !(disablePastHours && isTodayPicked && parseInt(h, 10) <= now.getHours()),
-  )
-  const options = hours.includes(time) ? hours : [time, ...hours]
-
   return (
     <>
       <MiniMonthCalendar currentDate={anchorDate} selectedDate={date} onPick={onDateChange} />
-      <div className="flex items-center gap-3 border-t border-border-neutral-default pt-3">
-        <Label htmlFor={`time-${idBase}`} className="text-small shrink-0">
-          שעה
-        </Label>
-        <Select
-          id={`time-${idBase}`}
-          selectSize="small"
-          value={time}
-          onChange={(e) => onTimeChange(e.target.value)}
-          className="tabular-nums"
-        >
-          {options.map((h) => (
-            <option key={h} value={h}>
-              {h}
-            </option>
-          ))}
-        </Select>
-      </div>
+      {/* Editable HH:MM, not an hourly list (Hani, 2026-10-21). Whether the
+          slot is far enough ahead is checked on save — see checkSlot. */}
+      <TimeField idBase={idBase} time={time} onTimeChange={onTimeChange} />
     </>
   )
 }
-
-/** The provider refuses anything closer than a few minutes; 7 is the tested floor. */
-const MIN_LEAD_MINUTES = 7
 
 function slotLabel(date: string, time: string): string {
   const day = parseDateKey(date).toLocaleDateString("he-IL", {
@@ -128,150 +94,167 @@ function clampPart(raw: string, max: number): string | null {
   return n > max ? null : String(n).padStart(2, "0")
 }
 
+/** The provider refuses anything closer than a few minutes; 7 is the tested floor. */
+export const MIN_LEAD_MINUTES = 7
+
+/**
+ * "HH:MM" if the slot is a real time at least MIN_LEAD_MINUTES ahead, else the
+ * Hebrew reason. Shared by every place that commits a slot.
+ */
+export function checkSlot(date: string, time: string): { ok: true } | { ok: false; reason: string } {
+  const m = /^(\d{2}):(\d{2})$/.exec(time)
+  if (!date || !m || parseInt(m[1], 10) > 23 || parseInt(m[2], 10) > 59) {
+    return { ok: false, reason: "שעה לא תקינה" }
+  }
+  const at = parseDateKey(date)
+  at.setHours(parseInt(m[1], 10), parseInt(m[2], 10), 0, 0)
+  if (at.getTime() < Date.now() + MIN_LEAD_MINUTES * 60_000) {
+    return { ok: false, reason: `אפשר לתזמן רק לפחות ${MIN_LEAD_MINUTES} דקות קדימה` }
+  }
+  return { ok: true }
+}
+
 /**
  * Date + time as one field (Hani, 2026-10-21, format preview A): the slot reads
  * like a select; clicking it opens a datepicker popover with the time as an
- * editable HH:MM field under the grid, and a primary "תזמון פוסט" button
- * (Hani, same day) that commits to the board — the board is the source of
- * truth. Closing without it discards the edit. A time that's already passed,
- * or too close to go out, keeps the popover open with the reason.
+ * editable HH:MM field under the grid. Controlled — the field only edits a
+ * draft. Committing is the parent's primary "תזמון פוסט" button, which sits in
+ * the footer next to "עריכה בקנבס" (Hani, same day).
  */
 export function ScheduleDateTimeField({
   idBase,
   date,
   time,
-  onCommit,
+  onChange,
+  error,
   disabled = false,
 }: {
   idBase: string
-  /** YYYY-MM-DD currently on the board. */
+  /** Draft YYYY-MM-DD; "" = not picked yet (shows the placeholder). */
   date: string
-  /** "HH:MM" currently on the board. */
+  /** Draft "HH:MM"; "" = not picked yet. */
   time: string
-  onCommit: (date: string, time: string) => void
+  onChange: (date: string, time: string) => void
+  /** Shown under the field — e.g. the slot is too close to go out. */
+  error?: string | null
   disabled?: boolean
 }) {
-  const [open, setOpen] = useState(false)
-  const [draftDate, setDraftDate] = useState(date)
+  // Nothing picked yet → the grid opens on tomorrow, the time on 09:00.
+  const startDate = date || toDateKey(addDays(new Date(), 1))
+  const startTime = time || "09:00"
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Popover>
+        <PopoverTrigger asChild disabled={disabled}>
+          <button
+            type="button"
+            data-invalid={error ? "" : undefined}
+            className="flex h-10 w-full items-center gap-2 rounded-xl border border-border-neutral-default bg-bg-surface px-3 text-start text-p text-text-primary-default tabular-nums transition-colors hover:bg-bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60 data-[invalid]:border-red-50"
+          >
+            <CalendarDays className="size-4 shrink-0 text-text-neutral-default" />
+            {date ? (
+              <span className="flex-1 truncate">{slotLabel(date, time || startTime)}</span>
+            ) : (
+              <span className="flex-1 truncate text-text-neutral-default">בחירת תאריך ושעה</span>
+            )}
+            <ChevronDown className="size-4 shrink-0 text-text-neutral-default" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          // Same width as the field, so it opens like a select in either direction.
+          className="flex w-(--radix-popover-trigger-width) min-w-72 flex-col gap-3"
+        >
+          <MiniMonthCalendar
+            currentDate={startDate}
+            selectedDate={date}
+            onPick={(d) => onChange(d, time || startTime)}
+          />
+          <TimeField
+            idBase={idBase}
+            time={time || startTime}
+            onTimeChange={(t) => onChange(startDate, t)}
+          />
+        </PopoverContent>
+      </Popover>
+      {error && (
+        <p role="alert" className="text-xs-body text-red-50">
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Editable "HH : MM" (24h), left-to-right even in RTL. Emits only complete,
+ * valid times; partial typing stays local until it parses.
+ */
+function TimeField({
+  idBase,
+  time,
+  onTimeChange,
+}: {
+  idBase: string
+  time: string
+  onTimeChange: (time: string) => void
+}) {
   const [hh, setHh] = useState(time.slice(0, 2))
   const [mm, setMm] = useState(time.slice(3, 5))
-  const [error, setError] = useState<string | null>(null)
-
-  const reset = () => {
-    setDraftDate(date)
+  const [synced, setSynced] = useState(time)
+  if (synced !== time) {
+    setSynced(time)
     setHh(time.slice(0, 2))
     setMm(time.slice(3, 5))
-    setError(null)
   }
-
-  // Returns the committed time, or null with `error` set.
-  const validate = (): string | null => {
-    const h = clampPart(hh, 23)
-    const m = clampPart(mm, 59)
-    if (h === null || m === null) {
-      setError("שעה לא תקינה")
-      return null
+  const emit = (h: string, m: string) => {
+    const ch = clampPart(h, 23)
+    const cm = clampPart(m, 59)
+    if (ch !== null && cm !== null) {
+      const next = `${ch}:${cm}`
+      setSynced(next)
+      onTimeChange(next)
     }
-    const at = parseDateKey(draftDate)
-    at.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0)
-    if (at.getTime() < Date.now() + MIN_LEAD_MINUTES * 60_000) {
-      setError(`אפשר לתזמן רק לפחות ${MIN_LEAD_MINUTES} דקות קדימה`)
-      return null
-    }
-    setError(null)
-    return `${h}:${m}`
   }
-
-  // Closing without the button discards the edit — only "תזמון פוסט" commits.
-  const onOpenChange = (next: boolean) => {
-    if (next) reset()
-    setOpen(next)
-  }
-
-  const dirty = draftDate !== date || `${hh.padStart(2, "0")}:${mm.padStart(2, "0")}` !== time
-
-  const commit = () => {
-    const committed = validate()
-    if (committed === null) return // stay open, reason is showing
-    if (draftDate !== date || committed !== time) onCommit(draftDate, committed)
-    setOpen(false)
-  }
-
-  const timeInput =
+  const box =
     "h-9 w-11 rounded-lg border border-border-neutral-default bg-bg-surface text-center text-p-bold tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild disabled={disabled}>
-        <button
-          type="button"
-          className="flex h-10 w-full items-center gap-2 rounded-xl border border-border-neutral-default bg-bg-surface px-3 text-start text-p text-text-primary-default tabular-nums transition-colors hover:bg-bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <CalendarDays className="size-4 shrink-0 text-text-neutral-default" />
-          <span className="flex-1 truncate">{slotLabel(date, time)}</span>
-          <ChevronDown className="size-4 shrink-0 text-text-neutral-default" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        // Same width as the field, so it opens like a select in either direction.
-        className="flex w-(--radix-popover-trigger-width) min-w-72 flex-col gap-3"
-      >
-        <MiniMonthCalendar
-          currentDate={date}
-          selectedDate={draftDate}
-          onPick={(d) => {
-            setDraftDate(d)
-            setError(null)
+    <div className="flex items-center justify-between gap-3 border-t border-border-neutral-default pt-3">
+      <Label htmlFor={`hh-${idBase}`} className="text-small shrink-0">
+        שעה
+      </Label>
+      <div dir="ltr" className="flex items-center gap-1.5">
+        <input
+          id={`hh-${idBase}`}
+          aria-label="שעות"
+          inputMode="numeric"
+          maxLength={2}
+          value={hh}
+          onChange={(e) => {
+            const v = e.target.value.replace(/\D/g, "")
+            setHh(v)
+            emit(v, mm)
           }}
+          onBlur={() => setHh((v) => clampPart(v, 23) ?? v)}
+          onFocus={(e) => e.target.select()}
+          className={box}
         />
-        <div className="flex flex-col gap-1.5 border-t border-border-neutral-default pt-3">
-          <div className="flex items-center justify-between gap-3">
-            <Label htmlFor={`hh-${idBase}`} className="text-small shrink-0">
-              שעה
-            </Label>
-            {/* Time reads left-to-right even in RTL: HH : MM. */}
-            <div dir="ltr" className="flex items-center gap-1.5">
-              <input
-                id={`hh-${idBase}`}
-                aria-label="שעות"
-                inputMode="numeric"
-                maxLength={2}
-                value={hh}
-                onChange={(e) => {
-                  setHh(e.target.value.replace(/\D/g, ""))
-                  setError(null)
-                }}
-                onBlur={() => setHh((v) => clampPart(v, 23) ?? v)}
-                onFocus={(e) => e.target.select()}
-                className={timeInput}
-              />
-              <span className="text-p-bold text-text-primary-default">:</span>
-              <input
-                aria-label="דקות"
-                inputMode="numeric"
-                maxLength={2}
-                value={mm}
-                onChange={(e) => {
-                  setMm(e.target.value.replace(/\D/g, ""))
-                  setError(null)
-                }}
-                onBlur={() => setMm((v) => clampPart(v, 59) ?? v)}
-                onFocus={(e) => e.target.select()}
-                className={timeInput}
-              />
-            </div>
-          </div>
-          {error && (
-            <p role="alert" className="text-xs-body text-red-50">
-              {error}
-            </p>
-          )}
-        </div>
-        <Button className="w-full" disabled={!dirty} onClick={commit}>
-          תזמון פוסט
-        </Button>
-      </PopoverContent>
-    </Popover>
+        <span className="text-p-bold text-text-primary-default">:</span>
+        <input
+          aria-label="דקות"
+          inputMode="numeric"
+          maxLength={2}
+          value={mm}
+          onChange={(e) => {
+            const v = e.target.value.replace(/\D/g, "")
+            setMm(v)
+            emit(hh, v)
+          }}
+          onBlur={() => setMm((v) => clampPart(v, 59) ?? v)}
+          onFocus={(e) => e.target.select()}
+          className={box}
+        />
+      </div>
+    </div>
   )
 }
 

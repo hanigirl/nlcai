@@ -16,7 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { ScheduleDateTimePicker } from "@/components/schedule-date-time-picker"
+import { checkSlot, ScheduleDateTimePicker } from "@/components/schedule-date-time-picker"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,6 +30,7 @@ import {
   ApprovalReviewBar,
   buildReviewSeed,
   readApprovalParam,
+  seedHookFor,
   seedMediaFor,
   type ApprovalVariant,
   type ReviewState,
@@ -208,9 +209,11 @@ function FormatCard({
   const currentTime = post.scheduledTime ?? DEFAULT_SCHEDULED_TIME
   const [pickedDate, setPickedDate] = useState(post.scheduledDate)
   const [pickedTime, setPickedTime] = useState(currentTime)
+  const [slotError, setSlotError] = useState<string | null>(null)
   const openDateDialog = () => {
     setPickedDate(post.scheduledDate)
     setPickedTime(currentTime)
+    setSlotError(null)
     setDateDialogOpen(true)
   }
 
@@ -319,12 +322,28 @@ function FormatCard({
             anchorDate={post.scheduledDate}
             date={pickedDate}
             time={pickedTime}
-            onDateChange={setPickedDate}
-            onTimeChange={setPickedTime}
+            onDateChange={(d) => {
+              setPickedDate(d)
+              setSlotError(null)
+            }}
+            onTimeChange={(t) => {
+              setPickedTime(t)
+              setSlotError(null)
+            }}
           />
+          {slotError && (
+            <p role="alert" className="text-xs-body text-red-50">
+              {slotError}
+            </p>
+          )}
           <DialogFooter className="gap-2 sm:justify-start">
             <Button
               onClick={() => {
+                const check = checkSlot(pickedDate, pickedTime)
+                if (!check.ok) {
+                  setSlotError(check.reason)
+                  return
+                }
                 setDateDialogOpen(false)
                 onReschedule(pickedDate, pickedTime)
               }}
@@ -539,13 +558,19 @@ export default function CalendarPage() {
     // Declared after the approval seed on purpose: it runs second and puts
     // the preview's sample formats on the board.
     if (approvalVariant && previewVariant) {
-      setReviewScheduled(
-        buildPreviewScheduled(
-          buildWeekGrid(startOfWeek(today))
-            .filter((d) => !isPastDate(d, today))
-            .map(toDateKey),
-        ),
+      const rows = buildPreviewScheduled(
+        buildWeekGrid(startOfWeek(today))
+          .filter((d) => !isPastDate(d, today))
+          .map(toDateKey),
       )
+      setReviewScheduled(rows)
+      // On the board = already approved. Without this, removing one sent it
+      // to "ממתינים לאישור" instead of back to "מוכנים לתזמון".
+      setReviewApproved((prev) => {
+        const next = new Set(prev)
+        for (const r of rows) next.add(`${r.corePostId}:${r.format}`)
+        return next
+      })
     }
   }, [approvalVariant, previewVariant, applyReviewState, today])
   // Keep the rail's exclusion set in step with what was dropped on the grid.
@@ -809,9 +834,20 @@ export default function CalendarPage() {
   // Everything stays in this component's state: no schedulePost, no caption
   // write, no canvas navigation. DELETE the harness half before shipping; the
   // handlers are where the real writes go once a variant is picked.
-  const previewRow =
+  const previewRow: ScheduledPost | null =
     previewVariant && previewKey
-      ? reviewScheduled.find((p) => `${p.corePostId}:${p.format}` === previewKey) ?? null
+      ? reviewScheduled.find((p) => `${p.corePostId}:${p.format}` === previewKey) ??
+        (() => {
+          const [corePostId, format] = previewKey.split(":")
+          return {
+            corePostId,
+            format: format as FormatId,
+            scheduledDate: "",
+            scheduledTime: "",
+            publishedAt: null,
+            hook: seedHookFor(corePostId),
+          }
+        })()
       : null
   const previewData = previewRow
     ? buildPreviewData(
@@ -829,7 +865,9 @@ export default function CalendarPage() {
     ? {
         onReschedule: (date: string, time: string) => {
           upsertReviewRow(previewRow.corePostId, previewRow.format, date, previewRow.hook ?? undefined, time)
-          toast.success("התזמון עודכן — הכרטיס זז בלוח")
+          toast.success(
+            previewRow.scheduledDate ? "התזמון עודכן — הכרטיס זז בלוח" : "הפוסט תוזמן ונוסף ללוח",
+          )
         },
         onCaptionSave: (caption: string) => {
           setPreviewCaptions((m) => new Map(m).set(`${previewRow.corePostId}:${previewRow.format}`, caption))
@@ -839,8 +877,9 @@ export default function CalendarPage() {
           setReviewScheduled((rows) =>
             rows.filter((p) => !(p.corePostId === previewRow.corePostId && p.format === previewRow.format)),
           )
+          setReviewApproved((prev) => new Set(prev).add(`${previewRow.corePostId}:${previewRow.format}`))
           setPreviewKey(null)
-          toast.success("הפורמט הוחזר לתור")
+          toast.success("הפורמט חזר ל״מוכנים לתזמון״")
         },
         onOpenCanvas: () => toast("בסביבת הבדיקה הקנבס לא נפתח — בפועל זה עובר לעריכת הפורמט"),
         onStatusAction: (action: string) =>
@@ -1053,7 +1092,10 @@ export default function CalendarPage() {
                                       ),
                                   ),
                                 )
-                                toast.success("הפורמט הוחזר לתור")
+                                setReviewApproved((prev) =>
+                                  new Set(prev).add(`${post.corePostId}:${post.format}`),
+                                )
+                                toast.success("הפורמט חזר ל״מוכנים לתזמון״")
                                 return
                               }
                               // Send THIS format back to the queue and drop
@@ -1062,7 +1104,7 @@ export default function CalendarPage() {
                               unschedulePost(post.corePostId, post.format)
                               unmarkPublished(post.corePostId, post.format)
                               reloadBoard()
-                              toast.success("הפורמט הוחזר לתור")
+                              toast.success("הפורמט חזר ל״מוכנים לתזמון״")
                             }}
                             onReschedule={(newDate, newTime) => {
                               if (reviewMode) {
@@ -1108,9 +1150,11 @@ export default function CalendarPage() {
           collapsed={panelCollapsed || inspectorOpen}
           onToggleCollapse={() => setPanelCollapsed((v) => !v)}
           onItemClick={(corePostId, format) =>
-            reviewMode
-              ? toast("בסביבת הבדיקה הפוסטים לדוגמה — הפאנל לא נפתח")
-              : openSheetForCorePost(corePostId, format, "preview")
+            previewVariant && format
+              ? setPreviewKey(`${corePostId}:${format}`)
+              : reviewMode
+                ? toast("בסביבת הבדיקה הפוסטים לדוגמה — הפאנל לא נפתח")
+                : openSheetForCorePost(corePostId, format, "preview")
           }
           approval={approvalMode}
         />

@@ -20,7 +20,7 @@ import type {
   PublishStatus,
 } from "@/components/format-preview/shared"
 import type { FormatId, ScheduledPost } from "@/lib/timing-storage"
-import { seedHookFor } from "./approval-review-harness"
+import { seedHookFor, seedMediaFor } from "./approval-review-harness"
 
 export type PreviewVariant = "a" | "b"
 
@@ -199,7 +199,17 @@ export function buildPreviewData(
   captionOverrides: Map<string, string>,
 ): FormatPreviewData {
   const k = key(post.corePostId, post.format)
-  const seed = SEED_FORMATS.find((f) => key(f.corePostId, f.format) === k)
+  // Rail items aren't in SEED_FORMATS — borrow a same-format sample caption
+  // and use the rail's own thumbnail as the media.
+  const seed =
+    SEED_FORMATS.find((f) => key(f.corePostId, f.format) === k) ??
+    (() => {
+      const sameFormat = SEED_FORMATS.find((f) => f.format === post.format)
+      const thumb = seedMediaFor(post.corePostId)[post.format]
+      return sameFormat
+        ? { ...sameFormat, slides: thumb ? [{ url: thumb, type: "image" as const }] : sameFormat.slides, coverUrl: undefined }
+        : undefined
+    })()
   const baseCaption = captionOverrides.get(k) ?? seed?.caption ?? ""
   return {
     corePostId: post.corePostId,
@@ -210,8 +220,12 @@ export function buildPreviewData(
     coverUrl: seed?.coverUrl,
     handle: PREVIEW_HANDLE,
     scheduledDate: post.scheduledDate,
-    scheduledTime: post.scheduledTime ?? "09:00",
-    publish: statusPick === "mixed" ? (MIXED[k] ?? STATUS.scheduled) : STATUS[statusPick],
+    scheduledTime: post.scheduledDate ? (post.scheduledTime ?? "09:00") : "",
+    publish: !post.scheduledDate
+      ? { kind: "unscheduled" }
+      : statusPick === "mixed"
+        ? (MIXED[k] ?? STATUS.scheduled)
+        : STATUS[statusPick],
   }
 }
 

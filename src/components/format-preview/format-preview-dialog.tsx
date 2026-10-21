@@ -20,7 +20,7 @@ import { Pencil, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { FormatStatusChip } from "@/components/format-status-chip"
-import { ScheduleDateTimeField } from "@/components/schedule-date-time-picker"
+import { checkSlot, ScheduleDateTimeField } from "@/components/schedule-date-time-picker"
 import { Skeleton } from "@/components/ui/skeleton"
 import { destinationForFormat } from "@/lib/social/media-spec"
 import {
@@ -87,6 +87,28 @@ function DialogBody({
 } & FormatPreviewHandlers) {
   const [slide, setSlide] = useState(0)
   const [editingCaption, setEditingCaption] = useState(false)
+  // Draft slot — "תזמון פוסט" in the footer commits it to the board.
+  const [draftDate, setDraftDate] = useState(data.scheduledDate)
+  const [draftTime, setDraftTime] = useState(data.scheduledTime)
+  const [slotError, setSlotError] = useState<string | null>(null)
+  const slotKey = `${data.corePostId}:${data.format} ${data.scheduledDate} ${data.scheduledTime}`
+  const [syncedSlot, setSyncedSlot] = useState(slotKey)
+  if (syncedSlot !== slotKey) {
+    setSyncedSlot(slotKey)
+    setDraftDate(data.scheduledDate)
+    setDraftTime(data.scheduledTime)
+    setSlotError(null)
+  }
+  const slotDirty =
+    !!draftDate && (draftDate !== data.scheduledDate || draftTime !== data.scheduledTime)
+  const commitSlot = () => {
+    const check = checkSlot(draftDate, draftTime)
+    if (!check.ok) {
+      setSlotError(check.reason)
+      return
+    }
+    onReschedule(draftDate, draftTime)
+  }
 
   const kind = destinationForFormat(data.format)
   const isStory = kind === "story"
@@ -149,9 +171,14 @@ function DialogBody({
             ) : (
               <ScheduleDateTimeField
                 idBase={`pv-a-${data.corePostId}-${data.format}`}
-                date={data.scheduledDate}
-                time={data.scheduledTime}
-                onCommit={onReschedule}
+                date={draftDate}
+                time={draftTime}
+                onChange={(d, t) => {
+                  setDraftDate(d)
+                  setDraftTime(t)
+                  setSlotError(null)
+                }}
+                error={slotError}
                 disabled={isPublished}
               />
             )}
@@ -202,13 +229,10 @@ function DialogBody({
           </section>
         </div>
 
+        {/* Footer (RTL): "הסרה מהלוח" alone on the right; "עריכה בקנבס" and
+            the primary "תזמון פוסט" together on the left (Hani, 2026-10-21). */}
         <div className="flex items-center gap-2 border-t border-border-neutral-default px-6 py-3">
-          <Button size="sm" variant="outline" onClick={onOpenCanvas}>
-            <Pencil className="size-3.5" aria-hidden />
-            עריכה בקנבס
-          </Button>
-          <span className="flex-1" />
-          {!isPublished && (
+          {!isPublished && data.scheduledDate && (
             <Button
               size="sm"
               variant="ghost"
@@ -217,6 +241,16 @@ function DialogBody({
             >
               <Trash2 className="size-3.5" aria-hidden />
               הסרה מהלוח
+            </Button>
+          )}
+          <span className="flex-1" />
+          <Button size="sm" variant="outline" onClick={onOpenCanvas}>
+            <Pencil className="size-3.5" aria-hidden />
+            עריכה בקנבס
+          </Button>
+          {!isPublished && (
+            <Button size="sm" disabled={!slotDirty || loading} onClick={commitSlot}>
+              תזמון פוסט
             </Button>
           )}
         </div>
