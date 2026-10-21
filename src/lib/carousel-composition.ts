@@ -54,7 +54,7 @@ const SYSTEM = `You are a senior editorial designer building Instagram carousels
 You output ONE HTML document containing every slide of the carousel as <section class="slide" data-slide="N"> elements (N = 1..count, in order), each exactly ${SLIDE_W}px × ${SLIDE_H}px, position relative, overflow hidden. The page is screenshotted slide by slide.
 
 THE CAROUSEL IS ONE SYSTEM — slides are swiped one after another, so consistency is the whole job:
-1. Fonts: ONLY the brand font families given (they're loaded for you). At most two roles — one for headings, one for body. No other font, no font-weight soup: at most two weights per family.
+1. Fonts: ONLY the brand fonts. Write font-family as var(--font-head) for headings (.title) and var(--font-body) for everything else — never a font name. We define those variables to her brand fonts (they're loaded for you). No font-weight soup: at most two weights.
 2. One type scale, defined ONCE in :root as CSS variables, and every font-size written as calc(var(--type-scale) * <px>) — e.g. --title: calc(var(--type-scale) * 76px). All content slides use the SAME title size and the SAME body size. The cover may use one larger title size; the closing slide reuses the content sizes. No per-slide font-size overrides, no inline font styles.
 3. One grid: identical margins, text block position and illustration slot on every content slide. Use shared classes, never per-slide positioning.
 4. The slide number: the same element, same corner, same size, same style on every slide (e.g. "3/7" or a numbered badge) — designed once in the stylesheet.
@@ -158,6 +158,25 @@ export function illustrationPrompt(idea: string, slide: SlideData, styleLines: s
   ].join("\n")
 }
 
+/**
+ * Her fonts, enforced. The prompt asks for brand fonts only, but a model will
+ * still reach for a familiar face (it once set a whole carousel in Rubik with
+ * her font sitting unused). So the families are pinned here, after the
+ * composition's CSS: headings get her first brand font, everything else her
+ * second (or the first again). Rubik / Heebo remain only as glyph fallbacks.
+ */
+function fontEnforcement(fonts: BrandFont[]): string {
+  if (!fonts.length) return ""
+  const head = JSON.stringify(fonts[0].family)
+  const body = JSON.stringify((fonts[1] ?? fonts[0]).family)
+  return `<style>
+:root{--font-head:${head},"Rubik",sans-serif;--font-body:${body},"Heebo","Rubik",sans-serif}
+.slide,.slide .body,.slide p,.slide li,.slide span:not(.title *){font-family:var(--font-body)!important}
+.slide .title,.slide .title *,.slide h1,.slide h2,.slide h3{font-family:var(--font-head)!important}
+.slide .num{font-family:var(--font-body)!important}
+</style>`
+}
+
 /** Load the HTML once, fit the type scale across ALL slides, screenshot each. */
 export async function renderCarousel(
   html: string,
@@ -168,8 +187,9 @@ export async function renderCarousel(
   illustrationUrls.forEach((url, i) => {
     page = page.split(IMAGE_TOKEN(i)).join(url)
   })
-  const head = fontHead(fonts)
-  page = /<head[^>]*>/i.test(page) ? page.replace(/<head[^>]*>/i, (m) => `${m}${head}`) : `${head}${page}`
+  const head = fontHead(fonts) + fontEnforcement(fonts)
+  // Appended at the END of <head> so it wins over the composition's own CSS.
+  page = /<\/head>/i.test(page) ? page.replace(/<\/head>/i, `${head}</head>`) : `${head}${page}`
 
   const browser = await launch({ width: SLIDE_W, height: SLIDE_H })
   try {
@@ -186,10 +206,19 @@ export async function renderCarousel(
       // One scale for every slide: shrink together until nothing overflows.
       const root = document.documentElement;
       const boxes = Array.from(document.querySelectorAll(".text-box"));
-      const over = () => boxes.some((el) => el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1);
+      // Overflow = the text really needs more room than the box allows: past
+      // its max-height (a tight line-height spilling a few px of descenders
+      // doesn't count) or wider than the box.
+      const over = () => boxes.some((el) => {
+        const cs = getComputedStyle(el);
+        const maxH = parseFloat(cs.maxHeight);
+        const limit = Number.isFinite(maxH) ? maxH : el.clientHeight;
+        return el.scrollHeight > limit + 16 || el.scrollWidth > el.clientWidth + 2;
+      });
       let scale = parseFloat(getComputedStyle(root).getPropertyValue("--type-scale")) || 1;
       root.style.setProperty("--type-scale", String(scale));
-      for (let i = 0; i < 20 && over(); i++) {
+      // Never below 70% — past that it's a layout problem, not a fit problem.
+      for (let i = 0; i < 8 && over(); i++) {
         scale = Math.round(scale * 0.95 * 1000) / 1000;
         root.style.setProperty("--type-scale", String(scale));
       }
