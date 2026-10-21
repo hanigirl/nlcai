@@ -241,9 +241,9 @@ export function VisualLanguagePanel({
 
   const handleExampleFiles = async (files: FileList | null, kind: UserExampleKind) => {
     if (!files) return
-    const room = MAX_BRAND_EXAMPLES - examples.length
+    const room = roomFor(kind === "feed_post" ? "image" : kind)
     const picked = Array.from(files).filter((f) => f.type.startsWith("image/")).slice(0, room)
-    if (files.length > room) toast.message(`אפשר עד ${MAX_BRAND_EXAMPLES} דוגמאות`)
+    if (files.length > room) toast.message(`אפשר עד ${MAX_BRAND_EXAMPLES} דוגמאות מכל סוג`)
     setUploadingExamples((n) => n + picked.length)
     for (const file of picked) {
       const res = await uploadFile(file, "brand_example", { kind })
@@ -263,8 +263,8 @@ export function VisualLanguagePanel({
       toast.error("הקישור לא נראה תקין")
       return
     }
-    if (examples.length >= MAX_BRAND_EXAMPLES) {
-      toast.message(`אפשר עד ${MAX_BRAND_EXAMPLES} דוגמאות`)
+    if (roomFor("image") <= 0) {
+      toast.message(`אפשר עד ${MAX_BRAND_EXAMPLES} דוגמאות מכל סוג`)
       return
     }
     const href = url.toString()
@@ -374,6 +374,8 @@ export function VisualLanguagePanel({
     if (kind === "carousel" || kind === "cover" || kind === "story") return kind
     return "image"
   }
+  // The cap is per format: six carousels don't crowd out her stories.
+  const roomFor = (tab: ExamplesTab) => MAX_BRAND_EXAMPLES - examples.filter((ex) => tabOf(ex) === tab).length
   // Where the analysis pinned an element (pasted at exact pixels).
   const SLIDE_LABELS = { all: "בכל השקופיות", cover: "בשקופית הפתיחה", content: "בשקופיות התוכן", closing: "בשקופית הסיום", not_cover: "בכל השקופיות חוץ מהפתיחה" } as const
   const FORMAT_LABELS = { carousel: "קרוסלה", story: "סטורי", image_post: "פוסט תמונה", b_roll: "בי-רול" } as const
@@ -414,7 +416,6 @@ export function VisualLanguagePanel({
   }
 
   if (view === "examples") {
-    const room = MAX_BRAND_EXAMPLES - examples.length
     const renderExample = (ex: ExampleItem) =>
       ex.isLink ? (
         <div
@@ -493,6 +494,7 @@ export function VisualLanguagePanel({
 
           {EXAMPLE_TABS.map((t) => {
             const items = examples.filter((ex) => tabOf(ex) === t.id)
+            const room = MAX_BRAND_EXAMPLES - items.length
             return (
               <TabsContent key={t.id} value={t.id} className="flex flex-col gap-4 pt-3">
                 {t.id === "cover" ? (
@@ -528,7 +530,7 @@ export function VisualLanguagePanel({
                     )}
                   </>
                 ) : (
-                  <p className="text-sm text-text-neutral-default">הגעתם למקסימום {MAX_BRAND_EXAMPLES} דוגמאות. מחקו אחת כדי להוסיף.</p>
+                  <p className="text-sm text-text-neutral-default">הגעתם למקסימום {MAX_BRAND_EXAMPLES} דוגמאות בסוג הזה. מחקו אחת כדי להוסיף.</p>
                 )}
                 {t.id !== "cover" && uploadingExamples > 0 && <UploadingNote count={uploadingExamples} />}
 

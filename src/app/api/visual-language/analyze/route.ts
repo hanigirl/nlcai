@@ -12,12 +12,13 @@ import {
 import {
   MAX_BRAND_ELEMENTS,
   MAX_BRAND_EXAMPLES,
+  USER_EXAMPLE_KINDS,
   userExampleKind,
   visualLanguageSignature,
   type VisualLanguage,
 } from "@/lib/visual-language/types"
 
-// Website screenshots + an Opus vision call over up to 14 images.
+// Website screenshots + an Opus vision call over up to 32 images (8 elements + 6 examples per format).
 export const maxDuration = 300
 
 /**
@@ -66,7 +67,10 @@ export async function POST() {
     metadata: Record<string, unknown> | null
   }[]
   const elementRows = rows.filter((r) => r.category === "element").slice(0, MAX_BRAND_ELEMENTS)
-  const exampleRows = rows.filter((r) => r.category === "brand_example").slice(0, MAX_BRAND_EXAMPLES)
+  // The cap is per format, so the analysis can see up to one full set of each.
+  const exampleRows = rows
+    .filter((r) => r.category === "brand_example")
+    .slice(0, MAX_BRAND_EXAMPLES * USER_EXAMPLE_KINDS.length)
 
   if (!colors.length && !elementRows.length && !exampleRows.length) {
     return NextResponse.json(

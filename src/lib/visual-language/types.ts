@@ -9,6 +9,7 @@
 
 export const MAX_BRAND_COLORS = 3
 export const MAX_BRAND_ELEMENTS = 8
+/** Per format (carousel / cover / story / image), not in total. */
 export const MAX_BRAND_EXAMPLES = 6
 
 /**
