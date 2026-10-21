@@ -4148,7 +4148,7 @@ function MediaUploadFlow({
                 alt=""
                 className="size-4 shrink-0"
               />
-              יבוא מדיה מ Google Drive
+              המדיה שלכם מ Google Drive
             </Button>
           ) : (
           <DriveMediaLinks
@@ -4437,7 +4437,7 @@ function MediaUploadFlow({
                 alt=""
                 className="size-4 shrink-0"
               />
-              {previewUrl ? "החלפת מדיה מ Google Drive" : "יבוא מדיה מ Google Drive"}
+              {previewUrl ? "החלפת מדיה מ Google Drive" : "המדיה שלכם מ Google Drive"}
             </Button>
           ) : (
           <div className="flex flex-col gap-2">
