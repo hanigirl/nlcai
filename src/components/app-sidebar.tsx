@@ -3,7 +3,7 @@
 import Link, { useLinkStatus } from "next/link"
 import { usePathname } from "next/navigation"
 import { useEffect } from "react"
-import { Home, FileText, Image, Settings, Anchor, Lightbulb, CalendarDays } from "lucide-react"
+import { Home, FileText, Settings, Anchor, Lightbulb, CalendarDays } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import {
   Sidebar,
@@ -43,11 +43,6 @@ const navItems: NavItem[] = [
     label: "מחסן הוקים",
     href: "/hooks",
     icon: Anchor,
-  },
-  {
-    label: "מדיה",
-    href: "/media",
-    icon: Image,
   },
   {
     label: "תזמון",
