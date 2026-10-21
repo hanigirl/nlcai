@@ -27,7 +27,9 @@ import {
 
 const FPS = 25
 
-async function launch(): Promise<Browser> {
+export async function launch(
+  viewport: { width: number; height: number } = { width: COMPOSITION_WIDTH, height: COMPOSITION_HEIGHT },
+): Promise<Browser> {
   const puppeteer = (await import("puppeteer-core")).default
   const onServerless = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME
   if (onServerless) {
@@ -36,7 +38,7 @@ async function launch(): Promise<Browser> {
       args: chromium.args,
       executablePath: await chromium.executablePath(),
       headless: true,
-      defaultViewport: { width: COMPOSITION_WIDTH, height: COMPOSITION_HEIGHT },
+      defaultViewport: viewport,
     })
   }
   return puppeteer.launch({
@@ -44,7 +46,7 @@ async function launch(): Promise<Browser> {
       process.env.CHROME_EXECUTABLE_PATH ??
       "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     headless: true,
-    defaultViewport: { width: COMPOSITION_WIDTH, height: COMPOSITION_HEIGHT },
+    defaultViewport: viewport,
   })
 }
 

@@ -23,11 +23,12 @@ type Quality = "high" | "medium" | "low" | "auto"
  * afterwards — nothing gets trimmed. Cropping a 2:3 render to 4:5 used to cut
  * corner elements (her badge, the slide tab) clean off.
  */
-export type ImageShape = "4:5" | "9:16"
+export type ImageShape = "4:5" | "9:16" | "1:1"
 
 const SHAPE_SIZE: Record<ImageShape, string> = {
   "4:5": "1088x1360", // → 1080×1350 feed post / carousel slide
   "9:16": "1008x1792", // → 1080×1920 story / b-roll
+  "1:1": "1024x1024", // carousel illustration slot (the slide itself is laid out in code)
 }
 
 // The old universal size. Only used if OpenAI ever refuses a custom size;

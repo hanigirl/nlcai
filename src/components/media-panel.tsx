@@ -1662,6 +1662,7 @@ function CarouselFlow({
           body: JSON.stringify({
             slides: parsedSlides,
             templateId: genId,
+            postId,
           }),
         },
       )

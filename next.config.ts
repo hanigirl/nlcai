@@ -31,6 +31,9 @@ const nextConfig: NextConfig = {
       "./node_modules/ffmpeg-static/ffmpeg",
       "./node_modules/@sparticuz/chromium/bin/**",
     ],
+    // The AI carousel lays its slides out in HTML and screenshots them.
+    "/api/carousel/generate-ai": ["./node_modules/@sparticuz/chromium/bin/**"],
+    "/api/media/ai-edit": ["./node_modules/@sparticuz/chromium/bin/**"],
   },
   typescript: { ignoreBuildErrors: true },
 };

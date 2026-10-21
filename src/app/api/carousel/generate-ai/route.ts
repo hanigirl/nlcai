@@ -12,6 +12,16 @@ import {
   reservedZoneLines,
   type ImageRole,
 } from "@/lib/visual-language/fixed-elements"
+import { loadBrandFonts } from "@/lib/broll-animation/brief"
+import {
+  composeCarousel,
+  illustrationPrompt,
+  renderCarousel,
+  saveCarousel,
+  uploadIllustration,
+  type CarouselBrief,
+} from "@/lib/carousel-composition"
+import type { VisualLanguage } from "@/lib/visual-language/types"
 import {
   noExtrasRule,
   resolveDesignDirection,
@@ -35,6 +45,8 @@ const MAX_AI_SLIDES = 10
 
 // Parallel OpenAI image calls per carousel (rate-limit friendly).
 const CONCURRENCY = 3
+// Illustrations are smaller, text-free and medium quality — more at once.
+const ART_CONCURRENCY = 5
 
 /**
  * AI carousel generation — gpt-image-2 (BYOK — users.openai_api_key)
@@ -103,9 +115,11 @@ function cropToCanvas(imageBase64: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { slides, templateId } = (await req.json().catch(() => ({}))) as {
+    const { slides, templateId, postId } = (await req.json().catch(() => ({}))) as {
       slides?: SlideData[]
       templateId?: string
+      /** Lets "עריכה עם AI" find this carousel's layout later. */
+      postId?: string
     }
 
     if (!slides || !Array.isArray(slides) || slides.length === 0) {
@@ -183,6 +197,63 @@ export async function POST(req: NextRequest) {
         format: "carousel",
         style: templateId === "ai-light" ? "ai-light" : templateId === "ai-dark" ? "ai-dark" : "niche",
       })
+    }
+
+    // Laid out in code when she has a Claude key (lib/carousel-composition):
+    // one stylesheet, her fonts, one type scale, identical grid and number on
+    // every slide — the model only draws illustrations. Without a Claude key
+    // the slides are drawn whole by the image model, as before.
+    const anthropicKey = await getUserApiKey(supabase, "anthropic_api_key").catch(() => null)
+    if (anthropicKey) {
+      const [fonts, { data: userRow }] = await Promise.all([
+        loadBrandFonts(supabase, user.id),
+        supabase.from("users").select("brand_colors, visual_language").eq("id", user.id).single(),
+      ])
+      const row = userRow as { brand_colors?: string[] | null; visual_language?: VisualLanguage | null } | null
+      const palette =
+        isBrandTemplate && row?.visual_language?.palette?.length
+          ? row.visual_language.palette
+          : (row?.brand_colors ?? []).map((hex, i) => ({ hex, role: i === 0 ? "primary brand colour" : "brand colour" }))
+      const brief: CarouselBrief = {
+        slides: slides!,
+        fonts,
+        palette,
+        styleLines: direction.lines,
+        reservedLines: reservedZoneLines(direction.fixed, "content", IMAGE_WIDTH, IMAGE_HEIGHT),
+      }
+
+      // Layout (Opus) and illustrations (image model) don't wait on each other.
+      const illustrations: string[] = new Array(total)
+      let nextArt = 0
+      async function artWorker() {
+        while (nextArt < total) {
+          const i = nextArt++
+          const raw = await generateImage(openaiKey, illustrationPrompt("", slides![i], direction.lines), {
+            shape: "1:1",
+            quality: "medium",
+          })
+          illustrations[i] = await uploadIllustration(supabase, user!.id, Buffer.from(raw, "base64"))
+        }
+      }
+      const [layout] = await Promise.all([
+        composeCarousel(anthropicKey, brief),
+        Promise.all(Array.from({ length: Math.min(ART_CONCURRENCY, total) }, () => artWorker())),
+      ])
+      const shots = await renderCarousel(layout.html, illustrations, fonts)
+      for (let i = 0; i < total; i++) {
+        const shot = shots[i]
+        if (!shot) throw new Error("render_missing_slide")
+        images[i] = await applyFixedElements(shot.toString("base64"), direction.fixed, slideRole(slides![i]))
+      }
+      if (postId) {
+        await saveCarousel(supabase, user.id, postId, {
+          html: layout.html,
+          brief,
+          illustrations,
+          edits: [],
+        }).catch((err) => console.error("[carousel/generate-ai] save composition", err))
+      }
+      return NextResponse.json({ images })
     }
 
     // Simple concurrency pool — kinder to OpenAI rate limits than firing

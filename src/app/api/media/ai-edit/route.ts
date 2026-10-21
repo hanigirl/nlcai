@@ -8,6 +8,17 @@ import { editImage, type ImageShape } from "@/lib/openai-image"
 import { loadImageForModels } from "@/lib/visual-language/image-input"
 import { replaceImageAssetSet } from "@/lib/media-asset-set"
 import { learnFromInstruction } from "@/lib/style-memory"
+import { applyFixedElements } from "@/lib/visual-language/fixed-elements"
+import { resolveDesignDirection } from "@/lib/visual-language/direction"
+import {
+  illustrationPrompt,
+  loadCarousel,
+  renderCarousel,
+  reviseCarousel,
+  saveCarousel,
+  uploadIllustration,
+} from "@/lib/carousel-composition"
+import { generateImage } from "@/lib/openai-image"
 
 // Planning + up to 10 parallel image edits (30–120s each).
 export const maxDuration = 300
@@ -175,6 +186,56 @@ export async function POST(req: NextRequest) {
     }
 
     const learning = learnFromInstruction(supabase, user.id, anthropicKey, text, NOUN[format])
+
+    // A carousel laid out in code is edited in its layout — exact and
+    // obedient — and only the illustrations she asks about are redrawn.
+    const stored = format === "carousel" ? await loadCarousel(supabase, user.id, postId) : null
+    if (stored && stored.brief.slides.length === urls.length) {
+      const revised = await reviseCarousel(anthropicKey, stored, text)
+      const illustrations = [...stored.illustrations]
+      const redraw = revised.illustrations
+        .map((idea, i) => ({ idea: idea.trim(), i }))
+        .filter((x) => x.idea)
+      await Promise.all(
+        redraw.map(async ({ idea, i }) => {
+          const raw = await generateImage(openaiKey, illustrationPrompt(idea, stored.brief.slides[i], stored.brief.styleLines), {
+            shape: "1:1",
+            quality: "medium",
+          })
+          illustrations[i] = await uploadIllustration(supabase, user.id, Buffer.from(raw, "base64"))
+        }),
+      )
+      const direction = await resolveDesignDirection(supabase, user.id, { format: "carousel" })
+      const shots = await renderCarousel(revised.html, illustrations, stored.brief.fonts)
+      const nextSet = await Promise.all(
+        shots.map((shot, i) =>
+          applyFixedElements(
+            shot.toString("base64"),
+            direction.fixed,
+            stored.brief.slides[i].type === "cover" ? "cover" : stored.brief.slides[i].type === "cta" ? "closing" : "content",
+          ),
+        ),
+      )
+      const saved = await replaceImageAssetSet(supabase, user.id, postId, format, nextSet)
+      if (!saved.ok) return NextResponse.json({ error: saved.error }, { status: 500 })
+      await saveCarousel(supabase, user.id, postId, {
+        html: revised.html,
+        brief: stored.brief,
+        illustrations,
+        edits: [...stored.edits, text],
+      })
+      const { data: after } = await supabase
+        .from("media_assets")
+        .select("url")
+        .eq("format_variant_id", (variant as unknown as { id: string }).id)
+        .eq("asset_type", "image")
+        .order("created_at", { ascending: true })
+      return NextResponse.json({
+        urls: ((after ?? []) as { url: string }[]).map((a) => a.url),
+        edited: shots.map((_, i) => i + 1),
+        remembered: await learning,
+      })
+    }
     const { targets, edit } = await plan(anthropicKey, format, urls.length, text)
     const prompt = editPrompt(edit)
 
