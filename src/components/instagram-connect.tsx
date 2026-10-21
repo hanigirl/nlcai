@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Instagram, Loader2, RefreshCw, Unlink } from "lucide-react"
 import { toast } from "sonner"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -353,14 +354,7 @@ function InstagramConnectDialog({
                   disabled={flow.busy}
                   className="flex items-center gap-3 rounded-xl border border-border-neutral-default p-3 text-start transition-colors hover:bg-bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 disabled:opacity-60"
                 >
-                  {o.avatar ? (
-                    // eslint-disable-next-line @next/next/no-img-element -- Facebook CDN URL, short-lived and not in next/image's allow-list
-                    <img src={o.avatar} alt="" className="size-9 shrink-0 rounded-full object-cover" />
-                  ) : (
-                    <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-bg-surface">
-                      <Instagram className="size-4 text-text-neutral-default" aria-hidden />
-                    </span>
-                  )}
+                  <AccountAvatar src={o.avatar} />
                   <span className="truncate text-small-bold text-text-primary-default">
                     <bdi>@{o.name.replace(/^@/, "")}</bdi>
                   </span>
@@ -374,7 +368,8 @@ function InstagramConnectDialog({
           </p>
         ) : account && (isLive || isLapsed) ? (
           <div className="flex flex-col gap-3 rounded-xl border border-border-neutral-default p-3">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <AccountAvatar src={account.avatarUrl} />
               <div className="flex min-w-0 flex-col">
                 <span className="truncate text-small-bold text-text-primary-default">
                   {/* bdi, not dir="ltr": keeps "@handle" reading correctly
@@ -524,5 +519,19 @@ export function InstagramConnect() {
 
       <p className="text-xs-body text-text-neutral-default">{FACEBOOK_PAGE_NOTE}</p>
     </div>
+  )
+}
+
+/** Profile picture of an Instagram account. The URL is Facebook's CDN link,
+ *  which expires after a while, so the Instagram glyph stands in whenever it
+ *  is missing or fails to load. */
+function AccountAvatar({ src }: { src: string | null | undefined }) {
+  return (
+    <Avatar size="lg">
+      {src && <AvatarImage src={src} alt="" className="object-cover" />}
+      <AvatarFallback className="bg-bg-surface">
+        <Instagram className="size-4 text-text-neutral-default" aria-hidden />
+      </AvatarFallback>
+    </Avatar>
   )
 }
