@@ -9,8 +9,8 @@
  * under it every carousel slide in order. On the other side, what she can act
  * on: the publish status first, then when it goes out, then the caption.
  *
- * View-first: date/time and caption read as finished facts and open for
- * editing only on request. The board is covered while it's open — the moment
+ * View-first: the caption reads as a finished fact and opens for editing on
+ * request; date/time is one field that opens a datepicker. The board is covered while it's open — the moment
  * is "is this ready to go out?", one post at a time. A modal also can't
  * collide with the approved rail: it sits above both.
  */
@@ -20,7 +20,7 @@ import { Pencil, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
 import { FormatStatusChip } from "@/components/format-status-chip"
-import { ScheduleDateTimePicker } from "@/components/schedule-date-time-picker"
+import { ScheduleDateTimeField } from "@/components/schedule-date-time-picker"
 import { Skeleton } from "@/components/ui/skeleton"
 import { destinationForFormat } from "@/lib/social/media-spec"
 import {
@@ -34,7 +34,6 @@ import {
   SlideDots,
   SlideStrip,
   StoryCaptionNote,
-  formatSlot,
   type FormatPreviewData,
   type PreviewContentState,
 } from "./shared"
@@ -87,17 +86,7 @@ function DialogBody({
   onClose: () => void
 } & FormatPreviewHandlers) {
   const [slide, setSlide] = useState(0)
-  const [editingWhen, setEditingWhen] = useState(false)
   const [editingCaption, setEditingCaption] = useState(false)
-  const [pickedDate, setPickedDate] = useState(data.scheduledDate)
-  const [pickedTime, setPickedTime] = useState(data.scheduledTime)
-  const slotKey = `${data.scheduledDate} ${data.scheduledTime}`
-  const [syncedSlot, setSyncedSlot] = useState(slotKey)
-  if (syncedSlot !== slotKey) {
-    setSyncedSlot(slotKey)
-    setPickedDate(data.scheduledDate)
-    setPickedTime(data.scheduledTime)
-  }
 
   const kind = destinationForFormat(data.format)
   const isStory = kind === "story"
@@ -148,60 +137,23 @@ function DialogBody({
             />
           )}
 
-          {/* When it goes out. The board is the source of truth, so saving
-              here moves the card on the board. */}
+          {/* When it goes out. One field that opens a datepicker with the
+              time under it (Hani, 2026-10-21) — closing it moves the card on
+              the board, which is the source of truth. */}
           <section className="flex flex-col gap-2" aria-labelledby="pv-when">
-            <div className="flex items-center gap-2">
-              <h4 id="pv-when" className="flex-1 text-small-bold text-text-primary-default">
-                מתי עולה
-              </h4>
-              {!editingWhen && !isPublished && !loading && (
-                <Button size="sm" variant="ghost" onClick={() => setEditingWhen(true)}>
-                  שינוי
-                </Button>
-              )}
-            </div>
+            <h4 id="pv-when" className="text-small-bold text-text-primary-default">
+              מתי עולה
+            </h4>
             {loading ? (
-              <Skeleton className="h-5 w-48" />
-            ) : editingWhen ? (
-              <div className="flex flex-col gap-3 rounded-xl border border-border-neutral-default p-3">
-                <ScheduleDateTimePicker
-                  idBase={`pv-a-${data.corePostId}-${data.format}`}
-                  anchorDate={data.scheduledDate}
-                  date={pickedDate}
-                  time={pickedTime}
-                  onDateChange={setPickedDate}
-                  onTimeChange={setPickedTime}
-                  disablePastHours
-                />
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    disabled={pickedDate === data.scheduledDate && pickedTime === data.scheduledTime}
-                    onClick={() => {
-                      onReschedule(pickedDate, pickedTime)
-                      setEditingWhen(false)
-                    }}
-                  >
-                    שמירה
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setPickedDate(data.scheduledDate)
-                      setPickedTime(data.scheduledTime)
-                      setEditingWhen(false)
-                    }}
-                  >
-                    ביטול
-                  </Button>
-                </div>
-              </div>
+              <Skeleton className="h-10 w-full rounded-xl" />
             ) : (
-              <p className="text-p text-text-primary-default tabular-nums">
-                {formatSlot(data.scheduledDate, data.scheduledTime)}
-              </p>
+              <ScheduleDateTimeField
+                idBase={`pv-a-${data.corePostId}-${data.format}`}
+                date={data.scheduledDate}
+                time={data.scheduledTime}
+                onCommit={onReschedule}
+                disabled={isPublished}
+              />
             )}
           </section>
 

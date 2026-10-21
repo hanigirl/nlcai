@@ -1,8 +1,9 @@
 "use client"
 
 import { useState } from "react"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react"
 import { Label } from "@/components/ui/label"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Select } from "@/components/ui/select"
 import { toDateKey } from "@/lib/timing-storage"
 
@@ -105,6 +106,169 @@ export function ScheduleDateTimePicker({
         </Select>
       </div>
     </>
+  )
+}
+
+/** The provider refuses anything closer than a few minutes; 7 is the tested floor. */
+const MIN_LEAD_MINUTES = 7
+
+function slotLabel(date: string, time: string): string {
+  const day = parseDateKey(date).toLocaleDateString("he-IL", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  })
+  return `${day} · ${time}`
+}
+
+function clampPart(raw: string, max: number): string | null {
+  if (!/^\d{1,2}$/.test(raw)) return null
+  const n = parseInt(raw, 10)
+  return n > max ? null : String(n).padStart(2, "0")
+}
+
+/**
+ * Date + time as one field (Hani, 2026-10-21, format preview A): the slot reads
+ * like a select; clicking it opens a datepicker popover with the time as an
+ * editable HH:MM field under the grid. No "שינוי" / "שמירה" buttons — picking
+ * is the edit, and closing the popover commits it to the board (the board is
+ * the source of truth). A time that's already passed, or too close to go out,
+ * keeps the popover open with the reason; Escape reverts.
+ */
+export function ScheduleDateTimeField({
+  idBase,
+  date,
+  time,
+  onCommit,
+  disabled = false,
+}: {
+  idBase: string
+  /** YYYY-MM-DD currently on the board. */
+  date: string
+  /** "HH:MM" currently on the board. */
+  time: string
+  onCommit: (date: string, time: string) => void
+  disabled?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const [draftDate, setDraftDate] = useState(date)
+  const [hh, setHh] = useState(time.slice(0, 2))
+  const [mm, setMm] = useState(time.slice(3, 5))
+  const [error, setError] = useState<string | null>(null)
+
+  const reset = () => {
+    setDraftDate(date)
+    setHh(time.slice(0, 2))
+    setMm(time.slice(3, 5))
+    setError(null)
+  }
+
+  // Returns the committed time, or null with `error` set.
+  const validate = (): string | null => {
+    const h = clampPart(hh, 23)
+    const m = clampPart(mm, 59)
+    if (h === null || m === null) {
+      setError("שעה לא תקינה")
+      return null
+    }
+    const at = parseDateKey(draftDate)
+    at.setHours(parseInt(h, 10), parseInt(m, 10), 0, 0)
+    if (at.getTime() < Date.now() + MIN_LEAD_MINUTES * 60_000) {
+      setError(`אפשר לתזמן רק לפחות ${MIN_LEAD_MINUTES} דקות קדימה`)
+      return null
+    }
+    setError(null)
+    return `${h}:${m}`
+  }
+
+  const onOpenChange = (next: boolean) => {
+    if (next) {
+      reset()
+      setOpen(true)
+      return
+    }
+    const committed = validate()
+    if (committed === null) return // stay open, reason is showing
+    if (draftDate !== date || committed !== time) onCommit(draftDate, committed)
+    setOpen(false)
+  }
+
+  const timeInput =
+    "h-9 w-11 rounded-lg border border-border-neutral-default bg-bg-surface text-center text-p-bold tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild disabled={disabled}>
+        <button
+          type="button"
+          className="flex h-10 w-full items-center gap-2 rounded-xl border border-border-neutral-default bg-bg-surface px-3 text-start text-p text-text-primary-default tabular-nums transition-colors hover:bg-bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <CalendarDays className="size-4 shrink-0 text-text-neutral-default" />
+          <span className="flex-1 truncate">{slotLabel(date, time)}</span>
+          <ChevronDown className="size-4 shrink-0 text-text-neutral-default" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        // Same width as the field, so it opens like a select in either direction.
+        className="flex w-(--radix-popover-trigger-width) min-w-72 flex-col gap-3"
+        onEscapeKeyDown={() => {
+          reset()
+          setOpen(false)
+        }}
+      >
+        <MiniMonthCalendar
+          currentDate={date}
+          selectedDate={draftDate}
+          onPick={(d) => {
+            setDraftDate(d)
+            setError(null)
+          }}
+        />
+        <div className="flex flex-col gap-1.5 border-t border-border-neutral-default pt-3">
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor={`hh-${idBase}`} className="text-small shrink-0">
+              שעה
+            </Label>
+            {/* Time reads left-to-right even in RTL: HH : MM. */}
+            <div dir="ltr" className="flex items-center gap-1.5">
+              <input
+                id={`hh-${idBase}`}
+                aria-label="שעות"
+                inputMode="numeric"
+                maxLength={2}
+                value={hh}
+                onChange={(e) => {
+                  setHh(e.target.value.replace(/\D/g, ""))
+                  setError(null)
+                }}
+                onBlur={() => setHh((v) => clampPart(v, 23) ?? v)}
+                onFocus={(e) => e.target.select()}
+                className={timeInput}
+              />
+              <span className="text-p-bold text-text-primary-default">:</span>
+              <input
+                aria-label="דקות"
+                inputMode="numeric"
+                maxLength={2}
+                value={mm}
+                onChange={(e) => {
+                  setMm(e.target.value.replace(/\D/g, ""))
+                  setError(null)
+                }}
+                onBlur={() => setMm((v) => clampPart(v, 59) ?? v)}
+                onFocus={(e) => e.target.select()}
+                className={timeInput}
+              />
+            </div>
+          </div>
+          {error && (
+            <p role="alert" className="text-xs-body text-red-50">
+              {error}
+            </p>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 
