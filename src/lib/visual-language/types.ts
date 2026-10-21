@@ -47,6 +47,16 @@ export const EXAMPLE_KIND_LABELS: Record<ExampleKind, string> = {
   other: "אחר",
 }
 
+/** The kinds she can file an example under herself (Settings → דוגמאות לשימוש). */
+export const USER_EXAMPLE_KINDS = ["carousel", "cover", "story", "feed_post"] as const
+export type UserExampleKind = (typeof USER_EXAMPLE_KINDS)[number]
+
+/** The kind she filed an example under, read from user_media.metadata.kind. */
+export function userExampleKind(metadata: Record<string, unknown> | null | undefined): UserExampleKind | null {
+  const k = metadata?.kind
+  return typeof k === "string" && (USER_EXAMPLE_KINDS as readonly string[]).includes(k) ? (k as UserExampleKind) : null
+}
+
 export type ElementAnchor =
   | "top-left"
   | "top-right"

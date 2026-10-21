@@ -12,6 +12,7 @@ import {
 import {
   MAX_BRAND_ELEMENTS,
   MAX_BRAND_EXAMPLES,
+  userExampleKind,
   visualLanguageSignature,
   type VisualLanguage,
 } from "@/lib/visual-language/types"
@@ -104,7 +105,11 @@ export async function POST() {
           return { id: r.id, label: `screenshot of ${link}`, image: shot.image, palette: shot.palette }
         }
         try {
-          return { id: r.id, label: r.file_name, image: await loadImageForModels(publicUrl(r.storage_path)) }
+          // Her own filing (Settings → דוגמאות לשימוש) goes in the label so
+          // the per-format notes learn from the right examples.
+          const filed = userExampleKind(r.metadata)
+          const label = filed ? `${r.file_name} — she filed this as: ${filed}` : r.file_name
+          return { id: r.id, label, image: await loadImageForModels(publicUrl(r.storage_path)) }
         } catch (err) {
           console.error("[visual-language][example]", r.id, err)
           return null
@@ -175,9 +180,14 @@ export async function POST() {
       })),
     formats: result.formats,
     // The model numbers examples 1..n in the order it saw them.
+    // Where she filed an example herself, that wins over the model's guess.
     example_kinds: result.example_kinds
       .filter((k) => okExamples[k.example - 1])
-      .map((k) => ({ id: okExamples[k.example - 1].id, kind: k.kind })),
+      .map((k) => {
+        const id = okExamples[k.example - 1].id
+        const filed = userExampleKind(exampleRows.find((r) => r.id === id)?.metadata)
+        return { id, kind: filed ?? k.kind }
+      }),
     preview: result.preview,
     inputs_signature: visualLanguageSignature({
       colors,

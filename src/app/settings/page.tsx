@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { Loader2, Link2, Unlink, Plus, Trash2, Upload, X, Sparkles, Check, Type, Image as ImageIcon, Search, Download, AlertCircle, AlertTriangle } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
-import { VisualLanguagePanel } from "@/components/visual-language-panel"
+import { VisualLanguagePanel, type ExamplesTab } from "@/components/visual-language-panel"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -193,7 +193,7 @@ interface UploadingFile {
   status: "uploading" | "done" | "error"
 }
 
-type MediaSection = "visual" | "fonts" | "covers"
+type MediaSection = "visual" | "examples"
 
 // Sub-sections per main tab. Module scope, not component scope, because the
 // initial state has to resolve `?sub=...` against it before the first render —
@@ -224,11 +224,11 @@ const SUB_SECTIONS: Record<SettingsTab, { id: string; label: string; icon: typeo
     { id: "list", label: "היוצרים שלכם", icon: Type },
   ],
   media: [
-    // Colours, graphic elements and design examples live together on one
-    // page — the analysis needs all three, so splitting them hid the flow.
+    // The brand itself (colours, fonts, graphic elements) and how it looks in
+    // use (examples per format) are separate pages; the analysis on the first
+    // reads both.
     { id: "visual", label: "שפה ויזואלית", icon: Sparkles },
-    { id: "fonts", label: "פונטים", icon: Type },
-    { id: "covers", label: "קאברים", icon: ImageIcon },
+    { id: "examples", label: "דוגמאות לשימוש", icon: ImageIcon },
   ],
 }
 
@@ -251,7 +251,10 @@ function SettingsPageInner() {
   // health banner uses this to land the user directly on, say, the
   // "קבצים להעלאה" panel inside the business tab instead of forcing them
   // to find it manually.
-  const initialSub = searchParams.get("sub") || ""
+  // Old media deep links: fonts moved into שפה ויזואלית, covers into
+  // דוגמאות לשימוש → קאברים.
+  const rawSub = searchParams.get("sub") || ""
+  const initialSub = initialTab === "media" ? (rawSub === "fonts" ? "visual" : rawSub === "covers" ? "examples" : rawSub) : rawSub
   // Resolved once, up front: a `?sub` that names a real section of the opening
   // tab wins, anything else (missing, misspelled, belonging to another tab)
   // falls back to that tab's first section.
@@ -263,6 +266,9 @@ function SettingsPageInner() {
   const [activeSubSection, setActiveSubSection] = useState<string>(resolvedSub)
   const [activeMediaSection, setActiveMediaSection] = useState<MediaSection>(
     initialTab === "media" ? (resolvedSub as MediaSection) : "visual",
+  )
+  const [examplesTab, setExamplesTab] = useState<ExamplesTab>(
+    initialTab === "media" && rawSub === "covers" ? "cover" : "carousel",
   )
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<KeyName | null>(null)
@@ -1498,187 +1504,194 @@ function SettingsPageInner() {
                 <SubNav sections={SUB_SECTIONS.media} active={activeMediaSection} onChange={(id) => { setActiveMediaSection(id as MediaSection); setActiveSubSection(id) }} />
 
                 <div className="flex-1 min-w-0 max-w-lg">
-                  {/* ── Visual language ── */}
-                  {activeMediaSection === "visual" && <VisualLanguagePanel />}
+                  {/* ── Visual language: colours, fonts, graphic elements + the analysis ── */}
+                  {activeMediaSection === "visual" && (
+                    <VisualLanguagePanel
+                      view="visual"
+                      onOpenExamples={() => { setActiveMediaSection("examples"); setActiveSubSection("examples") }}
+                      fontsSection={
+                        <div className="flex flex-col gap-3">
+                          <div>
+                            <h4 className="text-small-bold text-text-primary-default">2. פונטים</h4>
+                            <p className="text-small text-text-neutral-default mt-0.5">העלו את הפונטים שאתם עובדים איתם, או בחרו מ-Google Fonts. עד 5 פונטים.</p>
+                          </div>
 
-                  {/* ── Fonts ── */}
-                  {activeMediaSection === "fonts" && (
-                    <div className="flex flex-col gap-5">
-                      <div>
-                        <h3 className="text-p-bold text-text-primary-default">פונטים</h3>
-                        <p className="text-small text-text-neutral-default mt-1">העלו את הפונטים שאתם עובדים איתם, או בחרו מ-Google Fonts. עד 5 פונטים.</p>
-                      </div>
-
-                      {fontItems.length >= 5 ? (
-                        <p className="text-sm text-text-neutral-default">הגעת למקסימום 5 פונטים להעלאה</p>
-                      ) : (
-                        <>
-                          {/* Google Fonts searchable dropdown */}
-                          <div className="flex flex-col gap-1.5 relative" onClick={(e) => e.stopPropagation()}>
-                            <label className="text-xs text-text-neutral-default">Google Fonts</label>
-                            <div className="relative">
-                              <Input
-                                placeholder="חיפוש פונט..."
-                                value={googleFontSearch}
-                                onChange={(e) => { setGoogleFontSearch(e.target.value); setShowFontDropdown(true) }}
-                                onFocus={() => setShowFontDropdown(true)}
-                                className="text-sm text-start ps-9"
-                              />
-                              <Search className="absolute start-3 top-1/2 -translate-y-1/2 size-4 text-text-neutral-default pointer-events-none" />
-                            </div>
-                            {showFontDropdown && googleFontSearch.length > 0 && (
-                              <div className="absolute top-full mt-1 left-0 right-0 z-10 max-h-[200px] overflow-y-auto rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 shadow-lg">
-                                {GOOGLE_FONTS.filter((f) => f.toLowerCase().includes(googleFontSearch.toLowerCase())).slice(0, 8).map((font) => (
-                                  <button
-                                    key={font}
-                                    onClick={() => {
-                                      handleAddGoogleFont(font)
-                                      setGoogleFontSearch("")
-                                      setShowFontDropdown(false)
-                                    }}
-                                    disabled={fontItems.length >= 5}
-                                    className="w-full text-start px-3 py-2.5 text-sm text-text-primary-default hover:bg-bg-surface transition-colors cursor-pointer disabled:opacity-40"
-                                    style={{ fontFamily: font }}
-                                  >
-                                    {font}
-                                  </button>
-                                ))}
-                                {GOOGLE_FONTS.filter((f) => f.toLowerCase().includes(googleFontSearch.toLowerCase())).length === 0 && (
-                                  <div className="px-3 py-2.5 text-xs text-text-neutral-default">לא נמצאו תוצאות</div>
+                          {fontItems.length >= 5 ? (
+                            <p className="text-sm text-text-neutral-default">הגעת למקסימום 5 פונטים להעלאה</p>
+                          ) : (
+                            <>
+                              {/* Google Fonts searchable dropdown */}
+                              <div className="flex flex-col gap-1.5 relative" onClick={(e) => e.stopPropagation()}>
+                                <label className="text-xs text-text-neutral-default">Google Fonts</label>
+                                <div className="relative">
+                                  <Input
+                                    placeholder="חיפוש פונט..."
+                                    value={googleFontSearch}
+                                    onChange={(e) => { setGoogleFontSearch(e.target.value); setShowFontDropdown(true) }}
+                                    onFocus={() => setShowFontDropdown(true)}
+                                    className="text-sm text-start ps-9"
+                                  />
+                                  <Search className="absolute start-3 top-1/2 -translate-y-1/2 size-4 text-text-neutral-default pointer-events-none" />
+                                </div>
+                                {showFontDropdown && googleFontSearch.length > 0 && (
+                                  <div className="absolute top-full mt-1 left-0 right-0 z-10 max-h-[200px] overflow-y-auto rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 shadow-lg">
+                                    {GOOGLE_FONTS.filter((f) => f.toLowerCase().includes(googleFontSearch.toLowerCase())).slice(0, 8).map((font) => (
+                                      <button
+                                        key={font}
+                                        onClick={() => {
+                                          handleAddGoogleFont(font)
+                                          setGoogleFontSearch("")
+                                          setShowFontDropdown(false)
+                                        }}
+                                        disabled={fontItems.length >= 5}
+                                        className="w-full text-start px-3 py-2.5 text-sm text-text-primary-default hover:bg-bg-surface transition-colors cursor-pointer disabled:opacity-40"
+                                        style={{ fontFamily: font }}
+                                      >
+                                        {font}
+                                      </button>
+                                    ))}
+                                    {GOOGLE_FONTS.filter((f) => f.toLowerCase().includes(googleFontSearch.toLowerCase())).length === 0 && (
+                                      <div className="px-3 py-2.5 text-xs text-text-neutral-default">לא נמצאו תוצאות</div>
+                                    )}
+                                  </div>
                                 )}
                               </div>
-                            )}
-                          </div>
 
-                          {/* Divider */}
-                          <div className="flex items-center gap-3">
-                            <div className="h-px flex-1 bg-border-neutral-default" />
-                            <span className="text-xs text-text-neutral-default">או העלאה ידנית</span>
-                            <div className="h-px flex-1 bg-border-neutral-default" />
-                          </div>
+                              {/* Divider */}
+                              <div className="flex items-center gap-3">
+                                <div className="h-px flex-1 bg-border-neutral-default" />
+                                <span className="text-xs text-text-neutral-default">או העלאה ידנית</span>
+                                <div className="h-px flex-1 bg-border-neutral-default" />
+                              </div>
 
-                          <input ref={fontInputRef} type="file" accept=".ttf,.otf,.woff,.woff2" multiple onChange={handleFontUpload} className="hidden" />
+                              <input ref={fontInputRef} type="file" accept=".ttf,.otf,.woff,.woff2" multiple onChange={handleFontUpload} className="hidden" />
+                              <button
+                                onClick={() => fontInputRef.current?.click()}
+                                className="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-border-neutral-default p-5 hover:bg-gray-95 dark:hover:bg-gray-20 transition-all cursor-pointer"
+                              >
+                                <Upload className="size-5 text-text-neutral-default" />
+                                <span className="text-xs text-text-neutral-default">TTF, OTF, WOFF</span>
+                              </button>
+                            </>
+                          )}
+
+                          {fontUploading.map((f) => (
+                            <div key={f.id} className="flex items-center gap-2 rounded-lg bg-bg-surface p-2">
+                              <span className="text-xs text-text-primary-default truncate flex-1">{f.name}</span>
+                              {f.status === "done" ? <Check className="size-3.5 text-green-600 dark:text-green-400" /> : <Progress value={f.progress} className="w-20 h-1.5" />}
+                            </div>
+                          ))}
+
+                          {/* Uploaded fonts */}
+                          {fontItems.length > 0 && (
+                            <div className="flex flex-col gap-2">
+                              {fontItems.map((font) => (
+                                <div key={font.id} className="flex items-center justify-between rounded-lg bg-bg-surface px-3 py-2.5 group">
+                                  <div className="flex items-center gap-2">
+                                    <Type className="size-3.5 text-text-neutral-default" />
+                                    <span className="text-sm text-text-primary-default">{font.name.replace(/\.(ttf|otf|woff2?)$/, "")}</span>
+                                  </div>
+                                  <button onClick={async () => { await deleteMediaItem(font); setFontItems((prev) => prev.filter((f) => f.id !== font.id)) }} className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <X className="size-3.5 text-text-neutral-default hover:text-button-destructive-default" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      }
+                    />
+                  )}
+
+                  {/* ── Examples per format; covers keep their own upload + style analysis ── */}
+                  {activeMediaSection === "examples" && (
+                    <VisualLanguagePanel
+                      view="examples"
+                      examplesTab={examplesTab}
+                      onExamplesTabChange={setExamplesTab}
+                      coversSection={
+                        <div className="flex flex-col gap-5">
+                          <p className="text-small text-text-neutral-default">
+                            העלו צילומי מסך של הקאברים שלכם — הסוכנים ישתמשו בהם כרפרנס
+                          </p>
+
+                          <input ref={coverInputRef} type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(e) => { if (e.target.files) handleCoverUpload(e.target.files); if (coverInputRef.current) coverInputRef.current.value = "" }} className="hidden" />
                           <button
-                            onClick={() => fontInputRef.current?.click()}
+                            onClick={() => coverInputRef.current?.click()}
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={(e) => { e.preventDefault(); handleCoverUpload(e.dataTransfer.files) }}
                             className="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-border-neutral-default p-5 hover:bg-gray-95 dark:hover:bg-gray-20 transition-all cursor-pointer"
                           >
                             <Upload className="size-5 text-text-neutral-default" />
-                            <span className="text-xs text-text-neutral-default">TTF, OTF, WOFF</span>
+                            <span className="text-xs text-text-neutral-default">PNG, JPG (עד 10)</span>
                           </button>
-                        </>
-                      )}
 
-                      {fontUploading.map((f) => (
-                        <div key={f.id} className="flex items-center gap-2 rounded-lg bg-bg-surface p-2">
-                          <span className="text-xs text-text-primary-default truncate flex-1">{f.name}</span>
-                          {f.status === "done" ? <Check className="size-3.5 text-green-600 dark:text-green-400" /> : <Progress value={f.progress} className="w-20 h-1.5" />}
-                        </div>
-                      ))}
-
-                      {/* Uploaded fonts */}
-                      {fontItems.length > 0 && (
-                        <div className="flex flex-col gap-2">
-                          {fontItems.map((font) => (
-                            <div key={font.id} className="flex items-center justify-between rounded-lg bg-bg-surface px-3 py-2.5 group">
-                              <div className="flex items-center gap-2">
-                                <Type className="size-3.5 text-text-neutral-default" />
-                                <span className="text-sm text-text-primary-default">{font.name.replace(/\.(ttf|otf|woff2?)$/, "")}</span>
-                              </div>
-                              <button onClick={async () => { await deleteMediaItem(font); setFontItems((prev) => prev.filter((f) => f.id !== font.id)) }} className="opacity-0 group-hover:opacity-100 transition-opacity">
-                                <X className="size-3.5 text-text-neutral-default hover:text-button-destructive-default" />
-                              </button>
+                          {coverUploading.map((f) => (
+                            <div key={f.id} className="flex items-center gap-2 rounded-lg bg-bg-surface p-2">
+                              <span className="text-xs text-text-primary-default truncate flex-1">{f.name}</span>
+                              {f.status === "done" ? <Check className="size-3.5 text-green-600 dark:text-green-400" /> : <Progress value={f.progress} className="w-20 h-1.5" />}
                             </div>
                           ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
 
-                  {/* ── Covers ── */}
-                  {activeMediaSection === "covers" && (
-                    <div className="flex flex-col gap-5">
-                      <div>
-                        <h3 className="text-p-bold text-text-primary-default">דוגמאות לקאברים</h3>
-                        <p className="text-small text-text-neutral-default mt-1">
-                          העלו צילומי מסך של הקאברים שלכם — הסוכנים ישתמשו בהם כרפרנס
-                        </p>
-                      </div>
-
-                      <input ref={coverInputRef} type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(e) => { if (e.target.files) handleCoverUpload(e.target.files); if (coverInputRef.current) coverInputRef.current.value = "" }} className="hidden" />
-                      <button
-                        onClick={() => coverInputRef.current?.click()}
-                        onDragOver={(e) => e.preventDefault()}
-                        onDrop={(e) => { e.preventDefault(); handleCoverUpload(e.dataTransfer.files) }}
-                        className="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-border-neutral-default p-5 hover:bg-gray-95 dark:hover:bg-gray-20 transition-all cursor-pointer"
-                      >
-                        <Upload className="size-5 text-text-neutral-default" />
-                        <span className="text-xs text-text-neutral-default">PNG, JPG (עד 10)</span>
-                      </button>
-
-                      {coverUploading.map((f) => (
-                        <div key={f.id} className="flex items-center gap-2 rounded-lg bg-bg-surface p-2">
-                          <span className="text-xs text-text-primary-default truncate flex-1">{f.name}</span>
-                          {f.status === "done" ? <Check className="size-3.5 text-green-600 dark:text-green-400" /> : <Progress value={f.progress} className="w-20 h-1.5" />}
-                        </div>
-                      ))}
-
-                      {coverItems.length > 0 && (
-                        <div className="flex gap-3 flex-wrap">
-                          {coverItems.map((item) => (
-                            <div key={item.id} className="relative size-[80px] rounded-lg overflow-hidden bg-bg-surface group">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
-                              <button onClick={async () => { await deleteMediaItem(item); setCoverItems((prev) => prev.filter((c) => c.id !== item.id)) }} className="absolute top-1 end-1 size-5 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                <X className="size-3 text-white" />
-                              </button>
+                          {coverItems.length > 0 && (
+                            <div className="flex gap-3 flex-wrap">
+                              {coverItems.map((item) => (
+                                <div key={item.id} className="relative size-[80px] rounded-lg overflow-hidden bg-bg-surface group">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
+                                  <button onClick={async () => { await deleteMediaItem(item); setCoverItems((prev) => prev.filter((c) => c.id !== item.id)) }} className="absolute top-1 end-1 size-5 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <X className="size-3 text-white" />
+                                  </button>
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
-                      )}
+                          )}
 
-                      {analyzingStyle && (
-                        <div className="flex items-center gap-2 text-sm text-text-neutral-default">
-                          <Loader2 className="size-4 animate-spin" />
-                          מנתח את סגנון הקאברים...
-                        </div>
-                      )}
-                      {styleAnalyzed && !analyzingStyle && (
-                        <div className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400">
-                          <Check className="size-4" />
-                          סגנון הקאברים נשמר
-                        </div>
-                      )}
+                          {analyzingStyle && (
+                            <div className="flex items-center gap-2 text-sm text-text-neutral-default">
+                              <Loader2 className="size-4 animate-spin" />
+                              מנתח את סגנון הקאברים...
+                            </div>
+                          )}
+                          {styleAnalyzed && !analyzingStyle && (
+                            <div className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400">
+                              <Check className="size-4" />
+                              סגנון הקאברים נשמר
+                            </div>
+                          )}
 
-                      {coverItems.length >= 3 && !analyzingStyle && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={async () => {
-                            const allUrls = coverItems.map((c) => c.url)
-                            setAnalyzingStyle(true)
-                            setStyleAnalyzed(false)
-                            try {
-                              const res = await fetch("/api/analyze-covers", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ images: allUrls }),
-                              })
-                              const data = await res.json()
-                              if (data.brand_style) {
-                                setStyleAnalyzed(true)
-                                setTimeout(() => setStyleAnalyzed(false), 10000)
-                              }
-                            } catch (err) { console.error("[settings][reanalyze-covers]", err) }
-                            finally { setAnalyzingStyle(false) }
-                          }}
-                          className="w-fit gap-2"
-                        >
-                          <Sparkles className="size-4" />
-                          נתח את סגנון הקאברים מחדש
-                        </Button>
-                      )}
+                          {coverItems.length >= 3 && !analyzingStyle && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={async () => {
+                                const allUrls = coverItems.map((c) => c.url)
+                                setAnalyzingStyle(true)
+                                setStyleAnalyzed(false)
+                                try {
+                                  const res = await fetch("/api/analyze-covers", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ images: allUrls }),
+                                  })
+                                  const data = await res.json()
+                                  if (data.brand_style) {
+                                    setStyleAnalyzed(true)
+                                    setTimeout(() => setStyleAnalyzed(false), 10000)
+                                  }
+                                } catch (err) { console.error("[settings][reanalyze-covers]", err) }
+                                finally { setAnalyzingStyle(false) }
+                              }}
+                              className="w-fit gap-2"
+                            >
+                              <Sparkles className="size-4" />
+                              נתח את סגנון הקאברים מחדש
+                            </Button>
+                          )}
 
-                    </div>
+                        </div>
+                      }
+                    />
                   )}
                 </div>
               </div>
