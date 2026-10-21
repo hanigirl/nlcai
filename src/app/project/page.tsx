@@ -5,7 +5,7 @@ import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
-import { BRollAiEditDialog, isEditableBRollUrl } from "@/components/broll-ai-edit"
+import { BRollAiChat, isEditableBRollUrl } from "@/components/broll-ai-edit"
 import { clearBRollUrl } from "@/lib/broll-generation-store"
 import { CaptionControls } from "@/components/image-caption-block"
 import { useCarouselCaption } from "@/lib/carousel-caption"
@@ -2631,7 +2631,7 @@ function ProjectPageInner() {
       />
 
       {savedPostId && (
-        <BRollAiEditDialog
+        <BRollAiChat
           postId={savedPostId}
           open={bRollAiEditOpen}
           onOpenChange={setBRollAiEditOpen}
