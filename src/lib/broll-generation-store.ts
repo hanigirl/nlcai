@@ -132,7 +132,7 @@ export function startBRollGeneration(
   if (!postId) return
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   const toastId = `broll-gen-${++toastSeq}`
-  toast.loading("מייצרים בי-רול... זה יכול לקחת עד דקה", {
+  toast.loading("מייצרים בי-רול... זה יכול לקחת כשתי דקות", {
     id: toastId,
     duration: Infinity,
   })
@@ -167,6 +167,54 @@ export function startBRollGeneration(
         `יצירת הבי-רול נכשלה: ${err instanceof Error ? err.message : String(err)}`,
         { id: toastId, duration: 10000 },
       )
+    } finally {
+      update(postId, (s) => ({ ...s, inFlight: Math.max(0, s.inFlight - 1) }))
+    }
+  })()
+}
+
+/**
+ * "עריכה עם AI" — Opus revises the current b-roll's animation per her
+ * instruction and the clip is re-rendered. Shares `inFlight` with generation:
+ * to the panel and the canvas it's the same "b-roll is being made" state.
+ * Resolves true when the new clip landed (the panel clears the instruction).
+ */
+export function startBRollEdit(postId: string, instruction: string): Promise<boolean> {
+  if (!postId || !instruction.trim()) return Promise.resolve(false)
+  update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
+  const toastId = `broll-edit-${++toastSeq}`
+  toast.loading("מעדכנים את הבי-רול לפי ההוראות... זה יכול לקחת כדקה", {
+    id: toastId,
+    duration: Infinity,
+  })
+  return (async () => {
+    try {
+      const res = await fetch("/api/b-roll/edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId, instruction }),
+      })
+      const data = (await res.json().catch(() => ({}))) as {
+        url?: string
+        error?: string
+        message?: string
+      }
+      if (!res.ok || !data.url) {
+        toast.error(data.message ?? data.error ?? "עריכת הבי-רול נכשלה", {
+          id: toastId,
+          duration: 10000,
+        })
+        return false
+      }
+      update(postId, (s) => ({ ...s, url: data.url as string }))
+      toast.success("הבי-רול עודכן", { id: toastId, duration: 4000 })
+      return true
+    } catch (err) {
+      toast.error(
+        `עריכת הבי-רול נכשלה: ${err instanceof Error ? err.message : String(err)}`,
+        { id: toastId, duration: 10000 },
+      )
+      return false
     } finally {
       update(postId, (s) => ({ ...s, inFlight: Math.max(0, s.inFlight - 1) }))
     }

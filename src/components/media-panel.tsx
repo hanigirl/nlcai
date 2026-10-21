@@ -21,6 +21,7 @@ import { ConfirmModal } from "@/components/confirm-modal"
 import { DriveVideoPreview } from "@/components/drive-video-preview"
 import { MediaCreditsCard } from "@/components/media-credits-card"
 import { useOpenAiConnected } from "@/hooks/use-openai-connected"
+import { BRollAiEdit, isEditableBRollUrl } from "@/components/broll-ai-edit"
 import {
   subscribeBRollGeneration,
   getBRollGenerationSnapshot,
@@ -4284,8 +4285,8 @@ function MediaUploadFlow({
                   יצירת בי-רול בלחיצה
                 </span>
                 <span className="max-w-[286px] text-center text-xs leading-relaxed text-text-neutral-default">
-                  ניצור רקע שמתאים לתוכן הפוסט, נשלב עליו את הטקסט של הבי-רול
-                  ונהפוך את זה לסרטון קצר
+                  ניצור רקע שמתאים לתוכן הפוסט, ו-Claude יבנה עליו אנימציה של
+                  ההוק בפונטים ובצבעי המותג שלך
                 </span>
                 <MediaStylePicker
                   value={mediaStyle.style}
@@ -4609,6 +4610,10 @@ function MediaUploadFlow({
                   </button>
                 </div>
               ) : null}
+              {/* "עריכה עם AI" — clips from the Opus engine only. */}
+              {postId && !burningText && isEditableBRollUrl(previewUrl) && (
+                <BRollAiEdit postId={postId} busy={bRollGenerating} />
+              )}
             </div>
           )}
         </>
