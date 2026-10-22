@@ -1049,7 +1049,7 @@ function NoAccess({ variant, folderKey }: { variant: DrivePickVariant; folderKey
 /** Footer stuck to the bottom of the panel's scroll area. */
 function StickyFooter({ children }: { children: React.ReactNode }) {
   return (
-    <div className="sticky bottom-0 -mx-6 -mb-6 mt-auto flex flex-col gap-2 border-t border-border-neutral-default bg-white px-6 py-4 dark:bg-gray-10">
+    <div className="sticky -bottom-6 z-10 -mx-6 -mb-6 mt-auto flex flex-col gap-2 border-t border-border-neutral-default bg-white px-6 py-4 dark:bg-gray-10">
       {children}
     </div>
   )
