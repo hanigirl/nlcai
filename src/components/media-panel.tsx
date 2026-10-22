@@ -1707,6 +1707,7 @@ function CarouselFlow({
           body: JSON.stringify({
             slides: parsedSlides,
             templateId: genId,
+            postId,
           }),
         },
       )
@@ -2135,13 +2136,6 @@ function CarouselFlow({
       </div>
 
       {/* 2. Actions — previews live in the dialog, not in the panel. */}
-      {isAiTemplate && openAiConnected !== false && (
-        <p className="text-xs-body text-text-neutral-default">
-          טמפלט AI מצייר כל שקופית עם gpt-image-2 דרך מפתח ה-OpenAI שלכם —
-          זה לוקח כמה דקות.
-        </p>
-      )}
-
       {/* An AI template with no OpenAI key connected can only fail, so the
           generate button is replaced by the way to fix it. The satori
           templates are unaffected — picking one brings the button back. */}
@@ -2617,6 +2611,17 @@ function MediaUploadFlow({
       ? initialMediaUrl
       : null
   const [previewUrl, setPreviewUrl] = useState<string | null>(seedMediaUrl)
+  // Deleted from the canvas (the card's trash) while the panel is open: let
+  // go of it here too.
+  const prevInitialMediaRef = useRef(initialMediaUrl)
+  useEffect(() => {
+    const prev = prevInitialMediaRef.current
+    prevInitialMediaRef.current = initialMediaUrl
+    if (prev && !initialMediaUrl && format !== "story") {
+      setPreviewUrl(null)
+      setPreviewKind(null)
+    }
+  }, [initialMediaUrl, format])
   // Once the replacement actually lands, put the field away again — otherwise
   // swapping a clip leaves the panel permanently back in "paste a link" mode.
   useEffect(() => {
@@ -3878,40 +3883,17 @@ function MediaUploadFlow({
             <MediaCreditsCard />
           ) : (
             <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
-              {/* Camera illustration — split into two assets so the tile
-                  reads as centered while the sparkle cluster hangs off to
-                  its upper-left. */}
-              <div className="relative size-10 shrink-0">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/images/ai-camera.png"
-                  alt=""
-                  className="size-full object-contain"
-                />
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/images/ai-camera-sparkle.png"
-                  alt=""
-                  className="pointer-events-none absolute -left-3.5 -top-1 w-5"
-                />
-              </div>
-              <span className="text-small font-semibold text-text-primary-default">
-                יצירת תמונה בלחיצה
-              </span>
-              <span className="max-w-[286px] text-center text-xs leading-relaxed text-text-neutral-default">
-                ניצור תמונה מעוצבת לפי תוכן הפוסט, עם הטקסט של הפורמט משולב
-                בעיצוב
-              </span>
               <MediaStylePicker
                 value={mediaStyle.style}
                 onChange={mediaStyle.setStyle}
                 brandTemplate={mediaStyle.brandTemplate}
+                brandLoading={mediaStyle.brandLoading}
                 aspect="4/5"
               />
               <Button
                 variant="outline"
                 onClick={handleAiGenerate}
-                disabled={!postId}
+                disabled={!postId || mediaStyle.brandLoading}
                 className="w-full gap-1.5"
               >
                 {inFlight > 0 && <Loader2 className="size-3.5 animate-spin" />}
@@ -4120,35 +4102,16 @@ function MediaUploadFlow({
             <MediaCreditsCard />
           ) : (
             <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
-              <div className="relative size-10 shrink-0">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/images/ai-camera.png"
-                  alt=""
-                  className="size-full object-contain"
-                />
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/images/ai-camera-sparkle.png"
-                  alt=""
-                  className="pointer-events-none absolute -left-3.5 -top-1 w-5"
-                />
-              </div>
-              <span className="text-small font-semibold text-text-primary-default">
-                יצירת תמונה בלחיצה
-              </span>
-              <span className="max-w-[286px] text-center text-xs leading-relaxed text-text-neutral-default">
-                ניצור רקע שמתאים לתוכן הפוסט ונשלב עליו את הטקסט של הסטורי
-              </span>
               <MediaStylePicker
                 value={mediaStyle.style}
                 onChange={mediaStyle.setStyle}
                 brandTemplate={mediaStyle.brandTemplate}
+                brandLoading={mediaStyle.brandLoading}
               />
               <Button
                 variant="outline"
                 onClick={handleStoryGenerate}
-                disabled={!postId}
+                disabled={!postId || mediaStyle.brandLoading}
                 className="w-full gap-1.5"
               >
                 {storyInFlight > 0 && (
@@ -4217,7 +4180,7 @@ function MediaUploadFlow({
                 alt=""
                 className="size-4 shrink-0"
               />
-              יבוא מדיה מ Google Drive
+              המדיה שלכם מ Google Drive
             </Button>
           ) : (
           <DriveMediaLinks
@@ -4336,36 +4299,16 @@ function MediaUploadFlow({
           {isBRoll && !hydrating && openAiConnected === true && (
             <>
               <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
-                <div className="relative size-10 shrink-0">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src="/images/ai-camera.png"
-                    alt=""
-                    className="size-full object-contain"
-                  />
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src="/images/ai-camera-sparkle.png"
-                    alt=""
-                    className="pointer-events-none absolute -left-3.5 -top-1 w-5"
-                  />
-                </div>
-                <span className="text-small font-semibold text-text-primary-default">
-                  יצירת בי-רול בלחיצה
-                </span>
-                <span className="max-w-[286px] text-center text-xs leading-relaxed text-text-neutral-default">
-                  ניצור רקע שמתאים לתוכן הפוסט, נשלב עליו את הטקסט של הבי-רול
-                  ונהפוך את זה לסרטון קצר
-                </span>
                 <MediaStylePicker
                   value={mediaStyle.style}
                   onChange={mediaStyle.setStyle}
                   brandTemplate={mediaStyle.brandTemplate}
+                  brandLoading={mediaStyle.brandLoading}
                 />
                 <Button
                   variant="outline"
                   onClick={handleBRollGenerate}
-                  disabled={!postId || bRollGenerating}
+                  disabled={!postId || bRollGenerating || mediaStyle.brandLoading}
                   className="w-full gap-1.5"
                 >
                   {bRollGenerating && (
@@ -4508,7 +4451,7 @@ function MediaUploadFlow({
                 alt=""
                 className="size-4 shrink-0"
               />
-              {previewUrl ? "החלפת מדיה מ Google Drive" : "יבוא מדיה מ Google Drive"}
+              {previewUrl ? "החלפת מדיה מ Google Drive" : "המדיה שלכם מ Google Drive"}
             </Button>
           ) : (
           <div className="flex flex-col gap-2">

@@ -15,12 +15,25 @@ const nextConfig: NextConfig = {
       { hostname: "mwogbieylrteorftphhi.supabase.co" },
     ],
   },
-  serverExternalPackages: ["@resvg/resvg-js", "ffmpeg-static"],
+  serverExternalPackages: ["@resvg/resvg-js", "ffmpeg-static", "puppeteer-core", "@sparticuz/chromium"],
   // The story video route spawns the ffmpeg-static binary at runtime. Next's
   // file tracer doesn't follow a binary loaded via a path string, so include
   // it explicitly or it's missing from the serverless bundle on Vercel.
   outputFileTracingIncludes: {
     "/api/story/generate-video-media": ["./node_modules/ffmpeg-static/ffmpeg"],
+    // The b-roll renders Opus's animation in a headless Chromium and encodes
+    // with ffmpeg; both ship as files the tracer can't see.
+    "/api/b-roll/generate-media": [
+      "./node_modules/ffmpeg-static/ffmpeg",
+      "./node_modules/@sparticuz/chromium/bin/**",
+    ],
+    "/api/b-roll/edit": [
+      "./node_modules/ffmpeg-static/ffmpeg",
+      "./node_modules/@sparticuz/chromium/bin/**",
+    ],
+    // The AI carousel lays its slides out in HTML and screenshots them.
+    "/api/carousel/generate-ai": ["./node_modules/@sparticuz/chromium/bin/**"],
+    "/api/media/ai-edit": ["./node_modules/@sparticuz/chromium/bin/**"],
   },
   typescript: { ignoreBuildErrors: true },
 };

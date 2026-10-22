@@ -82,6 +82,12 @@
   --color-green-success-70: #A4BBB6;
   --color-green-success-50: #00786F;
 
+  /* Primitive tokens: AI gradient — the "this is AI" sparkle (Hani,
+     2026-10-22: purple → blue, the recognisable AI pairing). */
+  --color-ai-purple: #8B5CF6;
+  --color-ai-violet: #6366F1;
+  --color-ai-blue: #3B82F6;
+
   /* Primitive tokens: Gray */
   --color-gray-98: #FAFAFA;
   --color-gray-95: #F2F2F2;

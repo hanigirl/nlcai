@@ -1,9 +1,10 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { X, ArrowUp, Loader2, Check, Sparkles } from "lucide-react"
+import { X, ArrowUp, Loader2, Check } from "lucide-react"
 import { toast } from "sonner"
 
+import { AiSparkle } from "@/components/ai-refine-button"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { logLearningEdit, type LearningOutcome } from "@/lib/learning-capture"
@@ -223,7 +224,7 @@ export function CorePostChat({
     >
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">
-        <Sparkles className="size-4 text-yellow-40" aria-hidden />
+        <AiSparkle />
         <span className="text-small-bold text-text-primary-default">עריכת פוסט ליבה</span>
         <button
           type="button"

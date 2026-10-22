@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
 import { getUserApiKey } from "@/lib/api-keys"
+import { learnFromInstruction } from "@/lib/style-memory"
 import { reviseBrandFormatSpec, reviseNicheToneSpec } from "@/lib/agents/visual-language-analyzer"
 import { resolveOwnImagePath } from "@/lib/visual-language/media-source"
 import {
@@ -151,6 +152,11 @@ export async function POST(req: NextRequest) {
           .filter(Boolean)
           .join(" — "),
       )
+    // A note about a specific element is often a lasting preference, not
+    // just about this format — remember it for every format (lib/style-memory).
+    const learning = body.note?.trim()
+      ? learnFromInstruction(supabase, user.id, apiKey, body.note.trim(), format)
+      : Promise.resolve(null)
     let revised: { style_spec: string; summary_he: string }
     try {
       revised =
@@ -178,7 +184,8 @@ export async function POST(req: NextRequest) {
     if (prev.anchor_path) await supabase.storage.from("user-media").remove([prev.anchor_path])
     nextSlot = { approved: false, votes: [...prev.votes, vote].slice(-20) }
     nextBrief = revised.style_spec
-    message = revised.summary_he
+    const remembered = await learning
+    message = remembered ? `${revised.summary_he} אזכור את זה גם להבא, בכל הפורמטים: ${remembered}` : revised.summary_he
   }
 
   // Write the slot back.

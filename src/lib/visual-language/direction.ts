@@ -4,6 +4,7 @@ import { deriveNicheVisualLanguage } from "@/lib/agents/visual-language-analyzer
 import { loadImageForModels, type ModelImage } from "@/lib/visual-language/image-input"
 import { measureElement, type FixedElement } from "@/lib/visual-language/fixed-elements"
 import sharp from "sharp"
+import { loadStyleRules, styleRuleLines } from "@/lib/style-memory"
 import type {
   MediaStyle,
   NicheVisualLanguage,
@@ -81,7 +82,24 @@ function toneLine(tone: "dark" | "light"): string {
     : "Make it a LIGHT design: a light, airy background with dark readable text."
 }
 
+/**
+ * The direction plus her standing preferences (lib/style-memory) — what she
+ * asked for in earlier AI edits applies to every format from now on.
+ */
 export async function resolveDesignDirection(
+  supabase: SupabaseClient,
+  userId: string,
+  opts: { format: VisualFormat; allowReferences?: boolean; style?: MediaStyle },
+): Promise<DesignDirection> {
+  const [direction, rules] = await Promise.all([
+    resolveBaseDirection(supabase, userId, opts),
+    loadStyleRules(supabase, userId),
+  ])
+  const extra = styleRuleLines(rules)
+  return extra.length ? { ...direction, lines: [...direction.lines, "", ...extra] } : direction
+}
+
+async function resolveBaseDirection(
   supabase: SupabaseClient,
   userId: string,
   opts: { format: VisualFormat; allowReferences?: boolean; style?: MediaStyle },

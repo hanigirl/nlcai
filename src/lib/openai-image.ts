@@ -23,11 +23,12 @@ type Quality = "high" | "medium" | "low" | "auto"
  * afterwards — nothing gets trimmed. Cropping a 2:3 render to 4:5 used to cut
  * corner elements (her badge, the slide tab) clean off.
  */
-export type ImageShape = "4:5" | "9:16"
+export type ImageShape = "4:5" | "9:16" | "1:1"
 
 const SHAPE_SIZE: Record<ImageShape, string> = {
   "4:5": "1088x1360", // → 1080×1350 feed post / carousel slide
   "9:16": "1008x1792", // → 1080×1920 story / b-roll
+  "1:1": "1024x1024", // carousel illustration slot (the slide itself is laid out in code)
 }
 
 // The old universal size. Only used if OpenAI ever refuses a custom size;
@@ -134,6 +135,26 @@ export async function generateImage(
     if (!(err instanceof SizeRejectedError)) throw err
     console.error(`[openai-image] ${SHAPE_SIZE[shape]} refused, falling back to ${FALLBACK_SIZE}:`, err.message)
     return attempt(apiKey, prompt, FALLBACK_SIZE, rest)
+  }
+}
+
+/**
+ * Edit ONE existing image per an instruction — "עריכה עם AI" on a carousel
+ * slide, story frame or image post (Hani, 2026-10-22). Unlike generateImage's
+ * reference path, this never falls back to generating from scratch: a fresh
+ * image in place of an edit would silently throw her design away.
+ */
+export async function editImage(
+  apiKey: string,
+  prompt: string,
+  image: ModelImage,
+  shape: ImageShape,
+): Promise<string> {
+  try {
+    return await edit(apiKey, prompt, [image], SHAPE_SIZE[shape])
+  } catch (err) {
+    if (!(err instanceof SizeRejectedError)) throw err
+    return edit(apiKey, prompt, [image], FALLBACK_SIZE)
   }
 }
 

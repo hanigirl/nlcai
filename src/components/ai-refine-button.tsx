@@ -24,19 +24,19 @@ interface AiRefineButtonProps {
   onClick?: () => void
   /** Accessible name / visible label. Defaults to the AI-forward wording. */
   label?: string
+  /** Layout only (width / radius) — the look stays the shared one. */
+  className?: string
 }
 
 /**
- * Shared gradient that paints the sparkle glyph. Built from the project's
- * yellow token scale (globals.css `@theme`) — no raw hex. NOTE: the token
- * system has no dedicated "orange" primitive, so the deep end is the darkest
- * warm yellow (yellow-30). See the handoff note about adding an orange
- * primitive if a hotter gradient is wanted.
+ * Shared gradient that paints the sparkle glyph: purple → blue, the AI
+ * pairing people recognise (Hani, 2026-10-22; was the brand yellow). From the
+ * `--color-ai-*` tokens in globals.css — no raw hex here.
  */
 const AI_GRADIENT_STOPS = [
-  { offset: "0%", color: "var(--color-yellow-50)" },
-  { offset: "55%", color: "var(--color-yellow-40)" },
-  { offset: "100%", color: "var(--color-yellow-30)" },
+  { offset: "0%", color: "var(--color-ai-purple)" },
+  { offset: "50%", color: "var(--color-ai-violet)" },
+  { offset: "100%", color: "var(--color-ai-blue)" },
 ] as const
 
 /**
@@ -46,7 +46,7 @@ const AI_GRADIENT_STOPS = [
  * Token values come through `style` because `var()` doesn't resolve inside a
  * plain SVG attribute.
  */
-const AI_GRADIENT_ID = "ai-refine-gradient"
+export const AI_GRADIENT_ID = "ai-refine-gradient"
 
 /**
  * One four-point sparkle: a diamond whose edges bow inward, so the points read
@@ -73,7 +73,7 @@ function starPath(cx: number, cy: number, r: number, bulge = 0.42): string {
  * `fill` is set on the <svg> and inherited by the paths, so a single style or
  * `fill-current` class drives all three stars.
  */
-function AiSparkIcon({
+export function AiSparkIcon({
   className,
   style,
 }: {
@@ -95,7 +95,7 @@ function AiSparkIcon({
   )
 }
 
-function AiGradientDefs() {
+export function AiGradientDefs() {
   return (
     <svg width="0" height="0" aria-hidden="true" focusable="false" className="absolute">
       <defs>
@@ -114,6 +114,7 @@ export function AiRefineButton({
   busy = false,
   onClick,
   label = "עריכה עם AI",
+  className,
 }: AiRefineButtonProps) {
   // Frozen state drops the gradient for the flat disabled token — a dignified
   // "locked", not a glitch.
@@ -133,18 +134,35 @@ export function AiRefineButton({
         disabled={disabled}
         aria-label={label}
         onClick={onClick}
-        className="gap-1.5"
+        className={cn("gap-1.5", className)}
       >
         <AiSparkIcon
           style={glyphStyle}
           className={cn(
-            "size-4 shrink-0",
+            // 15% larger than the 16px icon size (Hani, 2026-10-22).
+            "size-[18.4px] shrink-0",
             disabled && "fill-current text-text-primary-disabled",
             busy && !disabled && "ai-sparkle-pulse",
           )}
         />
         <span>{label}</span>
       </Button>
+    </>
+  )
+}
+
+/**
+ * The AI sparkle on its own, painted with the purple → blue gradient — for
+ * headers like "עריכת בי-רול עם AI", so every AI surface shows the same mark.
+ */
+export function AiSparkle({ className }: { className?: string }) {
+  return (
+    <>
+      <AiGradientDefs />
+      <AiSparkIcon
+        style={{ fill: `url(#${AI_GRADIENT_ID})` }}
+        className={cn("size-[18.4px] shrink-0", className)}
+      />
     </>
   )
 }

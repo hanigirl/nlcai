@@ -13,13 +13,25 @@ import type { VisualLanguage } from "@/lib/visual-language/types"
  * colours.
  */
 export function useBrandCarouselTemplate(): TemplateConfig | null {
+  return useBrandCarouselTemplateState().template
+}
+
+/**
+ * Same, plus whether it's still being looked up — so a picker can hold a
+ * place for it instead of looking like she has no visual language.
+ */
+export function useBrandCarouselTemplateState(): { template: TemplateConfig | null; loading: boolean } {
   const [template, setTemplate] = useState<TemplateConfig | null>(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let cancelled = false
     const supabase = createClient()
     getCurrentUser(supabase).then(async ({ data: { user } }) => {
-      if (!user) return
+      if (!user) {
+        if (!cancelled) setLoading(false)
+        return
+      }
       const { data, error } = await supabase
         .from("users")
         .select("visual_language")
@@ -27,7 +39,10 @@ export function useBrandCarouselTemplate(): TemplateConfig | null {
         .single()
       if (error) console.error("[brand-carousel-template]", error)
       const vl = (data as { visual_language?: VisualLanguage | null } | null)?.visual_language
-      if (!vl || vl.status !== "ok") return
+      if (!vl || vl.status !== "ok") {
+        if (!cancelled) setLoading(false)
+        return
+      }
 
       let thumbnailUrl: string | undefined
       // A carousel she filed herself (Settings → דוגמאות לשימוש) beats the
@@ -70,11 +85,14 @@ export function useBrandCarouselTemplate(): TemplateConfig | null {
             : undefined,
         }),
       )
+      setLoading(false)
+    }).catch(() => {
+      if (!cancelled) setLoading(false)
     })
     return () => {
       cancelled = true
     }
   }, [])
 
-  return template
+  return { template, loading }
 }

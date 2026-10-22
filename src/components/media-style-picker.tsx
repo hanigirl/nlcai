@@ -2,7 +2,8 @@
 
 import { useState } from "react"
 import { getTemplate, type TemplateConfig } from "@/lib/carousel-templates"
-import { useBrandCarouselTemplate } from "@/hooks/use-brand-carousel-template"
+import { useBrandCarouselTemplateState } from "@/hooks/use-brand-carousel-template"
+import { Skeleton } from "@/components/ui/skeleton"
 import type { MediaStyle } from "@/lib/visual-language/types"
 
 /**
@@ -18,23 +19,29 @@ export function useMediaStyle(): {
   style: MediaStyle
   setStyle: (s: MediaStyle) => void
   brandTemplate: TemplateConfig | null
+  /** Her visual language is still being looked up. */
+  brandLoading: boolean
 } {
-  const brandTemplate = useBrandCarouselTemplate()
+  const { template: brandTemplate, loading: brandLoading } = useBrandCarouselTemplateState()
   const [picked, setPicked] = useState<MediaStyle | null>(null)
-  const style: MediaStyle = picked ?? (brandTemplate ? "brand" : "ai-light")
-  return { style, setStyle: setPicked, brandTemplate }
+  // While it loads, nothing jumps: her language is the expected default.
+  const style: MediaStyle = picked ?? (brandTemplate || brandLoading ? "brand" : "ai-light")
+  return { style, setStyle: setPicked, brandTemplate, brandLoading }
 }
 
 export function MediaStylePicker({
   value,
   onChange,
   brandTemplate,
+  brandLoading = false,
   label = "סגנון",
   aspect = "9/16",
 }: {
   value: MediaStyle
   onChange: (s: MediaStyle) => void
   brandTemplate: TemplateConfig | null
+  /** Hold a loading tile in her visual language's place. */
+  brandLoading?: boolean
   label?: string
   /** Tile shape — the format's own: 9/16 story & b-roll, 4/5 image post. */
   aspect?: "9/16" | "4/5"
@@ -81,7 +88,13 @@ export function MediaStylePicker({
   return (
     <div className="flex w-full flex-col gap-1.5">
       <p className="text-xs text-text-neutral-default">{label}</p>
-      <div role="radiogroup" aria-label={label} className="grid grid-cols-3 gap-1.5">
+      <div role="radiogroup" aria-label={label} aria-busy={brandLoading && !brandTemplate} className="grid grid-cols-3 gap-1.5">
+        {brandLoading && !brandTemplate && (
+          <div className="flex flex-col gap-1 rounded-lg border border-border-neutral-default p-1" aria-hidden>
+            <Skeleton className={`${aspect === "4/5" ? "aspect-[4/5]" : "aspect-[9/16]"} w-full rounded-md`} />
+            <Skeleton className="mx-auto h-3 w-3/4 rounded" />
+          </div>
+        )}
         {options.map((o) => {
           const selected = value === o.id
           return (
