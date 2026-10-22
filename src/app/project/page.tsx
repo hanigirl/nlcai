@@ -2987,6 +2987,8 @@ function MediaTrashButton({ label, onClick }: { label: string; onClick: () => vo
       </button>
     </TooltipLabel>
   )
+}
+
 /** Media approval wiring handed to the format tree (design review). */
 type FormatTreeApproval = {
   variant: "a" | "b"
