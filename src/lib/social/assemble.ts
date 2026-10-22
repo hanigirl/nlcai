@@ -27,9 +27,9 @@ import {
   destinationForFormat,
 } from "./media-spec"
 import { SocialPublishError, type SchedulePostInput, type SocialMedia } from "./types"
+import { slotToInstant } from "./slot-time"
 
-/** Israel. The calendar stores a bare local hour; publishing needs a real instant. */
-const CALENDAR_TIMEZONE = "Asia/Jerusalem"
+export { slotToInstant } from "./slot-time"
 
 type AssembleArgs = {
   db: SupabaseClient<Database>
@@ -41,61 +41,6 @@ type AssembleArgs = {
   scheduledDate: string
   /** "HH:00" from the calendar. */
   scheduledTime: string
-}
-
-/**
- * Resolve the calendar's local wall-clock slot to an absolute instant.
- *
- * The board stores "the 5th at 09:00" with no zone, on purpose — it has to
- * mean the same thing to everyone looking at it (migration 026). Publishing
- * cannot carry that ambiguity, so the wall-clock time is interpreted as Israel
- * time here, in one place, rather than each caller guessing.
- *
- * Done by asking Intl what the zone's offset actually was on that date, so DST
- * is handled by the timezone database instead of a hardcoded +2/+3.
- */
-export function slotToInstant(scheduledDate: string, scheduledTime: string): Date {
-  const [y, m, d] = scheduledDate.split("-").map(Number)
-  const [hh, mm] = scheduledTime.split(":").map(Number)
-
-  if (!y || !m || !d || Number.isNaN(hh)) {
-    throw new SocialPublishError(
-      `slot has an unreadable date/time: ${scheduledDate} ${scheduledTime}`,
-      "provider_error",
-      false
-    )
-  }
-
-  // Start from the instant that has these numbers in UTC, then correct by
-  // whatever offset Israel was on at that moment.
-  const asUtc = Date.UTC(y, m - 1, d, hh, mm || 0)
-  const offsetMs = zoneOffsetMs(new Date(asUtc))
-  return new Date(asUtc - offsetMs)
-}
-
-/** How far ahead of UTC the calendar's zone was at a given instant. */
-function zoneOffsetMs(at: Date): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: CALENDAR_TIMEZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).formatToParts(at)
-
-  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value)
-  const local = Date.UTC(
-    get("year"),
-    get("month") - 1,
-    get("day"),
-    get("hour") % 24,
-    get("minute"),
-    get("second")
-  )
-  return local - at.getTime()
 }
 
 export async function assembleScheduledPost(
@@ -116,7 +61,7 @@ export async function assembleScheduledPost(
   if (!variant) {
     throw new SocialPublishError(
       `אין תוכן לפורמט "${format}" בפוסט הזה.`,
-      "not_connected"
+      "media_rejected"
     )
   }
 
@@ -169,6 +114,18 @@ export async function assembleScheduledPost(
       ? usable.find((a) => a.asset_type === "cover")?.url ?? undefined
       : undefined
 
+  // The provider fetches each file itself, from the URL, at publish time. A
+  // Drive "view" link answers with an HTML page, not the file, and Instagram
+  // has no SVG support at all — both would sit in the queue looking fine and
+  // fail at the slot minute, while nobody is watching.
+  const unfetchable = media.find((m) => !isDirectMediaUrl(m.url))
+  if (unfetchable) {
+    throw new SocialPublishError(
+      "אחד מקובצי המדיה הוא קישור (למשל מגוגל דרייב) או קובץ שאינסטגרם לא מקבלת. צריך להעלות את הקובץ עצמו.",
+      "media_rejected"
+    )
+  }
+
   if (media.length === 0) {
     throw new SocialPublishError(
       "אין מדיה מוכנה לפרסום בפורמט הזה. ייתכן שהיצירה עוד רצה או נכשלה.",
@@ -196,4 +153,19 @@ export async function assembleScheduledPost(
     kind,
     publishAt: slotToInstant(args.scheduledDate, args.scheduledTime),
   }
+}
+
+/** A URL the provider can download a real image/video file from. */
+function isDirectMediaUrl(url: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false
+  if (/(^|\.)drive\.google\.com$|(^|\.)docs\.google\.com$|(^|\.)canva\.com$/i.test(parsed.hostname)) {
+    return false
+  }
+  return !/\.svg$/i.test(parsed.pathname)
 }

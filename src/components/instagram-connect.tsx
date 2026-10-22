@@ -1,19 +1,42 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Instagram, Loader2, Unlink } from "lucide-react"
+import { Instagram, Loader2, RefreshCw, Unlink } from "lucide-react"
+import { toast } from "sonner"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { cn } from "@/lib/utils"
+import {
+  refreshInstagramConnection,
+  useInstagramConnection,
+  type InstagramConnection,
+} from "@/lib/instagram-connection"
+import { syncScheduledFromServer } from "@/lib/timing-storage"
 
 /**
- * Connect an Instagram account, without ever leaving nlcai.
+ * Instagram connection — one control, used in two places.
  *
- * The whole flow is: click → a popup runs Instagram's consent screen → it
- * closes → the account is connected. The user never sees, logs into, or holds
- * an account in the system that brokers this; the workspace behind her
- * connection is created for her by the server and she has no login to it.
+ * Above the calendar and in Settings → Instagram, the same pill says whether
+ * scheduled posts will actually go out (green "אינסטגרם · מחובר" / red
+ * "אינסטגרם · לא מחובר"), and the same modal opens on click: Hani's copy about
+ * the Facebook-page requirement, the connect button, and — once connected —
+ * the account with reconnect and disconnect. One component, so the two
+ * screens cannot drift apart, and one shared store (`instagram-connection`),
+ * so connecting in either updates both without a refresh.
  *
- * Two details below are the difference between this working and this being a
- * bug report, and neither is obvious:
+ * The user never sees, logs into, or holds an account in the system that
+ * brokers this; nothing here names it.
+ *
+ * Two details in the connect flow are the difference between this working and
+ * this being a bug report, and neither is obvious:
  *
  *   1. The popup is opened SYNCHRONOUSLY in the click handler, before the
  *      fetch that resolves its URL. Browsers only trust `window.open` when it
@@ -31,12 +54,16 @@ import { Button } from "@/components/ui/button"
 /** The only origin whose messages we act on. */
 const PROVIDER_ORIGIN = "https://services.leadconnectorhq.com"
 
-type SocialAccount = {
-  id: string
-  handle: string | null
-  avatarUrl: string | null
-  status: "connected" | "needs_reconnect" | "revoked"
-}
+/** Hani's copy (2026-10-15). Light Hebrew polish only — not the content. */
+const FACEBOOK_PAGE_NOTE =
+  "חיבור אינסטגרם לתזמון אפשרי לחשבון שמקושר לדף פייסבוק. אם החשבון שלכם לא מקושר, צריך ליצור דף פייסבוק עסקי ולקשר אותו לחשבון האינסטגרם. אחרת התזמון לא יעבוד."
+
+/** One account the Facebook login exposes, when there are several to pick from. */
+type AccountOption = { originId: string; name: string; avatar: string | null }
+
+/** Where the picker goes when Facebook keeps handing back the old account. */
+const WRONG_ACCOUNT_HELP =
+  "בפייסבוק: הגדרות ← אינטגרציות עסקיות ← LeadConnector ← ״הצג וערוך״. מסמנים שם את החשבון והדף שרוצים, ואז חוזרים לכאן ולוחצים ״חיבור מחדש״."
 
 /** The shape the provider's popup posts back when it closes. */
 type ConnectMessage = {
@@ -62,41 +89,53 @@ function accountIdFrom(data: ConnectMessage): string | null {
   return null
 }
 
-export function InstagramConnect() {
-  const [accounts, setAccounts] = useState<SocialAccount[]>([])
-  const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState(false)
-  // Null until the first load answers. The connect button stays hidden while
-  // unknown rather than flashing in and out.
-  const [ready, setReady] = useState<boolean | null>(null)
-  const [error, setError] = useState<string | null>(null)
+/** After the connection changes, the board's cards change with it. */
+async function afterConnectionChange() {
+  await refreshInstagramConnection()
+  await syncScheduledFromServer()
+}
 
-  // Held so the message listener can close the popup once it has answered.
+/**
+ * The popup flow. Its message listener is mounted for the life of the
+ * control rather than only while a popup is open: it must already exist when
+ * the popup fires, and re-attaching per click risks missing a fast one.
+ */
+function useConnectFlow() {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  // Set when the login exposes several accounts: the grant to attach from,
+  // and the accounts to choose between.
+  const [choice, setChoice] = useState<{ accountId: string; options: AccountOption[] } | null>(null)
   const popupRef = useRef<Window | null>(null)
 
-  const refresh = useCallback(async () => {
+  /** Attach the grant — and, the second time round, the account she picked. */
+  const save = useCallback(async (accountId: string, originId?: string) => {
+    setBusy(true)
     try {
-      const res = await fetch("/api/social/accounts")
+      const res = await fetch("/api/social/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountId, ...(originId ? { originId } : {}) }),
+      })
       const json = await res.json()
-      if (res.ok) {
-        setAccounts(json.accounts ?? [])
-        setReady(json.ready !== false)
+      if (res.status === 409 && json.error === "choose_account" && Array.isArray(json.choose)) {
+        setError(null)
+        setChoice({ accountId, options: json.choose as AccountOption[] })
+      } else if (!res.ok) {
+        setError(json.message ?? "לא הצלחנו לשמור את החיבור.")
+      } else {
+        setError(null)
+        setChoice(null)
+        await afterConnectionChange()
+        toast.success("אינסטגרם מחובר")
       }
     } catch {
-      // A failed refresh is not worth an error banner — the list simply stays
-      // as it was, and the next action retries.
+      setError("לא הצלחנו לשמור את החיבור.")
     } finally {
-      setLoading(false)
+      setBusy(false)
     }
   }, [])
 
-  useEffect(() => {
-    refresh()
-  }, [refresh])
-
-  // The other half of the popup flow. Mounted for the life of the component
-  // rather than only while a popup is open: the listener must already exist
-  // when the popup fires, and re-attaching per click risks missing a fast one.
   useEffect(() => {
     async function onMessage(e: MessageEvent) {
       if (e.origin !== PROVIDER_ORIGIN) return
@@ -111,53 +150,37 @@ export function InstagramConnect() {
       // `aborted` is the user closing the consent screen — a decision, not a
       // failure, so it gets no error banner.
       if (data.error) {
-        if (data.error !== "aborted") {
-          setError("החיבור לא הושלם. אפשר לנסות שוב.")
-        }
+        if (data.error !== "aborted") setError("החיבור לא הושלם. אפשר לנסות שוב.")
         setBusy(false)
         return
       }
 
       const accountId = accountIdFrom(data)
       if (!accountId) {
-        setError("אינסטגרם לא החזירה חשבון. ודאי שהחשבון עסקי או יוצר ומקושר לדף פייסבוק, ונסי שוב.")
+        setError(
+          "אינסטגרם לא החזירה חשבון. צריך לוודא שהחשבון עסקי או יוצר ומקושר לדף פייסבוק, ולנסות שוב.",
+        )
         setBusy(false)
         return
       }
 
-      try {
-        const res = await fetch("/api/social/accounts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ accountId }),
-        })
-        const json = await res.json()
-        if (!res.ok) {
-          setError(json.message ?? "לא הצלחנו לשמור את החיבור.")
-        } else {
-          setError(null)
-          await refresh()
-        }
-      } catch {
-        setError("לא הצלחנו לשמור את החיבור.")
-      } finally {
-        setBusy(false)
-      }
+      await save(accountId)
     }
 
     window.addEventListener("message", onMessage)
     return () => window.removeEventListener("message", onMessage)
-  }, [refresh])
+  }, [save])
 
-  async function handleConnect() {
+  const connect = useCallback(async () => {
     setError(null)
+    setChoice(null)
     setBusy(true)
 
     // Opened FIRST, synchronously — see the note at the top of the file.
     const popup = window.open("", "nlcai-instagram-connect", "width=600,height=760")
     if (!popup) {
       setBusy(false)
-      setError("הדפדפן חסם את חלון החיבור. אפשרי חלונות קופצים לאתר הזה ונסי שוב.")
+      setError("הדפדפן חסם את חלון החיבור. צריך לאפשר חלונות קופצים לאתר הזה ולנסות שוב.")
       return
     }
     popupRef.current = popup
@@ -179,89 +202,336 @@ export function InstagramConnect() {
       setBusy(false)
       setError("לא הצלחנו לפתוח את החיבור לאינסטגרם.")
     }
+  }, [])
+
+  const choose = useCallback(
+    (originId: string) => {
+      if (choice) void save(choice.accountId, originId)
+    },
+    [choice, save],
+  )
+
+  return { busy, error, setError, connect, choice, setChoice, choose }
+}
+
+// ---------------------------------------------------------------------------
+// pill
+// ---------------------------------------------------------------------------
+
+/**
+ * The pill itself. Green only for a live connection; a lapsed one is red,
+ * because posts on it will not go out.
+ */
+export function InstagramStatusPill({
+  connection,
+  onClick,
+  className,
+}: {
+  connection: InstagramConnection
+  onClick: () => void
+  className?: string
+}) {
+  if (connection.status === "loading") {
+    return (
+      <span
+        aria-hidden
+        className={cn("inline-flex h-7 w-36 animate-pulse rounded-full bg-gray-95 dark:bg-gray-20", className)}
+      />
+    )
   }
 
-  async function handleDisconnect(id: string) {
-    setBusy(true)
-    setError(null)
+  const connected = connection.status === "connected"
+  const label = connected ? "אינסטגרם · מחובר" : "אינסטגרם · לא מחובר"
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-haspopup="dialog"
+      aria-label={`${label}. פתיחת הגדרות החיבור`}
+      className={cn(
+        "inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50",
+        connected
+          ? "bg-green-95 text-green-20 hover:bg-green-90 dark:bg-green-95/10 dark:text-green-80"
+          : "bg-red-95 text-button-destructive-default hover:bg-red-90 dark:bg-red-95/10",
+        className,
+      )}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "size-2 rounded-full",
+          connected ? "bg-bg-surface-success-default" : "bg-button-destructive-default",
+        )}
+      />
+      <Instagram className="size-3.5" aria-hidden />
+      {label}
+    </button>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// modal
+// ---------------------------------------------------------------------------
+
+function InstagramConnectDialog({
+  open,
+  onOpenChange,
+  connection,
+  flow,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  connection: InstagramConnection
+  flow: ReturnType<typeof useConnectFlow>
+}) {
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false)
+  const [disconnecting, setDisconnecting] = useState(false)
+
+  const account = connection.primary
+  const isLive = connection.status === "connected" && account?.status === "connected"
+  const isLapsed = !!account && account.status === "needs_reconnect"
+  const queued = account?.queuedCount ?? 0
+
+  const { setChoice } = flow
+  useEffect(() => {
+    if (!open) {
+      setConfirmingDisconnect(false)
+      setChoice(null)
+    }
+  }, [open, setChoice])
+
+  async function disconnect() {
+    if (!account) return
+    setDisconnecting(true)
+    flow.setError(null)
     try {
-      await fetch(`/api/social/accounts?id=${encodeURIComponent(id)}`, { method: "DELETE" })
-      await refresh()
+      const res = await fetch(`/api/social/accounts?id=${encodeURIComponent(account.id)}`, {
+        method: "DELETE",
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok) {
+        flow.setError(json?.message ?? "הניתוק לא הצליח. אפשר לנסות שוב.")
+        return
+      }
+      await afterConnectionChange()
+      const cancelled = typeof json?.cancelled === "number" ? json.cancelled : 0
+      toast.success(
+        cancelled > 0
+          ? `אינסטגרם נותק, ו-${cancelled === 1 ? "פוסט אחד בוטל" : `${cancelled} פוסטים בוטלו`} בתור`
+          : "אינסטגרם נותק",
+      )
+      setConfirmingDisconnect(false)
     } finally {
-      setBusy(false)
+      setDisconnecting(false)
     }
   }
 
   return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent dir="rtl" className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Instagram className="size-5" aria-hidden />
+            חיבור אינסטגרם
+          </DialogTitle>
+          <DialogDescription className="text-start text-small text-text-neutral-default">
+            {FACEBOOK_PAGE_NOTE}
+          </DialogDescription>
+        </DialogHeader>
+
+        {flow.choice ? (
+          <div className="flex flex-col gap-2">
+            <span className="text-small-bold text-text-primary-default">לאיזה חשבון לחבר?</span>
+            <div role="list" className="flex flex-col gap-1.5">
+              {flow.choice.options.map((o) => (
+                <button
+                  key={o.originId}
+                  type="button"
+                  role="listitem"
+                  onClick={() => flow.choose(o.originId)}
+                  disabled={flow.busy}
+                  className="flex items-center gap-3 rounded-xl border border-border-neutral-default p-3 text-start transition-colors hover:bg-bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 disabled:opacity-60"
+                >
+                  <AccountAvatar src={o.avatar} />
+                  <span className="truncate text-small-bold text-text-primary-default">
+                    <bdi>@{o.name.replace(/^@/, "")}</bdi>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : connection.status === "unavailable" ? (
+          <p className="text-small text-text-neutral-default">
+            החיבור לאינסטגרם ייפתח בקרוב. נעדכן ברגע שיהיה זמין.
+          </p>
+        ) : account && (isLive || isLapsed) ? (
+          <div className="flex flex-col gap-3 rounded-xl border border-border-neutral-default p-3">
+            <div className="flex items-center gap-3">
+              <AccountAvatar src={account.avatarUrl} />
+              <div className="flex min-w-0 flex-col">
+                <span className="truncate text-small-bold text-text-primary-default">
+                  {/* bdi, not dir="ltr": keeps "@handle" reading correctly
+                      while the line itself stays right-aligned. */}
+                  {account.handle ? <bdi>@{account.handle.replace(/^@/, "")}</bdi> : "חשבון אינסטגרם"}
+                </span>
+                <span
+                  className={cn(
+                    "text-xs-body",
+                    isLive ? "text-text-neutral-default" : "text-button-destructive-default",
+                  )}
+                >
+                  {isLive
+                    ? queued > 0
+                      ? `מחובר · ${queued === 1 ? "פוסט אחד בתור" : `${queued} פוסטים בתור`}`
+                      : "מחובר"
+                    : "החיבור פג — צריך לחבר מחדש כדי שהתזמון ימשיך לעבוד"}
+                </span>
+              </div>
+            </div>
+
+            {confirmingDisconnect ? (
+              <div
+                role="alert"
+                className="flex flex-col gap-2 rounded-lg bg-red-95 p-3 text-small text-button-destructive-default dark:bg-red-95/10"
+              >
+                {queued > 0
+                  ? `ניתוק יבטל ${queued === 1 ? "פוסט אחד שמתוזמן" : `${queued} פוסטים שמתוזמנים`} לאינסטגרם. הם יישארו על הלוח, אבל לא יתפרסמו.`
+                  : "אחרי הניתוק, פוסטים שתשימו ביומן לא יתפרסמו לאינסטגרם."}
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={disconnect}
+                    disabled={disconnecting}
+                    className="gap-2 border-button-destructive-default text-button-destructive-default hover:bg-red-90"
+                  >
+                    {disconnecting ? <Loader2 className="size-4 animate-spin" /> : <Unlink className="size-4" />}
+                    {queued > 0 ? "ניתוק וביטול הפוסטים" : "ניתוק"}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirmingDisconnect(false)}>
+                    חזרה
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {flow.error && (
+          <p role="alert" className="text-xs-body text-button-destructive-default">
+            {flow.error}
+          </p>
+        )}
+
+        {connection.status !== "unavailable" && !confirmingDisconnect && !flow.choice && (
+          <DialogFooter className="gap-2 sm:justify-start">
+            {isLive ? (
+              <>
+                <Button variant="outline" onClick={flow.connect} disabled={flow.busy} className="gap-2">
+                  {flow.busy ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                  חיבור מחדש
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setConfirmingDisconnect(true)}
+                  disabled={flow.busy}
+                  className="gap-2 border-button-destructive-default text-button-destructive-default hover:bg-red-95"
+                >
+                  <Unlink className="size-4" />
+                  ניתוק
+                </Button>
+              </>
+            ) : (
+              <Button onClick={flow.connect} disabled={flow.busy} className="gap-2">
+                {flow.busy ? <Loader2 className="size-4 animate-spin" /> : <Instagram className="size-4" />}
+                {flow.busy ? "מתחבר..." : "קישור לאינסטגרם"}
+              </Button>
+            )}
+          </DialogFooter>
+        )}
+
+        {connection.status !== "unavailable" && (
+          <p className="text-xs-body text-text-neutral-default">
+            <span className="font-semibold text-text-primary-default">לא רואה את החשבון הנכון? </span>
+            {WRONG_ACCOUNT_HELP}
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// the control, as each screen uses it
+// ---------------------------------------------------------------------------
+
+/**
+ * Pill + modal. What sits above the calendar, and inside the settings card.
+ * `open` / `onOpenChange` let a card's "לחבר מחדש" action open the same modal.
+ */
+export function InstagramConnectionControl({
+  className,
+  open: openProp,
+  onOpenChange,
+}: {
+  className?: string
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+}) {
+  const connection = useInstagramConnection()
+  const flow = useConnectFlow()
+  const [openLocal, setOpenLocal] = useState(false)
+  const open = openProp ?? openLocal
+  const setOpen = (v: boolean) => {
+    setOpenLocal(v)
+    onOpenChange?.(v)
+    if (v) {
+      flow.setError(null)
+      // Fresh queued counts before anyone reads "disconnect will cancel N".
+      void refreshInstagramConnection()
+    }
+  }
+
+  return (
+    <>
+      <InstagramStatusPill connection={connection} onClick={() => setOpen(true)} className={className} />
+      <InstagramConnectDialog open={open} onOpenChange={setOpen} connection={connection} flow={flow} />
+    </>
+  )
+}
+
+/** Settings → Instagram. */
+export function InstagramConnect() {
+  return (
     <div className="flex flex-col gap-3 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 p-6">
       <div className="flex items-center justify-between">
         <span className="text-p-bold text-text-primary-default">אינסטגרם</span>
-        <Instagram className="size-4 text-text-neutral-default" />
+        <Instagram className="size-4 text-text-neutral-default" aria-hidden />
       </div>
 
       <p className="text-xs-body text-text-neutral-default">
-        חיבור החשבון מאפשר לפוסטים שתזמנת ביומן להתפרסם לבד, בשעה שקבעת.
+        חיבור החשבון מאפשר לפוסטים שתזמנתם ביומן להתפרסם לבד, בשעה שקבעתם.
       </p>
 
-      {loading ? (
-        <Loader2 className="size-4 animate-spin text-text-neutral-default" />
-      ) : ready === false && accounts.length === 0 ? (
-        // Deployed but the agency install isn't finished. Saying so plainly
-        // beats a button that fails after doing half the work.
-        <p className="text-xs-body text-text-neutral-default">
-          החיבור לאינסטגרם ייפתח בקרוב. נעדכן ברגע שיהיה זמין.
-        </p>
-      ) : accounts.length > 0 ? (
-        <div className="flex flex-col gap-3">
-          {accounts.map((account) => (
-            <div key={account.id} className="flex items-center justify-between gap-3">
-              <div className="flex flex-col">
-                <span className="text-sm text-text-primary-default">
-                  {account.handle ?? "חשבון אינסטגרם"}
-                </span>
-                {account.status === "needs_reconnect" && (
-                  <span className="text-xs-body text-button-destructive-default">
-                    החיבור פג — צריך לחבר מחדש כדי שהתזמון ימשיך לעבוד
-                  </span>
-                )}
-              </div>
+      <InstagramConnectionControl className="w-fit" />
 
-              {account.status === "needs_reconnect" ? (
-                <Button size="sm" onClick={handleConnect} disabled={busy} className="w-fit gap-2">
-                  {busy ? <Loader2 className="size-4 animate-spin" /> : <Instagram className="size-4" />}
-                  חברי מחדש
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleDisconnect(account.id)}
-                  disabled={busy}
-                  className="w-fit gap-2 border-button-destructive-default text-button-destructive-default hover:bg-red-95"
-                >
-                  {busy ? <Loader2 className="size-4 animate-spin" /> : <Unlink className="size-4" />}
-                  נתקי
-                </Button>
-              )}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <Button onClick={handleConnect} disabled={busy} className="w-fit gap-2">
-          {busy ? <Loader2 className="size-4 animate-spin" /> : <Instagram className="size-4" />}
-          {busy ? "מתחבר..." : "חברי אינסטגרם"}
-        </Button>
-      )}
-
-      {error && (
-        <p role="alert" className="text-xs-body text-button-destructive-default">
-          {error}
-        </p>
-      )}
-
-      <p className="text-xs-body text-text-neutral-default">
-        צריך חשבון אינסטגרם מקצועי (עסקי או יוצר) שמקושר לדף פייסבוק.
-      </p>
+      <p className="text-xs-body text-text-neutral-default">{FACEBOOK_PAGE_NOTE}</p>
     </div>
+  )
+}
+
+/** Profile picture of an Instagram account. The URL is Facebook's CDN link,
+ *  which expires after a while, so the Instagram glyph stands in whenever it
+ *  is missing or fails to load. */
+function AccountAvatar({ src }: { src: string | null | undefined }) {
+  return (
+    <Avatar size="lg">
+      {src && <AvatarImage src={src} alt="" className="object-cover" />}
+      <AvatarFallback className="bg-bg-surface">
+        <Instagram className="size-4 text-text-neutral-default" aria-hidden />
+      </AvatarFallback>
+    </Avatar>
   )
 }

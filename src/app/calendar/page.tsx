@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
 import {
   ChevronRight,
   ChevronLeft,
@@ -65,6 +66,10 @@ import { FormatPreviewDialog } from "@/components/format-preview/format-preview-
 import { FormatPreviewInspector } from "@/components/format-preview/format-preview-inspector"
 import { CorePostSheet, type CorePostSheetData } from "@/components/core-post-sheet"
 import { FormatThumbnail } from "@/components/format-thumbnail"
+import { InstagramConnectionControl } from "@/components/instagram-connect"
+import { PublishStatusLine } from "@/components/publish-status"
+import { useInstagramConnection, type InstagramConnection } from "@/lib/instagram-connection"
+import { isSlotTooSoon } from "@/lib/social/slot-time"
 import {
   FormatStatusChip,
   getFormatChipLabel,
@@ -74,6 +79,7 @@ import {
   TIMING_KEYS,
   getPublishedMap,
   getScheduledPosts,
+  refreshPublishStatus,
   schedulePost,
   toDateKey,
   unmarkPublished,
@@ -199,6 +205,9 @@ function FormatCard({
   onCardClick,
   onUnschedule,
   onReschedule,
+  connection,
+  onConnectInstagram,
+  onFixMedia,
 }: {
   post: ScheduledPost
   /** Resolved hook text for the core post (live > snapshot > placeholder). */
@@ -216,6 +225,12 @@ function FormatCard({
   onUnschedule: () => void
   /** Kebab → "תזמון לתאריך". Re-schedules THIS format to the picked date + time. */
   onReschedule: (newDate: string, newTime: string) => void
+  /** Shared Instagram connection state — drives the publish-status line. */
+  connection: InstagramConnection
+  /** Opens the shared Instagram connection modal (the card's "reconnect"). */
+  onConnectInstagram: () => void
+  /** Takes her to where this format's media is edited. */
+  onFixMedia: () => void
 }) {
   const formatLabel = getFormatChipLabel(post.format)
   const publishedTitle = post.publishedAt
@@ -339,6 +354,15 @@ function FormatCard({
         <div className="flex">
           <FormatStatusChip format={post.format} state="ready" size="xs" />
         </div>
+        {/* Where this slot stands with Instagram — "תוזמן" only when the
+            provider holds it, otherwise what's wrong and one way to fix it. */}
+        <PublishStatusLine
+          post={post}
+          connection={connection}
+          onConnect={onConnectInstagram}
+          onPickTime={() => setDateDialogOpen(true)}
+          onFixMedia={onFixMedia}
+        />
       </div>
 
       {/* Re-schedule date picker. Portalled by Radix, so it sits outside the
@@ -441,6 +465,31 @@ export default function CalendarPage() {
   const endRoutineEdit = () => {
     setRoutineEditing(false)
     setPanelCollapsed(panelBeforeEditRef.current)
+  }
+
+  // Instagram: one shared connection state for the pill above the board and
+  // every card's status line; one modal, opened from either.
+  const router = useRouter()
+  const connection = useInstagramConnection()
+  const [igDialogOpen, setIgDialogOpen] = useState(false)
+
+  // What happened in the queue since the last visit — outcomes of slots
+  // whose time passed, edits after queuing, a lapsed connection.
+  useEffect(() => {
+    void refreshPublishStatus()
+  }, [])
+
+  /**
+   * The provider refuses anything under ~6 minutes ahead. When posts really
+   * go out, a slot that's already too close is stopped here, while she's
+   * dragging, with the reason — not discovered later as a failed post. A
+   * board-only user (no connection) plans freely, as before.
+   */
+  const blockedAsTooSoon = (dateKey: string, time: string): boolean => {
+    if (connection.status !== "connected") return false
+    if (!isSlotTooSoon(dateKey, time)) return false
+    toast.error(`השעה ${time} כבר עברה או קרובה מדי, ולכן הפוסט לא יוכל לצאת בזמן. בחרו יום אחר.`)
+    return true
   }
 
   // Scheduled posts live in localStorage. We hydrate after mount to avoid
@@ -781,6 +830,8 @@ export default function CalendarPage() {
           (p) => p.corePostId === corePostId && p.format === format,
         )
         const time = existing?.scheduledTime ?? DEFAULT_SCHEDULED_TIME
+        if (existing?.scheduledDate === dayKey) return
+        if (blockedAsTooSoon(dayKey, time)) return
         schedulePost(corePostId, format, dayKey, time)
         reloadBoard()
       } catch (err) {
@@ -806,6 +857,7 @@ export default function CalendarPage() {
           upsertReviewRow(corePostId, format, dayKey, trimmed)
           return
         }
+        if (blockedAsTooSoon(dayKey, DEFAULT_SCHEDULED_TIME)) return
         schedulePost(
           corePostId,
           format,
@@ -1054,6 +1106,7 @@ export default function CalendarPage() {
             return
           }
           // Move THIS format to the picked date + time.
+          if (blockedAsTooSoon(newDate, newTime)) return
           schedulePost(
             post.corePostId,
             post.format,
@@ -1064,6 +1117,13 @@ export default function CalendarPage() {
           reloadBoard()
           toast.success("התזמון עודכן")
         }}
+        connection={connection}
+        onConnectInstagram={() => setIgDialogOpen(true)}
+        onFixMedia={() =>
+          router.push(
+            `/project?post_id=${post.corePostId}&format=${post.format}`,
+          )
+        }
       />
     )
   }
@@ -1126,6 +1186,11 @@ export default function CalendarPage() {
                 className="w-[48px] h-[48px]"
               />
               <h2 className="text-text-primary-default">תזמון</h2>
+              <InstagramConnectionControl
+                className="ms-auto"
+                open={igDialogOpen}
+                onOpenChange={setIgDialogOpen}
+              />
             </div>
 
             {rulesVariant && (

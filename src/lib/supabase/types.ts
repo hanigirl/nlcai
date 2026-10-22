@@ -338,7 +338,8 @@ export interface ScheduledPostRow {
 }
 
 /** `idle` is the pre-033 world: on the calendar, owed to nobody. */
-export type SchedulePublishStatus = "idle" | "queued" | "published" | "failed";
+/** See `src/lib/social/publish-state.ts` for what each value means. */
+export type SchedulePublishStatus = "idle" | "pending" | "queued" | "sent" | "published" | "failed";
 
 export type ScheduledPostInsert = Pick<
   ScheduledPostRow,
