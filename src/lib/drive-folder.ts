@@ -16,6 +16,8 @@ export type DriveFolderItem = {
   id: string
   name: string
   kind: "image" | "video"
+  /** Drive's thumbnail for it, from the folder view (videos included). */
+  thumb?: string
 }
 
 export type DriveFolderListing = { name: string; items: DriveFolderItem[] }
@@ -82,7 +84,10 @@ export async function listPublicFolder(
     const kind = VIDEO_EXT.test(fileName) ? "video" : IMAGE_EXT.test(fileName) ? "image" : null
     if (!kind) continue
     seen.add(id)
-    items.push({ id, name: fileName, kind })
+    // The entry's own preview image; its size suffix (=s190) is asked bigger.
+    const img = body.match(/<img src="(https:\/\/lh3\.googleusercontent\.com\/[^"]+)"/)?.[1]
+    const thumb = img ? decodeEntities(img).replace(/=s\d+$/, "=s400") : undefined
+    items.push({ id, name: fileName, kind, ...(thumb ? { thumb } : {}) })
   }
   return { name, items }
 }

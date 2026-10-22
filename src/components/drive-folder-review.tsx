@@ -208,6 +208,9 @@ function mixedFolders(): Record<FolderKey, Folder> {
   }
 }
 
+/** "קובץ אחד" / "3 קבצים". */
+const filesLabel = (n: number) => (n === 1 ? "קובץ אחד" : `${n} קבצים`)
+
 /* ================================================================ store */
 
 /** Folders come from her Drive (Hani, 2026-10-22); the seed above is review-only. */
@@ -271,7 +274,7 @@ const ERROR_COPY: Record<FolderError, { title: string; fix: string }> = {
   },
 }
 
-type ApiItem = { id: string; name: string; kind: "image" | "video" }
+type ApiItem = { id: string; name: string; kind: "image" | "video"; thumb?: string }
 type ApiFolder = { link: string; name: string; items: ApiItem[] } | { link: string; error: FolderError }
 
 /** A Drive file as the picker shows it: Drive's own thumbnail, its file link as the source. */
@@ -279,7 +282,9 @@ const toItem = (it: ApiItem): MediaItem => ({
   id: it.id,
   name: it.name,
   kind: it.kind,
-  thumb: `https://drive.google.com/thumbnail?id=${it.id}&sz=w400`,
+  // Drive's own thumbnail from the folder view; drive.google.com/thumbnail
+  // needs a Google session in the browser and comes back broken for videos.
+  thumb: it.thumb ?? `https://lh3.googleusercontent.com/d/${it.id}=w400`,
   src: `https://drive.google.com/file/d/${it.id}/view`,
 })
 
@@ -719,7 +724,7 @@ function FolderSummary({ f, folderKey }: { f: Folder; folderKey: FolderKey }) {
           <img key={it.id} src={it.thumb} alt="" className={cn("rounded-[4px] border border-white object-cover dark:border-gray-10", miniFor(FOLDER_FORMAT[folderKey]))} />
         ))}
       </span>
-      {f.items.length} קבצים
+      {filesLabel(f.items.length)}
     </span>
   )
 }
@@ -767,7 +772,7 @@ function FolderRow({
             <div className="flex items-center gap-2">
               <DriveMark />
               <span className="truncate text-small-bold text-text-primary-default">{f.name}</span>
-              <span className="text-xs-body text-text-neutral-default">· {f.items.length} קבצים</span>
+              <span className="text-xs-body text-text-neutral-default">· {filesLabel(f.items.length)}</span>
               <a
                 href={f.link}
                 target="_blank"
@@ -908,7 +913,7 @@ export function DriveFolderEntry({
       </Button>
       <p className="text-xs-body text-text-neutral-default">
         {f.status === "connected"
-          ? `מתיקיית „${f.name}” · ${f.items.length} קבצים`
+          ? `מתיקיית „${f.name}” · ${filesLabel(f.items.length)}`
           : f.status === "error"
             ? "אין גישה לתיקייה שחוברה — אפשר לתקן בהגדרות"
             : "עוד לא חוברה תיקייה ל" + FOLDER_META[k].label}
@@ -1069,7 +1074,7 @@ export function DriveFolderPicker({
           {f.status === "connected" ? f.name : `תיקייה ל${meta.label}`}
         </span>
         {f.status === "connected" && !loading && (
-          <span className="shrink-0 text-xs-body text-text-neutral-default">· {f.items.length} קבצים</span>
+          <span className="shrink-0 text-xs-body text-text-neutral-default">· {filesLabel(f.items.length)}</span>
         )}
         {f.status === "connected" && (
           <span className="ms-auto flex shrink-0 items-center">
