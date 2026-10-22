@@ -3897,7 +3897,7 @@ function MediaUploadFlow({
                 aspect="4/5"
               />
               <Button
-                variant="outline"
+                variant="default"
                 onClick={handleAiGenerate}
                 disabled={!postId || mediaStyle.brandLoading}
                 className="w-full gap-1.5"
@@ -4122,7 +4122,7 @@ function MediaUploadFlow({
                 brandLoading={mediaStyle.brandLoading}
               />
               <Button
-                variant="outline"
+                variant="default"
                 onClick={handleStoryGenerate}
                 disabled={!postId || mediaStyle.brandLoading}
                 className="w-full gap-1.5"
@@ -4319,7 +4319,7 @@ function MediaUploadFlow({
                   brandLoading={mediaStyle.brandLoading}
                 />
                 <Button
-                  variant="outline"
+                  variant="default"
                   onClick={handleBRollGenerate}
                   disabled={!postId || bRollGenerating || mediaStyle.brandLoading}
                   className="w-full gap-1.5"
