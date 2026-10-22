@@ -23,6 +23,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { toast } from "sonner"
 import { formatPostDate, getDayKey } from "@/lib/format-date"
@@ -30,6 +31,7 @@ import { CorePostSheet, type CorePostSheetData } from "@/components/core-post-sh
 import { FormatStatusChipLink } from "@/components/format-status-chip"
 import {
   TIMING_KEYS,
+  getCorePostMeta,
   getFormatReadiness,
   getPublishedMark,
   getScheduledByPostAndFormat,
@@ -54,6 +56,66 @@ const CARD_CHIP_FORMATS: FormatId[] = [
   "carousel",
   "image_post",
 ]
+
+/**
+ * Status filter — the stages a FORMAT moves through: בכתיבה (no media yet) →
+ * ממתין לאישור → מאושר → תוזמן → פורסם. A post shows under every stage one of
+ * its formats is in, so a post with a story still missing media and a
+ * carousel waiting for approval appears under both. `?status=pending` opens on
+ * "ממתין לאישור" — that's where the calendar rail's "מעבר לאישור" lands.
+ */
+type StatusFilter = "all" | "writing" | "pending" | "approved" | "scheduled" | "published"
+
+const STATUS_FILTERS: { id: StatusFilter; label: string }[] = [
+  { id: "all", label: "הכל" },
+  { id: "writing", label: "בכתיבה" },
+  { id: "pending", label: "ממתין לאישור" },
+  { id: "approved", label: "מאושר" },
+  { id: "scheduled", label: "תוזמן" },
+  { id: "published", label: "פורסם" },
+]
+
+function readStatusParam(): StatusFilter {
+  if (typeof window === "undefined") return "all"
+  const v = new URLSearchParams(window.location.search).get("status")
+  return STATUS_FILTERS.some((f) => f.id === v) ? (v as StatusFilter) : "all"
+}
+
+/** Approval is stored per format on the post's meta by the approval step. */
+function isFormatApproved(corePostId: string, format: FormatId): boolean {
+  const slice = getCorePostMeta(corePostId).byFormat?.[format] as
+    | { approvedAt?: string }
+    | undefined
+  return !!slice?.approvedAt
+}
+
+function matchesStatus(post: SavedPost, status: StatusFilter): boolean {
+  if (status === "all") return true
+  const input: ReadinessPostInput = {
+    id: post.id,
+    formats: post.formats,
+    formatsWithMedia: post.formats_with_media,
+    hasBody: !!post.body?.trim(),
+  }
+  const formats = [...new Set([...CARD_CHIP_FORMATS, ...(post.formats as FormatId[])])]
+  const states = formats.map((f) => ({ f, s: getFormatReadiness(input, f) }))
+  switch (status) {
+    case "writing":
+      // No formats duplicated yet, or a duplicated format still without media.
+      return (
+        post.formats.length === 0 ||
+        states.some(({ f, s }) => post.formats.includes(f) && (s === "empty" || s === "incomplete"))
+      )
+    case "approved":
+      return states.some(({ f, s }) => s === "ready" && isFormatApproved(post.id, f))
+    case "pending":
+      return states.some(({ f, s }) => s === "ready" && !isFormatApproved(post.id, f))
+    case "scheduled":
+      return states.some(({ s }) => s === "scheduled")
+    case "published":
+      return states.some(({ s }) => s === "published")
+  }
+}
 
 interface SavedPost {
   id: string
@@ -80,6 +142,10 @@ export default function CorePostsPage() {
   const [loading, setLoading] = useState(true)
   const [formatFilter, setFormatFilter] = useState("")
   const [searchQuery, setSearchQuery] = useState("")
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
+  useEffect(() => {
+    setStatusFilter(readStatusParam())
+  }, [])
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
 
   // Sheet state — clicking a card opens it instead of navigating away.
@@ -196,6 +262,7 @@ export default function CorePostsPage() {
   const filtered = posts
     .filter((p) => {
       if (formatFilter && !p.formats.includes(formatFilter)) return false
+      if (!matchesStatus(p, statusFilter)) return false
       if (q) {
         const haystack = `${p.title || ""} ${p.body} ${p.hook_text || ""}`.toLowerCase()
         if (!haystack.includes(q)) return false
@@ -293,6 +360,24 @@ export default function CorePostsPage() {
 
             <div className="flex-1" />
 
+            {/* Status */}
+            <div className="w-[160px]">
+              <Select
+                selectSize="small"
+                variant="homepage"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+                aria-label="סינון לפי סטטוס"
+                className="text-xs"
+              >
+                {STATUS_FILTERS.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
             {/* Search */}
             <div className="relative w-[200px]">
               <Search className="absolute start-3 top-1/2 -translate-y-1/2 size-3.5 text-text-neutral-default pointer-events-none" />
@@ -361,7 +446,11 @@ export default function CorePostsPage() {
         {!loading && posts.length > 0 && filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
             <FileText className="size-10 text-text-neutral-default" />
-            <p className="text-p text-text-neutral-default">{q ? "לא נמצאו פוסטים" : "אין פוסטים בפורמט הזה"}</p>
+            <p className="text-p text-text-neutral-default">{q
+                ? "לא נמצאו פוסטים"
+                : statusFilter !== "all"
+                  ? `אין פוסטים בסטטוס ״${STATUS_FILTERS.find((f) => f.id === statusFilter)?.label}״`
+                  : "אין פוסטים בפורמט הזה"}</p>
           </div>
         )}
 

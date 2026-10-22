@@ -33,10 +33,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import confetti from "canvas-confetti"
-import { FileText, Inbox, PanelLeftClose, Search } from "lucide-react"
+import {
+  Check,
+  ChevronLeft,
+  Clock,
+  FileText,
+  Inbox,
+  PanelLeftClose,
+  Search,
+} from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   TIMING_KEYS,
@@ -192,6 +201,40 @@ export type QueuePanelProps = {
   collapsed?: boolean
   /** Toggle handler for the in-header collapse button. */
   onToggleCollapse?: () => void
+  /**
+   * Approval-aware rail (task "רשימת הצד מציגה רק פוסטים מאושרים").
+   * Undefined → the rail behaves exactly as before (every ready format).
+   * Set → only formats the user APPROVED are draggable cards; formats that
+   * are ready (script + media) but not yet approved are surfaced as
+   * "ממתינים לאישור" — variant A as a count row that routes out, variant B
+   * as a second tab where each card can be approved in place.
+   */
+  approval?: QueueApprovalMode
+}
+
+/**
+ * Approval mode config. `isApproved` is the seam to the sibling task
+ * "שלב אישור מדיה לפני תזמון" — whatever store that task lands on, the rail
+ * only needs a (post, format) → boolean.
+ */
+export type QueueApprovalMode = {
+  variant: "a" | "b"
+  isApproved: (corePostId: string, format: FormatId) => boolean
+  /** Variant B — approve a pending format from inside the rail. */
+  onApprove?: (corePostId: string, format: FormatId) => void
+  /** Variant A — where the "ממתינים לאישור" row sends the user. */
+  pendingHref: string
+  /**
+   * Review harness only: render from these posts instead of fetching, and
+   * hide card ids the reviewer already dropped on the grid. Never set in
+   * production.
+   */
+  seed?: {
+    posts: PanelItem[]
+    loading: boolean
+    error: string | null
+    excludeCardIds: Set<string>
+  }
 }
 
 export function QueuePanel({
@@ -201,6 +244,7 @@ export function QueuePanel({
   onItemClick,
   collapsed = false,
   onToggleCollapse,
+  approval,
 }: QueuePanelProps) {
   const [allPosts, setAllPosts] = useState<PanelItem[]>([])
   const [scheduledIds, setScheduledIds] = useState<Set<string>>(new Set())
@@ -247,8 +291,19 @@ export function QueuePanel({
     setScheduledIds(ids)
   }, [])
 
+  // Review harness: a seeded rail never fetches — it mirrors the seed.
+  const seed = approval?.seed
+  const seeded = !!seed
+  useEffect(() => {
+    if (!seed) return
+    setAllPosts(seed.posts)
+    setLoading(seed.loading)
+    setError(seed.error)
+  }, [seed])
+
   // Initial fetch + scheduled hydrate.
   useEffect(() => {
+    if (seeded) return
     let cancelled = false
     refreshScheduled()
     setLoading(true)
@@ -283,7 +338,7 @@ export function QueuePanel({
     return () => {
       cancelled = true
     }
-  }, [refreshScheduled])
+  }, [refreshScheduled, seeded])
 
   // Bumped every time we want to re-derive READY filter on a meta change
   // (drive_url is in localStorage, not on the API row, so the filter has to
@@ -423,16 +478,42 @@ export function QueuePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allPosts, scheduledIds, metaTick])
 
+  // Approval split. A "ready" format (script + media) is only schedulable
+  // once the user approved it; until then it is "pending". Outside approval
+  // mode both lists collapse back to the old behaviour (all ready = rail).
+  const [railTab, setRailTab] = useState<"approved" | "pending">("approved")
+  const { approvedCards, pendingCards } = useMemo(() => {
+    if (!approval) return { approvedCards: readyCards, pendingCards: [] }
+    const excluded = approval.seed?.excludeCardIds
+    const live = excluded
+      ? readyCards.filter((c) => !excluded.has(c.id))
+      : readyCards
+    return {
+      approvedCards: live.filter((c) =>
+        approval.isApproved(c.corePostId, c.format),
+      ),
+      pendingCards: live.filter(
+        (c) => !approval.isApproved(c.corePostId, c.format),
+      ),
+    }
+  }, [approval, readyCards])
+  // A new review seed (harness state switch) starts back on "מוכנים".
   useEffect(() => {
-    onCountChange?.(readyCards.length)
-  }, [readyCards.length, onCountChange])
+    if (seed) setRailTab("approved")
+  }, [seed])
+  const showingPending = approval?.variant === "b" && railTab === "pending"
+  const listCards = showingPending ? pendingCards : approvedCards
+
+  useEffect(() => {
+    onCountChange?.(approvedCards.length)
+  }, [approvedCards.length, onCountChange])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return readyCards
+    if (!q) return listCards
     // Search on the card's resolved hook — the user-recognisable string.
-    return readyCards.filter((c) => c.hook.toLowerCase().includes(q))
-  }, [readyCards, query])
+    return listCards.filter((c) => c.hook.toLowerCase().includes(q))
+  }, [listCards, query])
 
   const handleDragStart = (
     e: React.DragEvent<HTMLLIElement>,
@@ -479,6 +560,35 @@ export function QueuePanel({
     unscheduledAll.length > 0 &&
     unscheduled.length === 0
 
+  // Approval-mode empties. Resolved AFTER the shared ones above (loading,
+  // error, no posts, all scheduled, none ready), so they only cover the new
+  // cases: formats exist with media, but the approved list is empty.
+  let approvalEmpty: React.ReactNode = null
+  if (approval && !loading && !error && allPosts.length > 0) {
+    const excludedCount = approval.seed?.excludeCardIds.size ?? 0
+    if (approvedCards.length === 0 && pendingCards.length === 0) {
+      approvalEmpty =
+        excludedCount > 0 ? (
+          <EmptyAllScheduledState />
+        ) : (
+          <EmptyNoneReadyState count={0} />
+        )
+    } else if (showingPending && pendingCards.length === 0) {
+      approvalEmpty = <EmptyNothingPendingState />
+    } else if (!showingPending && approvedCards.length === 0) {
+      approvalEmpty = (
+        <EmptyNoneApprovedState
+          pendingCount={pendingCards.length}
+          action={
+            approval.variant === "a"
+              ? { kind: "link", href: approval.pendingHref }
+              : { kind: "tab", onClick: () => setRailTab("pending") }
+          }
+        />
+      )
+    }
+  }
+
   return (
     <aside
       dir="rtl"
@@ -510,9 +620,13 @@ export function QueuePanel({
     >
       <div className="px-4 py-3 border-b border-border-neutral-default flex items-center gap-2">
         <h3 className="text-text-primary-default text-p-bold flex-1">פוסטים לתזמון</h3>
-        <Badge variant="outline" className="tabular-nums">
-          {unscheduled.length}
-        </Badge>
+        {/* Variant B carries its counts on the tabs, so the header badge
+            would say the same number twice. */}
+        {approval?.variant !== "b" && (
+          <Badge variant="outline" className="tabular-nums">
+            {approval ? approvedCards.length : unscheduled.length}
+          </Badge>
+        )}
         {onToggleCollapse && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -531,7 +645,71 @@ export function QueuePanel({
         )}
       </div>
 
-      {unscheduled.length > 0 && (
+      {/* Variant A — the rail stays strictly "approved only"; formats that
+          still wait for approval are one quiet row right under the header
+          (Hani, 2026-10-15), routing out to where approval happens. Hidden
+          when nothing waits, and when the empty state already says it. */}
+      {approval?.variant === "a" &&
+        !loading &&
+        !error &&
+        pendingCards.length > 0 &&
+        approvedCards.length > 0 && (
+          <div className="shrink-0 px-4 pt-3">
+            <Link
+              href={approval.pendingHref}
+              className="group flex items-center gap-2 rounded-lg bg-bg-surface px-3 py-2 text-right transition-colors hover:bg-gray-95 dark:hover:bg-gray-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+            >
+              <Clock
+                className="size-4 shrink-0 text-text-neutral-default"
+                aria-hidden
+              />
+              <span className="flex-1 text-small text-text-primary-default">
+                <span className="tabular-nums font-medium">
+                  {pendingCards.length}
+                </span>{" "}
+                {pendingCards.length === 1
+                  ? "פורמט ממתין לאישור"
+                  : "פורמטים ממתינים לאישור"}
+              </span>
+              <span className="flex items-center gap-0.5 text-xs-body text-text-neutral-default group-hover:text-text-primary-default">
+                מעבר לאישור
+                <ChevronLeft className="size-3.5" aria-hidden />
+              </span>
+            </Link>
+          </div>
+        )}
+
+      {/* Variant B — two lists, one rail. "מוכנים" is always the default:
+          the rail's job is scheduling, so it opens on what can be dragged. */}
+      {approval?.variant === "b" &&
+        !loading &&
+        !error &&
+        approvedCards.length + pendingCards.length > 0 && (
+        <div className="px-4 pt-3">
+          <Tabs
+            value={railTab}
+            onValueChange={(v) => setRailTab(v as "approved" | "pending")}
+            dir="rtl"
+          >
+            <TabsList className="w-full">
+              <TabsTrigger value="approved">
+                מוכנים לתזמון
+                <span className="tabular-nums text-text-neutral-default">
+                  {approvedCards.length}
+                </span>
+              </TabsTrigger>
+              <TabsTrigger value="pending">
+                ממתינים לאישור
+                <span className="tabular-nums text-text-neutral-default">
+                  {pendingCards.length}
+                </span>
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+      )}
+
+      {(approval ? listCards.length > 0 : unscheduled.length > 0) && (
         <div className="px-4 pt-3">
           <div className="relative">
             <Search className="absolute start-3 top-1/2 -translate-y-1/2 size-3.5 text-text-neutral-default pointer-events-none" />
@@ -590,13 +768,22 @@ export function QueuePanel({
           <EmptyAllScheduledState />
         ) : noneReady ? (
           <EmptyNoneReadyState count={unscheduledAll.length} />
+        ) : approvalEmpty ? (
+          approvalEmpty
         ) : filtered.length === 0 ? (
           <div className="text-center py-6">
             <p className="text-small text-text-neutral-default">לא נמצאו פוסטים</p>
           </div>
         ) : (
           <div className="flex flex-col gap-3">
-            {helpVisible && <QueueHelpCard onDismiss={dismissHelp} />}
+            {/* The review harness hides the help card so a preview visit
+                doesn't burn the reviewer's real onboarding views. */}
+            {helpVisible && !seeded && (
+              <QueueHelpCard
+                onDismiss={dismissHelp}
+                approvedOnly={!!approval}
+              />
+            )}
             {/* Two cards per row — the rail is wide enough (w-[560px]) to
                 show the new core-post card design two-up. The help card
                 above stays full width as a sibling of this grid. */}
@@ -608,6 +795,20 @@ export function QueuePanel({
               // long lists don't get a slow trailing tail.
               const animationDelay = `${Math.min(index * 60, 600)}ms`
               const formatLabel = getFormatChipLabel(card.format)
+              if (showingPending) {
+                return (
+                  <PendingApprovalCard
+                    key={card.id}
+                    card={card}
+                    formatLabel={formatLabel}
+                    animationDelay={animationDelay}
+                    onOpen={() => onItemClick?.(card.corePostId, card.format)}
+                    onApprove={() =>
+                      approval?.onApprove?.(card.corePostId, card.format)
+                    }
+                  />
+                )
+              }
               return (
                 <li
                   key={card.id}
@@ -675,7 +876,153 @@ export function QueuePanel({
           </div>
         )}
       </div>
+
     </aside>
+  )
+}
+
+/**
+ * Variant B — a format that is ready (script + media) but not approved yet.
+ * Same card anatomy as a schedulable card so the two tabs read as one list
+ * split in two — but it is NOT draggable (you can't schedule what you
+ * haven't approved), the chip row carries a "ממתין לאישור" label, and the
+ * card ends in the approve action. Clicking the card body opens the post's
+ * Sheet so the media can be checked before approving.
+ */
+function PendingApprovalCard({
+  card,
+  formatLabel,
+  animationDelay,
+  onOpen,
+  onApprove,
+}: {
+  card: ReadyCard
+  formatLabel: string
+  animationDelay: string
+  onOpen: () => void
+  onApprove: () => void
+}) {
+  return (
+    <li
+      style={{ animationDelay }}
+      className="animate-in fade-in slide-in-from-top-2 fill-mode-both duration-300 ease-out flex flex-col gap-3 rounded-[12px] border border-border-neutral-default bg-white dark:bg-gray-10 p-4 text-right"
+    >
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`צפייה במדיה: ${formatLabel} — ${card.hook}`}
+        className="flex flex-col gap-3 text-right rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+      >
+        <FormatThumbnail
+          url={card.mediaUrl}
+          format={card.format}
+          className="aspect-[4/5] w-full rounded-lg"
+          iconClassName="size-8"
+          fallbackClassName="bg-gray-95"
+          fit={card.format === "carousel" ? "contain" : "cover"}
+        />
+        <div className="flex flex-col gap-1.5">
+          <p className="text-sm font-semibold text-text-primary-default line-clamp-2 leading-snug">
+            {card.hook}
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <FormatStatusChip format={card.format} state="ready" size="sm" />
+            <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
+              <Clock className="size-3" aria-hidden />
+              ממתין לאישור
+            </span>
+          </div>
+        </div>
+      </button>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onApprove}
+        aria-label={`אישור לתזמון: ${formatLabel} — ${card.hook}`}
+        className="w-full"
+      >
+        <Check className="size-4" aria-hidden />
+        אישור לתזמון
+      </Button>
+    </li>
+  )
+}
+
+/**
+ * Approval mode, nothing approved yet — but there ARE formats with media
+ * waiting. Says why the rail is empty (it isn't broken, nothing is approved)
+ * and offers the one next step: go approve. Variant A routes out; variant B
+ * switches to the pending tab in place.
+ */
+function EmptyNoneApprovedState({
+  pendingCount,
+  action,
+}: {
+  pendingCount: number
+  action:
+    | { kind: "link"; href: string }
+    | { kind: "tab"; onClick: () => void }
+}) {
+  const label = `לאישור ${pendingCount === 1 ? "פורמט אחד" : `${pendingCount} פורמטים`}`
+  return (
+    <div
+      dir="rtl"
+      className="bg-white dark:bg-gray-10 border border-border-neutral-default rounded-xl p-4 flex flex-col items-center text-center gap-2"
+    >
+      <div className="size-[55px] flex items-center justify-center">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/images/paper-plane-empty.png"
+          alt=""
+          className="size-10 object-contain"
+        />
+      </div>
+      <div className="flex flex-col gap-1 w-full">
+        <p className="text-small-bold text-text-primary-default">
+          עדיין אין פורמטים מאושרים לתזמון
+        </p>
+        <p className="text-xs-body text-text-neutral-default leading-snug">
+          {pendingCount === 1
+            ? "פורמט אחד עם מדיה מחכה לאישור שלכם."
+            : `${pendingCount} פורמטים עם מדיה מחכים לאישור שלכם.`}
+          <br />
+          אחרי שתאשרו, הם יופיעו כאן לגרירה ללוח
+        </p>
+      </div>
+      {action.kind === "link" ? (
+        <Button asChild variant="outline" size="sm" className="mt-1">
+          <Link href={action.href}>{label}</Link>
+        </Button>
+      ) : (
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-1"
+          onClick={action.onClick}
+        >
+          {label}
+        </Button>
+      )}
+    </div>
+  )
+}
+
+/** Variant B, pending tab, nothing waiting — everything with media is approved. */
+function EmptyNothingPendingState() {
+  return (
+    <div className="flex flex-col items-center text-center gap-3 py-10 px-3">
+      <div className="size-12 rounded-full bg-bg-surface flex items-center justify-center">
+        <Check className="size-5 text-text-neutral-default" aria-hidden />
+      </div>
+      <div>
+        <p className="text-small-bold text-text-primary-default">
+          אין פורמטים שממתינים לאישור
+        </p>
+        <p className="text-xs-body text-text-neutral-default mt-1 leading-relaxed">
+          כל מה שיש לו מדיה כבר אושר ומחכה בלשונית ״מוכנים לתזמון״
+        </p>
+      </div>
+    </div>
   )
 }
 
@@ -690,7 +1037,14 @@ export function QueuePanel({
  * the design used a yellow ellipse asset; the radial-style glow gets
  * the same warmth without shipping another image.
  */
-function QueueHelpCard({ onDismiss }: { onDismiss: () => void }) {
+function QueueHelpCard({
+  onDismiss,
+  approvedOnly = false,
+}: {
+  onDismiss: () => void
+  /** Approval mode — the rail holds approved formats, not "has media". */
+  approvedOnly?: boolean
+}) {
   // Two-phase dismissal so the card animates out cleanly before the
   // parent unmounts it.
   //   click → `dismissing = true` → fade + slide + collapse height/padding
@@ -729,6 +1083,15 @@ function QueueHelpCard({ onDismiss }: { onDismiss: () => void }) {
         <p className="text-small-bold text-text-primary-default">
           כל כרטיס הוא פורמט מוכן לתזמון
         </p>
+        {approvedOnly ? (
+          <p className="text-xs-body text-text-neutral-default leading-snug">
+            כאן מופיעים רק פורמטים{" "}
+            <span className="text-text-primary-default font-medium">
+              שאישרתם
+            </span>
+            . גררו כרטיס ליום בלוח כדי לתזמן
+          </p>
+        ) : (
         <p className="text-xs-body text-text-neutral-default leading-snug">
           כל פורמט{" "}
           <span className="text-text-primary-default font-medium">
@@ -738,6 +1101,7 @@ function QueueHelpCard({ onDismiss }: { onDismiss: () => void }) {
           <br />
           תמיד אפשר להוסיף מדיה לפורמט בעמוד העריכה
         </p>
+        )}
       </div>
 
       <Button
