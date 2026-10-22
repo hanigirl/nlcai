@@ -102,6 +102,12 @@ const unset = (): Folder => ({ status: "unset", link: "", name: "", items: [], e
 /** "קובץ אחד" / "3 קבצים". */
 const filesLabel = (n: number) => (n === 1 ? "קובץ אחד" : `${n} קבצים`)
 
+/** "שקופית אחת" / "3 שקופיות", "פריים אחד" / "3 פריימים". */
+const countLabel = (format: string, n: number) =>
+  format === "carousel"
+    ? n === 1 ? "שקופית אחת" : `${n} שקופיות`
+    : n === 1 ? "פריים אחד" : `${n} פריימים`
+
 /* ================================================================ store */
 
 let store: Store = {
@@ -553,7 +559,7 @@ export function DriveFolderEntry({
         <div className="flex flex-col gap-2 rounded-xl border border-border-neutral-default p-3">
           <p className="text-xs-body text-text-neutral-default">
             {multi
-              ? `נבחרו ${picked.length} ${format === "carousel" ? "שקופיות" : "פריימים"} מהתיקייה, לפי הסדר:`
+              ? `נבחרו ${countLabel(format, picked.length)} מהתיקייה, לפי הסדר:`
               : "נבחר מהתיקייה:"}
           </p>
           <div className="flex flex-wrap gap-1.5">
@@ -917,7 +923,6 @@ function OrderFirstPicker({ format, items, scriptText }: { format: string; items
   const s = useDrivePickStore()
   const busy = s.importing === format
   const texts = useSlideTexts(format, scriptText)
-  const unit = format === "carousel" ? "שקופיות" : "פריימים"
   const [order, setOrder] = useState<string[]>(() => (s.picked[format] ?? []).map((i) => i.id))
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [overIndex, setOverIndex] = useState<number | null>(null)
@@ -1037,7 +1042,7 @@ function OrderFirstPicker({ format, items, scriptText }: { format: string; items
               onClick={() => runImport(format, order.map(byId).filter((x): x is MediaItem => !!x))}
               className="w-full"
             >
-              {format === "carousel" ? `טעינת הקרוסלה (${order.length} ${unit})` : `טעינת הסטורי (${order.length} ${unit})`}
+              {format === "carousel" ? `טעינת הקרוסלה (${countLabel(format, order.length)})` : `טעינת הסטורי (${countLabel(format, order.length)})`}
             </Button>
           </>
         )}
