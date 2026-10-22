@@ -614,7 +614,7 @@ export function DriveFoldersSettings() {
   )
 }
 
-function FolderSummary({ f }: { f: Folder }) {
+function FolderSummary({ f, folderKey }: { f: Folder; folderKey: FolderKey }) {
   if (f.status === "checking") return <>בודקים...</>
   if (f.status === "error")
     return <span className="text-button-destructive-default">{f.error === "not_public" ? "אין גישה לתיקייה" : "הקישור לא תקין"}</span>
@@ -625,7 +625,7 @@ function FolderSummary({ f }: { f: Folder }) {
       <span className="flex -space-x-1.5 space-x-reverse" aria-hidden>
         {f.items.slice(0, 3).map((it) => (
           // eslint-disable-next-line @next/next/no-img-element
-          <img key={it.id} src={it.thumb} alt="" className="h-5 w-4 rounded-[4px] border border-white object-cover dark:border-gray-10" />
+          <img key={it.id} src={it.thumb} alt="" className={cn("rounded-[4px] border border-white object-cover dark:border-gray-10", miniFor(FOLDER_FORMAT[folderKey]))} />
         ))}
       </span>
       {f.items.length} קבצים
@@ -661,7 +661,7 @@ function FolderRow({
         <FolderOpen className="size-4 shrink-0 text-text-neutral-default" aria-hidden />
         <span className="text-small-bold text-text-primary-default">תיקייה ל{meta.label}</span>
         <span className="ms-auto flex min-w-0 items-center truncate text-xs-body text-text-neutral-default">
-          <FolderSummary f={f} />
+          <FolderSummary f={f} folderKey={folderKey} />
         </span>
         <ChevronDown
           className={cn("size-4 shrink-0 text-text-neutral-default transition-transform", open && "rotate-180")}
@@ -691,7 +691,7 @@ function FolderRow({
             {f.items.length > 0 ? (
               <div className="flex gap-1.5">
                 {f.items.slice(0, 6).map((it) => (
-                  <div key={it.id} className={cn("relative shrink-0 overflow-hidden rounded-lg bg-gray-90", THUMB)}>
+                  <div key={it.id} className={cn("relative shrink-0 overflow-hidden rounded-lg bg-gray-90", thumbFor(FOLDER_FORMAT[folderKey]))}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={it.thumb} alt={it.name} className="size-full object-cover" />
                     {it.kind === "video" && (
@@ -700,7 +700,7 @@ function FolderRow({
                   </div>
                 ))}
                 {f.items.length > 6 && (
-                  <span className={cn("flex shrink-0 items-center justify-center rounded-lg bg-gray-90 text-xs text-text-neutral-default dark:bg-gray-20", THUMB)}>
+                  <span className={cn("flex shrink-0 items-center justify-center rounded-lg bg-gray-90 text-xs text-text-neutral-default dark:bg-gray-20", thumbFor(FOLDER_FORMAT[folderKey]))}>
                     <span dir="ltr">+{f.items.length - 6}</span>
                   </span>
                 )}
@@ -774,7 +774,7 @@ export function DriveFolderEntry({ format }: { format: string }) {
                 key={`${it.id}-${i}`}
                 className={cn(
                   "relative shrink-0 overflow-hidden rounded-lg bg-gray-90",
-                  THUMB,
+                  thumbFor(format),
                 )}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -810,14 +810,28 @@ export function DriveFolderEntry({ format }: { format: string }) {
 /* ================================================================ the picker */
 
 /**
- * ONE shape for everything in this flow (Hani): a 4:5 portrait. Tiles,
- * skeletons, slots, tray, result previews and Settings thumbnails all use it,
- * so a picture never changes shape between where it's chosen and where it
- * lands.
+ * Every preview takes the shape of its FORMAT (Hani): an image post or a
+ * carousel slide is a 4:5 portrait, a story / b-roll / talking head is 9:16.
+ * Never square. Tiles, skeletons, slots, tray, result previews and Settings
+ * thumbnails all follow it, so a picture keeps its shape from where it's
+ * chosen to where it lands.
  */
-const TILE = "aspect-[4/5]"
-/** Small 4:5 thumbnail — 40×50. */
-const THUMB = "h-[50px] w-10"
+const TALL_FORMATS = new Set(["story", "b_roll", "talking_head"])
+const FOLDER_FORMAT: Record<FolderKey, string> = {
+  broll: "b_roll",
+  talking: "talking_head",
+  images: "image_post",
+  story: "story",
+  carousel: "carousel",
+}
+const tileFor = (format: string) =>
+  TALL_FORMATS.has(format) ? "aspect-[9/16]" : "aspect-[4/5]"
+/** Small thumbnail — 40×50 (4:5) or 36×64 (9:16). */
+const thumbFor = (format: string) =>
+  TALL_FORMATS.has(format) ? "h-16 w-9" : "h-[50px] w-10"
+/** The tiny stacked thumbnails in a folder row's summary. */
+const miniFor = (format: string) =>
+  TALL_FORMATS.has(format) ? "h-6 w-[14px]" : "h-5 w-4"
 
 function Tile({
   item,
@@ -843,7 +857,7 @@ function Tile({
       aria-label={`${item.name}${item.duration ? `, ${item.duration}` : ""}${badge ? ` — במקום ${badge}` : ""}`}
       className={cn(
         "group relative overflow-hidden rounded-xl bg-gray-90 text-start transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 disabled:cursor-default dark:bg-gray-20",
-        TILE,
+        tileFor(format),
         selected ? "ring-2 ring-yellow-50" : "hover:ring-2 hover:ring-gray-80",
       )}
     >
@@ -888,7 +902,7 @@ function GridSkeleton({ format }: { format: string }) {
       {Array.from({ length: 9 }).map((_, i) => (
         <div
           key={i}
-          className={cn("animate-pulse rounded-xl bg-gray-90 dark:bg-gray-20", TILE)}
+          className={cn("animate-pulse rounded-xl bg-gray-90 dark:bg-gray-20", tileFor(format))}
         />
       ))}
     </div>
@@ -1223,7 +1237,7 @@ function SlotFirstPicker({ format, items, scriptText }: { format: string; items:
                   aria-label={`${unit} ${i + 1}${it ? ` — ${it.name}` : " — ריקה"}`}
                   className={cn(
                     "relative flex items-center justify-center overflow-hidden rounded-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50",
-                    THUMB,
+                    thumbFor(format),
                     it ? "bg-gray-90" : "border border-dashed border-border-neutral-default",
                     active === i ? "ring-2 ring-yellow-50 ring-offset-1 ring-offset-white dark:ring-offset-gray-10" : "hover:ring-2 hover:ring-gray-80",
                   )}
@@ -1442,7 +1456,7 @@ function OrderFirstPicker({ format, items, scriptText }: { format: string; items
                       }}
                       className={cn(
                         "relative shrink-0 cursor-grab overflow-hidden rounded-lg bg-gray-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 active:cursor-grabbing",
-                        THUMB,
+                        thumbFor(format),
                         dragIndex === i && "opacity-50",
                         overIndex === i && dragIndex !== i && "ring-2 ring-gray-80",
                       )}
