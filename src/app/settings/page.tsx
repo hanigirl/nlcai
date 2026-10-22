@@ -17,6 +17,7 @@ import { ProductsList, type ProductEntry } from "@/components/products-list"
 import { BusinessSourcesPanel } from "@/components/business-sources-panel"
 import { LearnedInsightsPanel } from "@/components/learned-insights-panel"
 import { InstagramConnect } from "@/components/instagram-connect"
+import { PostingScheduleSettings } from "@/components/posting-schedule-settings"
 import { toast } from "sonner"
 import { validateIdentityFile } from "@/lib/validate-identity-file"
 import { isLegacyGeminiKey } from "@/lib/api-keys"
@@ -47,7 +48,8 @@ const GOOGLE_FONTS = [
 ]
 
 type KeyName = "anthropic_api_key" | "heygen_api_key" | "apify_api_key" | "openai_api_key" | "gemini_api_key"
-type SettingsTab = "connections" | "business" | "products" | "creators" | "media"
+// "schedule" is review-only for now — reachable under `?rules=b`.
+type SettingsTab = "connections" | "business" | "products" | "creators" | "media" | "schedule"
 
 interface KeyConfig {
   key: KeyName
@@ -232,6 +234,7 @@ const SUB_SECTIONS: Record<SettingsTab, { id: string; label: string; icon: typeo
     { id: "visual", label: "שפה ויזואלית", icon: Sparkles },
     { id: "examples", label: "דוגמאות לשימוש", icon: ImageIcon },
   ],
+  schedule: [],
 }
 
 export default function SettingsPage() {
@@ -248,7 +251,12 @@ function SettingsPageInner() {
   type Product = ProductEntry
 
   const searchParams = useSearchParams()
-  const initialTab = (searchParams.get("tab") as SettingsTab) || "connections"
+  // Review gate for the posting-schedule tab (variant B). Without it the tab
+  // doesn't exist and a stray `?tab=schedule` falls back to connections.
+  const scheduleReview = searchParams.get("rules") === "b"
+  const requestedTab = (searchParams.get("tab") as SettingsTab) || "connections"
+  const initialTab: SettingsTab =
+    requestedTab === "schedule" && !scheduleReview ? "connections" : requestedTab
   // Settings → מדיה → "מדיה מ-Google Drive": one shared folder per kind of
   // media, read on the canvas by "מדיה משלכם מ Google Drive" (Hani, 2026-10-22).
   const mediaSections = [
@@ -1073,6 +1081,7 @@ function SettingsPageInner() {
     { id: "products", label: "מוצרים" },
     { id: "creators", label: "יוצרים מובילים" },
     { id: "media", label: "מדיה" },
+    ...(scheduleReview ? [{ id: "schedule" as const, label: "לו״ז פרסום" }] : []),
   ]
 
   // Reset the sub-section when the tab ACTUALLY changes — never on mount.
@@ -1206,6 +1215,9 @@ function SettingsPageInner() {
           </div>
         ) : (
           <>
+            {/* ==================== SCHEDULE TAB (review: ?rules=b) ==================== */}
+            {activeTab === "schedule" && scheduleReview && <PostingScheduleSettings />}
+
             {/* ==================== CONNECTIONS TAB ==================== */}
             {activeTab === "connections" && (
               <div className="flex gap-8">

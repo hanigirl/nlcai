@@ -1,12 +1,27 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ChevronRight,
   ChevronLeft,
   MoreVertical,
   PanelLeftOpen,
+  CalendarClock,
 } from "lucide-react"
+import Link from "next/link"
+import {
+  ReviewStateToggle,
+  useReviewSchedule,
+} from "@/components/posting-schedule-parts"
+import {
+  GhostSlot,
+  RoutineButton,
+  RoutineDayEditor,
+  RoutineEditBar,
+  RoutineSuggestionNote,
+  unfilledSlots,
+} from "@/components/calendar-routine"
+import { slotsForDate } from "@/lib/posting-schedule"
 import { AppShell } from "@/components/app-shell"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -405,6 +420,28 @@ export default function CalendarPage() {
   // must move together, so a single source of truth drives both the panel's
   // slide-out and the grid's widening.
   const [panelCollapsed, setPanelCollapsed] = useState(false)
+
+  // --- Posting-schedule review gate (`?rules=a|b`) -----------------------
+  // a → the weekly routine lives on this board (ghost slots + in-place edit)
+  // b → it lives in Settings; this page only links there.
+  // No param → page is unchanged. Review state is in-memory only.
+  const [rulesVariant, setRulesVariant] = useState<"a" | "b" | null>(null)
+  useEffect(() => {
+    const v = new URLSearchParams(window.location.search).get("rules")
+    if (v === "a" || v === "b") setRulesVariant(v)
+  }, [])
+  const routine = useReviewSchedule()
+  const [routineEditing, setRoutineEditing] = useState(false)
+  const panelBeforeEditRef = useRef(false)
+  const startRoutineEdit = () => {
+    panelBeforeEditRef.current = panelCollapsed
+    setPanelCollapsed(true) // the 7 columns need the room
+    setRoutineEditing(true)
+  }
+  const endRoutineEdit = () => {
+    setRoutineEditing(false)
+    setPanelCollapsed(panelBeforeEditRef.current)
+  }
 
   // Scheduled posts live in localStorage. We hydrate after mount to avoid
   // SSR/CSR mismatch (localStorage doesn't exist on the server).
@@ -1091,7 +1128,42 @@ export default function CalendarPage() {
               <h2 className="text-text-primary-default">תזמון</h2>
             </div>
 
-            {/* Level 2 — week navigation. */}
+            {rulesVariant && (
+              <ReviewStateToggle
+                label={rulesVariant === "a" ? "הצעה א׳ — לו״ז על הלוח" : "הצעה ב׳ — לו״ז בהגדרות"}
+                value={routine.reviewState}
+                onChange={(st) => {
+                  routine.setReviewState(st)
+                  if (rulesVariant === "a" && (st === "saving" || st === "error")) startRoutineEdit()
+                }}
+              />
+            )}
+
+            {rulesVariant === "a" && !routineEditing && !routine.hasCustom && (
+              <RoutineSuggestionNote schedule={routine.saved} onEdit={startRoutineEdit} />
+            )}
+
+            {/* Level 2 — week navigation (or, in variant A edit mode, the
+                routine editor's bar). */}
+            {rulesVariant === "a" && routineEditing ? (
+              <RoutineEditBar
+                draft={routine.draft}
+                saving={routine.saving}
+                saveError={routine.saveError}
+                dirty={routine.dirty}
+                onStoryGap={(m) => routine.setDraft({ ...routine.draft, storyGapMinutes: m })}
+                onCancel={() => {
+                  routine.discard()
+                  endRoutineEdit()
+                }}
+                onSave={() =>
+                  routine.save(() => {
+                    endRoutineEdit()
+                    toast.success("הלו״ז נשמר")
+                  })
+                }
+              />
+            ) : (
             <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
               <div className="flex items-center gap-2 min-w-0">
                 <Button variant="ghost" size="icon-sm" onClick={goPrev} aria-label="שבוע קודם">
@@ -1104,10 +1176,24 @@ export default function CalendarPage() {
                   <ChevronLeft className="size-4" />
                 </Button>
               </div>
-              <Button variant="outline" size="sm" onClick={goThisWeek} disabled={isCurrentWeek}>
-                השבוע
-              </Button>
+              <div className="flex items-center gap-2">
+                {rulesVariant === "a" && (
+                  <RoutineButton schedule={routine.saved} onEdit={startRoutineEdit} />
+                )}
+                {rulesVariant === "b" && (
+                  <Button variant="outline" size="sm" asChild className="gap-1.5">
+                    <Link href="/settings?tab=schedule&rules=b">
+                      <CalendarClock className="size-4" aria-hidden="true" />
+                      לו״ז פרסום
+                    </Link>
+                  </Button>
+                )}
+                <Button variant="outline" size="sm" onClick={goThisWeek} disabled={isCurrentWeek}>
+                  השבוע
+                </Button>
+              </div>
             </div>
+            )}
           </div>
 
           {/* Level 3 — week grid (full-bleed). Negative margins cancel
@@ -1130,6 +1216,11 @@ export default function CalendarPage() {
                     <div className="text-xs-body text-text-neutral-default">
                       {WEEKDAY_LABELS[day.getDay()]}
                     </div>
+                    {rulesVariant === "a" && routineEditing ? (
+                      <div className="text-small-bold text-text-primary-default">
+                        {routine.draft.days[day.getDay()].length || "—"}
+                      </div>
+                    ) : (
                     <div className="text-small-bold text-text-primary-default tabular-nums">
                       {isToday ? (
                         <span className="inline-flex items-center justify-center size-6 rounded-full bg-yellow-50">
@@ -1139,6 +1230,7 @@ export default function CalendarPage() {
                         day.getDate()
                       )}
                     </div>
+                    )}
                   </div>
                 )
               })}
@@ -1154,33 +1246,52 @@ export default function CalendarPage() {
                 const isToday = isSameDay(day, today)
                 const dayOfWeek = day.getDay()
                 const isLastCol = i === days.length - 1
-                const past = isPastDate(day, today)
+                const editingRoutine = rulesVariant === "a" && routineEditing
+                const past = !editingRoutine && isPastDate(day, today)
                 const isDragOver = dragOverDay === dayKey
                 const dayPosts = postsByDay.get(dayKey) ?? []
 
                 // Today gets a very subtle warm tint (yellow-95 at 40%) —
                 // visible enough to read as "this is today" but light enough
                 // that the column still looks interactive (droppable).
-                const dayBg = isToday
+                const dayBg = isToday && !editingRoutine
                   ? "bg-yellow-95/40"
                   : "bg-white dark:bg-gray-10"
 
                 return (
                   <div
                     key={day.toISOString()}
-                    onDragOver={(e) => handleDragOver(e, day, dayKey)}
-                    onDragLeave={() => handleDragLeave(dayKey)}
-                    onDrop={(e) => handleDrop(e, day, dayKey)}
+                    onDragOver={editingRoutine ? undefined : (e) => handleDragOver(e, day, dayKey)}
+                    onDragLeave={editingRoutine ? undefined : () => handleDragLeave(dayKey)}
+                    onDrop={editingRoutine ? undefined : (e) => handleDrop(e, day, dayKey)}
                     aria-label={`${WEEKDAY_LABELS[dayOfWeek]} ${day.getDate()}${isToday ? " — היום" : ""}${past ? " — תאריך שעבר" : ""}`}
                     className={`relative overflow-y-auto scrollbar-subtle min-w-0 transition-colors ${isLastCol ? "" : "border-l"} border-border-neutral-default ${dayBg} ${
                       isDragOver ? "ring-2 ring-inset ring-yellow-50 bg-bg-surface-primary-default z-10" : ""
                     } ${past ? "cursor-not-allowed" : ""}`}
                   >
-                    {/* Cards stack from the top. `min-h-full` keeps the whole
-                        column a drop target even when it's nearly empty. */}
+                    {editingRoutine ? (
+                      <RoutineDayEditor
+                        dayIndex={dayOfWeek}
+                        draft={routine.draft}
+                        onChange={routine.setDraft}
+                      />
+                    ) : (
+                    /* Cards stack from the top. `min-h-full` keeps the whole
+                        column a drop target even when it's nearly empty. */
                     <div className="flex flex-col gap-1.5 p-2 min-h-full">
                       {dayPosts.map(renderCard)}
+                      {/* Variant A: the routine's still-open slots for this
+                          day, as dashed ghosts. Upcoming days only. */}
+                      {rulesVariant === "a" &&
+                        !past &&
+                        unfilledSlots(
+                          slotsForDate(routine.saved, day),
+                          dayPosts.map((p) => p.format),
+                        ).map((slot) => (
+                          <GhostSlot key={slot.id} slot={slot} onEdit={startRoutineEdit} />
+                        ))}
                     </div>
+                    )}
                   </div>
                 )
               })}
