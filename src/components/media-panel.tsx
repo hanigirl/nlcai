@@ -3936,6 +3936,9 @@ function MediaUploadFlow({
                   attached automatically — a video stays in Drive and plays
                   from there, an image is copied over. Canva/other stay as a
                   reference link. Upload-from-computer was removed per Hani. */}
+              {drivePick ? (
+                <DriveFolderEntry format="image_post" />
+              ) : (
               <div className="flex flex-col gap-2">
                 <p className="text-small-bold text-text-primary-default">
                   מדיה משלכם
@@ -3990,6 +3993,7 @@ function MediaUploadFlow({
                   </p>
                 )}
               </div>
+              )}
 
               {/* The saved image and the AI candidates used to live in a
                   72px thumbnail row here. The grey band below now shows the
@@ -4483,7 +4487,7 @@ function MediaUploadFlow({
               open reads as "you still need to paste something" under a video
               that's already there. Collapse it behind a replace button and only
               bring it back when the user asks to swap the clip. */}
-          {drivePick && (isBRoll || format === "image_post") ? (
+          {drivePick && isBRoll ? (
             <DriveFolderEntry format={format} />
           ) : isBRoll && !showBRollDriveField ? (
             // Same door as the story's (Hani, 2026-07-29): one button naming

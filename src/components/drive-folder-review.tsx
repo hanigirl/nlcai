@@ -625,7 +625,7 @@ function FolderSummary({ f }: { f: Folder }) {
       <span className="flex -space-x-1.5 space-x-reverse" aria-hidden>
         {f.items.slice(0, 3).map((it) => (
           // eslint-disable-next-line @next/next/no-img-element
-          <img key={it.id} src={it.thumb} alt="" className="size-5 rounded-md border border-white object-cover dark:border-gray-10" />
+          <img key={it.id} src={it.thumb} alt="" className="h-5 w-4 rounded-[4px] border border-white object-cover dark:border-gray-10" />
         ))}
       </span>
       {f.items.length} קבצים
@@ -691,7 +691,7 @@ function FolderRow({
             {f.items.length > 0 ? (
               <div className="flex gap-1.5">
                 {f.items.slice(0, 6).map((it) => (
-                  <div key={it.id} className="relative size-12 shrink-0 overflow-hidden rounded-lg bg-gray-90">
+                  <div key={it.id} className={cn("relative shrink-0 overflow-hidden rounded-lg bg-gray-90", THUMB)}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={it.thumb} alt={it.name} className="size-full object-cover" />
                     {it.kind === "video" && (
@@ -700,8 +700,8 @@ function FolderRow({
                   </div>
                 ))}
                 {f.items.length > 6 && (
-                  <span className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-gray-90 text-xs text-text-neutral-default dark:bg-gray-20">
-                    +{f.items.length - 6}
+                  <span className={cn("flex shrink-0 items-center justify-center rounded-lg bg-gray-90 text-xs text-text-neutral-default dark:bg-gray-20", THUMB)}>
+                    <span dir="ltr">+{f.items.length - 6}</span>
                   </span>
                 )}
               </div>
@@ -774,7 +774,7 @@ export function DriveFolderEntry({ format }: { format: string }) {
                 key={`${it.id}-${i}`}
                 className={cn(
                   "relative shrink-0 overflow-hidden rounded-lg bg-gray-90",
-                  format === "carousel" || format === "image_post" ? "size-14" : "h-20 w-[45px]",
+                  THUMB,
                 )}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -809,7 +809,15 @@ export function DriveFolderEntry({ format }: { format: string }) {
 
 /* ================================================================ the picker */
 
-const isSquare = (format: string) => format === "carousel" || format === "image_post"
+/**
+ * ONE shape for everything in this flow (Hani): a 4:5 portrait. Tiles,
+ * skeletons, slots, tray, result previews and Settings thumbnails all use it,
+ * so a picture never changes shape between where it's chosen and where it
+ * lands.
+ */
+const TILE = "aspect-[4/5]"
+/** Small 4:5 thumbnail — 40×50. */
+const THUMB = "h-[50px] w-10"
 
 function Tile({
   item,
@@ -835,16 +843,18 @@ function Tile({
       aria-label={`${item.name}${item.duration ? `, ${item.duration}` : ""}${badge ? ` — במקום ${badge}` : ""}`}
       className={cn(
         "group relative overflow-hidden rounded-xl bg-gray-90 text-start transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 disabled:cursor-default dark:bg-gray-20",
-        isSquare(format) ? "aspect-square" : "aspect-[9/16]",
+        TILE,
         selected ? "ring-2 ring-yellow-50" : "hover:ring-2 hover:ring-gray-80",
       )}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={item.thumb} alt="" className="size-full object-cover" loading="lazy" />
       {item.kind === "video" && (
-        <span className="absolute top-2 end-2 inline-flex items-center gap-1 rounded-md bg-gray-10/70 px-1.5 py-0.5 text-[11px] text-white" dir="ltr">
+        // Logical `end` — the badge itself must not carry dir="ltr", or "end"
+        // flips to the right and lands on the selection badge.
+        <span className="absolute top-2 end-2 inline-flex items-center gap-1 rounded-md bg-gray-10/70 px-1.5 py-0.5 text-[11px] text-white">
+          <span dir="ltr">{item.duration}</span>
           <Play className="size-2.5 fill-white" aria-hidden />
-          {item.duration}
         </span>
       )}
       {badge !== undefined && (
@@ -874,11 +884,11 @@ function Tile({
 
 function GridSkeleton({ format }: { format: string }) {
   return (
-    <div className={cn("grid gap-3", isSquare(format) ? "grid-cols-3" : "grid-cols-2")} role="status" aria-label="טוענים את התיקייה">
-      {Array.from({ length: isSquare(format) ? 9 : 4 }).map((_, i) => (
+    <div className={cn("grid gap-3", "grid-cols-3")} role="status" aria-label="טוענים את התיקייה">
+      {Array.from({ length: 9 }).map((_, i) => (
         <div
           key={i}
-          className={cn("animate-pulse rounded-xl bg-gray-90 dark:bg-gray-20", isSquare(format) ? "aspect-square" : "aspect-[9/16]")}
+          className={cn("animate-pulse rounded-xl bg-gray-90 dark:bg-gray-20", TILE)}
         />
       ))}
     </div>
@@ -1077,7 +1087,7 @@ function SinglePickInstant({ format, items }: { format: string; items: MediaItem
       <p className="text-xs-body text-text-neutral-default">
         {items[0]?.kind === "video" ? "לחצו על סרטון כדי להשתמש בו." : "לחצו על תמונה כדי להשתמש בה."}
       </p>
-      <div className={cn("grid gap-3", isSquare(format) ? "grid-cols-3" : "grid-cols-2")}>
+      <div className={cn("grid gap-3", "grid-cols-3")}>
         {items.map((it) => (
           <Tile
             key={it.id}
@@ -1113,7 +1123,7 @@ function SinglePickConfirm({ format, items }: { format: string; items: MediaItem
       <p className="text-xs-body text-text-neutral-default">
         {isVideo ? "בחרו סרטון ואשרו למטה." : "בחרו תמונה ואשרו למטה."}
       </p>
-      <div className={cn("grid gap-3", isSquare(format) ? "grid-cols-3" : "grid-cols-2")}>
+      <div className={cn("grid gap-3", "grid-cols-3")}>
         {items.map((it) => (
           <Tile
             key={it.id}
@@ -1132,9 +1142,9 @@ function SinglePickConfirm({ format, items }: { format: string; items: MediaItem
           <div className="flex items-center gap-3">
             {item ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={item.thumb} alt="" className="size-11 shrink-0 rounded-lg object-cover" />
+              <img src={item.thumb} alt="" className="h-[50px] w-10 shrink-0 rounded-lg object-cover" />
             ) : (
-              <span className="size-11 shrink-0 rounded-lg border border-dashed border-border-neutral-default" aria-hidden />
+              <span className="h-[50px] w-10 shrink-0 rounded-lg border border-dashed border-border-neutral-default" aria-hidden />
             )}
             <span className="min-w-0 flex-1 truncate text-xs-body text-text-neutral-default">
               {item ? item.name : isVideo ? "עוד לא נבחר סרטון" : "עוד לא נבחרה תמונה"}
@@ -1213,7 +1223,7 @@ function SlotFirstPicker({ format, items, scriptText }: { format: string; items:
                   aria-label={`${unit} ${i + 1}${it ? ` — ${it.name}` : " — ריקה"}`}
                   className={cn(
                     "relative flex items-center justify-center overflow-hidden rounded-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50",
-                    format === "carousel" ? "size-12" : "h-20 w-[45px]",
+                    THUMB,
                     it ? "bg-gray-90" : "border border-dashed border-border-neutral-default",
                     active === i ? "ring-2 ring-yellow-50 ring-offset-1 ring-offset-white dark:ring-offset-gray-10" : "hover:ring-2 hover:ring-gray-80",
                   )}
@@ -1259,7 +1269,7 @@ function SlotFirstPicker({ format, items, scriptText }: { format: string; items:
               aria-label={`הוספת ${unit}`}
               className={cn(
                 "flex shrink-0 items-center justify-center rounded-lg text-text-neutral-default transition-colors hover:bg-bg-surface-hover",
-                format === "carousel" ? "h-12 w-8" : "h-20 w-8",
+                "h-[50px] w-8",
               )}
             >
               <Plus className="size-4" />
@@ -1281,7 +1291,7 @@ function SlotFirstPicker({ format, items, scriptText }: { format: string; items:
         )}
       </div>
 
-      <div className={cn("grid gap-3", format === "carousel" ? "grid-cols-3" : "grid-cols-2")}>
+      <div className={cn("grid gap-3", "grid-cols-3")}>
         {items.map((it) => {
           const at = slots.indexOf(it.id)
           return (
@@ -1358,7 +1368,7 @@ function OrderFirstPicker({ format, items, scriptText }: { format: string; items
         {format === "carousel" && texts.length > 0 ? ` · בסקריפט יש ${texts.length} שקופיות` : ""}.
       </p>
 
-      <div className={cn("grid gap-3", format === "carousel" ? "grid-cols-3" : "grid-cols-2")}>
+      <div className={cn("grid gap-3", "grid-cols-3")}>
         {items.map((it) => {
           const at = order.indexOf(it.id)
           return (
@@ -1432,7 +1442,7 @@ function OrderFirstPicker({ format, items, scriptText }: { format: string; items
                       }}
                       className={cn(
                         "relative shrink-0 cursor-grab overflow-hidden rounded-lg bg-gray-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 active:cursor-grabbing",
-                        format === "carousel" ? "size-14" : "h-20 w-[45px]",
+                        THUMB,
                         dragIndex === i && "opacity-50",
                         overIndex === i && dragIndex !== i && "ring-2 ring-gray-80",
                       )}
