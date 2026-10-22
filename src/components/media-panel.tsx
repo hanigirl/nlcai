@@ -2155,7 +2155,7 @@ function CarouselFlow({
           ) : generatedByTemplate[selectedTemplate] ? (
             "יצירה מחדש"
           ) : (
-            "יצירת קרוסלה"
+            "יצירת קרוסלה עם AI"
           )}
         </Button>
       )}
