@@ -282,9 +282,10 @@ const toItem = (it: ApiItem): MediaItem => ({
   id: it.id,
   name: it.name,
   kind: it.kind,
-  // Drive's own thumbnail from the folder view; drive.google.com/thumbnail
-  // needs a Google session in the browser and comes back broken for videos.
-  thumb: it.thumb ?? `https://lh3.googleusercontent.com/d/${it.id}=w400`,
+  // Drive's public thumbnail by file id — videos included. Not
+  // drive.google.com/thumbnail (needs a Google session in the browser) and not
+  // the folder view's own image URL (refused when our page is the referrer).
+  thumb: `https://lh3.googleusercontent.com/d/${it.id}=w400`,
   src: `https://drive.google.com/file/d/${it.id}/view`,
 })
 
