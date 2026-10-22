@@ -350,13 +350,6 @@ export function MediaPanel({
         {/* The flows stay mounted under the picker so going back finds the
             panel exactly as it was left. */}
         <div hidden={drivePickerOpen}>
-        {meta && formatId !== "story" && formatId !== "b_roll" && formatId !== "image_post" &&
-          !(formatId === "talking_head" && (thAvatar || thSourceMode === "avatar")) && (
-          <p className="mb-4 text-small text-text-neutral-default">
-            אפשר לייצר מדיה עם AI או לתת קישור מגוגל דרייב לתמונה / סרטון שמאוחסן שם.
-          </p>
-        )}
-
         {formatId === "talking_head" && (
           <TalkingHeadFlow
             avatar={thAvatar}
