@@ -50,7 +50,7 @@ import { userKey } from "@/lib/user-scoped-storage"
 import { logLearningEdit } from "@/lib/learning-capture"
 import { BROLL_SCRIPT_CTA } from "@/lib/broll-copy"
 import { getCurrentUser } from "@/lib/supabase/current-user"
-import { DrivePickReviewBar, type DrivePickVariant } from "@/components/drive-folder-review"
+import { DrivePickReviewBar, setDrivePickApply, type DrivePickVariant } from "@/components/drive-folder-review"
 
 /**
  * Design review (task "תיקיית מדיה מדרייב בהגדרות + תצוגה מקדימה בקנבס"):
@@ -388,6 +388,30 @@ function ProjectPageInner() {
   const [storyVideoUrl, setStoryVideoUrl] = useState<string | null>(null)
   const storyVideoCardRef = useRef<HTMLDivElement>(null)
   const bRollCardRef = useRef<HTMLDivElement>(null)
+
+  // Design review (?drivepick): a pick from the Drive folder lands on the
+  // format's card on the canvas, the way a real import does, and the panel
+  // closes so the card is what she looks at. Safe by construction:
+  // savedPostId stays null on the sample post, and every media autosave
+  // (carousel, video, image, story, b-roll) returns early without it — no
+  // PATCH, no DB write. The sources are local files under /review.
+  useEffect(() => {
+    if (!drivePickSeeded) return
+    setDrivePickApply((format, relative) => {
+      // Absolute, like a real stored asset — the card renderers treat a
+      // bare path as base64.
+      const sources = relative.map((p) => new URL(p, window.location.origin).href)
+      if (format === "carousel") setCarouselImages(sources)
+      else if (format === "image_post") setImagePostUrl(sources[0] ?? null)
+      else if (format === "story") {
+        setStoryImages(sources)
+        setStoryVideoUrl(null)
+      } else if (format === "b_roll") setBRollUrl(sources[0] ?? null)
+      else if (format === "talking_head") setThVideoUrl(sources[0] ?? null)
+      setSelectedFormatCard(null)
+    })
+    return () => setDrivePickApply(null)
+  }, [drivePickSeeded])
 
   // Learning log — store originals to detect edits
   const [originalHooks, setOriginalHooks] = useState<string[]>([])

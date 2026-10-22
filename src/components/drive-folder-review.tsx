@@ -67,6 +67,8 @@ type MediaItem = {
   kind: "image" | "video"
   /** "0:24" — videos only. */
   duration?: string
+  /** What lands on the canvas card: the clip for a video, the picture otherwise. */
+  src: string
 }
 
 type FolderError = "not_drive" | "file_not_folder" | "not_public"
@@ -92,6 +94,9 @@ type Store = {
   picked: Record<string, MediaItem[]>
   importing: string | null
   importProgress: string
+  /** The format last worked on — the review bar keeps pointing at it after
+   *  a pick closes the panel. */
+  lastFormat: string | null
 }
 
 /* ================================================================ seed */
@@ -122,8 +127,11 @@ const v = (id: string, name: string, n: string, duration: string): MediaItem => 
   thumb: IMG(n),
   kind: "video",
   duration,
+  // A short 9:16 clip rendered from the same photo, so the canvas card has a
+  // real <video> to play — the review never touches Drive.
+  src: `/review/drive-folder/v${n}.mp4`,
 })
-const im = (id: string, name: string, n: string): MediaItem => ({ id, name, thumb: IMG(n), kind: "image" })
+const im = (id: string, name: string, n: string): MediaItem => ({ id, name, thumb: IMG(n), kind: "image", src: IMG(n) })
 
 const SEED_ITEMS: Record<FolderKey, MediaItem[]> = {
   broll: [
@@ -209,6 +217,7 @@ let store: Store = {
   picked: {},
   importing: null,
   importProgress: "",
+  lastFormat: null,
 }
 const listeners = new Set<() => void>()
 const set = (patch: Partial<Store>) => {
@@ -235,7 +244,7 @@ export function useDrivePickVariant(): DrivePickVariant | null {
 }
 
 export function openDrivePicker(format: string) {
-  set({ pickerFor: format })
+  set({ pickerFor: format, lastFormat: format })
 }
 export function closeDrivePicker() {
   set({ pickerFor: null })
@@ -307,6 +316,17 @@ export function disconnectFolder(k: FolderKey) {
 
 let importTimer: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * What a finished import does to the page. The /project page registers this
+ * so a pick lands on the format's CARD on the canvas, exactly as a real
+ * import would — not only in the panel. Receives the media sources in order.
+ */
+type ApplyPick = (format: string, sources: string[], kinds: ("image" | "video")[]) => void
+let applyPick: ApplyPick | null = null
+export function setDrivePickApply(fn: ApplyPick | null) {
+  applyPick = fn
+}
+
 function runImport(format: string, items: MediaItem[]) {
   if (items.length === 0) return
   if (importTimer) clearTimeout(importTimer)
@@ -332,6 +352,11 @@ function runImport(format: string, items: MediaItem[]) {
           picked: { ...store.picked, [format]: items },
           pickerFor: null,
         })
+        applyPick?.(
+          format,
+          items.map((it) => it.src),
+          items.map((it) => it.kind),
+        )
       }, 600)
     }
   }
@@ -430,7 +455,7 @@ export function DrivePickReviewBar({
 }) {
   const s = useDrivePickStore()
   const other: DrivePickVariant = variant === "a" ? "b" : "a"
-  const fmt = activeFormat ?? s.pickerFor ?? "carousel"
+  const fmt = activeFormat ?? s.pickerFor ?? s.lastFormat ?? "carousel"
   const folderKey = FORMAT_FOLDER[fmt] ?? "carousel"
   const preset = currentPreset(s, folderKey)
   const otherHref =
