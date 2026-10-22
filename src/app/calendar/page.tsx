@@ -50,6 +50,13 @@ import {
   type PublishStatus as PreviewPublishStatus,
 } from "@/components/format-preview/shared"
 import { useSchedulingAccess } from "@/lib/use-scheduling-access"
+import {
+  hasAnySlot,
+  planScheduleAll,
+  type PlanInputCard,
+  type PlannedSlot,
+} from "@/lib/schedule-all"
+import { NoSettingsDialog, PreviewBar, ScheduleAllButton } from "@/components/schedule-all"
 import { CorePostSheet, type CorePostSheetData } from "@/components/core-post-sheet"
 import { FormatThumbnail } from "@/components/format-thumbnail"
 import { InstagramConnectionControl } from "@/components/instagram-connect"
@@ -184,6 +191,47 @@ function formatWeekRange(weekStart: Date, weekEnd: Date): string {
  *   - Kebab → reschedule (date picker) / unschedule THIS format only.
  *   - Published format → opacity-60 on the whole card.
  */
+/**
+ * A post "סידור אוטומטי בלוח" laid on the board, not scheduled yet: dashed,
+ * no menu. Can be dragged to another day before "תזמון כל הפוסטים".
+ */
+function PlannedCard({ slot }: { slot: PlannedSlot }) {
+  const formatLabel = getFormatChipLabel(slot.format)
+  return (
+    <div
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData(
+          "application/x-schedule-ghost",
+          JSON.stringify({ corePostId: slot.corePostId, format: slot.format }),
+        )
+        e.dataTransfer.effectAllowed = "move"
+      }}
+      aria-label={`${formatLabel} מוצע לתזמון, עוד לא תוזמן: ${slot.hook}`}
+      className="relative w-full min-w-0 flex flex-col gap-1.5 rounded-lg border border-dashed border-gray-70 bg-bg-surface dark:bg-gray-20 p-1.5 cursor-grab active:cursor-grabbing transition-all hover:bg-gray-95 hover:border-gray-80"
+    >
+      <div className="relative aspect-[4/5] w-full overflow-hidden rounded-md bg-gray-95 opacity-70">
+        <FormatThumbnail
+          url={slot.mediaUrl}
+          format={slot.format}
+          className="absolute inset-0 w-full h-full"
+          iconClassName="size-5"
+          fit={slot.format === "carousel" ? "contain" : "cover"}
+        />
+      </div>
+      <div className="flex flex-col gap-1 px-0.5">
+        <p className="line-clamp-2 text-xs-body leading-tight text-text-primary-default">{slot.hook}</p>
+        <div className="flex items-center gap-1 flex-wrap">
+          <FormatStatusChip format={slot.format} state="ready" size="xs" />
+          <span className="text-[10px] leading-none text-text-neutral-default tabular-nums">
+            {slot.scheduledTime} · עוד לא תוזמן
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function FormatCard({
   post,
   hook,
@@ -621,6 +669,63 @@ export default function CalendarPage() {
       pendingHref: "/core_posts?status=pending",
     }
   }, [schedulingOn])
+
+  // --- "תזמון הכל" (scheduling release) ------------------------------------
+  // "סידור אוטומטי בלוח" lays every ready post onto the board by the weekly
+  // routine as dashed cards; "תזמון כל הפוסטים" schedules them all.
+  const [railCards, setRailCards] = useState<PlanInputCard[]>([])
+  const [planned, setPlanned] = useState<PlannedSlot[] | null>(null)
+  const [plannedUnmatched, setPlannedUnmatched] = useState<PlanInputCard[]>([])
+  const [noSettingsOpen, setNoSettingsOpen] = useState(false)
+  const onArrange = () => {
+    if (!hasAnySlot(routine.saved)) {
+      setNoSettingsOpen(true)
+      return
+    }
+    const plan = planScheduleAll(railCards, routine.saved, scheduled)
+    if (plan.placed.length === 0) {
+      toast("לפורמטים שנשארו אין משבצת פנויה בלו״ז", {
+        action: { label: "התאמת הלו״ז", onClick: () => startRoutineEdit() },
+      })
+      return
+    }
+    setPlanned(plan.placed)
+    setPlannedUnmatched(plan.unmatched)
+    // Land on the week the first post goes out.
+    const first = [...plan.placed].sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate))[0]
+    if (first) {
+      const [y, m, d] = first.scheduledDate.split("-").map((n) => parseInt(n, 10))
+      setWeekStart(startOfWeek(new Date(y, m - 1, d)))
+    }
+  }
+  const onConfirmPlanned = () => {
+    if (!planned) return
+    let count = 0
+    for (const p of planned) {
+      if (blockedAsTooSoon(p.scheduledDate, p.scheduledTime)) continue
+      schedulePost(p.corePostId, p.format, p.scheduledDate, p.scheduledTime, { hook: p.hook })
+      count++
+    }
+    reloadBoard()
+    setPlanned(null)
+    setPlannedUnmatched([])
+    if (count > 0) toast.success(count === 1 ? "פוסט אחד תוזמן" : `${count} פוסטים תוזמנו`)
+  }
+  const plannedByDay = useMemo(() => {
+    const map = new Map<string, PlannedSlot[]>()
+    for (const p of planned ?? []) {
+      const list = map.get(p.scheduledDate) ?? []
+      list.push(p)
+      map.set(p.scheduledDate, list)
+    }
+    for (const list of map.values()) list.sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime))
+    return map
+  }, [planned])
+  const plannedIds = useMemo(
+    () => (planned ? new Set(planned.map((p) => `${p.corePostId}:${p.format}`)) : undefined),
+    [planned],
+  )
+
   const isCurrentWeek = isSameDay(weekStart, startOfWeek(today))
 
   // Group scheduled posts by day (YYYY-MM-DD) so each day-cell lookup is
@@ -671,6 +776,29 @@ export default function CalendarPage() {
     if (isPastDate(day, today)) return
     e.preventDefault()
     setDragOverDay(null)
+
+    // A post laid out by "סידור אוטומטי בלוח", moved before it's scheduled.
+    const plannedRaw = e.dataTransfer.getData("application/x-schedule-ghost")
+    if (plannedRaw) {
+      try {
+        const { corePostId, format } = JSON.parse(plannedRaw) as {
+          corePostId: string
+          format: FormatId
+        }
+        setPlanned((list) =>
+          list
+            ? list.map((x) =>
+                x.corePostId === corePostId && x.format === format
+                  ? { ...x, scheduledDate: dayKey }
+                  : x,
+              )
+            : list,
+        )
+      } catch (err) {
+        console.error("[calendar] failed to parse planned payload", err)
+      }
+      return
+    }
 
     // Source 1: card-to-card reschedule. A scheduled card stamps this MIME
     // type on dragstart with `{corePostId, format}` — the (post, format)
@@ -1150,6 +1278,28 @@ export default function CalendarPage() {
             )}
           </div>
 
+          {planned && (
+            <div className="max-w-[1200px] w-full mx-auto">
+              <PreviewBar
+                plan={planned}
+                unmatched={plannedUnmatched}
+                error={false}
+                laterCount={
+                  planned.filter((p) => {
+                    const k = p.scheduledDate
+                    return k < toDateKey(weekStart) || k > toDateKey(weekEnd)
+                  }).length
+                }
+                onConfirm={onConfirmPlanned}
+                onCancel={() => {
+                  setPlanned(null)
+                  setPlannedUnmatched([])
+                }}
+                onOpenSettings={startRoutineEdit}
+              />
+            </div>
+          )}
+
           {/* Level 3 — week grid (full-bleed). Negative margins cancel
               `<main>`'s px-6/pb-6 so the grid hugs the sidebar on the
               start side, the queue panel on the end side, and the
@@ -1234,6 +1384,9 @@ export default function CalendarPage() {
                         column a drop target even when it's nearly empty. */
                     <div className="flex flex-col gap-1.5 p-2 min-h-full">
                       {dayPosts.map(renderCard)}
+                      {(plannedByDay.get(dayKey) ?? []).map((slot) => (
+                        <PlannedCard key={`planned:${slot.corePostId}:${slot.format}`} slot={slot} />
+                      ))}
                       {/* Variant A: the routine's still-open slots for this
                           day, as dashed ghosts. Upcoming days only. */}
                       {rulesVariant === "a" &&
@@ -1241,7 +1394,10 @@ export default function CalendarPage() {
                         !past &&
                         unfilledSlots(
                           slotsForDate(routine.saved, day),
-                          dayPosts.map((p) => p.format),
+                          [
+                            ...dayPosts.map((p) => p.format),
+                            ...(plannedByDay.get(dayKey) ?? []).map((p) => p.format),
+                          ],
                         ).map((slot) => (
                           <GhostSlot key={slot.id} slot={slot} onEdit={startRoutineEdit} />
                         ))}
@@ -1261,6 +1417,17 @@ export default function CalendarPage() {
             The panel itself uses `h-full` so its inner list scrolls
             independently of the calendar grid. */}
         <QueuePanel
+          onReadyCardsChange={schedulingOn ? setRailCards : undefined}
+          previewPlacedIds={plannedIds}
+          headerAction={
+            schedulingOn ? (
+              <ScheduleAllButton
+                label="סידור אוטומטי בלוח"
+                count={railCards.length}
+                onClick={onArrange}
+              />
+            ) : undefined
+          }
           collapsed={panelCollapsed}
           onToggleCollapse={() => setPanelCollapsed((v) => !v)}
           onItemClick={(corePostId, format) =>
@@ -1309,6 +1476,18 @@ export default function CalendarPage() {
           data={previewData}
           content={previewContentState}
           {...previewHandlers}
+        />
+      )}
+
+      {schedulingOn && (
+        <NoSettingsDialog
+          open={noSettingsOpen}
+          onOpenChange={setNoSettingsOpen}
+          count={railCards.length}
+          onOpenSettings={() => {
+            setNoSettingsOpen(false)
+            startRoutineEdit()
+          }}
         />
       )}
 

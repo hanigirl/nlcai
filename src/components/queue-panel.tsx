@@ -210,6 +210,12 @@ export type QueuePanelProps = {
    * as a second tab where each card can be approved in place.
    */
   approval?: QueueApprovalMode
+  /** Every card the rail currently offers (unscheduled, ready) — "סידור אוטומטי בלוח" plans from these. */
+  onReadyCardsChange?: (cards: Omit<ReadyCard, "id">[]) => void
+  /** Control rendered in the header in place of the count badge. */
+  headerAction?: React.ReactNode
+  /** Card ids laid out on the board as a not-yet-confirmed preview — dimmed here. */
+  previewPlacedIds?: Set<string>
 }
 
 /**
@@ -245,6 +251,9 @@ export function QueuePanel({
   collapsed = false,
   onToggleCollapse,
   approval,
+  onReadyCardsChange,
+  headerAction,
+  previewPlacedIds,
 }: QueuePanelProps) {
   const [allPosts, setAllPosts] = useState<PanelItem[]>([])
   const [scheduledIds, setScheduledIds] = useState<Set<string>>(new Set())
@@ -507,6 +516,9 @@ export function QueuePanel({
   useEffect(() => {
     onCountChange?.(approvedCards.length)
   }, [approvedCards.length, onCountChange])
+  useEffect(() => {
+    onReadyCardsChange?.(approvedCards)
+  }, [approvedCards, onReadyCardsChange])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -622,7 +634,8 @@ export function QueuePanel({
         <h3 className="text-text-primary-default text-p-bold flex-1">פוסטים לתזמון</h3>
         {/* Variant B carries its counts on the tabs, so the header badge
             would say the same number twice. */}
-        {approval?.variant !== "b" && (
+        {headerAction}
+        {!headerAction && approval?.variant !== "b" && (
           <Badge variant="outline" className="tabular-nums">
             {approval ? approvedCards.length : unscheduled.length}
           </Badge>
@@ -790,6 +803,7 @@ export function QueuePanel({
             <ul className="grid grid-cols-2 gap-3">
               {filtered.map((card, index) => {
               const isDragging = draggingId === card.id
+              const inPreview = previewPlacedIds?.has(card.id) ?? false
               // Stagger the entrance animation top → bottom. 60ms per row
               // gives a light rolling feel; clamped at ~600ms total so
               // long lists don't get a slow trailing tail.
@@ -828,7 +842,7 @@ export function QueuePanel({
                   style={{ animationDelay }}
                   className={`group animate-in fade-in slide-in-from-top-2 fill-mode-both duration-300 ease-out flex flex-col gap-3 rounded-[12px] border border-border-neutral-default bg-white dark:bg-gray-10 p-4 text-right cursor-grab active:cursor-grabbing transition-all hover:bg-bg-surface-hover hover:border-gray-80 hover:ring-2 hover:ring-gray-80/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
                     isDragging ? "opacity-50 cursor-grabbing" : ""
-                  }`}
+                  } ${inPreview ? "opacity-50" : ""}`}
                 >
                   {/* MEDIA — this format's own asset (video first-frame or
                       image), scaled to fill a PORTRAIT slot (aspect 4:5) so the
@@ -860,7 +874,12 @@ export function QueuePanel({
                         passed the schedulable bar (script + media/Drive).
                         `group-hover:border-gray-80` mirrors the /core_posts
                         card so the chip stands out on the card's yellow hover. */}
-                    <div className="mt-auto flex">
+                    <div className="mt-auto flex items-center gap-1.5 flex-wrap">
+                      {inPreview && (
+                        <span className="text-xs-body text-text-neutral-default">
+                          בתצוגה ביומן
+                        </span>
+                      )}
                       <FormatStatusChip
                         format={card.format}
                         state="ready"
