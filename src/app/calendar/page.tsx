@@ -17,7 +17,7 @@ import {
   RoutineButton,
   RoutineDayEditor,
   RoutineEditBar,
-  RoutineSuggestionNote,
+
   unfilledSlots,
 } from "@/components/calendar-routine"
 import { slotsForDate } from "@/lib/posting-schedule"
@@ -1105,10 +1105,6 @@ export default function CalendarPage() {
               )}
             </div>
 
-            {rulesVariant === "a" && !routineEditing && !routine.hasCustom && (
-              <RoutineSuggestionNote schedule={routine.saved} onEdit={startRoutineEdit} />
-            )}
-
             {/* Level 2 — week navigation (or, in variant A edit mode, the
                 routine editor's bar). */}
             {rulesVariant === "a" && routineEditing ? (
@@ -1241,6 +1237,7 @@ export default function CalendarPage() {
                       {/* Variant A: the routine's still-open slots for this
                           day, as dashed ghosts. Upcoming days only. */}
                       {rulesVariant === "a" &&
+                        routine.hasCustom &&
                         !past &&
                         unfilledSlots(
                           slotsForDate(routine.saved, day),
@@ -1271,7 +1268,6 @@ export default function CalendarPage() {
               ? openPreview(corePostId, format)
               : openSheetForCorePost(corePostId, format, "preview")
           }
-          approval={approvalMode}
         />
 
         {/* Reopen affordance — shown only while the rail is collapsed. Pinned
