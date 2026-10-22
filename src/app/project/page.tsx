@@ -51,6 +51,22 @@ import { logLearningEdit } from "@/lib/learning-capture"
 import { BROLL_SCRIPT_CTA } from "@/lib/broll-copy"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { handleGeminiQuotaFrame } from "@/lib/gemini-quota-toasts"
+import { mediaSignature } from "@/lib/timing-storage"
+import { useFormatApprovals, type ApprovalStatus } from "@/components/format-approval/use-format-approvals"
+import {
+  ApprovalHeaderTag,
+  FORMAT_NOUN,
+  approvalCardBorder,
+  approvalHeaderFill,
+} from "@/components/format-approval/approval-visuals"
+import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
+import { ApprovalChecklistBar } from "@/components/format-approval/approval-checklist-bar"
+import {
+  APPROVAL_SAMPLE,
+  ApprovalReviewHarness,
+  seedForScenario,
+  type ApprovalScenario,
+} from "@/components/format-approval/approval-review-harness"
 
 type Flow = "idea" | "hook" | "saved"
 
@@ -202,6 +218,15 @@ function ProjectPageInner() {
   const hookParam = searchParams.get("hook") ?? ""
   const hookIdParam = searchParams.get("hook_id") ?? ""
   const postId = searchParams.get("post_id") ?? ""
+  // Design review (task "שלב אישור מדיה לפני תזמון"): ?approve=a|b mounts one
+  // of the two media-approval variants. Without the param the page is
+  // unchanged. Without a post_id the canvas is seeded with a sample post and
+  // media so the reviewer lands on the media cards — no flow, no AI calls,
+  // nothing saved (savedPostId stays null, so every autosave no-ops).
+  const approveParam = searchParams.get("approve")
+  const approveVariant: "a" | "b" | null =
+    approveParam === "a" ? "a" : approveParam === "b" ? "b" : null
+  const approveSeeded = !!approveVariant && !postId
 
   const flow: Flow = postId ? "saved" : hookParam ? "hook" : "idea"
 
@@ -227,14 +252,16 @@ function ProjectPageInner() {
   // key is still missing and hooks still cannot run without it.
   const [noticeDismissed, setNoticeDismissed] = useState(false)
   const [response, setResponse] = useState("")
-  const [corePost, setCorePost] = useState("")
+  const [corePost, setCorePost] = useState(approveSeeded ? APPROVAL_SAMPLE.corePost : "")
   const [postLoading, setPostLoading] = useState(false)
   const [postError, setPostError] = useState("")
   const [celebrationKey, setCelebrationKey] = useState(0)
   const [bodySaveStatus, setBodySaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
   const [showFormats, setShowFormats] = useState(false)
   const [selectedFormats, setSelectedFormats] = useState<string[]>([])
-  const [duplicatedFormats, setDuplicatedFormats] = useState<string[]>([])
+  const [duplicatedFormats, setDuplicatedFormats] = useState<string[]>(
+    approveSeeded ? APPROVAL_SAMPLE.formats : [],
+  )
   // "Keep chatting with the AI about the post" floating panel. Only usable
   // BEFORE the post is duplicated to formats — once format variants exist the
   // core post is frozen (editing it wouldn't propagate to the duplicates), so
@@ -243,9 +270,13 @@ function ProjectPageInner() {
   // True while the chat's AI is generating a revision — drives the shimmer
   // animation on the core post card so the user sees it's working.
   const [chatBusy, setChatBusy] = useState(false)
-  const [formatPosts, setFormatPosts] = useState<Record<string, string>>({})
+  const [formatPosts, setFormatPosts] = useState<Record<string, string>>(
+    approveSeeded ? APPROVAL_SAMPLE.formatPosts : {},
+  )
   const [activeCard, setActiveCard] = useState<string>(flow === "hook" ? "response" : "hooks")
-  const [editableHook, setEditableHook] = useState<string>(hookParam || "")
+  const [editableHook, setEditableHook] = useState<string>(
+    hookParam || (approveSeeded ? APPROVAL_SAMPLE.hook : ""),
+  )
 
   // Product + trigger-word controls (per-session; persisted via canvas state).
   // The product dropdown shows ALL of the user's products. If the active hook
@@ -377,6 +408,64 @@ function ProjectPageInner() {
     onImagePostUrl: setImagePostUrl,
     onBRollUrl: setBRollUrl,
   })
+  // Media approval — one signature per format's media. The approval is pinned
+  // to that signature, so changing the media withdraws it (see the hook).
+  const storyFrames = [
+    ...(storyImages ?? []),
+    ...(storyVideoUrl && !(storyImages ?? []).includes(storyVideoUrl) ? [storyVideoUrl] : []),
+  ]
+  const approvalMediaSigs: Record<string, string> = {
+    carousel: mediaSignature(carouselImages ?? []),
+    story: mediaSignature(storyFrames),
+    image_post: mediaSignature([imagePostUrl]),
+    talking_head: mediaSignature([thVideoUrl]),
+    b_roll: mediaSignature([bRollUrl]),
+  }
+  const approvals = useFormatApprovals({
+    postId: savedPostId,
+    formats: duplicatedFormats,
+    mediaSigs: approvalMediaSigs,
+    // Review links never write. The real feature persists.
+    persist: !approveVariant,
+  })
+  // Review harness: which scenario is showing. A scenario resets the sample
+  // media first, then seeds the approvals once the new signatures are in.
+  const [approvalScenario, setApprovalScenario] = useState<ApprovalScenario>("none")
+  const pendingApprovalSeedRef = useRef<ApprovalScenario | null>(null)
+  const approvalSigKey = Object.values(approvalMediaSigs).join("\n")
+  useEffect(() => {
+    const pending = pendingApprovalSeedRef.current
+    if (!pending) return
+    pendingApprovalSeedRef.current = null
+    approvals.seed(seedForScenario(pending))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [approvalSigKey, approvalScenario])
+  const applyApprovalScenario = (next: ApprovalScenario) => {
+    setCarouselImages(APPROVAL_SAMPLE.carouselImages)
+    setImagePostUrl(APPROVAL_SAMPLE.imagePostUrl)
+    setStoryImages(next === "missing" ? null : APPROVAL_SAMPLE.storyImages)
+    pendingApprovalSeedRef.current = next
+    setApprovalScenario(next)
+  }
+  // Review harness: the edit buttons can't open the real media panel (it
+  // generates and saves), so they stand in for an edit by changing the sample
+  // media — which is exactly what withdraws an approval in the real feature.
+  const simulateMediaEdit = (fid: string) => {
+    if (fid === "carousel") {
+      setCarouselImages((prev) => (prev && prev.length > 1 ? [...prev.slice(1), prev[0]] : prev))
+    } else if (fid === "image_post") {
+      setImagePostUrl((prev) =>
+        prev === APPROVAL_SAMPLE.imagePostUrl
+          ? APPROVAL_SAMPLE.altImageUrl
+          : APPROVAL_SAMPLE.imagePostUrl,
+      )
+    } else if (fid === "story") {
+      setStoryImages((prev) =>
+        prev && prev.length > 0 ? [...prev].reverse() : APPROVAL_SAMPLE.storyImages,
+      )
+    }
+    toast("תצוגת בדיקה: העריכה מדומה — המדיה השתנתה", { id: `approve-sim-${fid}` })
+  }
   const [savedPostLoading, setSavedPostLoading] = useState(!!postId)
   const [savedHookText, setSavedHookText] = useState("")
   // Save lifecycle for the auto-POST that persists a freshly-generated core
@@ -525,6 +614,11 @@ function ProjectPageInner() {
   useEffect(() => {
     if (restoredRef.current) return
     if (!userId) return
+    // Review links (?approve=a|b) show the seeded sample post. Restoring the
+    // reviewer's own saved canvas here would overwrite it — for a logged-in
+    // reviewer the cards came up empty. Leaving restoredRef unset also keeps
+    // the autosave below off, so the sample never lands in her real draft.
+    if (approveSeeded) return
     restoredRef.current = true
     try {
       const raw = localStorage.getItem(userKey(CANVAS_KEY, userId))
@@ -585,6 +679,7 @@ function ProjectPageInner() {
   useEffect(() => {
     if (!restoredRef.current) return
     if (!userId) return
+    if (approveSeeded) return
     const t = setTimeout(() => {
       try {
         const state = {
@@ -1678,6 +1773,8 @@ function ProjectPageInner() {
    */
   const generateFormatVariants = async (formats: string[]) => {
     if (formats.length === 0) return
+    // Design-review links never call the format agents.
+    if (approveVariant) return
 
     setFormatPosts((prev) => {
       const next = { ...prev }
@@ -1841,6 +1938,10 @@ function ProjectPageInner() {
   }
 
   const handleFormatCardClick = (fid: string) => {
+    if (approveSeeded) {
+      simulateMediaEdit(fid)
+      return
+    }
     setSelectedFormatCard(selectedFormatCard === fid ? null : fid)
   }
 
@@ -1848,6 +1949,18 @@ function ProjectPageInner() {
   // further chat edits would silently diverge from the format variants. Lock
   // the "chat about the post" affordance and force the panel shut.
   const formatsLocked = duplicatedFormats.length > 0
+
+  // Review links: seed the sample media (client-side, so SSR and hydration
+  // agree), then land on the media cards rather than the top of the canvas.
+  useEffect(() => {
+    if (!approveSeeded) return
+    applyApprovalScenario("none")
+    const t = setTimeout(() => {
+      if (imagePostCardRef.current) canvasRef.current?.focusOn(imagePostCardRef.current)
+    }, 1200)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   useEffect(() => {
     if (formatsLocked && chatOpen) setChatOpen(false)
   }, [formatsLocked, chatOpen])
@@ -1997,7 +2110,7 @@ function ProjectPageInner() {
                 they explicitly remove it" — collapsing back to a single-hook
                 view broke that. The hook-flow card stack below is mutex'd
                 against this so they never render simultaneously. */}
-          {((flow === "idea") || hooks.length > 0) && (
+          {!approveSeeded && ((flow === "idea") || hooks.length > 0) && (
             <>
               {/* Idea card — editable */}
               <div
@@ -2254,7 +2367,7 @@ function ProjectPageInner() {
                   the URL flips to `saved`), so the connector must follow them
                   rather than be omitted as it was when `saved` had nothing
                   before the core post. */}
-              {(flow !== "saved" || !!(savedHookText || editableHook)) && (
+              {!approveSeeded && (flow !== "saved" || !!(savedHookText || editableHook)) && (
                 <div className="flex items-center mt-[55px]">
                   <div className="h-[2px] w-7 bg-gray-80" />
                 </div>
@@ -2577,14 +2690,20 @@ function ProjectPageInner() {
                           // the panel — same as story / image_post — where the
                           // saved carousel is shown on its template tile and
                           // deleting it is a separate, explicit action.
-                          onCarouselEdit={() => setSelectedFormatCard("carousel")}
+                          onCarouselEdit={() =>
+                            approveSeeded ? simulateMediaEdit("carousel") : setSelectedFormatCard("carousel")
+                          }
                           imagePostUrl={imagePostUrl}
                           imagePostCardRef={imagePostCardRef}
-                          onImagePostEdit={() => setSelectedFormatCard("image_post")}
+                          onImagePostEdit={() =>
+                            approveSeeded ? simulateMediaEdit("image_post") : setSelectedFormatCard("image_post")
+                          }
                           onImagePostUrlChange={setImagePostUrl}
                           storyImages={storyImages}
                           storyCardRef={storyCardRef}
-                          onStoryEdit={() => setSelectedFormatCard("story")}
+                          onStoryEdit={() =>
+                            approveSeeded ? simulateMediaEdit("story") : setSelectedFormatCard("story")
+                          }
                           storyVideoUrl={storyVideoUrl}
                           bRollUrl={bRollUrl}
                           bRollCardRef={bRollCardRef}
@@ -2592,6 +2711,19 @@ function ProjectPageInner() {
                           onAiEdit={setAiChatFormat}
                           onDeleteMedia={setPendingMediaDelete}
                           onBRollUrlChange={setBRollUrl}
+                          approval={
+                            approveVariant
+                              ? {
+                                  variant: approveVariant,
+                                  statusOf: approvals.statusOf,
+                                  approve: approvals.approve,
+                                  revoke: approvals.revoke,
+                                  calendarHref: savedPostId
+                                    ? `/calendar?post_id=${savedPostId}`
+                                    : "/calendar",
+                                }
+                              : undefined
+                          }
                         />
                       </div>
                     </div>
@@ -2604,9 +2736,42 @@ function ProjectPageInner() {
         </div>
       </InfiniteCanvas>
 
+      {/* Media approval — design review (?approve=a|b). */}
+      {approveSeeded && approveVariant && (
+        <ApprovalReviewHarness
+          variant={approveVariant}
+          scenario={approvalScenario}
+          onScenarioChange={applyApprovalScenario}
+          approvals={approvals}
+          formats={duplicatedFormats}
+        />
+      )}
+      {/* Variant B — the whole-post approval step owns the schedule bar's slot. */}
+      {approveVariant === "b" && duplicatedFormats.length > 0 && (
+        <ApprovalChecklistBar
+          approvals={approvals}
+          calendarHref={savedPostId ? `/calendar?post_id=${savedPostId}` : "/calendar"}
+          formats={duplicatedFormats
+            .filter((fid) => FORMAT_MAP[fid])
+            .map((fid) => ({
+              id: fid,
+              label: FORMAT_MAP[fid].label,
+              icon: FORMAT_MAP[fid].icon,
+              thumb:
+                fid === "carousel"
+                  ? carouselImages?.[0] ?? null
+                  : fid === "image_post"
+                    ? imagePostUrl
+                    : fid === "story"
+                      ? (storyImages?.[0] ?? null)
+                      : null,
+            }))}
+        />
+      )}
+
       {/* Floating schedule bar — appears once we have a saved post id, on
           top of the canvas. Picks up its state from timing-storage. */}
-      <ScheduleInCalendarBar
+      {approveVariant !== "b" && <ScheduleInCalendarBar
         corePostId={savedPostId}
         hookText={activeHook}
         hasUploadedMedia={
@@ -2620,7 +2785,7 @@ function ProjectPageInner() {
           (storyImages?.length ?? 0) > 0 ||
           !!storyVideoUrl
         }
-      />
+      />}
 
       {/* Re-run one format's agent. Confirmed rather than immediate: the card
           may hold text the user edited by hand, and the new draft replaces it.
@@ -2822,6 +2987,13 @@ function MediaTrashButton({ label, onClick }: { label: string; onClick: () => vo
       </button>
     </TooltipLabel>
   )
+/** Media approval wiring handed to the format tree (design review). */
+type FormatTreeApproval = {
+  variant: "a" | "b"
+  statusOf: (fid: string) => ApprovalStatus
+  approve: (fid: string) => void
+  revoke: (fid: string) => void
+  calendarHref: string
 }
 
 function FormatTree({
@@ -2873,6 +3045,7 @@ function FormatTree({
   onAiEdit,
   onDeleteMedia,
   onBRollUrlChange,
+  approval,
 }: {
   formats: string[]
   formatPosts: Record<string, string>
@@ -2927,6 +3100,8 @@ function FormatTree({
   onAiEdit: (format: AiEditFormat) => void
   /** Trash on a result card — confirm, then remove that format's media. */
   onDeleteMedia: (format: AiEditFormat) => void
+  /** Media approval (design review ?approve=a|b). Absent = feature off. */
+  approval?: FormatTreeApproval
 }) {
   const count = formats.length
   const totalWidth = count * CARD_WIDTH + (count - 1) * CARD_GAP
@@ -2975,6 +3150,20 @@ function FormatTree({
           const isActive = activeCard === `format-${fid}`
           const isSelected = selectedFormat === fid
           const isGenerating = formatPosts[fid] === FORMAT_GENERATING
+          // Media approval for this format. Variant A puts the approve action
+          // on the media card; variant B only shows the result there (the
+          // action lives in the floating checklist).
+          const approvalStatus = approval?.statusOf(fid)
+          const approvalFooter =
+            approval?.variant === "a" && approvalStatus ? (
+              <ApprovalCardFooter
+                status={approvalStatus}
+                formatNoun={FORMAT_NOUN[fid] ?? format.label}
+                onApprove={() => approval.approve(fid)}
+                onRevoke={() => approval.revoke(fid)}
+                calendarHref={approval.calendarHref}
+              />
+            ) : null
 
           return (
             <div key={fid} className="flex flex-col items-center" style={{ width: CARD_WIDTH }}>
@@ -3066,6 +3255,11 @@ function FormatTree({
                     <Icon className="size-4" />
                     הוספת מדיה ל{format.label}
                   </Button>
+                  {approval?.variant === "a" && approvalStatus === "no-media" && (
+                    <p className="text-xs leading-relaxed text-text-neutral-default text-center">
+                      אחרי שתוסיפו מדיה, תוכלו לאשר אותה לתזמון.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -3107,11 +3301,12 @@ function FormatTree({
                   <div
                     ref={thVideoCardRef}
                     dir="rtl"
-                    className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
+                    className={`flex flex-col gap-3 rounded-[20px] border ${approvalCardBorder(approvalStatus)} bg-white dark:bg-gray-10 pb-6 w-full`}
                   >
-                    <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface-primary-default-80">
+                    <div className={`flex items-center gap-2 px-6 py-3 rounded-t-[20px] ${approvalHeaderFill(approvalStatus)}`}>
                       <span className="text-p-bold text-text-primary-default">הוידאו שלכם</span>
                       <Video className="size-4 text-text-neutral-default" />
+                      <ApprovalHeaderTag status={approvalStatus} />
                     </div>
                     <div className="px-6 flex flex-col gap-4">
                       <div className="flex justify-center">
@@ -3163,6 +3358,7 @@ function FormatTree({
                           </button>
                         </TooltipLabel>
                       </div>
+                      {approvalFooter}
                     </div>
                   </div>
                 </>
@@ -3325,6 +3521,8 @@ function FormatTree({
                   postId={savedPostId}
                   driveLinks={carouselDriveLinks}
                   onImagesChange={onCarouselImagesChange}
+                  approvalStatus={approvalStatus}
+                  approvalFooter={approvalFooter}
                 />
               )}
 
@@ -3357,6 +3555,8 @@ function FormatTree({
                     onAiEdit={() => onAiEdit("story")}
                     onDelete={() => onDeleteMedia("story")}
                     postId={savedPostId}
+                    approvalStatus={approvalStatus}
+                    approvalFooter={approvalFooter}
                   />
                 )
               })()}
@@ -3383,11 +3583,12 @@ function FormatTree({
                   <div
                     ref={bRollCardRef}
                     dir="rtl"
-                    className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
+                    className={`flex flex-col gap-3 rounded-[20px] border ${approvalCardBorder(approvalStatus)} bg-white dark:bg-gray-10 pb-6 w-full`}
                   >
-                    <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface-primary-default-80">
+                    <div className={`flex items-center gap-2 px-6 py-3 rounded-t-[20px] ${approvalHeaderFill(approvalStatus)}`}>
                       <span className="text-p-bold text-text-primary-default">הבי-רול שלכם</span>
                       <Film className="size-4 text-text-neutral-default" />
+                      <ApprovalHeaderTag status={approvalStatus} />
                     </div>
                     <CardStyleFeedback postId={savedPostId} format="b_roll" mediaUrl={bRollUrl} />
                     <div className="px-6 flex flex-col gap-4">
@@ -3462,6 +3663,7 @@ function FormatTree({
                           </button>
                         </TooltipLabel>
                       </div>
+                      {approvalFooter}
                     </div>
                   </div>
                 </>
@@ -3480,11 +3682,12 @@ function FormatTree({
                   <div
                     ref={imagePostCardRef}
                     dir="rtl"
-                    className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
+                    className={`flex flex-col gap-3 rounded-[20px] border ${approvalCardBorder(approvalStatus)} bg-white dark:bg-gray-10 pb-6 w-full`}
                   >
-                    <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface-primary-default-80">
+                    <div className={`flex items-center gap-2 px-6 py-3 rounded-t-[20px] ${approvalHeaderFill(approvalStatus)}`}>
                       <span className="text-p-bold text-text-primary-default">התמונה שלכם</span>
                       <Image className="size-4 text-text-neutral-default" />
+                      <ApprovalHeaderTag status={approvalStatus} />
                     </div>
                     <CardStyleFeedback postId={savedPostId} format="image_post" mediaUrl={imagePostUrl} />
                     <div className="px-6 flex flex-col gap-4">
@@ -3547,6 +3750,7 @@ function FormatTree({
                         </TooltipLabel>
                         <MediaTrashButton label="מחיקת התמונה" onClick={() => onDeleteMedia("image_post")} />
                       </div>
+                      {approvalFooter}
                     </div>
                   </div>
                 </>
@@ -3626,7 +3830,11 @@ function CarouselResultCard({
   postId,
   driveLinks,
   onImagesChange,
+  approvalStatus,
+  approvalFooter,
 }: {
+  approvalStatus?: ApprovalStatus
+  approvalFooter?: React.ReactNode
   images: string[]
   cardRef: React.RefObject<HTMLDivElement | null>
   /** Opens the media panel. Non-destructive — see `onCarouselEdit`. */
@@ -3685,11 +3893,12 @@ function CarouselResultCard({
       <div
         ref={cardRef}
         dir="rtl"
-        className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
+        className={`flex flex-col gap-3 rounded-[20px] border ${approvalCardBorder(approvalStatus)} bg-white dark:bg-gray-10 pb-6 w-full`}
       >
-        <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface-primary-default-80">
+        <div className={`flex items-center gap-2 px-6 py-3 rounded-t-[20px] ${approvalHeaderFill(approvalStatus)}`}>
           <span className="text-p-bold text-text-primary-default">הקרוסלה שלכם</span>
           <Layers className="size-4 text-text-neutral-default" />
+          <ApprovalHeaderTag status={approvalStatus} />
         </div>
         <CardStyleFeedback postId={postId} format="carousel" mediaUrl={images[0]} />
         <div className="px-6 flex flex-col items-center gap-4">
@@ -3782,6 +3991,7 @@ function CarouselResultCard({
             )}
             <MediaTrashButton label="מחיקת הקרוסלה" onClick={onDelete} />
           </div>
+          {approvalFooter}
         </div>
       </div>
     </>
@@ -3799,7 +4009,11 @@ function StoryResultCard({
   onAiEdit,
   onDelete,
   postId,
+  approvalStatus,
+  approvalFooter,
 }: {
+  approvalStatus?: ApprovalStatus
+  approvalFooter?: React.ReactNode
   frames: string[]
   cardRef: React.RefObject<HTMLDivElement | null>
   onEdit: () => void
@@ -3848,11 +4062,12 @@ function StoryResultCard({
       <div
         ref={cardRef}
         dir="rtl"
-        className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
+        className={`flex flex-col gap-3 rounded-[20px] border ${approvalCardBorder(approvalStatus)} bg-white dark:bg-gray-10 pb-6 w-full`}
       >
-        <div className="flex items-center gap-2 px-6 py-3 rounded-t-[20px] bg-bg-surface-primary-default-80">
+        <div className={`flex items-center gap-2 px-6 py-3 rounded-t-[20px] ${approvalHeaderFill(approvalStatus)}`}>
           <span className="text-p-bold text-text-primary-default">הסטורי שלכם</span>
           <Smartphone className="size-4 text-text-neutral-default" />
+          <ApprovalHeaderTag status={approvalStatus} />
         </div>
         <CardStyleFeedback postId={postId} format="story" />
         <div className="px-6 flex flex-col items-center gap-4">
@@ -3891,6 +4106,7 @@ function StoryResultCard({
             </TooltipLabel>
             <MediaTrashButton label="מחיקת הסטורי" onClick={onDelete} />
           </div>
+          {approvalFooter}
         </div>
       </div>
     </>

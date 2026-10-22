@@ -379,7 +379,10 @@ export function QueuePanel({
         hasBody: post.hasBody,
       }
       return HEADER_CHIP_FORMATS.some(
-        (format) => getFormatReadiness(readinessInput, format) === "ready",
+        (format) => {
+          const s = getFormatReadiness(readinessInput, format)
+          return s === "ready" || s === "approved"
+        },
       )
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -148,6 +148,12 @@ export function toChipState(state: FormatReadiness): ChipState {
     case "scheduled":
     case "published":
       return "ready"
+    // Media approval (2026-10-14, task "שלב אישור מדיה לפני תזמון"): an
+    // approved format — the user said "this is finished" — wakes up the
+    // retained green `set` palette (the same green as the "מתוזמן" tag), so
+    // "what's approved" is the one thing that reads at a glance.
+    case "approved":
+      return "set"
   }
 }
 
@@ -283,7 +289,9 @@ function buildAriaLabel(format: FormatId, state: FormatReadiness): string {
     case "incomplete":
       return `${fmt}: צריך מדיה`
     case "ready":
-      return `${fmt}: מוכן`
+      return `${fmt}: מחכה לאישור`
+    case "approved":
+      return `${fmt}: מאושר לתזמון`
     case "scheduled":
       return `${fmt}: מתוזמן`
     case "published":

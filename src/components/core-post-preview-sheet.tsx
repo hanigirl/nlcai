@@ -323,6 +323,7 @@ export function CorePostPreviewSheet({
                     // as decorative state pills.
                     const isInteractive =
                       state === "ready" ||
+                      state === "approved" ||
                       state === "scheduled" ||
                       state === "published"
                     const isActive = previewFormat === format

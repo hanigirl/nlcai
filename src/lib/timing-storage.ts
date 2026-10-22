@@ -138,6 +138,18 @@ export type CorePostFormatMeta = {
    * shows no caption controls. Undefined = not checked yet.
    */
   bakedText?: boolean
+   * ISO timestamp of the moment the user approved this format's media as
+   * finished ("אישור"). Only an approved format is offered for scheduling.
+   * Absent = not approved (the default for every format, old and new).
+   */
+  approvedAt?: string
+  /**
+   * Signature of the media the user was looking at when they approved it.
+   * Approval is attached to THAT media: if the media changes afterwards (a
+   * new slide, a re-burned caption, a replaced image) the signature no longer
+   * matches and the approval no longer holds — see `revokeFormatApproval`.
+   */
+  approvedMediaSig?: string
 }
 
 /** Per-post optional metadata captured in the Sheet (task #B). */
@@ -175,6 +187,7 @@ export type FormatReadiness =
   | "empty"
   | "incomplete"
   | "ready"
+  | "approved"
   | "scheduled"
   | "published"
 
@@ -614,7 +627,48 @@ export function getFormatMeta(
     captionOn: slice.captionOn,
     captionSourceUrl: slice.captionSourceUrl,
     bakedText: slice.bakedText,
+    approvedAt: slice.approvedAt,
+    approvedMediaSig: slice.approvedMediaSig,
   }
+}
+
+// --- Approval ("אישור מדיה") ---------------------------------------------
+
+/**
+ * Mark a format's media as approved — the user's explicit "this is done".
+ * Only approved formats are ready for scheduling. `mediaSig` pins the
+ * approval to the exact media that was approved (see `mediaSignature`).
+ */
+export function approveFormat(
+  corePostId: string,
+  format: FormatId,
+  mediaSig: string,
+): void {
+  setFormatMeta(corePostId, format, {
+    approvedAt: new Date().toISOString(),
+    approvedMediaSig: mediaSig,
+  })
+}
+
+/** Withdraw an approval — by hand, or because the media changed after it. */
+export function revokeFormatApproval(corePostId: string, format: FormatId): void {
+  setFormatMeta(corePostId, format, {
+    approvedAt: undefined,
+    approvedMediaSig: undefined,
+  })
+}
+
+/** Is this (post, format) approved? Per-format only — no post-level fallback. */
+export function isFormatApproved(corePostId: string, format: FormatId): boolean {
+  return !!getCorePostMeta(corePostId).byFormat?.[format]?.approvedAt
+}
+
+/**
+ * Stable signature of a format's media — the list of asset URLs, in order.
+ * Same media → same string, so an approval survives a reload but not an edit.
+ */
+export function mediaSignature(urls: Array<string | null | undefined>): string {
+  return urls.filter((u): u is string => !!u && u.trim().length > 0).join("|")
 }
 
 /**
@@ -857,14 +911,20 @@ export function getFormatReadiness(
     perFormatBody !== undefined ? perFormatBody : !!post.hasBody
   if (!hasBody) return "empty"
 
+  // "approved" sits between ready and scheduled: the media exists AND the
+  // user said it is finished. Only approved formats are offered to the
+  // calendar. An approval on a format that has since lost its media doesn't
+  // count — there is nothing left to schedule.
   const hasMedia = (post.formatsWithMedia ?? []).includes(format)
-  if (hasMedia) return "ready"
+  if (hasMedia) return isFormatApproved(post.id, format) ? "approved" : "ready"
 
   // Drive URL fallback — per-format slice, then post-level legacy.
   const meta = getCorePostMeta(post.id)
   const formatDriveUrl =
     meta.byFormat?.[format]?.driveUrl ?? meta.driveUrl ?? ""
-  if (formatDriveUrl.trim().length > 0) return "ready"
+  if (formatDriveUrl.trim().length > 0) {
+    return isFormatApproved(post.id, format) ? "approved" : "ready"
+  }
 
   // Format was duplicated and has a script, but no media or drive URL —
   // it's "started but not yet shippable". Per Hani: this should look

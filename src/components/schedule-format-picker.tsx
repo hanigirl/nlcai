@@ -150,7 +150,7 @@ export function ScheduleFormatPicker({
   // `empty` has no script. We fall through to disabled rows for those.
   const selectableFormats = useMemo(() => {
     return PICKER_FORMATS.filter(
-      (f) => post.formatStates[f] === "ready",
+      (f) => post.formatStates[f] === "ready" || post.formatStates[f] === "approved",
     )
   }, [post.formatStates])
 
@@ -266,7 +266,7 @@ export function ScheduleFormatPicker({
             <legend className="sr-only">בחרו פורמטים לתזמון</legend>
             {PICKER_FORMATS.map((format, i) => {
               const state = post.formatStates[format]
-              const isReady = state === "ready"
+              const isReady = state === "ready" || state === "approved"
               const isFirst = isReady && format === selectableFormats[0]
               return (
                 <PickerRow
