@@ -232,59 +232,68 @@ export async function POST(req: NextRequest) {
     // every slide — the model only draws illustrations. Without a Claude key
     // the slides are drawn whole by the image model, as before.
     const anthropicKey = await getUserApiKey(supabase, "anthropic_api_key").catch(() => null)
+    // If the new engine fails early (e.g. the headless browser can't start on
+    // this server), the slides are drawn the old way instead of failing her.
     if (anthropicKey) {
-      const [fonts, { data: userRow }] = await Promise.all([
-        loadBrandFonts(supabase, user.id),
-        supabase.from("users").select("brand_colors, visual_language").eq("id", user.id).single(),
-      ])
-      const row = userRow as { brand_colors?: string[] | null; visual_language?: VisualLanguage | null } | null
-      const palette =
-        isBrandTemplate && row?.visual_language?.palette?.length
-          ? row.visual_language.palette
-          : (row?.brand_colors ?? []).map((hex, i) => ({ hex, role: i === 0 ? "primary brand colour" : "brand colour" }))
-      const brief: CarouselBrief = {
-        slides: slides!,
-        fonts,
-        palette,
-        styleLines: direction.lines,
-        reservedLines: reservedZoneLines(direction.fixed, "content", IMAGE_WIDTH, IMAGE_HEIGHT),
-        examples: isBrandTemplate ? await carouselExamples(supabase, user.id, row?.visual_language) : [],
-        pastedElements: direction.fixed.map((el) => el.name),
-      }
-
-      // Layout first: Opus decides which slides get an illustration at all
-      // (type-led examples → none), then only those are drawn.
-      const layout = await composeCarousel(anthropicKey, brief)
-      const illustrations: string[] = new Array(total).fill("")
-      const wanted = layout.illustrations.map((idea, i) => ({ idea: idea.trim(), i })).filter((x) => x.idea)
-      let nextArt = 0
-      async function artWorker() {
-        while (nextArt < wanted.length) {
-          const { idea, i } = wanted[nextArt++]
-          const raw = await generateImage(openaiKey, illustrationPrompt(idea, slides![i], direction.lines), {
-            shape: "1:1",
-            quality: "medium",
-          })
-          illustrations[i] = await uploadIllustration(supabase, user!.id, Buffer.from(raw, "base64"))
+      const started = Date.now()
+      try {
+        const [fonts, { data: userRow }] = await Promise.all([
+          loadBrandFonts(supabase, user.id),
+          supabase.from("users").select("brand_colors, visual_language").eq("id", user.id).single(),
+        ])
+        const row = userRow as { brand_colors?: string[] | null; visual_language?: VisualLanguage | null } | null
+        const palette =
+          isBrandTemplate && row?.visual_language?.palette?.length
+            ? row.visual_language.palette
+            : (row?.brand_colors ?? []).map((hex, i) => ({ hex, role: i === 0 ? "primary brand colour" : "brand colour" }))
+        const brief: CarouselBrief = {
+          slides: slides!,
+          fonts,
+          palette,
+          styleLines: direction.lines,
+          reservedLines: reservedZoneLines(direction.fixed, "content", IMAGE_WIDTH, IMAGE_HEIGHT),
+          examples: isBrandTemplate ? await carouselExamples(supabase, user.id, row?.visual_language) : [],
+          pastedElements: direction.fixed.map((el) => el.name),
         }
+
+        // Layout first: Opus decides which slides get an illustration at all
+        // (type-led examples → none), then only those are drawn.
+        const layout = await composeCarousel(anthropicKey, brief)
+        const illustrations: string[] = new Array(total).fill("")
+        const wanted = layout.illustrations.map((idea, i) => ({ idea: idea.trim(), i })).filter((x) => x.idea)
+        let nextArt = 0
+        async function artWorker() {
+          while (nextArt < wanted.length) {
+            const { idea, i } = wanted[nextArt++]
+            const raw = await generateImage(openaiKey, illustrationPrompt(idea, slides![i], direction.lines), {
+              shape: "1:1",
+              quality: "medium",
+            })
+            illustrations[i] = await uploadIllustration(supabase, user!.id, Buffer.from(raw, "base64"))
+          }
+        }
+        await Promise.all(Array.from({ length: Math.min(ART_CONCURRENCY, wanted.length) }, () => artWorker()))
+        const shots = await renderCarousel(layout.html, illustrations, fonts)
+        for (let i = 0; i < total; i++) {
+          const shot = shots[i]
+          if (!shot) throw new Error("render_missing_slide")
+          images[i] = await applyFixedElements(shot.toString("base64"), direction.fixed, slideRole(slides![i]))
+        }
+        if (postId) {
+          await saveCarousel(supabase, user.id, postId, {
+            html: layout.html,
+            brief,
+            illustrations,
+            edits: [],
+            slideHashes: images.map((b64) => slideHash(Buffer.from(b64, "base64"))),
+          }).catch((err) => console.error("[carousel/generate-ai] save composition", err))
+        }
+        return NextResponse.json({ images })
+      } catch (err) {
+        console.error("[carousel/generate-ai] layout engine failed", err)
+        if (Date.now() - started > 90_000) throw err
+        images.fill(undefined as unknown as string)
       }
-      await Promise.all(Array.from({ length: Math.min(ART_CONCURRENCY, wanted.length) }, () => artWorker()))
-      const shots = await renderCarousel(layout.html, illustrations, fonts)
-      for (let i = 0; i < total; i++) {
-        const shot = shots[i]
-        if (!shot) throw new Error("render_missing_slide")
-        images[i] = await applyFixedElements(shot.toString("base64"), direction.fixed, slideRole(slides![i]))
-      }
-      if (postId) {
-        await saveCarousel(supabase, user.id, postId, {
-          html: layout.html,
-          brief,
-          illustrations,
-          edits: [],
-          slideHashes: images.map((b64) => slideHash(Buffer.from(b64, "base64"))),
-        }).catch((err) => console.error("[carousel/generate-ai] save composition", err))
-      }
-      return NextResponse.json({ images })
     }
 
     // Simple concurrency pool — kinder to OpenAI rate limits than firing
