@@ -50,7 +50,10 @@ type Props = {
 }
 
 export function ScheduleInCalendarBar({ corePostId, hasUploadedMedia = false }: Props) {
-  const [scheduledFor, setScheduledFor] = useState<string | null>(null)
+  // Every format of this post that's on the calendar, soonest first. The bar
+  // used to show one date for the whole post, which read as "everything is
+  // scheduled" when only the carousel was (Hani, 2026-10-22).
+  const [scheduled, setScheduled] = useState<ScheduledRow[]>([])
   // External media link (Drive / Canva / other) lives in timing-storage
   // (localStorage), so it's tracked separately from the uploaded-media prop
   // and refreshed on storage events below.
@@ -63,21 +66,19 @@ export function ScheduleInCalendarBar({ corePostId, hasUploadedMedia = false }: 
   // `formatsWithMedia` is empty, so the bar correctly stays hidden.
   const [serverHasMedia, setServerHasMedia] = useState(false)
 
-  // Per-format era: a single core post can have multiple scheduled rows
-  // (one per format). The bar's job is just to nudge "you have something
-  // on the calendar" — so we pick the EARLIEST upcoming date across all
-  // formats. That's the slot the user is most likely to be thinking about.
-  const earliestScheduledDate = (rows: ReturnType<typeof getScheduledByPostId>) => {
-    if (rows.length === 0) return null
-    const sorted = [...rows].sort((a, b) =>
-      a.scheduledDate.localeCompare(b.scheduledDate),
-    )
-    return sorted[0].scheduledDate
-  }
+  const readScheduled = (id: string): ScheduledRow[] =>
+    [...getScheduledByPostId(id)]
+      .filter((r) => !r.publishedAt)
+      .sort((a, b) =>
+        `${a.scheduledDate} ${a.scheduledTime ?? ""}`.localeCompare(
+          `${b.scheduledDate} ${b.scheduledTime ?? ""}`,
+        ),
+      )
+      .map((r) => ({ format: r.format, date: r.scheduledDate, time: r.scheduledTime ?? null }))
 
   useEffect(() => {
     if (!corePostId) return
-    setScheduledFor(earliestScheduledDate(getScheduledByPostId(corePostId)))
+    setScheduled(readScheduled(corePostId))
     setHasLink(hasExternalMediaLink(corePostId))
   }, [corePostId])
 
@@ -113,7 +114,7 @@ export function ScheduleInCalendarBar({ corePostId, hasUploadedMedia = false }: 
     const onStorage = (e: StorageEvent) => {
       if (!e.key) return
       if (e.key === TIMING_KEYS.scheduled) {
-        setScheduledFor(earliestScheduledDate(getScheduledByPostId(corePostId)))
+        setScheduled(readScheduled(corePostId))
       }
       // A pasted Drive/Canva/media link lands in the per-post meta key.
       if (e.key.startsWith(TIMING_KEYS.metaPrefix)) {
@@ -133,7 +134,7 @@ export function ScheduleInCalendarBar({ corePostId, hasUploadedMedia = false }: 
   // the toast doesn't appear. The "already scheduled" badge is exempt: if a
   // post got scheduled it necessarily had media. Per Hani.
   const hasMedia = hasUploadedMedia || serverHasMedia || hasLink
-  if (!scheduledFor && !hasMedia) return null
+  if (scheduled.length === 0 && !hasMedia) return null
 
   // Common shell — placed bottom-start (the right in RTL) so it clears the
   // MediaPanel left rail, which the user reads while the bar is up. Per Hani:
@@ -144,12 +145,18 @@ export function ScheduleInCalendarBar({ corePostId, hasUploadedMedia = false }: 
       dir="rtl"
       className="pointer-events-none fixed bottom-8 start-8 z-40 flex items-center gap-3"
     >
-      {scheduledFor ? (
+      {scheduled.length > 0 ? (
         <div className="pointer-events-auto inline-flex items-center gap-3 rounded-lg bg-bg-surface-primary-default border border-yellow-50 ps-4 pe-2 py-1.5 shadow-[0_8px_24px_rgb(0_0_0_/_0.08)]">
-          <CalendarCheck className="size-4 text-text-primary-default" aria-hidden />
-          <span className="text-small text-text-primary-default">
-            מתוזמן ב-{formatShortDate(scheduledFor)}
-          </span>
+          <CalendarCheck className="size-4 shrink-0 text-text-primary-default" aria-hidden />
+          {/* One line per scheduled format — "קרוסלה מתוזמנת ל-…" above
+              "סטורי מתוזמן ל-…". Formats not on the calendar aren't listed. */}
+          <ul className="flex flex-col gap-0.5 text-small text-text-primary-default">
+            {scheduled.map((r) => (
+              <li key={`${r.format}-${r.date}`}>
+                {scheduledLine(r)}
+              </li>
+            ))}
+          </ul>
           <Button asChild size="sm" variant="outline" className="gap-1.5">
             <Link href={`/calendar?post_id=${corePostId}`}>
               ערכו בלוח
@@ -175,6 +182,23 @@ export function ScheduleInCalendarBar({ corePostId, hasUploadedMedia = false }: 
       )}
     </div>
   )
+}
+
+type ScheduledRow = { format: string; date: string; time: string | null }
+
+/** Name + the participle in its gender: "קרוסלה מתוזמנת", "סטורי מתוזמן". */
+const FORMAT_SCHEDULED: Record<string, string> = {
+  carousel: "קרוסלה מתוזמנת",
+  story: "סטורי מתוזמן",
+  image_post: "פוסט תמונה מתוזמן",
+  b_roll: "בי-רול מתוזמן",
+  talking_head: "דיבור למצלמה מתוזמן",
+}
+
+function scheduledLine(r: ScheduledRow): string {
+  const what = FORMAT_SCHEDULED[r.format] ?? "מתוזמן"
+  const when = formatShortDate(r.date) + (r.time ? ` ב-${r.time}` : "")
+  return `${what} ל-${when}`
 }
 
 function formatShortDate(dateKey: string): string {
