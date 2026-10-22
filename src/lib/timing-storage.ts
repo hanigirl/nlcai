@@ -132,6 +132,12 @@ export type CorePostFormatMeta = {
    * top of the first.
    */
   captionSourceUrl?: string
+  /**
+   * Carousel only: the slides she brought already have their words designed
+   * in (checked once, on the cover). Such a carousel is never captioned and
+   * shows no caption controls. Undefined = not checked yet.
+   */
+  bakedText?: boolean
 }
 
 /** Per-post optional metadata captured in the Sheet (task #B). */
@@ -607,6 +613,7 @@ export function getFormatMeta(
     captionPosition: slice.captionPosition,
     captionOn: slice.captionOn,
     captionSourceUrl: slice.captionSourceUrl,
+    bakedText: slice.bakedText,
   }
 }
 

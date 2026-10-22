@@ -25,6 +25,12 @@ export async function replaceImageAssetSet(
   postId: string,
   format: string,
   images: string[] | null | undefined,
+  /**
+   * Stamped on every row of the new set. Omitted → the set's existing stamp
+   * is carried over, so a reorder or a caption redraw never forgets what the
+   * set is.
+   */
+  metadata?: Record<string, unknown>,
 ): Promise<{ ok: true; changed: boolean } | { ok: false; error: string }> {
   let { data: variant } = await supabase
     .from("format_variants")
@@ -46,6 +52,20 @@ export async function replaceImageAssetSet(
   if (!variant) return { ok: true, changed: false }
 
   const variantRow = variant as unknown as { id: string }
+
+  let stamp = metadata
+  if (stamp === undefined) {
+    const { data: prev } = await supabase
+      .from("media_assets")
+      .select("metadata")
+      .eq("format_variant_id", variantRow.id)
+      .eq("asset_type", "image")
+      .order("created_at", { ascending: true })
+      .limit(1)
+    stamp =
+      ((prev?.[0] as { metadata?: Record<string, unknown> } | undefined)?.metadata) ??
+      undefined
+  }
 
   // Drop existing image assets — the set is replaced as a whole.
   const { error: wipeErr } = await supabase
@@ -94,6 +114,7 @@ export async function replaceImageAssetSet(
           asset_type: "image",
           url: base64,
           status: "completed",
+          ...(stamp ? { metadata: stamp } : {}),
         } as never)
         continue
       }
@@ -111,6 +132,7 @@ export async function replaceImageAssetSet(
         asset_type: "image",
         url: publicUrl,
         status: "completed",
+        ...(stamp ? { metadata: stamp } : {}),
       } as never)
     }
   }

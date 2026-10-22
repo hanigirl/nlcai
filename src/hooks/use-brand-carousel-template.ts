@@ -30,13 +30,26 @@ export function useBrandCarouselTemplate(): TemplateConfig | null {
       if (!vl || vl.status !== "ok") return
 
       let thumbnailUrl: string | undefined
+      // A carousel she filed herself (Settings → דוגמאות לשימוש) beats the
+      // analysis's guess, which may predate the filing.
+      const { data: filed } = await supabase
+        .from("user_media")
+        .select("storage_path")
+        .eq("user_id", user.id)
+        .eq("category", "brand_example")
+        .eq("metadata->>kind", "carousel")
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle()
       const carouselExampleId = vl.example_kinds?.find((k) => k.kind === "carousel")?.id
-      if (carouselExampleId) {
-        const { data: row } = await supabase
-          .from("user_media")
-          .select("storage_path")
-          .eq("id", carouselExampleId)
-          .maybeSingle()
+      if (filed || carouselExampleId) {
+        const { data: row } = filed
+          ? { data: filed }
+          : await supabase
+              .from("user_media")
+              .select("storage_path")
+              .eq("id", carouselExampleId!)
+              .maybeSingle()
         const path = (row as { storage_path?: string } | null)?.storage_path
         if (path && !path.startsWith("url:")) {
           thumbnailUrl = supabase.storage.from("user-media").getPublicUrl(path).data.publicUrl

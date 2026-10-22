@@ -22,7 +22,7 @@ import {
   uploadIllustration,
   type CarouselBrief,
 } from "@/lib/carousel-composition"
-import type { VisualLanguage } from "@/lib/visual-language/types"
+import { userExampleKind, type VisualLanguage } from "@/lib/visual-language/types"
 import {
   noExtrasRule,
   resolveDesignDirection,
@@ -102,8 +102,9 @@ function buildSlidePrompt(
 }
 
 /**
- * Her usage examples that the analysis recognised as carousel slides (all of
- * them when none were) — the template the layout copies one-to-one.
+ * Her carousel usage examples — the template the layout copies one-to-one.
+ * The ones she filed under "קרוסלה" in Settings; else the ones the analysis
+ * recognised as carousel slides; else all of them.
  */
 async function carouselExamples(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -112,13 +113,15 @@ async function carouselExamples(
 ): Promise<string[]> {
   const { data } = await supabase
     .from("user_media")
-    .select("id, storage_path")
+    .select("id, storage_path, metadata")
     .eq("user_id", userId)
     .eq("category", "brand_example")
     .order("created_at", { ascending: true })
-  const rows = (data ?? []) as { id: string; storage_path: string }[]
+  const rows = (data ?? []) as { id: string; storage_path: string; metadata: Record<string, unknown> | null }[]
+  const filed = rows.filter((r) => userExampleKind(r.metadata) === "carousel")
   const carouselIds = new Set((vl?.example_kinds ?? []).filter((k) => k.kind === "carousel").map((k) => k.id))
-  const picked = carouselIds.size ? rows.filter((r) => carouselIds.has(r.id)) : rows
+  const recognised = rows.filter((r) => carouselIds.has(r.id))
+  const picked = filed.length ? filed : recognised.length ? recognised : rows
   return picked
     .filter((r) => /\.(png|jpe?g|webp|gif)$/i.test(r.storage_path))
     .slice(0, 6)

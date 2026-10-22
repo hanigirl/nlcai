@@ -1,11 +1,13 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { HexColorPicker } from "react-colorful"
-import { AlertTriangle, Check, Link2, Loader2, Plus, Sparkles, Upload, X } from "lucide-react"
+import { AlertTriangle, ChevronDown, Link2, Loader2, Plus, Sparkles, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
@@ -16,16 +18,20 @@ import {
   MAX_BRAND_ELEMENTS,
   MAX_BRAND_EXAMPLES,
   isHexColor,
+  userExampleKind,
   visualLanguageSignature,
+  type UserExampleKind,
   type VisualLanguage,
 } from "@/lib/visual-language/types"
 
 /**
- * Settings → Media → שפה ויזואלית.
+ * Settings → Media → שפה ויזואלית / דוגמאות לשימוש.
  *
- * Three inputs — brand colours, graphic elements (each with a note on what
- * it is / when it's used), and design examples (images or a site link) —
- * then one button that asks Claude to turn them into a visual language.
+ * Two pages over one set of inputs. "visual": brand colours, fonts (rendered
+ * by the settings page), graphic elements (each with a note on what it is /
+ * when it's used) and the analysis. "examples": design examples filed per
+ * format (carousel / cover / story / image, plus a site link) — they feed the
+ * same analysis, which turns everything into a visual language.
  * Every AI media generator (story, image post, AI carousel, b-roll) follows
  * the result. If the inputs don't share one language, she gets a warning
  * explaining what contradicts what, and the generators fall back to a
@@ -51,6 +57,30 @@ interface ExampleItem {
   /** Image URL for uploads; the page URL for links. */
   url: string
   isLink: boolean
+  /** The format she filed it under; null for examples added before filing existed. */
+  filedKind: UserExampleKind | null
+}
+
+/** The tabs under דוגמאות לשימוש. */
+export type ExamplesTab = "carousel" | "cover" | "story" | "image"
+
+const EXAMPLE_TABS: { id: ExamplesTab; label: string; kind: UserExampleKind }[] = [
+  { id: "carousel", label: "קרוסלה", kind: "carousel" },
+  { id: "cover", label: "קאברים", kind: "cover" },
+  { id: "story", label: "סטורי", kind: "story" },
+  { id: "image", label: "תמונה", kind: "feed_post" },
+]
+
+interface VisualLanguagePanelProps {
+  view: "visual" | "examples"
+  /** The fonts block, owned by the settings page (shown as section 2). */
+  fontsSection?: ReactNode
+  /** How many fonts she has, for the closed fonts row. */
+  fontsCount?: number
+  /** The covers block (own uploads + style analysis), shown in the קאברים tab. */
+  coversSection?: ReactNode
+  examplesTab?: ExamplesTab
+  onExamplesTabChange?: (tab: ExamplesTab) => void
 }
 
 type MediaRow = {
@@ -61,12 +91,22 @@ type MediaRow = {
   metadata: Record<string, unknown> | null
 }
 
-export function VisualLanguagePanel() {
+export function VisualLanguagePanel({
+  view,
+  fontsSection,
+  fontsCount = 0,
+  coversSection,
+  examplesTab = "carousel",
+  onExamplesTabChange,
+}: VisualLanguagePanelProps) {
   const supabase = useMemo(() => createClient(), [])
   const [userId, setUserId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   const [colors, setColors] = useState<string[]>([])
+  // One input group open at a time keeps the page short and her attention on
+  // one thing. Colours first: it's the quickest win.
+  const [openSection, setOpenSection] = useState<"colors" | "fonts" | "elements" | null>("colors")
   const [elements, setElements] = useState<ElementItem[]>([])
   const [examples, setExamples] = useState<ExampleItem[]>([])
   const [visualLanguage, setVisualLanguage] = useState<VisualLanguage | null>(null)
@@ -135,6 +175,7 @@ export function VisualLanguagePanel() {
               storagePath: r.storage_path,
               url: link ?? publicUrl(r.storage_path),
               isLink: !!link,
+              filedKind: userExampleKind(r.metadata),
             }
           }),
       )
@@ -157,7 +198,11 @@ export function VisualLanguagePanel() {
   }
 
   // ── Uploads (elements + examples share the same storage path scheme) ──
-  const uploadFile = async (file: File, category: "element" | "brand_example") => {
+  const uploadFile = async (
+    file: File,
+    category: "element" | "brand_example",
+    metadata: Record<string, unknown> = {},
+  ) => {
     if (!userId) return null
     const ext = file.name.split(".").pop() || "png"
     const storagePath = `${userId}/${category}/${crypto.randomUUID()}.${ext}`
@@ -168,7 +213,7 @@ export function VisualLanguagePanel() {
     }
     const { data: row, error } = await supabase
       .from("user_media")
-      .insert({ user_id: userId, category, file_name: file.name, storage_path: storagePath, metadata: {} } as never)
+      .insert({ user_id: userId, category, file_name: file.name, storage_path: storagePath, metadata } as never)
       .select("id")
       .single()
     if (error || !row) {
@@ -194,16 +239,16 @@ export function VisualLanguagePanel() {
     if (elementInputRef.current) elementInputRef.current.value = ""
   }
 
-  const handleExampleFiles = async (files: FileList | null) => {
+  const handleExampleFiles = async (files: FileList | null, kind: UserExampleKind) => {
     if (!files) return
-    const room = MAX_BRAND_EXAMPLES - examples.length
+    const room = roomFor(kind === "feed_post" ? "image" : kind)
     const picked = Array.from(files).filter((f) => f.type.startsWith("image/")).slice(0, room)
-    if (files.length > room) toast.message(`אפשר עד ${MAX_BRAND_EXAMPLES} דוגמאות`)
+    if (files.length > room) toast.message(`אפשר עד ${MAX_BRAND_EXAMPLES} דוגמאות מכל סוג`)
     setUploadingExamples((n) => n + picked.length)
     for (const file of picked) {
-      const res = await uploadFile(file, "brand_example")
+      const res = await uploadFile(file, "brand_example", { kind })
       setUploadingExamples((n) => n - 1)
-      if (res) setExamples((prev) => [...prev, { ...res, name: file.name, isLink: false }])
+      if (res) setExamples((prev) => [...prev, { ...res, name: file.name, isLink: false, filedKind: kind }])
       else toast.error(`ההעלאה של ${file.name} נכשלה`)
     }
     if (exampleInputRef.current) exampleInputRef.current.value = ""
@@ -218,8 +263,8 @@ export function VisualLanguagePanel() {
       toast.error("הקישור לא נראה תקין")
       return
     }
-    if (examples.length >= MAX_BRAND_EXAMPLES) {
-      toast.message(`אפשר עד ${MAX_BRAND_EXAMPLES} דוגמאות`)
+    if (roomFor("image") <= 0) {
+      toast.message(`אפשר עד ${MAX_BRAND_EXAMPLES} דוגמאות מכל סוג`)
       return
     }
     const href = url.toString()
@@ -241,7 +286,7 @@ export function VisualLanguagePanel() {
     }
     setExamples((prev) => [
       ...prev,
-      { id: (row as { id: string }).id, name: url.hostname, storagePath: `url:${href}`, url: href, isLink: true },
+      { id: (row as { id: string }).id, name: url.hostname, storagePath: `url:${href}`, url: href, isLink: true, filedKind: null },
     ])
     setLinkDraft("")
   }
@@ -321,6 +366,16 @@ export function VisualLanguagePanel() {
     const kind = visualLanguage?.example_kinds?.find((k) => k.id === id)?.kind
     return kind ? EXAMPLE_KIND_LABELS[kind] : null
   }
+  // Which tab an example lives in: her filing first, then the analysis's
+  // guess. Anything that isn't a carousel, cover or story — feed posts,
+  // banners, posters, websites, unanalysed — is an image.
+  const tabOf = (ex: ExampleItem): ExamplesTab => {
+    const kind = ex.filedKind ?? visualLanguage?.example_kinds?.find((k) => k.id === ex.id)?.kind
+    if (kind === "carousel" || kind === "cover" || kind === "story") return kind
+    return "image"
+  }
+  // The cap is per format: six carousels don't crowd out her stories.
+  const roomFor = (tab: ExamplesTab) => MAX_BRAND_EXAMPLES - examples.filter((ex) => tabOf(ex) === tab).length
   // Where the analysis pinned an element (pasted at exact pixels).
   const SLIDE_LABELS = { all: "בכל השקופיות", cover: "בשקופית הפתיחה", content: "בשקופיות התוכן", closing: "בשקופית הסיום", not_cover: "בכל השקופיות חוץ מהפתיחה" } as const
   const FORMAT_LABELS = { carousel: "קרוסלה", story: "סטורי", image_post: "פוסט תמונה", b_roll: "בי-רול" } as const
@@ -360,6 +415,142 @@ export function VisualLanguagePanel() {
     )
   }
 
+  if (view === "examples") {
+    const renderExample = (ex: ExampleItem) =>
+      ex.isLink ? (
+        <div
+          key={ex.id}
+          className="flex items-center gap-2 rounded-lg border border-border-neutral-default px-3 h-10 max-w-full"
+        >
+          <Link2 className="size-4 shrink-0 text-text-neutral-default" />
+          <a
+            href={ex.url}
+            target="_blank"
+            rel="noreferrer"
+            dir="ltr"
+            className="text-sm text-text-primary-default truncate hover:underline"
+          >
+            {ex.name}
+          </a>
+          <RemoveButton
+            label={`מחיקת ${ex.name}`}
+            onClick={async () => {
+              if (await removeMedia(ex.id, ex.storagePath)) setExamples((prev) => prev.filter((x) => x.id !== ex.id))
+            }}
+          />
+        </div>
+      ) : (
+        <div key={ex.id} className="relative size-24 rounded-lg overflow-hidden bg-bg-surface group">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={ex.url} alt={ex.name} className="size-full object-cover" />
+          {/* In the image tab, say what the analysis saw (banner, poster…) when she didn't file it. */}
+          {!ex.filedKind && tabOf(ex) === "image" && kindLabel(ex.id) && (
+            <span className="absolute bottom-1 start-1 rounded-md bg-black/60 px-1.5 py-0.5 text-xs text-white">
+              {kindLabel(ex.id)}
+            </span>
+          )}
+          <button
+            type="button"
+            aria-label={`מחיקת ${ex.name}`}
+            onClick={async () => {
+              if (await removeMedia(ex.id, ex.storagePath)) setExamples((prev) => prev.filter((x) => x.id !== ex.id))
+            }}
+            className="absolute top-1 end-1 size-6 rounded-full bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity cursor-pointer"
+          >
+            <X className="size-3.5 text-white" />
+          </button>
+        </div>
+      )
+
+    return (
+      <div className="flex flex-col gap-6">
+        <div>
+          <h3 className="text-p-bold text-text-primary-default">דוגמאות לשימוש</h3>
+          <p className="text-small text-text-neutral-default mt-1">
+            עיצובים שמראים את המותג בפעולה, לפי סוג. הם נכנסים לניתוח השפה הוויזואלית, וכל סוג מלמד איך נראה אצלכם הפורמט הזה.
+          </p>
+        </div>
+
+        <input
+          ref={exampleInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const kind = EXAMPLE_TABS.find((t) => t.id === examplesTab)?.kind ?? "feed_post"
+            handleExampleFiles(e.target.files, kind)
+          }}
+        />
+
+        <Tabs value={examplesTab} onValueChange={(v) => onExamplesTabChange?.(v as ExamplesTab)} dir="rtl">
+          <TabsList className="w-full" aria-label="סוג הדוגמה">
+            {EXAMPLE_TABS.map((t) => (
+              <TabsTrigger key={t.id} value={t.id}>
+                {t.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+
+          {EXAMPLE_TABS.map((t) => {
+            const items = examples.filter((ex) => tabOf(ex) === t.id)
+            const room = MAX_BRAND_EXAMPLES - items.length
+            return (
+              <TabsContent key={t.id} value={t.id} className="flex flex-col gap-4 pt-3">
+                {t.id === "cover" ? (
+                  coversSection
+                ) : room > 0 ? (
+                  <>
+                    <DropZone
+                      label="PNG, JPG"
+                      onClick={() => exampleInputRef.current?.click()}
+                      onFiles={(files) => handleExampleFiles(files, t.kind)}
+                    />
+                    {t.id === "image" && (
+                      <form
+                        className="flex gap-2"
+                        onSubmit={(e) => {
+                          e.preventDefault()
+                          if (linkDraft.trim()) addLink()
+                        }}
+                      >
+                        <Input
+                          dir="ltr"
+                          value={linkDraft}
+                          onChange={(e) => setLinkDraft(e.target.value)}
+                          placeholder="https://..."
+                          aria-label="קישור לאתר או לדף מכירה"
+                          className="text-sm"
+                        />
+                        <Button type="submit" size="sm" variant="outline" disabled={!linkDraft.trim()} className="gap-1.5 shrink-0">
+                          <Link2 className="size-4" />
+                          הוספת קישור
+                        </Button>
+                      </form>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-text-neutral-default">הגעתם למקסימום {MAX_BRAND_EXAMPLES} דוגמאות בסוג הזה. מחקו אחת כדי להוסיף.</p>
+                )}
+                {t.id !== "cover" && uploadingExamples > 0 && <UploadingNote count={uploadingExamples} />}
+
+                {items.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    {/* Covers that came in as general examples, listed under their own label. */}
+                    {t.id === "cover" && (
+                      <span className="text-xs text-text-neutral-default">קאברים מתוך הדוגמאות לשימוש</span>
+                    )}
+                    <div className="flex flex-wrap gap-3">{items.map(renderExample)}</div>
+                  </div>
+                )}
+              </TabsContent>
+            )
+          })}
+        </Tabs>
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-8">
       <div>
@@ -370,11 +561,24 @@ export function VisualLanguagePanel() {
       </div>
 
       {/* ── 1. Brand colours ── */}
-      <section className="flex flex-col gap-3" aria-labelledby="vl-colors">
-        <div>
-          <h4 id="vl-colors" className="text-small-bold text-text-primary-default">1. צבעי מותג</h4>
-          <p className="text-small text-text-neutral-default mt-0.5">עד {MAX_BRAND_COLORS} צבעים, לפי סדר החשיבות.</p>
-        </div>
+      <div className="flex flex-col gap-3">
+      <AccordionSection
+        title="צבעי מותג"
+        open={openSection === "colors"}
+        onOpenChange={(o) => setOpenSection(o ? "colors" : null)}
+        summary={
+          colors.length > 0 ? (
+            <span className="flex items-center gap-1">
+              {colors.map((c, i) => (
+                <span key={`${i}-${c}`} className="size-4 rounded-full border border-border-neutral-default" style={{ backgroundColor: c }} />
+              ))}
+            </span>
+          ) : (
+            "עוד לא נבחרו צבעים"
+          )
+        }
+      >
+        <p className="text-small text-text-neutral-default">עד {MAX_BRAND_COLORS} צבעים, לפי סדר החשיבות.</p>
         <div className="flex flex-wrap items-center gap-3">
           {colors.map((color, i) => (
             <BrandColorField
@@ -398,16 +602,30 @@ export function VisualLanguagePanel() {
             </Button>
           )}
         </div>
-      </section>
+      </AccordionSection>
 
-      {/* ── 2. Graphic elements ── */}
-      <section className="flex flex-col gap-3" aria-labelledby="vl-elements">
-        <div>
-          <h4 id="vl-elements" className="text-small-bold text-text-primary-default">2. אלמנטים גרפיים</h4>
-          <p className="text-small text-text-neutral-default mt-0.5">
-            לוגו, אייקונים, צורות או מדבקות שחוזרים אצלכם. לכל אלמנט כתבו מה הוא ומתי אתם משתמשים בו.
-          </p>
-        </div>
+      {/* ── 2. Fonts (owned by the settings page) ── */}
+      {fontsSection && (
+        <AccordionSection
+          title="פונטים"
+          open={openSection === "fonts"}
+          onOpenChange={(o) => setOpenSection(o ? "fonts" : null)}
+          summary={fontsCount > 0 ? `${fontsCount} ${fontsCount === 1 ? "פונט" : "פונטים"}` : "עוד לא נוספו פונטים"}
+        >
+          {fontsSection}
+        </AccordionSection>
+      )}
+
+      {/* ── 3. Graphic elements ── */}
+      <AccordionSection
+        title="אלמנטים גרפיים"
+        open={openSection === "elements"}
+        onOpenChange={(o) => setOpenSection(o ? "elements" : null)}
+        summary={elements.length > 0 ? `${elements.length} ${elements.length === 1 ? "אלמנט" : "אלמנטים"}` : "עוד לא הועלו אלמנטים"}
+      >
+        <p className="text-small text-text-neutral-default">
+          לוגו, אייקונים, צורות או מדבקות שחוזרים אצלכם. לכל אלמנט כתבו מה הוא ומתי אתם משתמשים בו.
+        </p>
 
         <input
           ref={elementInputRef}
@@ -472,121 +690,14 @@ export function VisualLanguagePanel() {
             />
           </div>
         ))}
-      </section>
+      </AccordionSection>
+      </div>
 
-      {/* ── 3. Examples ── */}
-      <section className="flex flex-col gap-3" aria-labelledby="vl-examples">
-        <div>
-          <h4 id="vl-examples" className="text-small-bold text-text-primary-default">3. דוגמאות לשימוש</h4>
-          <p className="text-small text-text-neutral-default mt-0.5">
-            עיצובים שמראים את הצבעים והאלמנטים בפעולה: פוסטר, באנר, פוסט, או קישור לאתר או לדף המכירה שלכם.
-          </p>
-        </div>
-
-        <input
-          ref={exampleInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp"
-          multiple
-          className="hidden"
-          onChange={(e) => handleExampleFiles(e.target.files)}
-        />
-        {examples.length < MAX_BRAND_EXAMPLES && (
-          <>
-            <DropZone
-              label="PNG, JPG"
-              onClick={() => exampleInputRef.current?.click()}
-              onFiles={handleExampleFiles}
-            />
-            <form
-              className="flex gap-2"
-              onSubmit={(e) => {
-                e.preventDefault()
-                if (linkDraft.trim()) addLink()
-              }}
-            >
-              <Input
-                dir="ltr"
-                value={linkDraft}
-                onChange={(e) => setLinkDraft(e.target.value)}
-                placeholder="https://..."
-                aria-label="קישור לאתר או לדף מכירה"
-                className="text-sm"
-              />
-              <Button type="submit" size="sm" variant="outline" disabled={!linkDraft.trim()} className="gap-1.5 shrink-0">
-                <Link2 className="size-4" />
-                הוספת קישור
-              </Button>
-            </form>
-          </>
-        )}
-        {uploadingExamples > 0 && <UploadingNote count={uploadingExamples} />}
-
-        {examples.length > 0 && (
-          <div className="flex flex-wrap gap-3">
-            {examples.map((ex) =>
-              ex.isLink ? (
-                <div
-                  key={ex.id}
-                  className="flex items-center gap-2 rounded-lg border border-border-neutral-default px-3 h-10 max-w-full"
-                >
-                  <Link2 className="size-4 shrink-0 text-text-neutral-default" />
-                  <a
-                    href={ex.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    dir="ltr"
-                    className="text-sm text-text-primary-default truncate hover:underline"
-                  >
-                    {ex.name}
-                  </a>
-                  {kindLabel(ex.id) && (
-                    <span className="shrink-0 rounded-md bg-bg-surface px-1.5 py-0.5 text-xs text-text-neutral-default">
-                      {kindLabel(ex.id)}
-                    </span>
-                  )}
-                  <RemoveButton
-                    label={`מחיקת ${ex.name}`}
-                    onClick={async () => {
-                      if (await removeMedia(ex.id, ex.storagePath)) setExamples((prev) => prev.filter((x) => x.id !== ex.id))
-                    }}
-                  />
-                </div>
-              ) : (
-                <div key={ex.id} className="relative size-24 rounded-lg overflow-hidden bg-bg-surface group">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={ex.url} alt={ex.name} className="size-full object-cover" />
-                  {kindLabel(ex.id) && (
-                    <span className="absolute bottom-1 start-1 rounded-md bg-black/60 px-1.5 py-0.5 text-xs text-white">
-                      {kindLabel(ex.id)}
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    aria-label={`מחיקת ${ex.name}`}
-                    onClick={async () => {
-                      if (await removeMedia(ex.id, ex.storagePath)) setExamples((prev) => prev.filter((x) => x.id !== ex.id))
-                    }}
-                    className="absolute top-1 end-1 size-6 rounded-full bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity cursor-pointer"
-                  >
-                    <X className="size-3.5 text-white" />
-                  </button>
-                </div>
-              ),
-            )}
-          </div>
-        )}
-      </section>
-
-      {/* ── 4. Analysis ── */}
+      {/* ── Analysis (reads the examples too) ── */}
       <section className="flex flex-col gap-3" aria-label="ניתוח השפה הוויזואלית">
 
         {visualLanguage?.status === "ok" && (
           <div className="flex flex-col gap-3 rounded-xl bg-bg-surface p-4">
-            <div className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400">
-              <Check className="size-4" />
-              נמצאה שפה ויזואלית אחידה. התמונות החדשות ייוצרו לפיה.
-            </div>
             <p className="text-sm text-text-primary-default leading-relaxed">{visualLanguage.summary_he}</p>
             {visualLanguage.palette.length > 0 && (
               <div className="flex flex-wrap gap-2">
@@ -633,17 +744,16 @@ export function VisualLanguagePanel() {
         )}
 
         <Button
-          size="sm"
           onClick={analyze}
           disabled={!hasInputs || analyzing || busy}
-          className="w-fit gap-2"
+          className="w-full gap-2"
         >
           {analyzing ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
           {analyzing
             ? "מנתח את השפה הוויזואלית..."
             : visualLanguage
-              ? "ניתוח מחדש"
-              : "ניתוח השפה הוויזואלית"}
+              ? "ניתוח מחדש של שפה ויזואלית"
+              : "ניתוח שפה ויזואלית"}
         </Button>
         {analyzing && (
           <p className="text-xs text-text-neutral-default" aria-live="polite">
@@ -841,5 +951,39 @@ function RemoveButton({ label, onClick }: { label: string; onClick: () => void }
     >
       <X className="size-4" />
     </button>
+  )
+}
+
+/** One row of the visual-language inputs: a header that shows what's already
+ *  there while closed, and opens to the full editor. */
+function AccordionSection({
+  title,
+  summary,
+  open,
+  onOpenChange,
+  children,
+}: {
+  title: string
+  summary: ReactNode
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  children: ReactNode
+}) {
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={onOpenChange}
+      className="rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10"
+    >
+      <CollapsibleTrigger className="flex w-full items-center gap-3 rounded-2xl px-4 py-3.5 text-start transition-colors hover:bg-bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50">
+        <span className="text-small-bold text-text-primary-default">{title}</span>
+        <span className="ms-auto flex min-w-0 items-center truncate text-xs-body text-text-neutral-default">{summary}</span>
+        <ChevronDown
+          className={`size-4 shrink-0 text-text-neutral-default transition-transform ${open ? "rotate-180" : ""}`}
+          aria-hidden
+        />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="flex flex-col gap-3 px-4 pb-4">{children}</CollapsibleContent>
+    </Collapsible>
   )
 }

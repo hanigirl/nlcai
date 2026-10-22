@@ -9,6 +9,7 @@
 
 export const MAX_BRAND_COLORS = 3
 export const MAX_BRAND_ELEMENTS = 8
+/** Per format (carousel / cover / story / image), not in total. */
 export const MAX_BRAND_EXAMPLES = 6
 
 /**
@@ -45,6 +46,16 @@ export const EXAMPLE_KIND_LABELS: Record<ExampleKind, string> = {
   banner: "באנר",
   poster: "פוסטר",
   other: "אחר",
+}
+
+/** The kinds she can file an example under herself (Settings → דוגמאות לשימוש). */
+export const USER_EXAMPLE_KINDS = ["carousel", "cover", "story", "feed_post"] as const
+export type UserExampleKind = (typeof USER_EXAMPLE_KINDS)[number]
+
+/** The kind she filed an example under, read from user_media.metadata.kind. */
+export function userExampleKind(metadata: Record<string, unknown> | null | undefined): UserExampleKind | null {
+  const k = metadata?.kind
+  return typeof k === "string" && (USER_EXAMPLE_KINDS as readonly string[]).includes(k) ? (k as UserExampleKind) : null
 }
 
 export type ElementAnchor =

@@ -13,6 +13,8 @@ import {
   type CaptionPosition,
 } from "@/lib/caption-overlay"
 import { getAuthUser } from "@/lib/auth-user"
+import { getUserApiKey } from "@/lib/api-keys"
+import { imageHasBakedText } from "@/lib/baked-text"
 
 // One satori render + one Resvg rasterize. No model call, no ffmpeg — this
 // is seconds, not minutes, but a 50MB source still has to be pulled first.
@@ -102,6 +104,11 @@ export async function POST(req: NextRequest) {
        */
       imageBase64?: string
       slideIndex?: number
+      /**
+       * She asked for the caption herself (the switch / position on the
+       * card), so the "already has text" check below is skipped.
+       */
+      force?: boolean
     }
 
     const format: CaptionFormat =
@@ -263,6 +270,23 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(src, { status: 400 })
       }
       sourceBase64 = src.base64
+
+      // A picture whose words are already designed in is left as it came
+      // (Hani, 2026-10-22): a second caption over a finished design ruins
+      // it. Only on arrival — once she flips the switch herself, she gets
+      // what she asked for. The carousel decides once per set, from its
+      // cover, before it calls here.
+      if (!body.force) {
+        let anthropicKey: string | null = null
+        try {
+          anthropicKey = await getUserApiKey(supabase, "anthropic_api_key")
+        } catch {
+          // No key: caption as before rather than guess.
+        }
+        if (anthropicKey && (await imageHasBakedText(anthropicKey, sourceBase64))) {
+          return NextResponse.json({ skipped: "has_text", originalUrl: sourceUrl })
+        }
+      }
     }
 
     const png = await renderCaptionOverImagePng(

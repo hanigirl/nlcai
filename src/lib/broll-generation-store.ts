@@ -355,6 +355,16 @@ export function startImageCaption(
         originalUrl?: string
         error?: string
         message?: string
+        skipped?: string
+      }
+      // The picture already carries its words — it stays as she brought it,
+      // and with no captioned render nothing arms the caption controls.
+      if (res.ok && data.skipped === "has_text") {
+        toast.info("בתמונה כבר יש טקסט, אז השארנו אותה כמו שהיא", {
+          id: toastId,
+          duration: 5000,
+        })
+        return
       }
       if (!res.ok || !data.url) {
         const msg = data.message ?? data.error ?? "הטמעת הכיתוב בתמונה נכשלה"
