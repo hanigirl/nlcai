@@ -68,7 +68,9 @@ export function ScheduleInCalendarBar({ corePostId, hasUploadedMedia = false }: 
 
   const readScheduled = (id: string): ScheduledRow[] =>
     [...getScheduledByPostId(id)]
-      .filter((r) => !r.publishedAt)
+      // Only what's still ahead: a slot whose time has passed tells her
+      // nothing about this post now (Hani, 2026-10-22).
+      .filter((r) => !r.publishedAt && isUpcoming(r.scheduledDate, r.scheduledTime))
       .sort((a, b) =>
         `${a.scheduledDate} ${a.scheduledTime ?? ""}`.localeCompare(
           `${b.scheduledDate} ${b.scheduledTime ?? ""}`,
@@ -182,6 +184,14 @@ export function ScheduleInCalendarBar({ corePostId, hasUploadedMedia = false }: 
       )}
     </div>
   )
+}
+
+/** True while the slot's date + time (09:00 when unset) is still in the future. */
+function isUpcoming(date: string, time: string | null | undefined): boolean {
+  const [y, m, d] = date.split("-").map((n) => parseInt(n, 10))
+  const [hh, mm] = (time ?? "09:00").split(":").map((n) => parseInt(n, 10))
+  if ([y, m, d].some(Number.isNaN)) return false
+  return new Date(y, m - 1, d, hh || 0, mm || 0).getTime() > Date.now()
 }
 
 type ScheduledRow = { format: string; date: string; time: string | null }
