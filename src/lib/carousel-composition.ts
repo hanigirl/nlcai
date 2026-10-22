@@ -1,3 +1,4 @@
+import { createHash } from "crypto"
 import Anthropic from "@anthropic-ai/sdk"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { SlideData } from "@/lib/carousel-templates"
@@ -55,6 +56,36 @@ export interface StoredCarousel {
   /** Public URL of each slide's illustration, by slide index. */
   illustrations: string[]
   edits: string[]
+  /**
+   * Fingerprint of each slide this composition produced, in order. The post
+   * stores the PNG bytes as-is, so "עריכה עם AI" edits the layout only while
+   * the post still holds exactly these slides — once any slide was replaced,
+   * uploaded, removed or reordered, the layout is no longer the carousel and
+   * the edit works on the real images instead (never overwriting hers).
+   */
+  slideHashes?: string[]
+}
+
+export function slideHash(png: Buffer): string {
+  return createHash("sha256").update(png).digest("hex")
+}
+
+/** True when the post's slides (public URLs, in order) are exactly the ones this composition made. */
+export async function carouselStillMatches(stored: StoredCarousel, urls: string[]): Promise<boolean> {
+  const expected = stored.slideHashes
+  if (!expected?.length || expected.length !== urls.length) return false
+  try {
+    const actual = await Promise.all(
+      urls.map(async (url) => {
+        const res = await fetch(url)
+        if (!res.ok) throw new Error(`slide fetch ${res.status}`)
+        return slideHash(Buffer.from(await res.arrayBuffer()))
+      }),
+    )
+    return actual.every((h, i) => h === expected[i])
+  } catch {
+    return false
+  }
 }
 
 const SYSTEM = `You are a senior editorial designer building Instagram carousels for Hebrew-speaking creators, in HTML/CSS.

@@ -11,11 +11,13 @@ import { learnFromInstruction } from "@/lib/style-memory"
 import { applyFixedElements } from "@/lib/visual-language/fixed-elements"
 import { resolveDesignDirection } from "@/lib/visual-language/direction"
 import {
+  carouselStillMatches,
   illustrationPrompt,
   loadCarousel,
   renderCarousel,
   reviseCarousel,
   saveCarousel,
+  slideHash,
   uploadIllustration,
 } from "@/lib/carousel-composition"
 import { generateImage } from "@/lib/openai-image"
@@ -188,9 +190,11 @@ export async function POST(req: NextRequest) {
     const learning = learnFromInstruction(supabase, user.id, anthropicKey, text, NOUN[format])
 
     // A carousel laid out in code is edited in its layout — exact and
-    // obedient — and only the illustrations she asks about are redrawn.
+    // obedient — and only the illustrations she asks about are redrawn. Only
+    // while the post still holds exactly the slides that layout made; if she
+    // changed any of them, the real images are edited instead.
     const stored = format === "carousel" ? await loadCarousel(supabase, user.id, postId) : null
-    if (stored && stored.brief.slides.length === urls.length) {
+    if (stored && (await carouselStillMatches(stored, urls))) {
       const revised = await reviseCarousel(anthropicKey, stored, text)
       const illustrations = [...stored.illustrations]
       const redraw = revised.illustrations
@@ -223,6 +227,7 @@ export async function POST(req: NextRequest) {
         brief: stored.brief,
         illustrations,
         edits: [...stored.edits, text],
+        slideHashes: nextSet.map((b64) => slideHash(Buffer.from(b64, "base64"))),
       })
       const { data: after } = await supabase
         .from("media_assets")

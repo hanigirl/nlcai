@@ -18,6 +18,7 @@ import {
   illustrationPrompt,
   renderCarousel,
   saveCarousel,
+  slideHash,
   uploadIllustration,
   type CarouselBrief,
 } from "@/lib/carousel-composition"
@@ -277,6 +278,7 @@ export async function POST(req: NextRequest) {
           brief,
           illustrations,
           edits: [],
+          slideHashes: images.map((b64) => slideHash(Buffer.from(b64, "base64"))),
         }).catch((err) => console.error("[carousel/generate-ai] save composition", err))
       }
       return NextResponse.json({ images })
