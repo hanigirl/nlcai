@@ -254,9 +254,13 @@ function SettingsPageInner() {
   const drivePickParam = searchParams.get("drivepick")
   const drivePick: DrivePickVariant | null =
     drivePickParam === "a" || drivePickParam === "b" ? drivePickParam : null
-  const mediaSections = drivePick
-    ? [...SUB_SECTIONS.media, { id: "drive", label: "מדיה מ-Google Drive", icon: FolderOpen }]
-    : SUB_SECTIONS.media
+  // Always listed on this review branch: Hani reaches Settings from the
+  // sidebar, which drops the ?drivepick param (2026-10-22). The pick PR keeps
+  // it as the real section.
+  const mediaSections = [
+    ...SUB_SECTIONS.media,
+    { id: "drive", label: "מדיה מ-Google Drive", icon: FolderOpen },
+  ]
   // Optional sub-section deep link via `?sub=...`. The home-page profile-
   // health banner uses this to land the user directly on, say, the
   // "קבצים להעלאה" panel inside the business tab instead of forcing them
@@ -1657,7 +1661,7 @@ function SettingsPageInner() {
                     />
                   )}
 
-                  {activeMediaSection === "drive" && drivePick && <DriveFoldersSettings />}
+                  {activeMediaSection === "drive" && <DriveFoldersSettings />}
 
                   {/* ── Examples per format; covers keep their own upload + style analysis ── */}
                   {activeMediaSection === "examples" && (
