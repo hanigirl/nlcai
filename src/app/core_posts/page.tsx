@@ -29,6 +29,7 @@ import { toast } from "sonner"
 import { formatPostDate, getDayKey } from "@/lib/format-date"
 import { CorePostSheet, type CorePostSheetData } from "@/components/core-post-sheet"
 import { FormatStatusChipLink } from "@/components/format-status-chip"
+import { useSchedulingAccess } from "@/lib/use-scheduling-access"
 import {
   TIMING_KEYS,
   getCorePostMeta,
@@ -142,10 +143,12 @@ export default function CorePostsPage() {
   const [loading, setLoading] = useState(true)
   const [formatFilter, setFormatFilter] = useState("")
   const [searchQuery, setSearchQuery] = useState("")
+  // The status filter is part of the scheduling release (lib/scheduling-access).
+  const schedulingOn = useSchedulingAccess() === true
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
   useEffect(() => {
-    setStatusFilter(readStatusParam())
-  }, [])
+    if (schedulingOn) setStatusFilter(readStatusParam())
+  }, [schedulingOn])
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
 
   // Sheet state — clicking a card opens it instead of navigating away.
@@ -361,6 +364,7 @@ export default function CorePostsPage() {
             <div className="flex-1" />
 
             {/* Status */}
+            {schedulingOn && (
             <div className="w-[160px]">
               <Select
                 selectSize="small"
@@ -377,6 +381,7 @@ export default function CorePostsPage() {
                 ))}
               </Select>
             </div>
+            )}
 
             {/* Search */}
             <div className="relative w-[200px]">

@@ -7,12 +7,10 @@ import {
   ChevronLeft,
   MoreVertical,
   PanelLeftOpen,
-  CalendarClock,
 } from "lucide-react"
 import Link from "next/link"
 import {
-  ReviewStateToggle,
-  useReviewSchedule,
+  usePostingSchedule,
 } from "@/components/posting-schedule-parts"
 import {
   GhostSlot,
@@ -43,27 +41,15 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { toast } from "sonner"
 import { QueuePanel, type QueueApprovalMode } from "@/components/queue-panel"
-import {
-  ApprovalReviewBar,
-  buildReviewSeed,
-  readApprovalParam,
-  seedHookFor,
-  seedMediaFor,
-  type ApprovalVariant,
-  type ReviewState,
-} from "./approval-review-harness"
-import {
-  PreviewReviewBar,
-  buildPreviewData,
-  buildPreviewScheduled,
-  previewThumbFor,
-  readPreviewParam,
-  type ContentPick,
-  type PreviewVariant,
-  type StatusPick,
-} from "./format-preview-harness"
 import { FormatPreviewDialog } from "@/components/format-preview/format-preview-dialog"
-import { FormatPreviewInspector } from "@/components/format-preview/format-preview-inspector"
+import {
+  canvasHref,
+  type FormatPreviewData,
+  type PreviewContentState,
+  type PreviewSlide,
+  type PublishStatus as PreviewPublishStatus,
+} from "@/components/format-preview/shared"
+import { useSchedulingAccess } from "@/lib/use-scheduling-access"
 import { CorePostSheet, type CorePostSheetData } from "@/components/core-post-sheet"
 import { FormatThumbnail } from "@/components/format-thumbnail"
 import { InstagramConnectionControl } from "@/components/instagram-connect"
@@ -77,8 +63,11 @@ import {
 import {
   DEFAULT_SCHEDULED_TIME,
   TIMING_KEYS,
+  getFormatMeta,
   getPublishedMap,
   getScheduledPosts,
+  markPublished,
+  retryPublish,
   refreshPublishStatus,
   schedulePost,
   toDateKey,
@@ -205,6 +194,7 @@ function FormatCard({
   onCardClick,
   onUnschedule,
   onReschedule,
+  showPublish,
   connection,
   onConnectInstagram,
   onFixMedia,
@@ -225,6 +215,8 @@ function FormatCard({
   onUnschedule: () => void
   /** Kebab → "תזמון לתאריך". Re-schedules THIS format to the picked date + time. */
   onReschedule: (newDate: string, newTime: string) => void
+  /** Scheduling release: show where this slot stands with Instagram. */
+  showPublish: boolean
   /** Shared Instagram connection state — drives the publish-status line. */
   connection: InstagramConnection
   /** Opens the shared Instagram connection modal (the card's "reconnect"). */
@@ -356,13 +348,13 @@ function FormatCard({
         </div>
         {/* Where this slot stands with Instagram — "תוזמן" only when the
             provider holds it, otherwise what's wrong and one way to fix it. */}
-        <PublishStatusLine
+        {showPublish && <PublishStatusLine
           post={post}
           connection={connection}
           onConnect={onConnectInstagram}
           onPickTime={() => setDateDialogOpen(true)}
           onFixMedia={onFixMedia}
-        />
+        />}
       </div>
 
       {/* Re-schedule date picker. Portalled by Radix, so it sits outside the
@@ -445,16 +437,13 @@ export default function CalendarPage() {
   // slide-out and the grid's widening.
   const [panelCollapsed, setPanelCollapsed] = useState(false)
 
-  // --- Posting-schedule review gate (`?rules=a|b`) -----------------------
-  // a → the weekly routine lives on this board (ghost slots + in-place edit)
-  // b → it lives in Settings; this page only links there.
-  // No param → page is unchanged. Review state is in-memory only.
-  const [rulesVariant, setRulesVariant] = useState<"a" | "b" | null>(null)
-  useEffect(() => {
-    const v = new URLSearchParams(window.location.search).get("rules")
-    if (v === "a" || v === "b") setRulesVariant(v)
-  }, [])
-  const routine = useReviewSchedule()
+  // --- Scheduling release (lib/scheduling-access) ------------------------
+  // Live for the listed accounts only; for everyone else this page is the
+  // board it was before. Includes the weekly routine on the board (ghost
+  // slots + in-place edit), the approved-only rail and the format preview.
+  const schedulingOn = useSchedulingAccess() === true
+  const rulesVariant: "a" | null = schedulingOn ? "a" : null
+  const routine = usePostingSchedule()
   const [routineEditing, setRoutineEditing] = useState(false)
   const panelBeforeEditRef = useRef(false)
   const startRoutineEdit = () => {
@@ -476,8 +465,8 @@ export default function CalendarPage() {
   // What happened in the queue since the last visit — outcomes of slots
   // whose time passed, edits after queuing, a lapsed connection.
   useEffect(() => {
-    void refreshPublishStatus()
-  }, [])
+    if (schedulingOn) void refreshPublishStatus()
+  }, [schedulingOn])
 
   /**
    * The provider refuses anything under ~6 minutes ahead. When posts really
@@ -486,7 +475,7 @@ export default function CalendarPage() {
    * board-only user (no connection) plans freely, as before.
    */
   const blockedAsTooSoon = (dateKey: string, time: string): boolean => {
-    if (connection.status !== "connected") return false
+    if (!schedulingOn || connection.status !== "connected") return false
     if (!isSlotTooSoon(dateKey, time)) return false
     toast.error(`השעה ${time} כבר עברה או קרובה מדי, ולכן הפוסט לא יוכל לצאת בזמן. בחרו יום אחר.`)
     return true
@@ -621,139 +610,17 @@ export default function CalendarPage() {
   const days = useMemo(() => buildWeekGrid(weekStart), [weekStart])
   const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart])
 
-  // --- Approval review harness (`?approved=a|b`) — DELETE BEFORE SHIPPING ---
-  // With no param, `approvalVariant` stays null and nothing below changes the
-  // page. With it, the rail renders from seeded posts and every grid action
-  // (drop, move, return to queue) stays in this component's state: no
-  // schedulePost, no server mirror, no DB write, no credits.
-  const [approvalVariant, setApprovalVariant] =
-    useState<ApprovalVariant | null>(null)
-  const [reviewState, setReviewState] = useState<ReviewState>("mixed")
-  const [reviewApproved, setReviewApproved] = useState<Set<string>>(new Set())
-  const [reviewScheduled, setReviewScheduled] = useState<ScheduledPost[]>([])
-  const [reviewSeed, setReviewSeed] = useState<
-    NonNullable<QueueApprovalMode["seed"]> | undefined
-  >(undefined)
-  // --- Format preview harness (`?preview=a|b`) — DELETE BEFORE SHIPPING ---
-  // Rides on the approval harness's sample rail and local-only board, then
-  // seeds four scheduled formats and opens the preview on card click.
-  const [previewVariant, setPreviewVariant] = useState<PreviewVariant | null>(null)
-  const [previewKey, setPreviewKey] = useState<string | null>(null)
-  const [previewStatus, setPreviewStatus] = useState<StatusPick>("mixed")
-  const [previewContent, setPreviewContent] = useState<ContentPick>("ready")
-  const [previewCaptions, setPreviewCaptions] = useState<Map<string, string>>(new Map())
-  useEffect(() => {
-    const pv = readPreviewParam()
-    setPreviewVariant(pv)
-    setApprovalVariant(readApprovalParam() ?? (pv ? "a" : null))
-  }, [])
-  const applyReviewState = useCallback(
-    (state: ReviewState) => {
-      const seed = buildReviewSeed(
-        state,
-        buildWeekGrid(startOfWeek(today))
-          .filter((d) => !isPastDate(d, today))
-          .map(toDateKey),
-      )
-      setReviewState(state)
-      setReviewApproved(seed.approved)
-      setReviewScheduled(seed.scheduled)
-      setReviewSeed({
-        posts: seed.posts,
-        loading: seed.loading,
-        error: seed.error,
-        excludeCardIds: new Set(
-          seed.scheduled.map((p) => `${p.corePostId}:${p.format}`),
-        ),
-      })
-    },
-    [today],
-  )
-  useEffect(() => {
-    if (approvalVariant) applyReviewState("mixed")
-    // Declared after the approval seed on purpose: it runs second and puts
-    // the preview's sample formats on the board.
-    if (approvalVariant && previewVariant) {
-      const rows = buildPreviewScheduled(
-        buildWeekGrid(startOfWeek(today))
-          .filter((d) => !isPastDate(d, today))
-          .map(toDateKey),
-      )
-      // One slot that has already passed — yesterday 18:00 — to show the
-      // disabled state. Only when yesterday is still in this week.
-      const yesterday = addDays(today, -1)
-      if (isSameDay(startOfWeek(yesterday), startOfWeek(today))) {
-        rows.push({
-          corePostId: "seed-1",
-          format: "carousel",
-          scheduledDate: toDateKey(yesterday),
-          scheduledTime: "18:00",
-          publishedAt: null,
-          hook: seedHookFor("seed-1"),
-        })
-      }
-      setReviewScheduled(rows)
-      // On the board = already approved. Without this, removing one sent it
-      // to "ממתינים לאישור" instead of back to "מוכנים לתזמון".
-      setReviewApproved((prev) => {
-        const next = new Set(prev)
-        for (const r of rows) next.add(`${r.corePostId}:${r.format}`)
-        return next
-      })
-    }
-  }, [approvalVariant, previewVariant, applyReviewState, today])
-  // Keep the rail's exclusion set in step with what was dropped on the grid.
-  useEffect(() => {
-    setReviewSeed((prev) =>
-      prev
-        ? {
-            ...prev,
-            excludeCardIds: new Set(
-              reviewScheduled.map((p) => `${p.corePostId}:${p.format}`),
-            ),
-          }
-        : prev,
-    )
-  }, [reviewScheduled])
-  const reviewMode = approvalVariant !== null
-  const upsertReviewRow = (
-    corePostId: string,
-    format: FormatId,
-    date: string,
-    hook?: string,
-    time: string = DEFAULT_SCHEDULED_TIME,
-  ) => {
-    setReviewScheduled((rows) => [
-      ...rows.filter(
-        (p) => !(p.corePostId === corePostId && p.format === format),
-      ),
-      {
-        corePostId,
-        format,
-        scheduledDate: date,
-        scheduledTime: time,
-        publishedAt: null,
-        hook,
-      },
-    ])
-  }
+  // The approved-only rail: a ready format is draggable once it's approved
+  // on the canvas; the rest wait behind "ממתינים לאישור".
   const approvalMode = useMemo<QueueApprovalMode | undefined>(() => {
-    if (!approvalVariant) return undefined
+    if (!schedulingOn) return undefined
     return {
-      variant: approvalVariant,
+      variant: "a",
       isApproved: (corePostId, format) =>
-        reviewApproved.has(`${corePostId}:${format}`),
-      onApprove: (corePostId, format) => {
-        setReviewApproved((prev) => new Set(prev).add(`${corePostId}:${format}`))
-        toast.success("הפורמט אושר ועבר ל״מוכנים לתזמון״")
-      },
-      // Where approval lives is decided by the sibling task ("שלב אישור מדיה
-      // לפני תזמון"). Until then: the core-posts library.
+        !!getFormatMeta(corePostId, format).approvedAt,
       pendingHref: "/core_posts?status=pending",
-      seed: reviewSeed,
     }
-  }, [approvalVariant, reviewApproved, reviewSeed])
-  // --- /review harness ---
+  }, [schedulingOn])
   const isCurrentWeek = isSameDay(weekStart, startOfWeek(today))
 
   // Group scheduled posts by day (YYYY-MM-DD) so each day-cell lookup is
@@ -761,7 +628,7 @@ export default function CalendarPage() {
   // time is still tracked even though the board no longer shows an hour grid.
   const postsByDay = useMemo(() => {
     const map = new Map<string, ScheduledPost[]>()
-    for (const post of reviewMode ? reviewScheduled : scheduled) {
+    for (const post of scheduled) {
       const list = map.get(post.scheduledDate) ?? []
       list.push(post)
       map.set(post.scheduledDate, list)
@@ -772,7 +639,7 @@ export default function CalendarPage() {
       )
     }
     return map
-  }, [scheduled, reviewMode, reviewScheduled])
+  }, [scheduled])
 
   const goPrev = () => setWeekStart((d) => addDays(d, -7))
   const goNext = () => setWeekStart((d) => addDays(d, 7))
@@ -819,13 +686,6 @@ export default function CalendarPage() {
           corePostId: string
           format: FormatId
         }
-        if (reviewMode) {
-          const row = reviewScheduled.find(
-            (p) => p.corePostId === corePostId && p.format === format,
-          )
-          upsertReviewRow(corePostId, format, dayKey, row?.hook ?? undefined)
-          return
-        }
         const existing = scheduled.find(
           (p) => p.corePostId === corePostId && p.format === format,
         )
@@ -853,10 +713,6 @@ export default function CalendarPage() {
           hook?: string | null
         }
         const trimmed = hook?.trim()
-        if (reviewMode) {
-          upsertReviewRow(corePostId, format, dayKey, trimmed)
-          return
-        }
         if (blockedAsTooSoon(dayKey, DEFAULT_SCHEDULED_TIME)) return
         schedulePost(
           corePostId,
@@ -962,65 +818,174 @@ export default function CalendarPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // --- Format preview (`?preview=a|b`) — review data + handlers ---
-  // Everything stays in this component's state: no schedulePost, no caption
-  // write, no canvas navigation. DELETE the harness half before shipping; the
-  // handlers are where the real writes go once a variant is picked.
-  const previewRow: ScheduledPost | null =
-    previewVariant && previewKey
-      ? reviewScheduled.find((p) => `${p.corePostId}:${p.format}` === previewKey) ??
-        (() => {
-          const [corePostId, format] = previewKey.split(":")
-          return {
-            corePostId,
-            format: format as FormatId,
-            scheduledDate: "",
-            scheduledTime: "",
-            publishedAt: null,
-            hook: seedHookFor(corePostId),
-          }
-        })()
-      : null
-  const previewData = previewRow
-    ? buildPreviewData(
-        previewRow,
-        (hookByPostId.get(previewRow.corePostId) || previewRow.hook || "").trim() ||
-          "פוסט מתוזמן",
-        previewStatus,
-        previewContent,
-        previewCaptions,
-        isSlotPast(previewRow, new Date()),
-      )
+  // --- Format preview (scheduling release) --------------------------------
+  // A board card or a rail card opens the post as it will go out: media,
+  // caption, the slot, and the Instagram status. The caption and the slot
+  // are saved by its one "תזמון פוסט" button.
+  const [previewKey, setPreviewKey] = useState<string | null>(null)
+  const [previewDetail, setPreviewDetail] = useState<{
+    key: string
+    caption: string
+    slides: PreviewSlide[]
+    coverUrl?: string
+  } | null>(null)
+  const openPreview = (corePostId: string, format: FormatId) => {
+    const key = `${corePostId}:${format}`
+    setPreviewKey(key)
+    setPreviewDetail(null)
+    fetch(`/api/core-posts/${corePostId}`)
+      .then((r) => r.json())
+      .then((data) => {
+        const p = data?.post as
+          | {
+              formatPosts?: Record<string, string>
+              formatMedia?: Record<string, string>
+              videoUrl?: string | null
+              coverUrl?: string | null
+              carouselImageUrls?: string[]
+              storyImageUrls?: string[]
+            }
+          | undefined
+        if (!p) throw new Error("post not found")
+        const isVideo = (u: string) => /\.(mp4|mov|m4v|webm)(?:[?#]|$)/i.test(u)
+        const slide = (u: string): PreviewSlide => ({ url: u, type: isVideo(u) ? "video" : "image" })
+        let urls: string[] = []
+        if (format === "carousel") urls = p.carouselImageUrls ?? []
+        else if (format === "story") {
+          urls = p.storyImageUrls ?? []
+          if (urls.length === 0 && p.formatMedia?.story) urls = [p.formatMedia.story]
+        } else if (format === "talking_head") urls = p.videoUrl ? [p.videoUrl] : []
+        else if (p.formatMedia?.[format]) urls = [p.formatMedia[format]]
+        setPreviewDetail({
+          key,
+          caption: p.formatPosts?.[format] ?? "",
+          slides: urls.map(slide),
+          coverUrl: format === "talking_head" ? p.coverUrl ?? undefined : undefined,
+        })
+      })
+      .catch((err) => {
+        console.error("[calendar] failed to load post for preview", err)
+        setPreviewDetail({ key, caption: "", slides: [] })
+      })
+  }
+  const previewRow: ScheduledPost | null = previewKey
+    ? scheduled.find((p) => `${p.corePostId}:${p.format}` === previewKey) ??
+      (() => {
+        const [corePostId, format] = previewKey.split(":")
+        return {
+          corePostId,
+          format: format as FormatId,
+          scheduledDate: "",
+          scheduledTime: "",
+          publishedAt: null,
+        }
+      })()
     : null
-  const previewContentState = previewContent === "too-long" ? "ready" : previewContent
-  const inspectorOpen = previewVariant === "b" && !!previewData
+  const previewPast = previewRow?.scheduledDate ? isSlotPast(previewRow, new Date()) : false
+  const previewPublish = (row: ScheduledPost): PreviewPublishStatus => {
+    if (!row.scheduledDate) return { kind: "unscheduled" }
+    const st = row.publish
+    if (row.publishedAt || st?.status === "published") {
+      return { kind: "published", permalink: st?.permalink ?? undefined }
+    }
+    if (st?.status === "sent" || (previewPast && (!st || st.status === "idle"))) {
+      return { kind: "sent" }
+    }
+    if (connection.status !== "connected") return { kind: "not_connected" }
+    if (st?.status === "queued" && st.code !== "content_changed") return { kind: "scheduled" }
+    if (st?.status === "failed") {
+      return {
+        kind: "failed",
+        reason: st.message || "הפוסט לא תוזמן.",
+        action:
+          st.code === "needs_reconnect" || st.code === "not_connected"
+            ? "reconnect"
+            : st.code === "media_rejected"
+              ? "fix_media"
+              : "retry",
+      }
+    }
+    return { kind: "pending" }
+  }
+  const previewData: FormatPreviewData | null = previewRow
+    ? {
+        corePostId: previewRow.corePostId,
+        format: previewRow.format,
+        hook:
+          (hookByPostId.get(previewRow.corePostId) || previewRow.hook || "").trim() ||
+          "פוסט מתוזמן",
+        caption: previewDetail?.key === previewKey ? previewDetail.caption : "",
+        slides: previewDetail?.key === previewKey ? previewDetail.slides : [],
+        coverUrl: previewDetail?.key === previewKey ? previewDetail.coverUrl : undefined,
+        handle: connection.primary?.handle ?? "",
+        scheduledDate: previewRow.scheduledDate,
+        scheduledTime: previewRow.scheduledDate
+          ? (previewRow.scheduledTime ?? DEFAULT_SCHEDULED_TIME)
+          : "",
+        isPast: previewPast,
+        publish: previewPublish(previewRow),
+      }
+    : null
+  const previewContentState: PreviewContentState =
+    previewDetail?.key !== previewKey
+      ? "loading"
+      : previewDetail.slides.length === 0
+        ? "no-media"
+        : "ready"
   const previewHandlers = previewRow
     ? {
         onReschedule: (date: string, time: string) => {
-          upsertReviewRow(previewRow.corePostId, previewRow.format, date, previewRow.hook ?? undefined, time)
+          if (blockedAsTooSoon(date, time)) return
+          schedulePost(previewRow.corePostId, previewRow.format, date, time, {
+            hook: previewData?.hook,
+          })
+          reloadBoard()
           toast.success(
-            previewRow.scheduledDate ? "התזמון עודכן — הכרטיס זז בלוח" : "הפוסט תוזמן ונוסף ללוח",
+            previewRow.scheduledDate ? "התזמון עודכן" : "הפוסט תוזמן ונוסף ללוח",
           )
         },
         onCaptionSave: (caption: string) => {
-          setPreviewCaptions((m) => new Map(m).set(`${previewRow.corePostId}:${previewRow.format}`, caption))
-          toast.success("הכיתוב עודכן")
+          const key = previewKey
+          fetch(`/api/core-posts/${previewRow.corePostId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ formatPosts: { [previewRow.format]: caption } }),
+          })
+            .then((r) => {
+              if (!r.ok) throw new Error(`PATCH ${r.status}`)
+              setPreviewDetail((d) => (d && d.key === key ? { ...d, caption } : d))
+              toast.success("הכיתוב עודכן")
+            })
+            .catch((err) => {
+              console.error("[calendar] caption save failed", err)
+              toast.error("לא הצלחנו לשמור את הכיתוב. נסו שוב.")
+            })
         },
         onUnschedule: () => {
-          setReviewScheduled((rows) =>
-            rows.filter((p) => !(p.corePostId === previewRow.corePostId && p.format === previewRow.format)),
-          )
-          setReviewApproved((prev) => new Set(prev).add(`${previewRow.corePostId}:${previewRow.format}`))
+          unschedulePost(previewRow.corePostId, previewRow.format)
+          unmarkPublished(previewRow.corePostId, previewRow.format)
+          reloadBoard()
           setPreviewKey(null)
           toast.success("הפורמט חזר ל״מוכנים לתזמון״")
         },
-        onOpenCanvas: () => toast("בסביבת הבדיקה הקנבס לא נפתח — בפועל זה עובר לעריכת הפורמט"),
-        onStatusAction: (action: string) =>
-          toast(
-            action === "open_post"
-              ? "בסביבת הבדיקה אין פוסט אמיתי לפתוח"
-              : "בסביבת הבדיקה הפעולה לא רצה — בפועל היא של המשימה של בן",
-          ),
+        onOpenCanvas: () => router.push(canvasHref(previewRow)),
+        onStatusAction: (
+          action: "connect" | "reconnect" | "retry" | "fix_media" | "open_post",
+        ) => {
+          if (action === "connect" || action === "reconnect") setIgDialogOpen(true)
+          else if (action === "fix_media") router.push(canvasHref(previewRow))
+          else if (action === "open_post") {
+            const link = previewRow.publish?.permalink
+            if (link) window.open(link, "_blank", "noopener")
+            else markPublished(previewRow.corePostId, previewRow.format)
+          } else {
+            void retryPublish(previewRow.corePostId, previewRow.format, "retry").then((next) => {
+              reloadBoard()
+              if (next?.status === "queued") toast.success("הפוסט תוזמן לאינסטגרם")
+              else if (next?.status === "failed" && next.message) toast.error(next.message)
+            })
+          }
+        },
       }
     : null
 
@@ -1037,14 +1002,7 @@ export default function CalendarPage() {
         post.hook ||
         ""
       ).trim() || "פוסט מתוזמן"
-    const mediaUrl = reviewMode
-      ? (previewVariant
-          ? previewThumbFor(post.corePostId, post.format)
-          : undefined) ??
-        seedMediaFor(post.corePostId)[post.format]
-      : formatMediaByPost.get(post.corePostId)?.[
-          post.format
-        ]
+    const mediaUrl = formatMediaByPost.get(post.corePostId)?.[post.format]
     return (
       <FormatCard
         key={`${post.corePostId}:${post.format}`}
@@ -1053,15 +1011,9 @@ export default function CalendarPage() {
         hook={hook}
         mediaUrl={mediaUrl}
         isPublished={isPublished}
-        selected={
-          previewVariant === "b" &&
-          previewKey === `${post.corePostId}:${post.format}`
-        }
         onCardClick={() =>
-          previewVariant
-            ? setPreviewKey(`${post.corePostId}:${post.format}`)
-            : reviewMode
-            ? toast("בסביבת הבדיקה הפוסטים לדוגמה — הפאנל לא נפתח")
+          schedulingOn
+            ? openPreview(post.corePostId, post.format)
             : openSheetForCorePost(
                 post.corePostId,
                 post.format,
@@ -1069,22 +1021,6 @@ export default function CalendarPage() {
               )
         }
         onUnschedule={() => {
-          if (reviewMode) {
-            setReviewScheduled((rows) =>
-              rows.filter(
-                (p) =>
-                  !(
-                    p.corePostId === post.corePostId &&
-                    p.format === post.format
-                  ),
-              ),
-            )
-            setReviewApproved((prev) =>
-              new Set(prev).add(`${post.corePostId}:${post.format}`),
-            )
-            toast.success("הפורמט חזר ל״מוכנים לתזמון״")
-            return
-          }
           // Send THIS format back to the queue and drop
           // its stale published mark (returning a format
           // means "it isn't done yet").
@@ -1094,17 +1030,6 @@ export default function CalendarPage() {
           toast.success("הפורמט חזר ל״מוכנים לתזמון״")
         }}
         onReschedule={(newDate, newTime) => {
-          if (reviewMode) {
-            upsertReviewRow(
-              post.corePostId,
-              post.format,
-              newDate,
-              hook,
-              newTime,
-            )
-            toast.success("התזמון עודכן")
-            return
-          }
           // Move THIS format to the picked date + time.
           if (blockedAsTooSoon(newDate, newTime)) return
           schedulePost(
@@ -1117,6 +1042,7 @@ export default function CalendarPage() {
           reloadBoard()
           toast.success("התזמון עודכן")
         }}
+        showPublish={schedulingOn}
         connection={connection}
         onConnectInstagram={() => setIgDialogOpen(true)}
         onFixMedia={() =>
@@ -1150,7 +1076,7 @@ export default function CalendarPage() {
         // the padding animates to 0 (in lockstep with the rail's slide-out)
         // so the week grid expands to full width.
         className={`w-full flex gap-5 h-[calc(100vh-2rem-3rem)] min-h-0 transition-[padding] duration-300 ease-in-out ${
-          panelCollapsed && !inspectorOpen ? "pe-0" : "pe-[480px]"
+          panelCollapsed ? "pe-0" : "pe-[480px]"
         }`}
         dir="rtl"
       >
@@ -1160,22 +1086,6 @@ export default function CalendarPage() {
           {/* Header at the standard page width — keeps the title aligned
               with the rest of the system. */}
           <div className="max-w-[1200px] w-full mx-auto">
-            {previewVariant && (
-              <PreviewReviewBar
-                variant={previewVariant}
-                status={previewStatus}
-                onStatus={setPreviewStatus}
-                content={previewContent}
-                onContent={setPreviewContent}
-              />
-            )}
-            {approvalVariant && !previewVariant && (
-              <ApprovalReviewBar
-                variant={approvalVariant}
-                state={reviewState}
-                onStateChange={applyReviewState}
-              />
-            )}
             {/* Level 1 — page identity. Title + leading illustration,
                 matching /core_posts + /hooks. Subtitle intentionally
                 omitted per Hani. */}
@@ -1186,23 +1096,14 @@ export default function CalendarPage() {
                 className="w-[48px] h-[48px]"
               />
               <h2 className="text-text-primary-default">תזמון</h2>
-              <InstagramConnectionControl
-                className="ms-auto"
-                open={igDialogOpen}
-                onOpenChange={setIgDialogOpen}
-              />
+              {schedulingOn && (
+                <InstagramConnectionControl
+                  className="ms-auto"
+                  open={igDialogOpen}
+                  onOpenChange={setIgDialogOpen}
+                />
+              )}
             </div>
-
-            {rulesVariant && (
-              <ReviewStateToggle
-                label={rulesVariant === "a" ? "הצעה א׳ — לו״ז על הלוח" : "הצעה ב׳ — לו״ז בהגדרות"}
-                value={routine.reviewState}
-                onChange={(st) => {
-                  routine.setReviewState(st)
-                  if (rulesVariant === "a" && (st === "saving" || st === "error")) startRoutineEdit()
-                }}
-              />
-            )}
 
             {rulesVariant === "a" && !routineEditing && !routine.hasCustom && (
               <RoutineSuggestionNote schedule={routine.saved} onEdit={startRoutineEdit} />
@@ -1244,14 +1145,6 @@ export default function CalendarPage() {
               <div className="flex items-center gap-2">
                 {rulesVariant === "a" && (
                   <RoutineButton schedule={routine.saved} onEdit={startRoutineEdit} />
-                )}
-                {rulesVariant === "b" && (
-                  <Button variant="outline" size="sm" asChild className="gap-1.5">
-                    <Link href="/settings?tab=schedule&rules=b">
-                      <CalendarClock className="size-4" aria-hidden="true" />
-                      לו״ז פרסום
-                    </Link>
-                  </Button>
                 )}
                 <Button variant="outline" size="sm" onClick={goThisWeek} disabled={isCurrentWeek}>
                   השבוע
@@ -1371,14 +1264,12 @@ export default function CalendarPage() {
             The panel itself uses `h-full` so its inner list scrolls
             independently of the calendar grid. */}
         <QueuePanel
-          collapsed={panelCollapsed || inspectorOpen}
+          collapsed={panelCollapsed}
           onToggleCollapse={() => setPanelCollapsed((v) => !v)}
           onItemClick={(corePostId, format) =>
-            previewVariant && format
-              ? setPreviewKey(`${corePostId}:${format}`)
-              : reviewMode
-                ? toast("בסביבת הבדיקה הפוסטים לדוגמה — הפאנל לא נפתח")
-                : openSheetForCorePost(corePostId, format, "preview")
+            schedulingOn && format
+              ? openPreview(corePostId, format)
+              : openSheetForCorePost(corePostId, format, "preview")
           }
           approval={approvalMode}
         />
@@ -1387,17 +1278,7 @@ export default function CalendarPage() {
             to the end edge (left in RTL) just below the topbar, where the
             rail's collapse button sat, so the open/close controls live on
             the same edge. z-40 keeps it above the grid's dragOver ring. */}
-        {/* Variant B — the preview borrows the rail's slot while it's open. */}
-        {inspectorOpen && previewData && previewHandlers && (
-          <FormatPreviewInspector
-            data={previewData}
-            content={previewContentState}
-            onClose={() => setPreviewKey(null)}
-            {...previewHandlers}
-          />
-        )}
-
-        {panelCollapsed && !inspectorOpen && (
+        {panelCollapsed && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -1422,8 +1303,8 @@ export default function CalendarPage() {
           Now we always render CorePostSheet and hide the "תזמון פוסט"
           CTA when the user is in preview mode — they're already on
           /calendar, so the schedule affordance would loop. */}
-      {/* Variant A — the preview as a modal over the board. */}
-      {previewVariant === "a" && previewHandlers && (
+      {/* The format preview, as a modal over the board. */}
+      {schedulingOn && previewHandlers && (
         <FormatPreviewDialog
           open={!!previewData}
           onOpenChange={(open) => {

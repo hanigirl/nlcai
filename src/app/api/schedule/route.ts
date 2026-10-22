@@ -9,6 +9,7 @@ import {
   toPublishState,
 } from "@/lib/social/bridge"
 import type { PublishState } from "@/lib/social/publish-state"
+import { canUseScheduling } from "@/lib/scheduling-access"
 import type { SchedulePublishStatus } from "@/lib/supabase/types"
 
 // A board write now waits on the provider (create, read back). A batch from
@@ -189,7 +190,9 @@ export async function PUT(req: NextRequest) {
   // is the only path by which a slot reaches Instagram, so whatever moved the
   // row (a drag, a date pick, schedule-all) is what moves the post.
   const publish: Record<string, PublishState> = {}
-  if (!isBackfill) {
+  // Sending to Instagram is part of the scheduling release — the listed
+  // accounts only (lib/scheduling-access). Everyone else's board just saves.
+  if (!isBackfill && canUseScheduling(user.email)) {
     for (const r of parsed) {
       const key = slotKey(r.corePostId, r.format)
       const prev = before.get(key)

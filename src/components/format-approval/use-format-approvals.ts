@@ -26,6 +26,7 @@ import {
   getFormatMeta,
   getScheduledByPostId,
   revokeFormatApproval,
+  unschedulePost,
   type FormatId,
 } from "@/lib/timing-storage"
 
@@ -136,7 +137,14 @@ export function useFormatApprovals({
         return next
       })
       setEdited((prev) => ({ ...prev, [format]: false }))
-      if (persist && postId) revokeFormatApproval(postId, format)
+      if (persist && postId) {
+        revokeFormatApproval(postId, format)
+        // Only approved media is scheduled, so withdrawing the approval also
+        // takes it off the board (and out of the Instagram queue).
+        if (getScheduledByPostId(postId).some((p) => p.format === format)) {
+          unschedulePost(postId, format)
+        }
+      }
     },
     [persist, postId],
   )

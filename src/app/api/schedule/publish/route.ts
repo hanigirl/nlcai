@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
 import { refreshPublishStates, slotKey, syncSlot } from "@/lib/social/bridge"
+import { canUseScheduling } from "@/lib/scheduling-access"
 
 /**
  * The calendar's line to the publish queue, for the things a board write
@@ -30,6 +31,8 @@ export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const user = await getAuthUser(supabase)
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  // Part of the scheduling release (lib/scheduling-access).
+  if (!canUseScheduling(user.email)) return NextResponse.json({ publish: {} })
 
   let body: { action?: unknown; corePostId?: unknown; format?: unknown }
   try {

@@ -1,17 +1,11 @@
 "use client"
 
 /**
- * Shared building blocks for the weekly posting schedule (לו״ז פרסום).
- *
- * Both review variants (`?rules=a` on /calendar, `?rules=b` on /settings)
- * edit the same PostingSchedule with the same slot editor — they differ in
- * WHERE the schedule lives and HOW it's edited, not in the controls.
- *
- * Also hosts the review-only harness (state toggle + in-memory store). That
- * part is scaffolding: delete it when a variant is picked.
+ * Shared building blocks for the weekly posting schedule (לו״ז פרסום),
+ * edited in place on the calendar (Hani picked that, 2026-10-15).
  */
 
-import { createElement, useCallback, useRef, useState } from "react"
+import { createElement, useCallback, useEffect, useState } from "react"
 import { AlertCircle, Loader2, Trash2 } from "lucide-react"
 import { Select } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
@@ -23,7 +17,9 @@ import {
   WEEKDAY_NAMES,
   cloneSchedule,
   defaultPostingSchedule,
+  getPostingSchedule,
   newSlotId,
+  savePostingSchedule,
   schedulesEqual,
   type PostingSchedule,
   type PostingSlot,
@@ -179,119 +175,43 @@ export function SaveButton({ saving, disabled, onClick }: { saving: boolean; dis
 }
 
 /* ------------------------------------------------------------------ */
-/*  Review harness — DELETE when a variant ships                        */
+/*  The saved routine                                                  */
 /* ------------------------------------------------------------------ */
 
-export type ReviewState = "new" | "custom" | "saving" | "error"
-
-const REVIEW_STATES: { id: ReviewState; label: string }[] = [
-  { id: "new", label: "משתמשת חדשה (ברירת מחדל)" },
-  { id: "custom", label: "לו״ז מותאם" },
-  { id: "saving", label: "שמירה" },
-  { id: "error", label: "שגיאת שמירה" },
-]
-
-/** "Tuesdays and Thursdays are carousels" — the exact question from the brief. */
-function seededCustomSchedule(): PostingSchedule {
-  const s = defaultPostingSchedule()
-  s.days = [
-    [{ id: newSlotId(), format: "talking_head", time: "09:00" }],
-    [{ id: newSlotId(), format: "image_post", time: "18:00" }],
-    [{ id: newSlotId(), format: "carousel", time: "12:00" }],
-    [],
-    [
-      { id: newSlotId(), format: "carousel", time: "12:00" },
-      { id: newSlotId(), format: "story", time: "20:00" },
-    ],
-    [{ id: newSlotId(), format: "story", time: "10:00" }],
-    [],
-  ]
-  s.storyGapMinutes = 30
-  return s
-}
-
-export function ReviewStateToggle({
-  value,
-  onChange,
-  label,
-}: {
-  value: ReviewState
-  onChange: (s: ReviewState) => void
-  label: string
-}) {
-  return (
-    <div
-      role="group"
-      aria-label="מצב לסקירה"
-      className="flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-gray-70 px-3 py-2 mb-4"
-    >
-      <span className="text-xs-body text-text-neutral-default">סקירה בלבד · {label} · מצב:</span>
-      {REVIEW_STATES.map((s) => (
-        <Button
-          key={s.id}
-          type="button"
-          size="xs"
-          variant={value === s.id ? "default" : "outline"}
-          aria-pressed={value === s.id}
-          onClick={() => onChange(s.id)}
-        >
-          {s.label}
-        </Button>
-      ))}
-    </div>
-  )
-}
-
 /**
- * In-memory schedule store for the review links. Never touches
- * localStorage or the network. "Saving" fakes a short round-trip; the
- * `saving` review state freezes it mid-flight and `error` makes it fail.
+ * The weekly routine as saved on this device (lib/posting-schedule). Until
+ * she saves one, the suggested default shows and `hasCustom` is false.
  */
-export function useReviewSchedule() {
-  const [reviewState, setReviewStateRaw] = useState<ReviewState>("new")
+export function usePostingSchedule() {
   const [saved, setSaved] = useState<PostingSchedule>(() => defaultPostingSchedule())
   const [draft, setDraft] = useState<PostingSchedule>(() => cloneSchedule(saved))
   const [hasCustom, setHasCustom] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(false)
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const setReviewState = useCallback((s: ReviewState) => {
-    if (timer.current) clearTimeout(timer.current)
-    setReviewStateRaw(s)
-    setSaveError(s === "error")
-    setSaving(s === "saving")
-    if (s === "new") {
-      const d = defaultPostingSchedule()
-      setSaved(d)
-      setDraft(cloneSchedule(d))
-      setHasCustom(false)
-    } else {
-      const c = seededCustomSchedule()
-      setSaved(c)
-      // saving / error: show an unsaved edit in flight.
-      const d = cloneSchedule(c)
-      if (s !== "custom") d.days[3] = [{ id: newSlotId(), format: "carousel", time: "12:00" }]
-      setDraft(d)
-      setHasCustom(true)
-    }
+  useEffect(() => {
+    const stored = getPostingSchedule()
+    if (!stored) return
+    setSaved(stored)
+    setDraft(cloneSchedule(stored))
+    setHasCustom(true)
   }, [])
 
   const save = useCallback((onDone?: () => void) => {
     setSaving(true)
     setSaveError(false)
-    if (timer.current) clearTimeout(timer.current)
-    timer.current = setTimeout(() => {
-      setSaving(false)
-      if (reviewState === "error") {
-        setSaveError(true)
-        return
-      }
+    try {
+      savePostingSchedule(draft)
       setSaved(cloneSchedule(draft))
       setHasCustom(true)
       onDone?.()
-    }, 700)
-  }, [draft, reviewState])
+    } catch (err) {
+      console.error("[posting-schedule] save failed", err)
+      setSaveError(true)
+    } finally {
+      setSaving(false)
+    }
+  }, [draft])
 
   const discard = useCallback(() => {
     setDraft(cloneSchedule(saved))
@@ -299,14 +219,12 @@ export function useReviewSchedule() {
   }, [saved])
 
   return {
-    reviewState,
-    setReviewState,
     saved,
     draft,
     setDraft,
     dirty: !schedulesEqual(saved, draft),
     hasCustom,
-    saving: saving || reviewState === "saving",
+    saving,
     saveError,
     save,
     discard,

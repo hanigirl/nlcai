@@ -289,7 +289,7 @@ function buildAriaLabel(format: FormatId, state: FormatReadiness): string {
     case "incomplete":
       return `${fmt}: צריך מדיה`
     case "ready":
-      return `${fmt}: מחכה לאישור`
+      return `${fmt}: מוכן`
     case "approved":
       return `${fmt}: מאושר לתזמון`
     case "scheduled":
