@@ -2562,6 +2562,17 @@ function MediaUploadFlow({
       ? initialMediaUrl
       : null
   const [previewUrl, setPreviewUrl] = useState<string | null>(seedMediaUrl)
+  // Deleted from the canvas (the card's trash) while the panel is open: let
+  // go of it here too.
+  const prevInitialMediaRef = useRef(initialMediaUrl)
+  useEffect(() => {
+    const prev = prevInitialMediaRef.current
+    prevInitialMediaRef.current = initialMediaUrl
+    if (prev && !initialMediaUrl && format !== "story") {
+      setPreviewUrl(null)
+      setPreviewKind(null)
+    }
+  }, [initialMediaUrl, format])
   // Once the replacement actually lands, put the field away again — otherwise
   // swapping a clip leaves the panel permanently back in "paste a link" mode.
   useEffect(() => {
@@ -3826,12 +3837,13 @@ function MediaUploadFlow({
                 value={mediaStyle.style}
                 onChange={mediaStyle.setStyle}
                 brandTemplate={mediaStyle.brandTemplate}
+                brandLoading={mediaStyle.brandLoading}
                 aspect="4/5"
               />
               <Button
                 variant="outline"
                 onClick={handleAiGenerate}
-                disabled={!postId}
+                disabled={!postId || mediaStyle.brandLoading}
                 className="w-full gap-1.5"
               >
                 {inFlight > 0 && <Loader2 className="size-3.5 animate-spin" />}
@@ -4040,11 +4052,12 @@ function MediaUploadFlow({
                 value={mediaStyle.style}
                 onChange={mediaStyle.setStyle}
                 brandTemplate={mediaStyle.brandTemplate}
+                brandLoading={mediaStyle.brandLoading}
               />
               <Button
                 variant="outline"
                 onClick={handleStoryGenerate}
-                disabled={!postId}
+                disabled={!postId || mediaStyle.brandLoading}
                 className="w-full gap-1.5"
               >
                 {storyInFlight > 0 && (
@@ -4234,11 +4247,12 @@ function MediaUploadFlow({
                   value={mediaStyle.style}
                   onChange={mediaStyle.setStyle}
                   brandTemplate={mediaStyle.brandTemplate}
+                  brandLoading={mediaStyle.brandLoading}
                 />
                 <Button
                   variant="outline"
                   onClick={handleBRollGenerate}
-                  disabled={!postId || bRollGenerating}
+                  disabled={!postId || bRollGenerating || mediaStyle.brandLoading}
                   className="w-full gap-1.5"
                 >
                   {bRollGenerating && (

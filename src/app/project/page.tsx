@@ -2696,6 +2696,13 @@ function ProjectPageInner() {
             setStoryImages(null)
             setStoryVideoUrl(null)
           }
+          // The media panel seeds from formatMedia — drop it there too, or the
+          // panel keeps showing what the canvas just deleted.
+          setFormatMedia((prev) => {
+            const next = { ...prev }
+            delete next[format]
+            return next
+          })
           if (aiChatFormat === format) setAiChatFormat(null)
           toast.success("נמחק", { duration: 3000 })
         }}
