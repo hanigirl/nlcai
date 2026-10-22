@@ -38,6 +38,13 @@ import {
 import { StoryPlayer } from "@/components/story-player"
 import { DriveMediaLinks } from "@/components/drive-media-links"
 import {
+  DriveFolderEntry,
+  DriveFolderPicker,
+  closeDrivePicker,
+  useDrivePickStore,
+  useDrivePickVariant,
+} from "@/components/drive-folder-review"
+import {
   isDriveUrl,
   isCompleteDriveUrl,
   isVideoUrl,
@@ -257,6 +264,17 @@ export function MediaPanel({
   const isOpen = formatId !== null
   const meta = formatId ? FORMAT_META[formatId] : null
   const Icon = meta?.icon
+  // Design review (?drivepick=a|b): "Google Drive" swaps the panel for the
+  // connected folder's gallery. Null without the param — production is
+  // untouched.
+  const drivePick = useDrivePickVariant()
+  const drivePickStore = useDrivePickStore()
+  const drivePickerOpen = !!drivePick && !!formatId && drivePickStore.pickerFor === formatId
+  useEffect(() => {
+    if (drivePick && drivePickStore.pickerFor && drivePickStore.pickerFor !== formatId) closeDrivePicker()
+    // Only a format switch should close it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formatId])
 
   return (
     <div
@@ -269,7 +287,19 @@ export function MediaPanel({
       {meta && (
         <div className="flex items-center justify-between px-6 py-4 border-b border-border-neutral-default">
           <div className="flex items-center gap-2">
-            {formatId === "talking_head" && (thAvatar || thSourceMode === "avatar") && (
+            {drivePickerOpen && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (!drivePickStore.importing) closeDrivePicker()
+                }}
+                aria-label="חזרה"
+                className="p-0.5 rounded-lg hover:bg-bg-surface transition-colors cursor-pointer"
+              >
+                <ChevronRight className="size-4 text-text-neutral-default" />
+              </button>
+            )}
+            {!drivePickerOpen && formatId === "talking_head" && (thAvatar || thSourceMode === "avatar") && (
               <button
                 onClick={() => {
                   if (thAvatar) {
@@ -284,7 +314,9 @@ export function MediaPanel({
                 <ChevronRight className="size-4 text-text-neutral-default" />
               </button>
             )}
-            <span className="text-p-bold text-text-primary-default">{meta.label}</span>
+            <span className="text-p-bold text-text-primary-default">
+              {drivePickerOpen ? `${meta.label} · מהדרייב` : meta.label}
+            </span>
           </div>
           <button
             onClick={onClose}
@@ -306,6 +338,18 @@ export function MediaPanel({
             the copy was advertising a button that does not exist. */}
         {/* Not on the avatar picker: an avatar render has nothing to do with
             AI media or Drive / Canva links (Hani, 2026-10-07). */}
+        {drivePickerOpen && formatId && drivePick && (
+          <DriveFolderPicker
+            key={formatId}
+            format={formatId}
+            variant={drivePick}
+            scriptText={formatId === "carousel" ? carouselText : ""}
+          />
+        )}
+
+        {/* The flows stay mounted under the picker so going back finds the
+            panel exactly as it was left. */}
+        <div hidden={drivePickerOpen}>
         {meta && formatId !== "story" && formatId !== "b_roll" && formatId !== "image_post" &&
           !(formatId === "talking_head" && (thAvatar || thSourceMode === "avatar")) && (
           <p className="mb-4 text-small text-text-neutral-default">
@@ -383,6 +427,7 @@ export function MediaPanel({
             onBusyChange={onMediaBusyChange}
           />
         )}
+        </div>
       </div>
     </div>
   )
@@ -429,6 +474,7 @@ function TalkingHeadFlow({
   onScrollToVideo?: () => void
   onBusyChange?: (format: string, busy: boolean) => void
 }) {
+  const drivePick = useDrivePickVariant()
   // --- Google Drive link state ---
   // The talking_head format takes its media from a Google Drive share link
   // (not a local upload) — we download it server-side and store it, so it
@@ -980,7 +1026,10 @@ function TalkingHeadFlow({
   if (!avatar && sourceMode === "choose" && !(videoPhase === "done" && liftedVideoUrl)) {
     return (
       <div className="flex flex-col gap-6">
-        {/* Media from a Google Drive link */}
+        {drivePick ? (
+          <DriveFolderEntry format="talking_head" />
+        ) : (
+        /* Media from a Google Drive link */
         <div className="flex flex-col gap-2">
           <label className="flex items-center gap-2 text-small font-semibold text-text-primary-default">
             <Link2 className="size-4 text-text-neutral-default" />
@@ -1017,6 +1066,7 @@ function TalkingHeadFlow({
             </p>
           )}
         </div>
+        )}
 
         {/* Divider */}
         <div className="flex items-center gap-3">
@@ -1445,6 +1495,7 @@ function CarouselFlow({
   onDriveLinksChange: (links: string[] | null) => void
   onBusyChange?: (format: string, busy: boolean) => void
 }) {
+  const drivePick = useDrivePickVariant()
   // No separate "current carousel" tile (Hani 2026-07-09): the template
   // that made the saved carousel shows its real cover, starts SELECTED,
   // and tapping it opens the saved slides — one tile, one selection ring.
@@ -2295,6 +2346,9 @@ function CarouselFlow({
             creators actually hand off a carousel (individual per-slide
             images), so a single Canva/folder link is intentionally NOT the
             mechanism here. */}
+      {drivePick ? (
+        <DriveFolderEntry format="carousel" />
+      ) : (
       <div className="flex flex-col gap-2">
         <DriveMediaLinks
           savedLinks={driveLinks}
@@ -2349,6 +2403,7 @@ function CarouselFlow({
           }
         />
       </div>
+      )}
 
 
       {/* The post's carousel, in the same grey band story and b-roll use
@@ -2491,6 +2546,7 @@ function MediaUploadFlow({
   postLoaded?: boolean
   onBusyChange?: (format: string, busy: boolean) => void
 }) {
+  const drivePick = useDrivePickVariant()
   // Read once, before any narrowing. Inside the burn-button condition TS has
   // already pinned `format` to "story", so a literal check for b-roll there
   // reads as unreachable code.
@@ -3792,7 +3848,8 @@ function MediaUploadFlow({
   // it as an inline banner instead of disabling controls because the user
   // can still SEE the structure of the panel and understand what comes
   // next once they save.
-  const showNoPostWarning = !postId
+  // A review link (?drivepick) has no saved post by design.
+  const showNoPostWarning = !postId && !drivePick
 
   // Layout matches the editable Sheet's MediaBlock + DriveLinkBlock pair:
   // upload area on top, "או" divider, Drive URL input below. Single
@@ -4145,7 +4202,9 @@ function MediaUploadFlow({
           {/* 3. Bring your own frames — behind a button until asked for.
                  Row i is frame i, so dragging a row reorders the story
                  itself, not just the form. */}
-          {!showStoryDriveLinks ? (
+          {drivePick ? (
+            <DriveFolderEntry format="story" />
+          ) : !showStoryDriveLinks ? (
             <Button
               variant="outline"
               onClick={() => setShowStoryDriveLinks(true)}
@@ -4431,7 +4490,9 @@ function MediaUploadFlow({
               open reads as "you still need to paste something" under a video
               that's already there. Collapse it behind a replace button and only
               bring it back when the user asks to swap the clip. */}
-          {isBRoll && !showBRollDriveField ? (
+          {drivePick && (isBRoll || format === "image_post") ? (
+            <DriveFolderEntry format={format} />
+          ) : isBRoll && !showBRollDriveField ? (
             // Same door as the story's (Hani, 2026-07-29): one button naming
             // where the media comes from, with the field behind it. Doubles
             // as the "replace" affordance once a clip is in — swapping and

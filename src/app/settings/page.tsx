@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
-import { Loader2, Link2, Unlink, Plus, Trash2, Upload, X, Sparkles, Check, Type, Image as ImageIcon, Search, Download, AlertCircle, AlertTriangle } from "lucide-react"
+import { Loader2, Link2, Unlink, Plus, Trash2, Upload, X, Sparkles, Check, Type, Image as ImageIcon, Search, Download, AlertCircle, AlertTriangle, FolderOpen } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { VisualLanguagePanel, type ExamplesTab } from "@/components/visual-language-panel"
 import { Input } from "@/components/ui/input"
@@ -32,6 +32,7 @@ import {
   AudienceIdentityGapDialog,
 } from "@/components/identity-gap-dialog"
 import { ConfirmModal } from "@/components/confirm-modal"
+import { DriveFoldersSettings, DrivePickReviewBar, type DrivePickVariant } from "@/components/drive-folder-review"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 
 const GOOGLE_FONTS = [
@@ -193,7 +194,7 @@ interface UploadingFile {
   status: "uploading" | "done" | "error"
 }
 
-type MediaSection = "visual" | "examples"
+type MediaSection = "visual" | "examples" | "drive"
 
 // Sub-sections per main tab. Module scope, not component scope, because the
 // initial state has to resolve `?sub=...` against it before the first render —
@@ -247,6 +248,14 @@ function SettingsPageInner() {
 
   const searchParams = useSearchParams()
   const initialTab = (searchParams.get("tab") as SettingsTab) || "connections"
+  // Design review (?drivepick=a|b): Settings → מדיה gains "מדיה מ-Google
+  // Drive". Without the param the media tab is exactly as in production.
+  const drivePickParam = searchParams.get("drivepick")
+  const drivePick: DrivePickVariant | null =
+    drivePickParam === "a" || drivePickParam === "b" ? drivePickParam : null
+  const mediaSections = drivePick
+    ? [...SUB_SECTIONS.media, { id: "drive", label: "מדיה מ-Google Drive", icon: FolderOpen }]
+    : SUB_SECTIONS.media
   // Optional sub-section deep link via `?sub=...`. The home-page profile-
   // health banner uses this to land the user directly on, say, the
   // "קבצים להעלאה" panel inside the business tab instead of forcing them
@@ -259,7 +268,7 @@ function SettingsPageInner() {
   // tab wins, anything else (missing, misspelled, belonging to another tab)
   // falls back to that tab's first section.
   const resolvedSub =
-    (SUB_SECTIONS[initialTab] ?? []).find((s) => s.id === initialSub)?.id ??
+    (initialTab === "media" ? mediaSections : SUB_SECTIONS[initialTab] ?? []).find((s) => s.id === initialSub)?.id ??
     SUB_SECTIONS[initialTab]?.[0]?.id ??
     ""
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
@@ -1080,6 +1089,7 @@ function SettingsPageInner() {
 
   return (
     <AppShell>
+      {drivePick && <DrivePickReviewBar variant={drivePick} surface="settings" />}
       {/* Identity gap/verify dialogs + replace confirmations — surface here
           (above the tabs) so they cover the whole settings view regardless
           of which tab is active when the parse returns. */}
@@ -1501,7 +1511,7 @@ function SettingsPageInner() {
             {/* ==================== MEDIA TAB ==================== */}
             {activeTab === "media" && (
               <div className="flex gap-8">
-                <SubNav sections={SUB_SECTIONS.media} active={activeMediaSection} onChange={(id) => { setActiveMediaSection(id as MediaSection); setActiveSubSection(id) }} />
+                <SubNav sections={mediaSections} active={activeMediaSection} onChange={(id) => { setActiveMediaSection(id as MediaSection); setActiveSubSection(id) }} />
 
                 <div className="flex-1 min-w-0 max-w-lg">
                   {/* ── Visual language: colours, fonts, graphic elements + the analysis ── */}
@@ -1599,6 +1609,8 @@ function SettingsPageInner() {
                       }
                     />
                   )}
+
+                  {activeMediaSection === "drive" && drivePick && <DriveFoldersSettings />}
 
                   {/* ── Examples per format; covers keep their own upload + style analysis ── */}
                   {activeMediaSection === "examples" && (
