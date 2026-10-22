@@ -210,8 +210,11 @@ function mixedFolders(): Record<FolderKey, Folder> {
 
 /* ================================================================ store */
 
+/** Folders come from her Drive (Hani, 2026-10-22); the seed above is review-only. */
+const REAL_FOLDERS = true
+
 let store: Store = {
-  folders: mixedFolders(),
+  folders: Object.fromEntries(FOLDER_ORDER.map((k) => [k, unset()])) as Record<FolderKey, Folder>,
   pickerFor: null,
   forceLoading: false,
   picked: {},
@@ -238,9 +241,10 @@ export function useDrivePickStore(): Store {
 
 /** `?drivepick=a|b` → the direction under review; null in production. */
 export function useDrivePickVariant(): DrivePickVariant | null {
+  // B was picked (Hani, 2026-10-22) and now reads her real folders, so it's
+  // on everywhere on this branch; ?drivepick=a still shows the other one.
   const params = useSearchParams()
-  const p = params.get("drivepick")
-  return p === "a" || p === "b" ? p : null
+  return params.get("drivepick") === "a" ? "a" : "b"
 }
 
 export function openDrivePicker(format: string) {
@@ -267,49 +271,99 @@ const ERROR_COPY: Record<FolderError, { title: string; fix: string }> = {
   },
 }
 
-/**
- * Stands in for the real check (a server call that lists the folder with
- * the public link). Any link with "folders/" connects; the words below in
- * the link trigger the other outcomes so every state can be reached by hand:
- * "private" → not shared, "file/d/" → a file, "empty" → an empty folder,
- * "edit" → shared as editor.
- */
-function classifyLink(raw: string): { error: FolderError } | { empty: boolean; editor: boolean } {
-  const url = raw.trim()
-  if (!/drive\.google\.com|docs\.google\.com/i.test(url)) return { error: "not_drive" }
-  if (/\/file\/d\//.test(url)) return { error: "file_not_folder" }
-  if (/private|restricted/i.test(url)) return { error: "not_public" }
-  if (!/\/folders\//.test(url)) return { error: "file_not_folder" }
-  return { empty: /empty/i.test(url), editor: /edit/i.test(url) }
+type ApiItem = { id: string; name: string; kind: "image" | "video" }
+type ApiFolder = { link: string; name: string; items: ApiItem[] } | { link: string; error: FolderError }
+
+/** A Drive file as the picker shows it: Drive's own thumbnail, its file link as the source. */
+const toItem = (it: ApiItem): MediaItem => ({
+  id: it.id,
+  name: it.name,
+  kind: it.kind,
+  thumb: `https://drive.google.com/thumbnail?id=${it.id}&sz=w400`,
+  src: `https://drive.google.com/file/d/${it.id}/view`,
+})
+
+const fromApi = (f: ApiFolder | null): Folder =>
+  !f
+    ? unset()
+    : "error" in f
+      ? { ...unset(), status: "error", link: f.link, error: f.error }
+      : { status: "connected", link: f.link, name: f.name, items: f.items.map(toItem), error: null, editorLink: false }
+
+let loadedOnce: Promise<void> | null = null
+
+/** Her saved folders, listed live. Once per page load; `force` re-reads. */
+export function loadDriveFolders(force = false): Promise<void> {
+  if (loadedOnce && !force) return loadedOnce
+  FOLDER_ORDER.forEach((k) => {
+    if (store.folders[k].status === "unset") setFolder(k, { status: "checking" })
+  })
+  loadedOnce = fetch("/api/drive-folders")
+    .then((r) => r.json())
+    .then((d: { folders?: Record<FolderKey, ApiFolder | null> }) => {
+      const next = { ...store.folders }
+      for (const k of FOLDER_ORDER) next[k] = fromApi(d.folders?.[k] ?? null)
+      set({ folders: next })
+    })
+    .catch(() => {
+      FOLDER_ORDER.forEach((k) => {
+        if (store.folders[k].status === "checking") setFolder(k, unset())
+      })
+      loadedOnce = null
+    })
+  return loadedOnce
 }
 
-const checkTimers: Partial<Record<FolderKey, ReturnType<typeof setTimeout>>> = {}
+/** Re-list one folder — opening the picker shows what's in Drive NOW. */
+export async function refreshDriveFolder(k: FolderKey): Promise<void> {
+  if (store.folders[k].status !== "connected") return
+  try {
+    const d = (await fetch(`/api/drive-folders?key=${k}`).then((r) => r.json())) as { folder?: ApiFolder | null }
+    if (d.folder !== undefined) setFolder(k, fromApi(d.folder))
+  } catch {
+    // Keep what we had; the gallery still works from the last listing.
+  }
+}
 
-export function connectFolder(k: FolderKey, link: string) {
-  if (checkTimers[k]) clearTimeout(checkTimers[k])
+export async function connectFolder(k: FolderKey, link: string) {
   if (!link.trim()) {
     setFolder(k, unset())
     return
   }
   setFolder(k, { status: "checking", link, error: null })
-  checkTimers[k] = setTimeout(() => {
-    const r = classifyLink(link)
-    if ("error" in r) {
-      setFolder(k, { status: "error", error: r.error, items: [], name: "" })
-    } else {
-      setFolder(k, {
-        status: "connected",
-        error: null,
-        name: FOLDER_META[k].driveName,
-        items: r.empty ? [] : SEED_ITEMS[k],
-        editorLink: r.editor,
-      })
-    }
-  }, 1100)
+  try {
+    const d = (await fetch("/api/drive-folders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: k, link }),
+    }).then((r) => r.json())) as { folder?: ApiFolder; error?: FolderError }
+    if (d.folder) setFolder(k, fromApi(d.folder))
+    else setFolder(k, { status: "error", error: d.error ?? "not_public", items: [], name: "" })
+  } catch {
+    setFolder(k, { status: "error", error: "not_public", items: [], name: "" })
+  }
 }
 
 export function disconnectFolder(k: FolderKey) {
   setFolder(k, unset())
+  void fetch("/api/drive-folders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: k, link: "" }),
+  })
+}
+
+/**
+ * Each format's panel registers the import it already has (the carousel's
+ * Drive import, the story's, the image / b-roll / talking-head link pull).
+ * A pick hands it the chosen files as Drive file links, in order — exactly
+ * what she used to paste row by row — so captions, saving and the canvas
+ * card all work the way they always have.
+ */
+const importers = new Map<string, (links: string[]) => void>()
+export function registerDriveImporter(format: string, fn: ((links: string[]) => void) | null) {
+  if (fn) importers.set(format, fn)
+  else importers.delete(format)
 }
 
 /* ------------------------------------------------- simulated import */
@@ -329,6 +383,12 @@ export function setDrivePickApply(fn: ApplyPick | null) {
 
 function runImport(format: string, items: MediaItem[]) {
   if (items.length === 0) return
+  const importer = importers.get(format)
+  if (importer) {
+    set({ picked: { ...store.picked, [format]: items }, pickerFor: null })
+    importer(items.map((it) => it.src))
+    return
+  }
   if (importTimer) clearTimeout(importTimer)
   const unit = format === "carousel" ? "שקופית" : format === "story" ? "פריים" : null
   let i = 0
@@ -454,6 +514,9 @@ export function DrivePickReviewBar({
   onFormatChange?: (format: string) => void
 }) {
   const s = useDrivePickStore()
+  // The review strip drove sample folders; with her real folders it would
+  // only fake states over real data, so it no longer shows.
+  if (REAL_FOLDERS) return null
   const other: DrivePickVariant = variant === "a" ? "b" : "a"
   const fmt = activeFormat ?? s.pickerFor ?? s.lastFormat ?? "carousel"
   const folderKey = FORMAT_FOLDER[fmt] ?? "carousel"
@@ -598,6 +661,9 @@ function FolderLinkField({ folderKey, autoFocus }: { folderKey: FolderKey; autoF
 /** Settings → מדיה → מדיה מ-Google Drive. Identical in both directions. */
 export function DriveFoldersSettings() {
   const s = useDrivePickStore()
+  useEffect(() => {
+    void loadDriveFolders()
+  }, [])
   const [open, setOpen] = useState<FolderKey | null>("images")
   const connectedCount = FOLDER_ORDER.filter((k) => s.folders[k].status === "connected").length
 
@@ -777,9 +843,28 @@ function FolderRow({
  * What stands where the Drive section used to be in a format's media panel:
  * one button that swaps the panel for the folder, plus what was last picked.
  */
-export function DriveFolderEntry({ format }: { format: string }) {
+export function DriveFolderEntry({
+  format,
+  onImport,
+}: {
+  format: string
+  /** The format's own Drive import — receives the picked files' links, in order. */
+  onImport?: (links: string[]) => void
+}) {
   const s = useDrivePickStore()
   const k = FORMAT_FOLDER[format] ?? "images"
+  useEffect(() => {
+    void loadDriveFolders()
+  }, [])
+  // Kept current every render: the import closes over the panel's latest state.
+  const importRef = useRef(onImport)
+  useEffect(() => {
+    importRef.current = onImport
+  })
+  useEffect(() => {
+    registerDriveImporter(format, (links) => importRef.current?.(links))
+    return () => registerDriveImporter(format, null)
+  }, [format])
   const f = s.folders[k]
   const picked = s.picked[format]
   const multi = format === "carousel" || format === "story"
@@ -953,12 +1038,17 @@ export function DriveFolderPicker({
   const f = s.folders[k]
   const meta = FOLDER_META[k]
 
-  // Opening the folder takes a moment in real life (the server lists it).
+  // Opening re-lists the folder, so a file she just dropped into Drive is there.
   const [opening, setOpening] = useState(true)
   useEffect(() => {
-    const t = setTimeout(() => setOpening(false), 650)
-    return () => clearTimeout(t)
-  }, [])
+    let alive = true
+    void loadDriveFolders()
+      .then(() => refreshDriveFolder(k))
+      .finally(() => alive && setOpening(false))
+    return () => {
+      alive = false
+    }
+  }, [k])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

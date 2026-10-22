@@ -1020,7 +1020,13 @@ function TalkingHeadFlow({
     return (
       <div className="flex flex-col gap-6">
         {drivePick ? (
-          <DriveFolderEntry format="talking_head" />
+          <DriveFolderEntry
+            format="talking_head"
+            onImport={(links) => {
+              setDriveLink(links[0])
+              commitDrive(links[0])
+            }}
+          />
         ) : (
         /* Media from a Google Drive link */
         <div className="flex flex-col gap-2">
@@ -2334,7 +2340,7 @@ function CarouselFlow({
             images), so a single Canva/folder link is intentionally NOT the
             mechanism here. */}
       {drivePick ? (
-        <DriveFolderEntry format="carousel" />
+        <DriveFolderEntry format="carousel" onImport={requestDriveImport} />
       ) : (
       <div className="flex flex-col gap-2">
         <DriveMediaLinks
@@ -3919,7 +3925,14 @@ function MediaUploadFlow({
                   from there, an image is copied over. Canva/other stay as a
                   reference link. Upload-from-computer was removed per Hani. */}
               {drivePick ? (
-                <DriveFolderEntry format="image_post" />
+                <DriveFolderEntry
+                  format="image_post"
+                  onImport={(links) => {
+                    setDriveUrl(links[0])
+                    lastDriveRef.current = links[0]
+                    attachDriveMedia(links[0], "image_post")
+                  }}
+                />
               ) : (
               <div className="flex flex-col gap-2">
                 <p className="text-small-bold text-text-primary-default">
@@ -4163,7 +4176,7 @@ function MediaUploadFlow({
                  Row i is frame i, so dragging a row reorders the story
                  itself, not just the form. */}
           {drivePick ? (
-            <DriveFolderEntry format="story" />
+            <DriveFolderEntry format="story" onImport={handleStoryDriveImport} />
           ) : !showStoryDriveLinks ? (
             <Button
               variant="outline"
@@ -4431,7 +4444,14 @@ function MediaUploadFlow({
               that's already there. Collapse it behind a replace button and only
               bring it back when the user asks to swap the clip. */}
           {drivePick && isBRoll ? (
-            <DriveFolderEntry format={format} />
+            <DriveFolderEntry
+              format={format}
+              onImport={(links) => {
+                setDriveUrl(links[0])
+                lastDriveRef.current = links[0]
+                attachDriveMedia(links[0], format)
+              }}
+            />
           ) : isBRoll && !showBRollDriveField ? (
             // Same door as the story's (Hani, 2026-07-29): one button naming
             // where the media comes from, with the field behind it. Doubles

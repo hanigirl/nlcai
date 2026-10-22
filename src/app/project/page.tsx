@@ -230,7 +230,9 @@ function ProjectPageInner() {
   const drivePickParam = searchParams.get("drivepick")
   const drivePickVariant: DrivePickVariant | null =
     drivePickParam === "a" || drivePickParam === "b" ? drivePickParam : null
-  const drivePickSeeded = !!drivePickVariant && !postId
+  // The sample post was for reviewing sample folders; the picker now reads
+  // her real Drive, so it works on her real posts only.
+  const drivePickSeeded = false && !!drivePickVariant && !postId
 
   const flow: Flow = postId ? "saved" : hookParam ? "hook" : "idea"
 
