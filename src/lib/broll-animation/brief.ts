@@ -17,20 +17,31 @@ function familyFromName(fileName: string): string {
     .trim()
 }
 
+/**
+ * Her fonts, primary first. The role is set in Settings → Media → Fonts;
+ * without one, the first font she added is the primary and the rest are
+ * secondary.
+ */
 export async function loadBrandFonts(supabase: SupabaseClient, userId: string): Promise<BrandFont[]> {
   const { data } = await supabase
     .from("user_media")
-    .select("file_name, storage_path")
+    .select("file_name, storage_path, metadata")
     .eq("user_id", userId)
     .eq("category", "font")
-  const rows = (data ?? []) as { file_name: string; storage_path: string }[]
-  return rows.map((r): BrandFont => {
+    .order("created_at", { ascending: true })
+  const rows = (data ?? []) as { file_name: string; storage_path: string; metadata: { role?: string } | null }[]
+  const fonts = rows.map((r): BrandFont => {
+    const role = r.metadata?.role === "primary" || r.metadata?.role === "secondary" ? r.metadata.role : undefined
     if (r.storage_path.startsWith("google:")) {
-      return { kind: "google", family: r.storage_path.slice("google:".length) }
+      return { kind: "google", family: r.storage_path.slice("google:".length), role }
     }
     const url = supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl
-    return { kind: "file", family: familyFromName(r.file_name), url }
+    return { kind: "file", family: familyFromName(r.file_name), url, role }
   })
+  const primaryAt = Math.max(0, fonts.findIndex((f) => f.role === "primary"))
+  return fonts
+    .map((f, i) => ({ ...f, role: i === primaryAt ? ("primary" as const) : ("secondary" as const) }))
+    .sort((a, b) => (a.role === "primary" ? -1 : b.role === "primary" ? 1 : 0))
 }
 
 export async function buildCompositionBrief(

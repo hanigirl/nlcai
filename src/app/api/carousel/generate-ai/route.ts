@@ -100,6 +100,30 @@ function buildSlidePrompt(
   ].join("\n")
 }
 
+/**
+ * Her usage examples that the analysis recognised as carousel slides (all of
+ * them when none were) — the template the layout copies one-to-one.
+ */
+async function carouselExamples(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  vl: VisualLanguage | null | undefined,
+): Promise<string[]> {
+  const { data } = await supabase
+    .from("user_media")
+    .select("id, storage_path")
+    .eq("user_id", userId)
+    .eq("category", "brand_example")
+    .order("created_at", { ascending: true })
+  const rows = (data ?? []) as { id: string; storage_path: string }[]
+  const carouselIds = new Set((vl?.example_kinds ?? []).filter((k) => k.kind === "carousel").map((k) => k.id))
+  const picked = carouselIds.size ? rows.filter((r) => carouselIds.has(r.id)) : rows
+  return picked
+    .filter((r) => /\.(png|jpe?g|webp|gif)$/i.test(r.storage_path))
+    .slice(0, 6)
+    .map((r) => supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl)
+}
+
 function slideRole(slide: SlideData): ImageRole {
   return slide.type === "cover" ? "cover" : slide.type === "cta" ? "closing" : "content"
 }
@@ -220,25 +244,27 @@ export async function POST(req: NextRequest) {
         palette,
         styleLines: direction.lines,
         reservedLines: reservedZoneLines(direction.fixed, "content", IMAGE_WIDTH, IMAGE_HEIGHT),
+        examples: isBrandTemplate ? await carouselExamples(supabase, user.id, row?.visual_language) : [],
+        pastedElements: direction.fixed.map((el) => el.name),
       }
 
-      // Layout (Opus) and illustrations (image model) don't wait on each other.
-      const illustrations: string[] = new Array(total)
+      // Layout first: Opus decides which slides get an illustration at all
+      // (type-led examples → none), then only those are drawn.
+      const layout = await composeCarousel(anthropicKey, brief)
+      const illustrations: string[] = new Array(total).fill("")
+      const wanted = layout.illustrations.map((idea, i) => ({ idea: idea.trim(), i })).filter((x) => x.idea)
       let nextArt = 0
       async function artWorker() {
-        while (nextArt < total) {
-          const i = nextArt++
-          const raw = await generateImage(openaiKey, illustrationPrompt("", slides![i], direction.lines), {
+        while (nextArt < wanted.length) {
+          const { idea, i } = wanted[nextArt++]
+          const raw = await generateImage(openaiKey, illustrationPrompt(idea, slides![i], direction.lines), {
             shape: "1:1",
             quality: "medium",
           })
           illustrations[i] = await uploadIllustration(supabase, user!.id, Buffer.from(raw, "base64"))
         }
       }
-      const [layout] = await Promise.all([
-        composeCarousel(anthropicKey, brief),
-        Promise.all(Array.from({ length: Math.min(ART_CONCURRENCY, total) }, () => artWorker())),
-      ])
+      await Promise.all(Array.from({ length: Math.min(ART_CONCURRENCY, wanted.length) }, () => artWorker()))
       const shots = await renderCarousel(layout.html, illustrations, fonts)
       for (let i = 0; i < total; i++) {
         const shot = shots[i]

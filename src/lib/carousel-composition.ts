@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { SlideData } from "@/lib/carousel-templates"
-import { fontHead, type BrandFont } from "@/lib/broll-animation/compose"
+import { fontHead, fontRoleLines, type BrandFont } from "@/lib/broll-animation/compose"
 import { launch } from "@/lib/broll-animation/render"
 
 /**
@@ -39,6 +39,14 @@ export interface CarouselBrief {
   styleLines: string[]
   /** Corners kept free for brand elements pasted afterwards. */
   reservedLines: string[]
+  /**
+   * Public URLs of her carousel usage examples (Settings → visual language →
+   * "דוגמאות לשימוש"). When present they ARE the template: the layout copies
+   * them one-to-one (Hani, 2026-10-22).
+   */
+  examples?: string[]
+  /** Names of the brand elements we paste afterwards — never drawn. */
+  pastedElements?: string[]
 }
 
 export interface StoredCarousel {
@@ -54,22 +62,23 @@ const SYSTEM = `You are a senior editorial designer building Instagram carousels
 You output ONE HTML document containing every slide of the carousel as <section class="slide" data-slide="N"> elements (N = 1..count, in order), each exactly ${SLIDE_W}px × ${SLIDE_H}px, position relative, overflow hidden. The page is screenshotted slide by slide.
 
 THE CAROUSEL IS ONE SYSTEM — slides are swiped one after another, so consistency is the whole job:
-1. Fonts: ONLY the brand fonts. Write font-family as var(--font-head) for headings (.title) and var(--font-body) for everything else — never a font name. We define those variables to her brand fonts (they're loaded for you). No font-weight soup: at most two weights.
+1. Fonts: ONLY the brand fonts, by role. Everything — titles, body, numbers, callouts, buttons — is set in the PRIMARY font: write font-family: var(--font-primary), never a font name. The secondary font (if she has one) is an accent only: put it on an element with class "accent" (font-family: var(--font-accent)) for at most a short teaser line or one highlighted word — never a title, never a body paragraph. We define those variables to her fonts (they're loaded for you). At most two weights (e.g. 400 and 700).
 2. One type scale, defined ONCE in :root as CSS variables, and every font-size written as calc(var(--type-scale) * <px>) — e.g. --title: calc(var(--type-scale) * 76px). All content slides use the SAME title size and the SAME body size. The cover may use one larger title size; the closing slide reuses the content sizes. No per-slide font-size overrides, no inline font styles.
 3. One grid: identical margins, text block position and illustration slot on every content slide. Use shared classes, never per-slide positioning.
-4. The slide number: the same element, same corner, same size, same style on every slide (e.g. "3/7" or a numbered badge) — designed once in the stylesheet.
+4. The slide number: the same element, same corner, same size, same style on every slide (e.g. "3/7" or a numbered badge) — designed once in the stylesheet. Nothing else is attached to it: no tab, arrow or shape under or beside it unless the examples show one.
 5. Colours: only the brand palette (plus white/black/transparency of them).
-6. Text appears EXACTLY as given — same Hebrew words and order, nothing added, no emoji. <html lang="he" dir="rtl">. Put each slide's title in an element with class "title" and body in class "body"; wrap them in an element with class "text-box" that has a fixed max height — if text doesn't fit, we shrink --type-scale for all slides together, so design for the longest text.
-7. Illustrations: each slide has one illustration image (square, no text, drawn separately in the brand style). Place it with <img class="art" src="__SLIDE_IMAGE_N__"> in the same slot on every content slide (object-fit: cover or contain, your call). The cover may give it more room. Never put text over a busy part of an illustration.
+6. Text appears EXACTLY as given — same Hebrew words and order, nothing added, no emoji. You MAY split a slide's body between a body paragraph and a highlighted callout (e.g. its key sentence) when the examples do that — every word still appears once, in order. Recurring brand text that appears identically on every example (a website address, a handle) is part of the template and may be reproduced. <html lang="he" dir="rtl">. Put each slide's title in an element with class "title" and body in class "body"; wrap them in an element with class "text-box" that has a fixed max height — if text doesn't fit, we shrink --type-scale for all slides together, so design for the longest text.
+7. Illustrations are OPTIONAL. If (and only if) the examples / visual language use imagery, a slide may have one illustration (square, no text, drawn separately in the brand style): place it with <img class="art" src="__SLIDE_IMAGE_N__"> in the same slot on every content slide, and give it a prompt in the json block. A slide without an illustration gets an empty string there and no token. Type-led examples → no illustrations at all.
+7b. Decoration: only what the examples / visual language show. Do not invent icons, arrows, chevrons, tabs, badges or ornaments. Brand elements we paste afterwards (listed under PASTED ELEMENTS) must never be drawn or imitated anywhere — not even a simplified version.
 8. Keep ≥64px margins; nothing touches or crosses a slide edge.
 9. No JavaScript, no external resources other than the illustration tokens.
 
-Return two fenced blocks: first \`\`\`json {"illustrations": ["<English prompt for slide 1's illustration>", ...]}\`\`\` (one per slide — a concrete visual idea for that slide's message, in the visual language; NO text, letters or numbers in it), then \`\`\`html ...\`\`\`.`
+WHEN USAGE EXAMPLES ARE ATTACHED (images of her own finished carousel slides): they are THE TEMPLATE. Rebuild them one-to-one in HTML — the same structure per slide type (cover / content / closing), the same order of elements top to bottom (e.g. bold dark title → plain body text → tinted callout box), the same positions, proportions, sizes relative to the frame, alignment, spacing, backgrounds, number badge, callout style, colours and weights. Measure them; don't reinterpret them, don't "improve" them, don't add anything they don't have. Only the words change. The typefaces still come from rule 1.
+
+Return two fenced blocks: first \`\`\`json {"illustrations": ["<English prompt for slide 1's illustration, or empty>", ...]}\`\`\` (one entry per slide; a concrete visual idea with NO text, letters or numbers — or "" for no illustration), then \`\`\`html ...\`\`\`.`
 
 function briefText(b: CarouselBrief): string {
-  const fonts = b.fonts.length
-    ? b.fonts.map((f) => `- "${f.family}"`).join("\n")
-    : '- (no brand font set — use "Rubik" for headings and "Heebo" for body)'
+  const fonts = b.fonts.length ? fontRoleLines(b.fonts) : '- (no brand font set — "Rubik" is the primary)'
   const palette = b.palette.length
     ? b.palette.map((p) => `- ${p.hex} — ${p.role}`).join("\n")
     : "- (no brand colours — derive a restrained palette from the visual language)"
@@ -89,6 +98,12 @@ function briefText(b: CarouselBrief): string {
     "VISUAL LANGUAGE AND STANDING PREFERENCES:",
     b.styleLines.join("\n").slice(0, 4000),
     ...(b.reservedLines.length ? ["", "RESERVED ZONES (keep empty — brand elements are pasted there afterwards):", ...b.reservedLines] : []),
+    ...(b.pastedElements?.length
+      ? ["", "PASTED ELEMENTS (we add these ourselves — never draw them or anything resembling them):", ...b.pastedElements.map((n) => `- ${n}`)]
+      : []),
+    ...(b.examples?.length
+      ? ["", `USAGE EXAMPLES: ${b.examples.length} images of her own finished slides are attached above. Rebuild their layout one-to-one.`]
+      : []),
   ].join("\n")
 }
 
@@ -105,16 +120,20 @@ function parse(text: string, count: number): { html: string; illustrations: stri
   return { html: html[1].trim(), illustrations: Array.from({ length: count }, (_, i) => illustrations[i] ?? "") }
 }
 
-async function ask(apiKey: string, user: string, count: number) {
+async function ask(apiKey: string, user: string, count: number, examples: string[] = []) {
   const client = new Anthropic({ apiKey })
+  const content: Anthropic.ContentBlockParam[] = [
+    ...examples.map((url): Anthropic.ContentBlockParam => ({ type: "image", source: { type: "url", url } })),
+    { type: "text", text: user },
+  ]
   const message = await client.messages
-    .stream({ model: MODEL, max_tokens: 20000, system: SYSTEM, messages: [{ role: "user", content: user }] })
+    .stream({ model: MODEL, max_tokens: 24000, system: SYSTEM, messages: [{ role: "user", content }] })
     .finalMessage()
   return parse(message.content.map((c) => (c.type === "text" ? c.text : "")).join(""), count)
 }
 
 export function composeCarousel(apiKey: string, brief: CarouselBrief) {
-  return ask(apiKey, briefText(brief), brief.slides.length)
+  return ask(apiKey, briefText(brief), brief.slides.length, brief.examples)
 }
 
 /**
@@ -141,6 +160,7 @@ export function reviseCarousel(apiKey: string, stored: StoredCarousel, instructi
       "Return the full revised HTML.",
     ].join("\n"),
     stored.brief.slides.length,
+    stored.brief.examples,
   )
 }
 
@@ -162,18 +182,21 @@ export function illustrationPrompt(idea: string, slide: SlideData, styleLines: s
  * Her fonts, enforced. The prompt asks for brand fonts only, but a model will
  * still reach for a familiar face (it once set a whole carousel in Rubik with
  * her font sitting unused). So the families are pinned here, after the
- * composition's CSS: headings get her first brand font, everything else her
- * second (or the first again). Rubik / Heebo remain only as glyph fallbacks.
+ * composition's CSS: every piece of text gets her PRIMARY font; the secondary
+ * one only reaches elements marked "accent" — it never takes the design over.
+ * Rubik / Heebo remain only as glyph fallbacks. (--font-head / --font-body
+ * are kept, both primary, for compositions written before the roles.)
  */
 function fontEnforcement(fonts: BrandFont[]): string {
   if (!fonts.length) return ""
-  const head = JSON.stringify(fonts[0].family)
-  const body = JSON.stringify((fonts[1] ?? fonts[0]).family)
+  const primary = fonts.find((f) => f.role !== "secondary") ?? fonts[0]
+  const accent = fonts.find((f) => f.role === "secondary") ?? primary
+  const p = `${JSON.stringify(primary.family)},"Rubik","Heebo",sans-serif`
+  const a = `${JSON.stringify(accent.family)},${p}`
   return `<style>
-:root{--font-head:${head},"Rubik",sans-serif;--font-body:${body},"Heebo","Rubik",sans-serif}
-.slide,.slide .body,.slide p,.slide li,.slide span:not(.title *){font-family:var(--font-body)!important}
-.slide .title,.slide .title *,.slide h1,.slide h2,.slide h3{font-family:var(--font-head)!important}
-.slide .num{font-family:var(--font-body)!important}
+:root{--font-primary:${p};--font-accent:${a};--font-head:${p};--font-body:${p}}
+.slide,.slide *{font-family:var(--font-primary)!important}
+.slide .accent,.slide .accent *{font-family:var(--font-accent)!important}
 </style>`
 }
 
@@ -185,8 +208,11 @@ export async function renderCarousel(
 ): Promise<Buffer[]> {
   let page = html
   illustrationUrls.forEach((url, i) => {
-    page = page.split(IMAGE_TOKEN(i)).join(url)
+    page = page.split(IMAGE_TOKEN(i)).join(url ?? "")
   })
+  // A slot left without art (no idea for it) disappears instead of a broken image.
+  page = page.replace(/__SLIDE_IMAGE_\d+__/g, "")
+  page = page.replace(/<\/head>/i, `<style>img[src=""]{display:none!important}</style></head>`)
   const head = fontHead(fonts) + fontEnforcement(fonts)
   // Appended at the END of <head> so it wins over the composition's own CSS.
   page = /<\/head>/i.test(page) ? page.replace(/<\/head>/i, `${head}</head>`) : `${head}${page}`

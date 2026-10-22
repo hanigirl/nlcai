@@ -8,6 +8,7 @@ import { VisualLanguagePanel } from "@/components/visual-language-panel"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { Select } from "@/components/ui/select"
 import { Progress } from "@/components/ui/progress"
 import { createClient } from "@/lib/supabase/client"
 import { parseCreatorInput } from "@/lib/creator-url"
@@ -339,7 +340,7 @@ function SettingsPageInner() {
   const [savingCreatorIndex, setSavingCreatorIndex] = useState<number | null>(null)
 
   // Media tab state
-  interface MediaItem { id: string; name: string; url: string }
+  interface MediaItem { id: string; name: string; url: string; role?: "primary" | "secondary" }
   const [coverItems, setCoverItems] = useState<MediaItem[]>([])
   const [coverUploading, setCoverUploading] = useState<UploadingFile[]>([])
   const [analyzingStyle, setAnalyzingStyle] = useState(false)
@@ -387,6 +388,7 @@ function SettingsPageInner() {
         .from("user_media")
         .select("id, category, file_name, storage_path, metadata")
         .eq("user_id", user.id)
+        .order("created_at", { ascending: true })
 
       const userRowRes = await userRowPromise
       const coreIdRes = await coreIdPromise
@@ -456,7 +458,13 @@ function SettingsPageInner() {
 
         const toItem = (r: { id: string; file_name: string; storage_path: string; metadata: Record<string, unknown> }): MediaItem => {
           const isGoogle = (r.metadata as { source?: string })?.source === "google"
-          return { id: r.id, name: r.file_name, url: isGoogle ? "" : supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl }
+          const role = (r.metadata as { role?: string } | null)?.role
+          return {
+            id: r.id,
+            name: r.file_name,
+            url: isGoogle ? "" : supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl,
+            role: role === "primary" || role === "secondary" ? role : undefined,
+          }
         }
         setFontItems(mediaRows.filter((r) => r.category === "font").map(toItem))
         setCoverItems(mediaRows.filter((r) => r.category === "cover").map(toItem))
@@ -591,6 +599,32 @@ function SettingsPageInner() {
     const url = supabase.storage.from("user-media").getPublicUrl(storagePath).data.publicUrl
     return { id: row.id, name: file.name, url } as MediaItem
   }, [])
+
+  // Primary / secondary font (Hani, 2026-10-22). The generators set all text
+  // in the primary; the secondary is only an accent. Without a choice, the
+  // first font is the primary — the same rule the server applies.
+  const fontRole = (i: number): "primary" | "secondary" => {
+    const explicit = fontItems.findIndex((f) => f.role === "primary")
+    return i === (explicit >= 0 ? explicit : 0) ? "primary" : "secondary"
+  }
+  const setFontRole = async (id: string, role: "primary" | "secondary") => {
+    const supabase = createClient()
+    const prev = fontItems
+    const primaryId = role === "primary" ? id : prev.find((f, i) => f.id !== id && fontRole(i) === "primary")?.id ?? prev.find((f) => f.id !== id)?.id
+    const next = prev.map((f) => ({ ...f, role: (f.id === primaryId ? "primary" : "secondary") as "primary" | "secondary" }))
+    setFontItems(next)
+    const { data: rows } = await supabase.from("user_media").select("id, metadata").in("id", next.map((f) => f.id))
+    const results = await Promise.all(
+      next.map((f) => {
+        const metadata = { ...(((rows ?? []) as { id: string; metadata: Record<string, unknown> | null }[]).find((r) => r.id === f.id)?.metadata ?? {}), role: f.role }
+        return supabase.from("user_media").update({ metadata } as never).eq("id", f.id)
+      }),
+    )
+    if (results.some((r) => r.error)) {
+      setFontItems(prev)
+      toast.error("לא הצלחנו לשמור את סוג הפונט. נסו שוב.")
+    }
+  }
 
   const deleteMediaItem = useCallback(async (item: MediaItem, storagePath?: string) => {
     const supabase = createClient()
@@ -1507,6 +1541,7 @@ function SettingsPageInner() {
                       <div>
                         <h3 className="text-p-bold text-text-primary-default">פונטים</h3>
                         <p className="text-small text-text-neutral-default mt-1">העלו את הפונטים שאתם עובדים איתם, או בחרו מ-Google Fonts. עד 5 פונטים.</p>
+                        <p className="text-small text-text-neutral-default mt-1">הפונט הראשי משמש לכותרות ולטקסט. פונט משני משמש רק להדגשות קטנות.</p>
                       </div>
 
                       {fontItems.length >= 5 ? (
@@ -1578,11 +1613,24 @@ function SettingsPageInner() {
                       {/* Uploaded fonts */}
                       {fontItems.length > 0 && (
                         <div className="flex flex-col gap-2">
-                          {fontItems.map((font) => (
-                            <div key={font.id} className="flex items-center justify-between rounded-lg bg-bg-surface px-3 py-2.5 group">
-                              <div className="flex items-center gap-2">
-                                <Type className="size-3.5 text-text-neutral-default" />
-                                <span className="text-sm text-text-primary-default">{font.name.replace(/\.(ttf|otf|woff2?)$/, "")}</span>
+                          {fontItems.map((font, i) => (
+                            <div key={font.id} className="flex items-center justify-between gap-3 rounded-lg bg-bg-surface px-3 py-2.5 group">
+                              <div className="flex min-w-0 flex-1 items-center gap-2">
+                                <Type className="size-3.5 shrink-0 text-text-neutral-default" />
+                                <span className="truncate text-sm text-text-primary-default">{font.name.replace(/\.(ttf|otf|woff2?)$/, "")}</span>
+                              </div>
+                              <div className="w-28 shrink-0">
+                                <Select
+                                  selectSize="small"
+                                  variant="homepage"
+                                  value={fontRole(i)}
+                                  onChange={(e) => setFontRole(font.id, e.target.value as "primary" | "secondary")}
+                                  aria-label={`סוג הפונט ${font.name}`}
+                                  disabled={fontItems.length < 2}
+                                >
+                                  <option value="primary">ראשי</option>
+                                  <option value="secondary">משני</option>
+                                </Select>
                               </div>
                               <button onClick={async () => { await deleteMediaItem(font); setFontItems((prev) => prev.filter((f) => f.id !== font.id)) }} className="opacity-0 group-hover:opacity-100 transition-opacity">
                                 <X className="size-3.5 text-text-neutral-default hover:text-button-destructive-default" />
