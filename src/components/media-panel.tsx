@@ -69,6 +69,7 @@ import {
   carouselBareSlides,
   carouselCaptionedSlides,
   captionCarouselSlide,
+  slideHasBakedText,
   forgetCarouselSlides,
   readCarouselCaptionSettings,
 } from "@/lib/carousel-caption"
@@ -1808,7 +1809,7 @@ function CarouselFlow({
       // points a "saved" tile at a carousel that no longer exists. The Drive
       // links survive — they describe where the slides came from, and she may
       // well want to re-import them.
-      setFormatMeta(postId, "carousel", { templateId: undefined })
+      setFormatMeta(postId, "carousel", { templateId: undefined, bakedText: undefined })
       carouselGenCache.delete(postId)
       forgetCarouselSlides(postId)
     }
@@ -1862,7 +1863,8 @@ function CarouselFlow({
   // the canvas — the import just reads whatever is currently chosen, so a set
   // brought in now matches the one brought in an hour ago.
   const handleDriveImport = async (rows: string[]) => {
-    const { captionOn: caption, position } = readCarouselCaptionSettings(postId)
+    const { captionOn: captionChosen, position } = readCarouselCaptionSettings(postId)
+    let caption = captionChosen
     // Every carousel slide comes from a link, so blank rows are just empty
     // form scaffolding here.
     const links = rows.filter(Boolean)
@@ -1913,6 +1915,18 @@ function CarouselFlow({
         // is recoverable, a dead import is not.
         const bare = data.base64 as string
         bares.push(bare)
+        // Finished designs keep their own words (Hani, 2026-10-22). The cover
+        // speaks for the set: one look, before any slide is captioned, so a
+        // carousel is never half captioned. Recorded either way — the card
+        // shows the caption controls only on bare pictures.
+        if (i === 0 && postId) {
+          setDriveImportProgress("בודקים אם יש טקסט בשקופיות...")
+          const hasText = await slideHasBakedText(bare)
+          setFormatMeta(postId, "carousel", {
+            bakedText: hasText === null ? undefined : hasText,
+          })
+          if (hasText) caption = false
+        }
         if (caption) {
           setDriveImportProgress(
             `מטמיעים כיתוב בשקופית ${i + 1} מתוך ${links.length}...`,

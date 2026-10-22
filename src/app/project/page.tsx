@@ -6,7 +6,11 @@ import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
 import { CaptionControls } from "@/components/image-caption-block"
-import { useCarouselCaption } from "@/lib/carousel-caption"
+import {
+  applyCarouselMetaFromServer,
+  carouselMetaForServer,
+  useCarouselCaption,
+} from "@/lib/carousel-caption"
 import { useStillCaption } from "@/lib/still-caption"
 import { toast } from "sonner"
 import { registerPendingSaveFlusher } from "@/lib/pending-saves"
@@ -862,6 +866,9 @@ function ProjectPageInner() {
             data.post.carouselImageUrls.length > 0
           ) {
             const urls = data.post.carouselImageUrls as string[]
+            // Before the card mounts, so it reads the post's answer to
+            // "made here or brought?" rather than this browser's memory.
+            applyCarouselMetaFromServer(postId, data.post.carouselMeta)
             // Show the card immediately from the URLs. The base64 decode
             // below still runs — the media panel needs base64 to re-save a
             // set — but the canvas no longer waits for it, and a failed
@@ -1393,7 +1400,13 @@ function ProjectPageInner() {
     if (sig === prevCarouselSigRef.current) return
     prevCarouselSigRef.current = sig
     if (!carouselImages || carouselImages.length === 0) return
-    void savePatch(savedPostId, { carouselImages }, "הקרוסלה")
+    // What the carousel is (AI-made / brought, words designed in) rides
+    // with the slides, so another browser reads it the same way.
+    void savePatch(
+      savedPostId,
+      { carouselImages, carouselMeta: carouselMetaForServer(savedPostId) },
+      "הקרוסלה",
+    )
   }, [savedPostId, carouselImages])
 
   // Manual hooks generation (no auto-generation)

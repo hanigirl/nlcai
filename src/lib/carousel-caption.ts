@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { getFormatMeta, setFormatMeta } from "@/lib/timing-storage"
 import type { CaptionPosition } from "@/components/image-caption-block"
 
@@ -90,6 +90,72 @@ export async function pullBareSlidesFromDrive(
   return slides
 }
 
+/**
+ * Whether a slide already has its words designed in. Asked of the cover only:
+ * a carousel is one design, so its cover speaks for the set. null = couldn't
+ * tell (no Anthropic key, model error) — callers keep the old behaviour.
+ */
+export async function slideHasBakedText(imageBase64: string): Promise<boolean | null> {
+  try {
+    const res = await fetch("/api/media/has-text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageBase64 }),
+    })
+    const data = await res.json()
+    return typeof data.hasText === "boolean" ? data.hasText : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * What the carousel IS, as the post stores it — made here by the AI (and from
+ * which template) or brought by her, and whether her slides carry their own
+ * words. Saved with the slides (media_assets.metadata) so it survives another
+ * browser or a cleared cache; localStorage alone used to make an AI carousel
+ * look "brought" anywhere but where it was made.
+ */
+export type CarouselStoredMeta = {
+  source: "ai" | "import"
+  templateId?: string
+  bakedText?: boolean
+}
+
+export function carouselMetaForServer(postId: string): CarouselStoredMeta {
+  const meta = getFormatMeta(postId, "carousel")
+  if (meta.templateId) return { source: "ai", templateId: meta.templateId }
+  return meta.bakedText === undefined
+    ? { source: "import" }
+    : { source: "import", bakedText: meta.bakedText }
+}
+
+/** The post's stored answer wins over whatever this browser remembered. */
+export function applyCarouselMetaFromServer(postId: string, meta: unknown) {
+  if (!meta || typeof meta !== "object") return
+  const m = meta as Partial<CarouselStoredMeta>
+  if (m.source === "ai") {
+    setFormatMeta(postId, "carousel", {
+      templateId: typeof m.templateId === "string" ? m.templateId : undefined,
+      bakedText: undefined,
+    })
+  } else if (m.source === "import") {
+    setFormatMeta(postId, "carousel", {
+      templateId: undefined,
+      bakedText: typeof m.bakedText === "boolean" ? m.bakedText : undefined,
+    })
+  }
+}
+
+/** Save the carousel's meta alone, onto the slides already stored. */
+export function persistCarouselMeta(postId: string) {
+  void fetch(`/api/core-posts/${postId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ carouselMeta: carouselMetaForServer(postId) }),
+  }).catch((err) => console.error("[carousel-caption][meta]", err))
+}
+
 /** The current on/off + placement for a post, straight from storage. */
 export function readCarouselCaptionSettings(postId: string | null): {
   captionOn: boolean
@@ -161,11 +227,18 @@ export function useCarouselCaption({
   const [isImport, setIsImport] = useState(
     () => !!postId && !getFormatMeta(postId, "carousel").templateId,
   )
+  // Slides she brought with their words already designed in — nothing to
+  // caption, so no caption controls (Hani, 2026-10-22).
+  const [bakedText, setBakedText] = useState<boolean | undefined>(() =>
+    postId ? getFormatMeta(postId, "carousel").bakedText : undefined,
+  )
 
   useEffect(() => {
     if (!postId) return
     const sync = () => {
-      setIsImport(!getFormatMeta(postId, "carousel").templateId)
+      const meta = getFormatMeta(postId, "carousel")
+      setIsImport(!meta.templateId)
+      setBakedText(meta.bakedText)
       setSettings(readCarouselCaptionSettings(postId))
     }
     sync()
@@ -175,6 +248,44 @@ export function useCarouselCaption({
 
   const slideCount = images?.length ?? 0
   const links = (driveLinks ?? []).filter(Boolean)
+  // Saved links alone don't make the slides hers: links can be pasted onto a
+  // post whose carousel the AI made (Hani's 5-slide AI carousel carried two
+  // links nobody imported, and grew caption controls). An import produces
+  // one slide per link, so the counts have to agree.
+  const cachedBares = postId ? carouselBareSlides.get(postId) : undefined
+  const cameFromImport =
+    slideCount > 0 &&
+    (links.length === slideCount || cachedBares?.length === slideCount)
+
+  // A carousel brought before the check existed has never been looked at.
+  // Look once, at the cover AS SHE BROUGHT IT — the stored slide may carry
+  // our own caption, which would read as "already has text". The answer is
+  // saved with the post, so this runs once per carousel, not per visit.
+  const checkedRef = useRef<string | null>(null)
+  // Couldn't tell (no key, model down): behave as before the check existed.
+  const [checkFailed, setCheckFailed] = useState(false)
+  useEffect(() => setCheckFailed(false), [postId])
+  useEffect(() => {
+    if (!postId || !isImport || !cameFromImport || bakedText !== undefined) return
+    if (checkedRef.current === postId) return
+    const cachedCover = cachedBares?.[0]
+    checkedRef.current = postId
+    void (async () => {
+      let cover = cachedCover
+      if (!cover) {
+        const pulled = await pullBareSlidesFromDrive(links.slice(0, 1))
+        cover = pulled?.[0]
+      }
+      const hasText = cover ? await slideHasBakedText(cover) : null
+      if (hasText === null) {
+        setCheckFailed(true)
+        return
+      }
+      setFormatMeta(postId, "carousel", { bakedText: hasText })
+      persistCarouselMeta(postId)
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [postId, isImport, cameFromImport, bakedText, links.join("|")])
 
   /** The originals, from the cache or — after a reload wiped it — from Drive. */
   const getBares = useCallback(async (): Promise<string[] | null> => {
@@ -298,8 +409,10 @@ export function useCarouselCaption({
     available:
       !!postId &&
       isImport &&
-      slideCount > 0 &&
-      (links.length > 0 || !!carouselBareSlides.get(postId)),
+      // Hidden until the cover has been looked at, so the controls never
+      // flash on and vanish over a finished design.
+      cameFromImport &&
+      (bakedText === false || (bakedText === undefined && checkFailed)),
     slides: draft ?? images ?? [],
     captionOn: settings.captionOn,
     position: settings.position,

@@ -115,6 +115,8 @@ export function useStillCaption({
             format,
             sourceUrl: source,
             position,
+            // Her own switch / placement — never second-guessed.
+            force: true,
           }),
         })
         const data = await res.json().catch(() => ({}))

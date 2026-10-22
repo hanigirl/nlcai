@@ -32,6 +32,12 @@ async function replaceImageAssetSet(
   postId: string,
   format: string,
   images: string[] | null | undefined,
+  /**
+   * Stamped on every row of the new set. Omitted → the set's existing stamp
+   * is carried over, so a reorder or a caption redraw never forgets what the
+   * set is.
+   */
+  metadata?: Record<string, unknown>,
 ): Promise<{ ok: true; changed: boolean } | { ok: false; error: string }> {
   let { data: variant } = await supabase
     .from("format_variants")
@@ -53,6 +59,20 @@ async function replaceImageAssetSet(
   if (!variant) return { ok: true, changed: false }
 
   const variantRow = variant as unknown as { id: string }
+
+  let stamp = metadata
+  if (stamp === undefined) {
+    const { data: prev } = await supabase
+      .from("media_assets")
+      .select("metadata")
+      .eq("format_variant_id", variantRow.id)
+      .eq("asset_type", "image")
+      .order("created_at", { ascending: true })
+      .limit(1)
+    stamp =
+      ((prev?.[0] as { metadata?: Record<string, unknown> } | undefined)?.metadata) ??
+      undefined
+  }
 
   // Drop existing image assets — the set is replaced as a whole.
   const { error: wipeErr } = await supabase
@@ -101,6 +121,7 @@ async function replaceImageAssetSet(
           asset_type: "image",
           url: base64,
           status: "completed",
+          ...(stamp ? { metadata: stamp } : {}),
         } as never)
         continue
       }
@@ -118,6 +139,7 @@ async function replaceImageAssetSet(
         asset_type: "image",
         url: publicUrl,
         status: "completed",
+        ...(stamp ? { metadata: stamp } : {}),
       } as never)
     }
   }
@@ -360,6 +382,21 @@ export async function GET(
 
     const carouselVariant = variants.find((v) => v.format === "carousel")
     const carouselImageUrls = imageUrlsFor(carouselVariant?.id)
+    // What the carousel is — AI-made (and from which template) or brought,
+    // and whether her slides carry their own words. Stamped on the slides.
+    const carouselStamp = carouselVariant
+      ? allMedia.find(
+          (m) => m.format_variant_id === carouselVariant.id && m.asset_type === "image",
+        )?.metadata
+      : null
+    const carouselMeta =
+      carouselStamp && typeof carouselStamp.source === "string"
+        ? {
+            source: carouselStamp.source,
+            templateId: carouselStamp.templateId,
+            bakedText: carouselStamp.bakedText,
+          }
+        : null
 
     // Story frames rehydrate the same way — each of the 1-3 AI-generated
     // frames is an `image` row under the `story` variant, ordered by
@@ -377,6 +414,7 @@ export async function GET(
         coverUrl,
         coverPillColor,
         carouselImageUrls,
+        carouselMeta,
         carouselDriveLinks,
         storyDriveLinks,
         bRollDriveLinks,
@@ -402,7 +440,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, videoUrl, deleteVideo, coverBase64, coverPillColor, coverText, deleteCover, carouselImages, carouselDriveLinks, storyImages, storyDriveLinks, bRollDriveLinks } = (await req.json()) as {
+    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, videoUrl, deleteVideo, coverBase64, coverPillColor, coverText, deleteCover, carouselImages, carouselMeta, carouselDriveLinks, storyImages, storyDriveLinks, bRollDriveLinks } = (await req.json()) as {
       body?: string
       hookText?: string
       hookId?: string
@@ -425,6 +463,8 @@ export async function PATCH(
       // format_variant. `null` clears the slate (matches the UI's
       // "delete carousel" path that sets carouselImages=null).
       carouselImages?: string[] | null
+      /** What the carousel is; see `carouselMetaForServer` on the client. */
+      carouselMeta?: { source?: unknown; templateId?: unknown; bakedText?: unknown }
       // The per-slide Drive links the carousel was imported from, in slide
       // order (migration 027). Order matters: dragging a link row in the
       // media panel reorders the slides too, so position IS slide position.
@@ -704,6 +744,19 @@ export async function PATCH(
     // Carousel + story are the multi-image formats — both persist their
     // frame set the same way (versioned as a group). Route both through the
     // shared helper so the subtle RLS wipe-verification lives in one place.
+    // Only the three known keys, typed — the stamp is read back into the UI.
+    const carouselStamp =
+      carouselMeta && (carouselMeta.source === "ai" || carouselMeta.source === "import")
+        ? {
+            source: carouselMeta.source,
+            ...(typeof carouselMeta.templateId === "string"
+              ? { templateId: carouselMeta.templateId }
+              : {}),
+            ...(typeof carouselMeta.bakedText === "boolean"
+              ? { bakedText: carouselMeta.bakedText }
+              : {}),
+          }
+        : undefined
     if (carouselImages !== undefined) {
       const r = await replaceImageAssetSet(
         supabase,
@@ -711,11 +764,28 @@ export async function PATCH(
         id,
         "carousel",
         carouselImages,
+        carouselStamp,
       )
       if (!r.ok) {
         return NextResponse.json({ error: r.error }, { status: 500 })
       }
       if (r.changed) didIndirectEdit = true
+    } else if (carouselStamp) {
+      // The stamp alone (e.g. the cover was just checked) — onto the slides
+      // already stored. No slides yet: the next set save carries it.
+      const { data: cv } = await supabase
+        .from("format_variants")
+        .select("id")
+        .eq("core_post_id", id)
+        .eq("format", "carousel")
+        .maybeSingle()
+      if (cv) {
+        await supabase
+          .from("media_assets")
+          .update({ metadata: carouselStamp } as never)
+          .eq("format_variant_id", (cv as { id: string }).id)
+          .eq("asset_type", "image")
+      }
     }
 
     // Drive links, per format. Upsert rather than update: the user can paste
