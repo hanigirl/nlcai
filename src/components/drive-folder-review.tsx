@@ -794,7 +794,7 @@ export function DriveFolderEntry({ format }: { format: string }) {
       )}
       <Button variant="outline" onClick={() => openDrivePicker(format)} className="w-full gap-2">
         <DriveMark />
-        {picked?.length ? "בחירה מחדש מהתיקייה בדרייב" : "בחירה מהתיקייה בדרייב"}
+        מדיה משלכם מ Google Drive
       </Button>
       <p className="text-xs-body text-text-neutral-default">
         {f.status === "connected"
