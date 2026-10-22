@@ -264,9 +264,7 @@ export function MediaPanel({
   const isOpen = formatId !== null
   const meta = formatId ? FORMAT_META[formatId] : null
   const Icon = meta?.icon
-  // Design review (?drivepick=a|b): "Google Drive" swaps the panel for the
-  // connected folder's gallery. Null without the param — production is
-  // untouched.
+  // "מדיה משלכם מ Google Drive" swaps the panel for the folder's gallery.
   const drivePick = useDrivePickVariant()
   const drivePickStore = useDrivePickStore()
   const drivePickerOpen = !!drivePick && !!formatId && drivePickStore.pickerFor === formatId
@@ -342,7 +340,6 @@ export function MediaPanel({
           <DriveFolderPicker
             key={formatId}
             format={formatId}
-            variant={drivePick}
             scriptText={formatId === "carousel" ? carouselText : ""}
           />
         )}
@@ -3852,8 +3849,7 @@ function MediaUploadFlow({
   // it as an inline banner instead of disabling controls because the user
   // can still SEE the structure of the panel and understand what comes
   // next once they save.
-  // A review link (?drivepick) has no saved post by design.
-  const showNoPostWarning = !postId && !drivePick
+  const showNoPostWarning = !postId
 
   // Layout matches the editable Sheet's MediaBlock + DriveLinkBlock pair:
   // upload area on top, "או" divider, Drive URL input below. Single

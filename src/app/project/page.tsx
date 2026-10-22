@@ -50,27 +50,6 @@ import { userKey } from "@/lib/user-scoped-storage"
 import { logLearningEdit } from "@/lib/learning-capture"
 import { BROLL_SCRIPT_CTA } from "@/lib/broll-copy"
 import { getCurrentUser } from "@/lib/supabase/current-user"
-import { DrivePickReviewBar, setDrivePickApply, type DrivePickVariant } from "@/components/drive-folder-review"
-
-/**
- * Design review (task "תיקיית מדיה מדרייב בהגדרות + תצוגה מקדימה בקנבס"):
- * the sample post a ?drivepick link lands on — all five formats already
- * duplicated, so any format card opens its real panel. Nothing is saved.
- */
-const DRIVE_PICK_SAMPLE = {
-  hook: "3 טעויות שעולות לכם בלקוחות כבר בשיחה הראשונה",
-  corePost:
-    "רוב היועצות מאבדות את הלקוחה עוד לפני שהיא אמרה כן — לא בגלל המחיר, אלא בגלל איך שהשיחה הראשונה נפתחת. הנה שלוש הטעויות שאני רואה שוב ושוב, ומה לעשות במקומן.",
-  formats: {
-    carousel:
-      "שקופית 1\n3 טעויות שעולות לכם בלקוחות כבר בשיחה הראשונה\n\nשקופית 2\nטעות 1: מדברים על עצמכם לפני ששאלתם עליה\n\nשקופית 3\nטעות 2: נותנים מחיר לפני שהיא הבינה את הערך\n\nשקופית 4\nטעות 3: מסיימים בלי צעד הבא ברור\n\nשקופית 5\nשמרו את הפוסט לשיחה הבאה שלכם",
-    story: "3 טעויות שעולות לכם בלקוחות כבר בשיחה הראשונה — ומה לעשות במקומן",
-    image_post: "רוב היועצות מאבדות את הלקוחה עוד לפני שהיא אמרה כן. הנה מה שאני רואה שוב ושוב.",
-    b_roll: `3 טעויות שעולות לכם בלקוחות כבר בשיחה הראשונה\n${BROLL_SCRIPT_CTA}`,
-    talking_head:
-      "רוב היועצות מאבדות את הלקוחה עוד לפני שהיא אמרה כן. הטעות הראשונה: מדברים על עצמכם לפני ששאלתם עליה...",
-  } as Record<string, string>,
-}
 import { handleGeminiQuotaFrame } from "@/lib/gemini-quota-toasts"
 
 type Flow = "idea" | "hook" | "saved"
@@ -223,16 +202,6 @@ function ProjectPageInner() {
   const hookParam = searchParams.get("hook") ?? ""
   const hookIdParam = searchParams.get("hook_id") ?? ""
   const postId = searchParams.get("post_id") ?? ""
-  // Design review: ?drivepick=a|b lands on the canvas with a sample post and
-  // the carousel's media panel open — no flow, no AI calls, nothing saved
-  // (savedPostId stays null, so every autosave no-ops). Only without a
-  // post_id: on a real post the param does nothing here.
-  const drivePickParam = searchParams.get("drivepick")
-  const drivePickVariant: DrivePickVariant | null =
-    drivePickParam === "a" || drivePickParam === "b" ? drivePickParam : null
-  // The sample post was for reviewing sample folders; the picker now reads
-  // her real Drive, so it works on her real posts only.
-  const drivePickSeeded = false && !!drivePickVariant && !postId
 
   const flow: Flow = postId ? "saved" : hookParam ? "hook" : "idea"
 
@@ -258,16 +227,14 @@ function ProjectPageInner() {
   // key is still missing and hooks still cannot run without it.
   const [noticeDismissed, setNoticeDismissed] = useState(false)
   const [response, setResponse] = useState("")
-  const [corePost, setCorePost] = useState(drivePickSeeded ? DRIVE_PICK_SAMPLE.corePost : "")
+  const [corePost, setCorePost] = useState("")
   const [postLoading, setPostLoading] = useState(false)
   const [postError, setPostError] = useState("")
   const [celebrationKey, setCelebrationKey] = useState(0)
   const [bodySaveStatus, setBodySaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
   const [showFormats, setShowFormats] = useState(false)
   const [selectedFormats, setSelectedFormats] = useState<string[]>([])
-  const [duplicatedFormats, setDuplicatedFormats] = useState<string[]>(
-    drivePickSeeded ? Object.keys(DRIVE_PICK_SAMPLE.formats) : [],
-  )
+  const [duplicatedFormats, setDuplicatedFormats] = useState<string[]>([])
   // "Keep chatting with the AI about the post" floating panel. Only usable
   // BEFORE the post is duplicated to formats — once format variants exist the
   // core post is frozen (editing it wouldn't propagate to the duplicates), so
@@ -276,13 +243,9 @@ function ProjectPageInner() {
   // True while the chat's AI is generating a revision — drives the shimmer
   // animation on the core post card so the user sees it's working.
   const [chatBusy, setChatBusy] = useState(false)
-  const [formatPosts, setFormatPosts] = useState<Record<string, string>>(
-    drivePickSeeded ? DRIVE_PICK_SAMPLE.formats : {},
-  )
+  const [formatPosts, setFormatPosts] = useState<Record<string, string>>({})
   const [activeCard, setActiveCard] = useState<string>(flow === "hook" ? "response" : "hooks")
-  const [editableHook, setEditableHook] = useState<string>(
-    hookParam || (drivePickSeeded ? DRIVE_PICK_SAMPLE.hook : ""),
-  )
+  const [editableHook, setEditableHook] = useState<string>(hookParam || "")
 
   // Product + trigger-word controls (per-session; persisted via canvas state).
   // The product dropdown shows ALL of the user's products. If the active hook
@@ -297,9 +260,7 @@ function ProjectPageInner() {
   const productManuallySetRef = useRef(false)
 
   // Media panel state
-  const [selectedFormatCard, setSelectedFormatCard] = useState<string | null>(
-    drivePickSeeded ? "carousel" : null,
-  )
+  const [selectedFormatCard, setSelectedFormatCard] = useState<string | null>(null)
 
   // Talking head state (lifted for panel persistence)
   const [thAvatar, setThAvatar] = useState<Avatar | null>(null)
@@ -390,30 +351,6 @@ function ProjectPageInner() {
   const [storyVideoUrl, setStoryVideoUrl] = useState<string | null>(null)
   const storyVideoCardRef = useRef<HTMLDivElement>(null)
   const bRollCardRef = useRef<HTMLDivElement>(null)
-
-  // Design review (?drivepick): a pick from the Drive folder lands on the
-  // format's card on the canvas, the way a real import does, and the panel
-  // closes so the card is what she looks at. Safe by construction:
-  // savedPostId stays null on the sample post, and every media autosave
-  // (carousel, video, image, story, b-roll) returns early without it — no
-  // PATCH, no DB write. The sources are local files under /review.
-  useEffect(() => {
-    if (!drivePickSeeded) return
-    setDrivePickApply((format, relative) => {
-      // Absolute, like a real stored asset — the card renderers treat a
-      // bare path as base64.
-      const sources = relative.map((p) => new URL(p, window.location.origin).href)
-      if (format === "carousel") setCarouselImages(sources)
-      else if (format === "image_post") setImagePostUrl(sources[0] ?? null)
-      else if (format === "story") {
-        setStoryImages(sources)
-        setStoryVideoUrl(null)
-      } else if (format === "b_roll") setBRollUrl(sources[0] ?? null)
-      else if (format === "talking_head") setThVideoUrl(sources[0] ?? null)
-      setSelectedFormatCard(null)
-    })
-    return () => setDrivePickApply(null)
-  }, [drivePickSeeded])
 
   // Learning log — store originals to detect edits
   const [originalHooks, setOriginalHooks] = useState<string[]>([])
@@ -587,10 +524,6 @@ function ProjectPageInner() {
 
   useEffect(() => {
     if (restoredRef.current) return
-    // Review links show the seeded sample. Restoring her saved canvas would
-    // overwrite it, and leaving restoredRef unset keeps the autosave off, so
-    // the sample never lands in her real draft.
-    if (drivePickSeeded) return
     if (!userId) return
     restoredRef.current = true
     try {
@@ -1745,8 +1678,6 @@ function ProjectPageInner() {
    */
   const generateFormatVariants = async (formats: string[]) => {
     if (formats.length === 0) return
-    // Design-review links never call the format agents.
-    if (drivePickSeeded) return
 
     setFormatPosts((prev) => {
       const next = { ...prev }
@@ -1923,14 +1854,6 @@ function ProjectPageInner() {
 
   return (
     <AppShell idea={shortenTitle(idea || hookParam || (postId ? "עריכת פוסט" : ""))}>
-      {drivePickSeeded && drivePickVariant && (
-        <DrivePickReviewBar
-          variant={drivePickVariant}
-          surface="project"
-          activeFormat={selectedFormatCard}
-          onFormatChange={setSelectedFormatCard}
-        />
-      )}
       {/* Media Panel — sibling to InfiniteCanvas, slides from left */}
       <MediaPanel
         formatId={selectedFormatCard}

@@ -1,40 +1,21 @@
 "use client"
 
 /**
- * Design review — task "להכניס תיקיית מדיה מדרייב בהגדרות, ובקנבס כשבוחרים
- * במדיה מגוגל דרייב כבר תופיע תצוגה מקדימה של אותה מדיה".
+ * Media from her Google Drive folders (Hani, 2026-10-22).
  *
- * Settings → מדיה gets a third page, "מדיה מ-Google Drive": one shared folder
- * per kind of media (b-roll, talking head, images, story, carousel), each in
- * an accordion row, view-only links only. On the canvas, "Google Drive" in a
- * format's media panel swaps the panel for a gallery of that folder (the
- * avatar picker's look) with a back chevron. Both directions share all of
- * that; they differ in how ORDER is chosen for a multi-frame format and in
- * where a missing folder gets connected:
+ * Settings → מדיה → "מדיה מ-Google Drive": one shared folder per kind of
+ * media (b-roll, talking head, images, story, carousel), each in an accordion
+ * row, view-only links. On the canvas, "מדיה משלכם מ Google Drive" in a
+ * format's media panel swaps the panel for a gallery of that folder.
+ * Multi-frame formats (carousel, story): tap pictures in the order they
+ * should appear, rearrange in the tray. Single-file formats: select, confirm.
  *
- *   A — slide first. A strip of numbered slots (one per slide of the script,
- *       with that slide's words shown) sits above the gallery. Pick the slot,
- *       tap a picture, the slot fills and the next empty one lights up.
- *       Single-frame formats: one tap picks (exactly like the avatars).
- *       No folder yet → a door to Settings.
- *   B — picture first. Tap pictures in the order they should appear; each
- *       gets a number. The order lives in a tray at the bottom where it can be
- *       dragged. Single-frame formats: tap to select, confirm in the tray.
- *       No folder yet → paste the folder link right there in the panel.
- *
- * REVIEW ONLY, behind `?drivepick=a|b`. Nothing here calls Drive, a
- * generation route or the DB: the folders are seeded, "checking a link" and
- * "importing" are timers, and every bit of state lives in this module's
- * store, so the review bar, Settings and the panel move together.
- *
- * In production the picker's output is exactly what the existing
- * DriveMediaLinks rows hold today — an ordered list of Drive file links, row
- * i = frame i — fed to the import that already exists. The picker replaces
- * the typing, not the pipeline.
+ * The folders are listed live by /api/drive-folders. A pick hands the chosen
+ * files, as Drive file links in order, to the import each format already had
+ * — the picker replaces the typing, not the pipeline.
  */
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
-import { useSearchParams } from "next/navigation"
 import {
   AlertTriangle,
   Check,
@@ -44,9 +25,7 @@ import {
   GripVertical,
   Loader2,
   Play,
-  Plus,
   RefreshCw,
-  X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -101,8 +80,6 @@ type Store = {
 
 /* ================================================================ seed */
 
-const IMG = (n: string) => `/review/drive-folder/p${n}.jpg`
-
 const FOLDER_META: Record<FolderKey, { label: string; driveName: string; kindLabel: string }> = {
   broll: { label: "בי-רולים", driveName: "בי-רולים לרילס", kindLabel: "סרטונים קצרים לרקע" },
   talking: { label: "דיבור למצלמה", driveName: "צילומי דיבור למצלמה", kindLabel: "סרטונים שצילמתם מדברים" },
@@ -121,100 +98,11 @@ export const FORMAT_FOLDER: Record<string, FolderKey> = {
   carousel: "carousel",
 }
 
-const v = (id: string, name: string, n: string, duration: string): MediaItem => ({
-  id,
-  name,
-  thumb: IMG(n),
-  kind: "video",
-  duration,
-  // A short 9:16 clip rendered from the same photo, so the canvas card has a
-  // real <video> to play — the review never touches Drive.
-  src: `/review/drive-folder/v${n}.mp4`,
-})
-const im = (id: string, name: string, n: string): MediaItem => ({ id, name, thumb: IMG(n), kind: "image", src: IMG(n) })
-
-const SEED_ITEMS: Record<FolderKey, MediaItem[]> = {
-  broll: [
-    v("br1", "קפה בבוקר.mov", "1060", "0:12"),
-    v("br2", "הקלדה במחשב.mp4", "0", "0:08"),
-    v("br3", "מחברת ועט.mp4", "20", "0:15"),
-    v("br4", "שולחן עבודה.mov", "48", "0:10"),
-    v("br5", "הליכה בעיר.mp4", "42", "0:21"),
-    v("br6", "טלפון ביד.mp4", "26", "0:09"),
-  ],
-  talking: [
-    v("th1", "פתיח — 3 טעויות.mp4", "1", "0:48"),
-    v("th2", "טיפ על מחירים.mov", "180", "1:05"),
-    v("th3", "סיפור לקוחה.mp4", "201", "0:52"),
-    v("th4", "שאלות ותשובות.mp4", "3", "1:31"),
-  ],
-  images: [
-    im("im1", "שולחן בהיר.jpg", "60"),
-    im("im2", "כוס תה.jpg", "225"),
-    im("im3", "מחשב פתוח.jpg", "119"),
-    im("im4", "ספרים.jpg", "24"),
-    im("im5", "בית קפה.jpg", "431"),
-    im("im6", "פינת עבודה.jpg", "7"),
-    im("im7", "נוף.jpg", "366"),
-    im("im8", "קפה.jpg", "1060"),
-  ],
-  story: [
-    im("st1", "בוקר.jpg", "225"),
-    v("st2", "מאחורי הקלעים.mp4", "1", "0:14"),
-    im("st3", "השולחן שלי.jpg", "60"),
-    im("st4", "פגישה.jpg", "431"),
-    v("st5", "דרך לסדנה.mp4", "42", "0:11"),
-    im("st6", "ספר חדש.jpg", "24"),
-  ],
-  carousel: [
-    im("ca1", "שער.jpg", "20"),
-    im("ca2", "טעות 1.jpg", "0"),
-    im("ca3", "טעות 2.jpg", "48"),
-    im("ca4", "טעות 3.jpg", "119"),
-    im("ca5", "סיכום.jpg", "60"),
-    im("ca6", "מחשב.jpg", "180"),
-    im("ca7", "בית קפה.jpg", "431"),
-    im("ca8", "ספרים.jpg", "24"),
-    im("ca9", "תה.jpg", "225"),
-  ],
-}
-
-const SAMPLE_LINK = (k: FolderKey) => `https://drive.google.com/drive/folders/1${k}NoaCohenMedia?usp=sharing`
-
-const connected = (k: FolderKey): Folder => ({
-  status: "connected",
-  link: SAMPLE_LINK(k),
-  name: FOLDER_META[k].driveName,
-  items: SEED_ITEMS[k],
-  error: null,
-  editorLink: false,
-})
 const unset = (): Folder => ({ status: "unset", link: "", name: "", items: [], error: null, editorLink: false })
-const failed = (k: FolderKey, error: FolderError): Folder => ({
-  ...unset(),
-  status: "error",
-  link: error === "not_public" ? SAMPLE_LINK(k).replace("sharing", "restricted") : "",
-  error,
-})
-
-/** What Settings looks like on a first visit to the review link: a bit of everything. */
-function mixedFolders(): Record<FolderKey, Folder> {
-  return {
-    broll: connected("broll"),
-    talking: connected("talking"),
-    images: unset(),
-    story: failed("story", "not_public"),
-    carousel: connected("carousel"),
-  }
-}
-
 /** "קובץ אחד" / "3 קבצים". */
 const filesLabel = (n: number) => (n === 1 ? "קובץ אחד" : `${n} קבצים`)
 
 /* ================================================================ store */
-
-/** Folders come from her Drive (Hani, 2026-10-22); the seed above is review-only. */
-const REAL_FOLDERS = true
 
 let store: Store = {
   folders: Object.fromEntries(FOLDER_ORDER.map((k) => [k, unset()])) as Record<FolderKey, Folder>,
@@ -242,12 +130,9 @@ export function useDrivePickStore(): Store {
   return useSyncExternalStore(subscribe, snapshot, snapshot)
 }
 
-/** `?drivepick=a|b` → the direction under review; null in production. */
-export function useDrivePickVariant(): DrivePickVariant | null {
-  // B was picked (Hani, 2026-10-22) and now reads her real folders, so it's
-  // on everywhere on this branch; ?drivepick=a still shows the other one.
-  const params = useSearchParams()
-  return params.get("drivepick") === "a" ? "a" : "b"
+/** The picker's direction — B (pick in order) was chosen (Hani, 2026-10-22). */
+export function useDrivePickVariant(): DrivePickVariant {
+  return "b"
 }
 
 export function openDrivePicker(format: string) {
@@ -374,225 +259,12 @@ export function registerDriveImporter(format: string, fn: ((links: string[]) => 
 
 /* ------------------------------------------------- simulated import */
 
-let importTimer: ReturnType<typeof setTimeout> | null = null
-
-/**
- * What a finished import does to the page. The /project page registers this
- * so a pick lands on the format's CARD on the canvas, exactly as a real
- * import would — not only in the panel. Receives the media sources in order.
- */
-type ApplyPick = (format: string, sources: string[], kinds: ("image" | "video")[]) => void
-let applyPick: ApplyPick | null = null
-export function setDrivePickApply(fn: ApplyPick | null) {
-  applyPick = fn
-}
-
 function runImport(format: string, items: MediaItem[]) {
   if (items.length === 0) return
   const importer = importers.get(format)
-  if (importer) {
-    set({ picked: { ...store.picked, [format]: items }, pickerFor: null })
-    importer(items.map((it) => it.src))
-    return
-  }
-  if (importTimer) clearTimeout(importTimer)
-  const unit = format === "carousel" ? "שקופית" : format === "story" ? "פריים" : null
-  let i = 0
-  const step = () => {
-    i += 1
-    set({
-      importing: format,
-      importProgress: unit
-        ? `מייבאים ${unit} ${i} מתוך ${items.length}...`
-        : items[0].kind === "video"
-          ? "מחברים את הסרטון מהדרייב..."
-          : "מייבאים את התמונה...",
-    })
-    if (i < items.length) {
-      importTimer = setTimeout(step, 450)
-    } else {
-      importTimer = setTimeout(() => {
-        set({
-          importing: null,
-          importProgress: "",
-          picked: { ...store.picked, [format]: items },
-          pickerFor: null,
-        })
-        applyPick?.(
-          format,
-          items.map((it) => it.src),
-          items.map((it) => it.kind),
-        )
-      }, 600)
-    }
-  }
-  step()
-}
-
-/* ------------------------------------------------- review-bar presets */
-
-type PanelPreset = "connected" | "loading" | "empty" | "no_access" | "unset"
-
-const PANEL_PRESETS: { id: PanelPreset; label: string }[] = [
-  { id: "connected", label: "תיקייה מחוברת" },
-  { id: "loading", label: "טוען" },
-  { id: "empty", label: "תיקייה ריקה" },
-  { id: "no_access", label: "אין גישה" },
-  { id: "unset", label: "לא חוברה תיקייה" },
-]
-
-function currentPreset(s: Store, k: FolderKey): PanelPreset {
-  if (s.forceLoading) return "loading"
-  const f = s.folders[k]
-  if (f.status === "error" && f.error === "not_public") return "no_access"
-  if (f.status === "connected" && f.items.length === 0) return "empty"
-  if (f.status === "connected") return "connected"
-  return "unset"
-}
-
-function applyPreset(k: FolderKey, p: PanelPreset) {
-  if (importTimer) clearTimeout(importTimer)
-  const base = { forceLoading: p === "loading", importing: null, importProgress: "" }
-  const f: Folder =
-    p === "empty"
-      ? { ...connected(k), items: [] }
-      : p === "no_access"
-        ? failed(k, "not_public")
-        : p === "unset"
-          ? unset()
-          : connected(k)
-  set({ ...base, folders: { ...store.folders, [k]: f } })
-}
-
-const FORMAT_TABS: { id: string; label: string }[] = [
-  { id: "carousel", label: "קרוסלה" },
-  { id: "story", label: "סטורי" },
-  { id: "image_post", label: "פוסט תמונה" },
-  { id: "b_roll", label: "בי-רול" },
-  { id: "talking_head", label: "דיבור למצלמה" },
-]
-
-const VARIANT_NAME: Record<DrivePickVariant, string> = {
-  a: "א׳ — שקופית אחרי שקופית",
-  b: "ב׳ — בוחרים לפי הסדר",
-}
-
-function Chip({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={active}
-      onClick={onClick}
-      className={cn(
-        "rounded-full border px-2.5 py-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50",
-        active
-          ? "border-yellow-50 bg-yellow-95 text-text-primary-default dark:bg-gray-20"
-          : "border-border-neutral-default text-text-neutral-default hover:bg-bg-surface-hover",
-      )}
-    >
-      {children}
-    </button>
-  )
-}
-
-/**
- * The strip pinned to the top of a review link. On /project it switches the
- * format and the folder's state; on /settings it resets the folders.
- */
-export function DrivePickReviewBar({
-  variant,
-  surface,
-  activeFormat,
-  onFormatChange,
-}: {
-  variant: DrivePickVariant
-  surface: "project" | "settings"
-  activeFormat?: string | null
-  onFormatChange?: (format: string) => void
-}) {
-  const s = useDrivePickStore()
-  // The review strip drove sample folders; with her real folders it would
-  // only fake states over real data, so it no longer shows.
-  if (REAL_FOLDERS) return null
-  const other: DrivePickVariant = variant === "a" ? "b" : "a"
-  const fmt = activeFormat ?? s.pickerFor ?? s.lastFormat ?? "carousel"
-  const folderKey = FORMAT_FOLDER[fmt] ?? "carousel"
-  const preset = currentPreset(s, folderKey)
-  const otherHref =
-    surface === "project"
-      ? `/project?drivepick=${other}`
-      : `/settings?tab=media&sub=drive&drivepick=${other}`
-  return (
-    <div
-      dir="rtl"
-      className="fixed inset-x-0 top-0 z-[60] flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 border-b border-border-neutral-default bg-white/95 px-4 py-2 text-xs shadow-sm backdrop-blur dark:bg-gray-10/95"
-      style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 0.5rem)" }}
-    >
-      <span className="font-semibold text-text-primary-default">
-        תצוגת בדיקה · הצעה {VARIANT_NAME[variant]}
-      </span>
-      {surface === "project" ? (
-        <>
-          <div role="radiogroup" aria-label="פורמט לבדיקה" className="flex flex-wrap gap-1">
-            {FORMAT_TABS.map((t) => (
-              <Chip key={t.id} active={fmt === t.id} onClick={() => onFormatChange?.(t.id)}>
-                {t.label}
-              </Chip>
-            ))}
-          </div>
-          <span className="text-text-neutral-default">מצב התיקייה:</span>
-          <div role="radiogroup" aria-label="מצב התיקייה לבדיקה" className="flex flex-wrap gap-1">
-            {PANEL_PRESETS.map((p) => (
-              <Chip key={p.id} active={preset === p.id} onClick={() => applyPreset(folderKey, p.id)}>
-                {p.label}
-              </Chip>
-            ))}
-          </div>
-          <a
-            href={`/settings?tab=media&sub=drive&drivepick=${variant}`}
-            className="text-text-primary-default underline underline-offset-2"
-          >
-            להגדרות
-          </a>
-        </>
-      ) : (
-        <div role="radiogroup" aria-label="מצב התיקיות לבדיקה" className="flex flex-wrap gap-1">
-          <Chip active={false} onClick={() => set({ folders: mixedFolders() })}>
-            מצב מעורב
-          </Chip>
-          <Chip
-            active={false}
-            onClick={() =>
-              set({
-                folders: Object.fromEntries(FOLDER_ORDER.map((k) => [k, unset()])) as Record<FolderKey, Folder>,
-              })
-            }
-          >
-            הכל ריק
-          </Chip>
-          <a
-            href={`/project?drivepick=${variant}`}
-            className="text-text-primary-default underline underline-offset-2"
-          >
-            לקנבס
-          </a>
-        </div>
-      )}
-      <a href={otherHref} className="text-text-primary-default underline underline-offset-2">
-        להצעה {other === "a" ? "א׳" : "ב׳"}
-      </a>
-      <span className="text-text-neutral-default">בלי קרדיטים, בלי שמירה</span>
-    </div>
-  )
+  if (!importer) return
+  set({ picked: { ...store.picked, [format]: items }, pickerFor: null })
+  importer(items.map((it) => it.src))
 }
 
 /* ================================================================ shared bits */
@@ -1031,11 +703,9 @@ function GridSkeleton({ format }: { format: string }) {
  */
 export function DriveFolderPicker({
   format,
-  variant,
   scriptText,
 }: {
   format: string
-  variant: DrivePickVariant
   /** The format's script — A shows each slide's words on its slot. */
   scriptText: string
 }) {
@@ -1064,7 +734,7 @@ export function DriveFolderPicker({
     return () => window.removeEventListener("keydown", onKey)
   }, [s.importing])
 
-  const loading = opening || s.forceLoading || f.status === "checking"
+  const loading = opening || f.status === "checking"
 
   return (
     <div className="flex min-h-full flex-col gap-4">
@@ -1108,9 +778,9 @@ export function DriveFolderPicker({
       {loading ? (
         <GridSkeleton format={format} />
       ) : f.status === "unset" ? (
-        <NoFolder variant={variant} folderKey={k} />
+        <NoFolder folderKey={k} />
       ) : f.status === "error" ? (
-        <NoAccess variant={variant} folderKey={k} />
+        <NoAccess folderKey={k} />
       ) : f.items.length === 0 ? (
         <div role="status" className="flex flex-col items-center gap-2 rounded-xl border border-border-neutral-default bg-bg-surface px-6 py-8 text-center">
           <FolderOpen className="size-6 text-text-neutral-default" aria-hidden />
@@ -1128,13 +798,7 @@ export function DriveFolderPicker({
           </a>
         </div>
       ) : format === "carousel" || format === "story" ? (
-        variant === "a" ? (
-          <SlotFirstPicker format={format} items={f.items} scriptText={scriptText} />
-        ) : (
-          <OrderFirstPicker format={format} items={f.items} scriptText={scriptText} />
-        )
-      ) : variant === "a" ? (
-        <SinglePickInstant format={format} items={f.items} />
+        <OrderFirstPicker format={format} items={f.items} scriptText={scriptText} />
       ) : (
         <SinglePickConfirm format={format} items={f.items} />
       )}
@@ -1142,25 +806,8 @@ export function DriveFolderPicker({
   )
 }
 
-function NoFolder({ variant, folderKey }: { variant: DrivePickVariant; folderKey: FolderKey }) {
+function NoFolder({ folderKey }: { folderKey: FolderKey }) {
   const meta = FOLDER_META[folderKey]
-  if (variant === "a") {
-    return (
-      <div className="flex flex-col items-center gap-2 rounded-xl border border-border-neutral-default bg-bg-surface px-6 py-8 text-center">
-        <FolderOpen className="size-6 text-text-neutral-default" aria-hidden />
-        <p className="text-small-bold text-text-primary-default">עוד לא חיברתם תיקייה ל{meta.label}</p>
-        <p className="text-xs-body text-text-neutral-default">
-          מחברים פעם אחת בהגדרות, ומאז כל מה שבתיקייה מופיע כאן לבחירה.
-        </p>
-        <a
-          href="/settings?tab=media&sub=drive&drivepick=a"
-          className="mt-1 text-small font-semibold text-text-primary-default hover:underline"
-        >
-          לחיבור תיקייה בהגדרות ←
-        </a>
-      </div>
-    )
-  }
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-border-neutral-default p-4">
       <p className="text-small-bold text-text-primary-default">חברו תיקייה ל{meta.label}</p>
@@ -1172,21 +819,11 @@ function NoFolder({ variant, folderKey }: { variant: DrivePickVariant; folderKey
   )
 }
 
-function NoAccess({ variant, folderKey }: { variant: DrivePickVariant; folderKey: FolderKey }) {
+function NoAccess({ folderKey }: { folderKey: FolderKey }) {
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-border-neutral-default p-4">
-      {/* B's field carries the same error under it — once is enough. */}
-      {variant === "a" && <ErrorBlock error="not_public" />}
-      {variant === "a" ? (
-        <a
-          href="/settings?tab=media&sub=drive&drivepick=a"
-          className="self-start text-small font-semibold text-text-primary-default hover:underline"
-        >
-          לתיקון בהגדרות ←
-        </a>
-      ) : (
-        <FolderLinkField folderKey={folderKey} />
-      )}
+      {/* The field carries the error and its fix under it. */}
+      <FolderLinkField folderKey={folderKey} />
     </div>
   )
 }
@@ -1213,40 +850,6 @@ function ImportingLine() {
 /* ---------------------------------------------- single-frame formats */
 
 /** A — one tap picks, like the avatar grid. */
-function SinglePickInstant({ format, items }: { format: string; items: MediaItem[] }) {
-  const s = useDrivePickStore()
-  const busy = s.importing === format
-  const [chosen, setChosen] = useState<string | null>(null)
-  return (
-    <>
-      <p className="text-xs-body text-text-neutral-default">
-        {items[0]?.kind === "video" ? "לחצו על סרטון כדי להשתמש בו." : "לחצו על תמונה כדי להשתמש בה."}
-      </p>
-      <div className={cn("grid gap-3", "grid-cols-3")}>
-        {items.map((it) => (
-          <Tile
-            key={it.id}
-            item={it}
-            format={format}
-            selected={chosen === it.id}
-            disabled={busy}
-            onClick={() => {
-              setChosen(it.id)
-              runImport(format, [it])
-            }}
-          />
-        ))}
-      </div>
-      {busy && (
-        <StickyFooter>
-          <ImportingLine />
-        </StickyFooter>
-      )}
-    </>
-  )
-}
-
-/** B — select, look, then confirm in the tray. */
 function SinglePickConfirm({ format, items }: { format: string; items: MediaItem[] }) {
   const s = useDrivePickStore()
   const busy = s.importing === format
@@ -1309,170 +912,6 @@ function useSlideTexts(format: string, scriptText: string): string[] {
 }
 
 const MAX_FRAMES = 10
-
-function SlotFirstPicker({ format, items, scriptText }: { format: string; items: MediaItem[]; scriptText: string }) {
-  const s = useDrivePickStore()
-  const busy = s.importing === format
-  const texts = useSlideTexts(format, scriptText)
-  const unit = format === "carousel" ? "שקופית" : "פריים"
-  const [slots, setSlots] = useState<(string | null)[]>(() => {
-    const prev = s.picked[format]
-    const base: (string | null)[] = texts.map(() => null)
-    prev?.forEach((it, i) => {
-      if (i < base.length) base[i] = it.id
-      else base.push(it.id)
-    })
-    return base
-  })
-  const [active, setActive] = useState(0)
-  const byId = (id: string | null) => (id ? items.find((i) => i.id === id) ?? null : null)
-  const filled = slots.filter(Boolean).length
-
-  const fill = (id: string) => {
-    const next = [...slots]
-    next[active] = id
-    setSlots(next)
-    // Light up the next empty slot after this one, wrapping around.
-    const order = [...next.keys()].map((i) => (active + 1 + i) % next.length)
-    const nextEmpty = order.find((i) => !next[i])
-    if (nextEmpty !== undefined) setActive(nextEmpty)
-  }
-
-  const activeText = texts[active]
-
-  return (
-    <>
-      <div className="flex flex-col gap-2">
-        <p className="text-xs font-semibold text-text-primary-default">סדר ה{format === "carousel" ? "שקופיות" : "פריימים"}</p>
-        <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 py-1" role="listbox" aria-label={`סדר ה${unit}ות`}>
-          {slots.map((id, i) => {
-            const it = byId(id)
-            return (
-              <div key={i} className="relative shrink-0">
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={active === i}
-                  onClick={() => setActive(i)}
-                  disabled={busy}
-                  aria-label={`${unit} ${i + 1}${it ? ` — ${it.name}` : " — ריקה"}`}
-                  className={cn(
-                    "relative flex items-center justify-center overflow-hidden rounded-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50",
-                    thumbFor(format),
-                    it ? "bg-gray-90" : "border border-dashed border-border-neutral-default",
-                    active === i ? "ring-2 ring-yellow-50 ring-offset-1 ring-offset-white dark:ring-offset-gray-10" : "hover:ring-2 hover:ring-gray-80",
-                  )}
-                >
-                  {it ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={it.thumb} alt="" className="size-full object-cover" />
-                  ) : (
-                    <span className="text-xs text-text-neutral-default">{i + 1}</span>
-                  )}
-                  {it && (
-                    <span className="absolute top-0.5 start-0.5 flex size-4 items-center justify-center rounded-full bg-gray-10/80 text-[10px] text-white">
-                      {i + 1}
-                    </span>
-                  )}
-                </button>
-                {it && !busy && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const next = [...slots]
-                      next[i] = null
-                      setSlots(next)
-                      setActive(i)
-                    }}
-                    aria-label={`ניקוי ${unit} ${i + 1}`}
-                    className="absolute top-0.5 end-0.5 flex size-4 items-center justify-center rounded-full bg-white/90 text-text-primary-default shadow-sm transition-colors hover:bg-bg-surface-hover dark:bg-gray-10/90"
-                  >
-                    <X className="size-2.5" />
-                  </button>
-                )}
-              </div>
-            )
-          })}
-          {slots.length < MAX_FRAMES && (
-            <button
-              type="button"
-              onClick={() => {
-                setSlots([...slots, null])
-                setActive(slots.length)
-              }}
-              disabled={busy}
-              aria-label={`הוספת ${unit}`}
-              className={cn(
-                "flex shrink-0 items-center justify-center rounded-lg text-text-neutral-default transition-colors hover:bg-bg-surface-hover",
-                "h-[50px] w-8",
-              )}
-            >
-              <Plus className="size-4" />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* What the active slot is for — the script already says what goes on it. */}
-      <div className="rounded-xl bg-bg-surface px-3 py-2.5">
-        <p className="text-xs font-semibold text-text-primary-default">
-          בוחרים ל{unit} {active + 1}
-          {format === "carousel" && active === 0 ? " (השער)" : ""}
-        </p>
-        {activeText ? (
-          <p className="mt-0.5 line-clamp-2 text-xs-body text-text-neutral-default">„{activeText}”</p>
-        ) : (
-          <p className="mt-0.5 text-xs-body text-text-neutral-default">לחצו על {format === "carousel" ? "תמונה" : "תמונה או סרטון"} למטה.</p>
-        )}
-      </div>
-
-      <div className={cn("grid gap-3", "grid-cols-3")}>
-        {items.map((it) => {
-          const at = slots.indexOf(it.id)
-          return (
-            <Tile
-              key={it.id}
-              item={it}
-              format={format}
-              selected={slots[active] === it.id}
-              badge={at >= 0 ? at + 1 : undefined}
-              disabled={busy}
-              onClick={() => fill(it.id)}
-            />
-          )
-        })}
-      </div>
-
-      <StickyFooter>
-        {busy ? (
-          <ImportingLine />
-        ) : (
-          <>
-            {filled > 0 && filled < slots.length && (
-              <p className="text-xs-body text-text-neutral-default">
-                {slots.length - filled} {format === "carousel" ? "שקופיות ריקות ידולגו" : "פריימים ריקים ידולגו"}
-              </p>
-            )}
-            <Button
-              disabled={filled === 0}
-              onClick={() =>
-                runImport(
-                  format,
-                  slots.map(byId).filter((x): x is MediaItem => !!x),
-                )
-              }
-              className="w-full"
-            >
-              {format === "carousel" ? `טעינת הקרוסלה (${filled} שקופיות)` : `טעינת הסטורי (${filled} פריימים)`}
-            </Button>
-          </>
-        )}
-      </StickyFooter>
-    </>
-  )
-}
-
-/* ---------------------------------------------- multi-frame: B, order first */
 
 function OrderFirstPicker({ format, items, scriptText }: { format: string; items: MediaItem[]; scriptText: string }) {
   const s = useDrivePickStore()

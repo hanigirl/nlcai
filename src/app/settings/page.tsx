@@ -33,7 +33,7 @@ import {
   AudienceIdentityGapDialog,
 } from "@/components/identity-gap-dialog"
 import { ConfirmModal } from "@/components/confirm-modal"
-import { DriveFoldersSettings, DrivePickReviewBar, type DrivePickVariant } from "@/components/drive-folder-review"
+import { DriveFoldersSettings } from "@/components/drive-folder-review"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 
 const GOOGLE_FONTS = [
@@ -249,14 +249,8 @@ function SettingsPageInner() {
 
   const searchParams = useSearchParams()
   const initialTab = (searchParams.get("tab") as SettingsTab) || "connections"
-  // Design review (?drivepick=a|b): Settings → מדיה gains "מדיה מ-Google
-  // Drive". Without the param the media tab is exactly as in production.
-  const drivePickParam = searchParams.get("drivepick")
-  const drivePick: DrivePickVariant | null =
-    drivePickParam === "a" || drivePickParam === "b" ? drivePickParam : null
-  // Always listed on this review branch: Hani reaches Settings from the
-  // sidebar, which drops the ?drivepick param (2026-10-22). The pick PR keeps
-  // it as the real section.
+  // Settings → מדיה → "מדיה מ-Google Drive": one shared folder per kind of
+  // media, read on the canvas by "מדיה משלכם מ Google Drive" (Hani, 2026-10-22).
   const mediaSections = [
     ...SUB_SECTIONS.media,
     { id: "drive", label: "מדיה מ-Google Drive", icon: FolderOpen },
@@ -1127,7 +1121,6 @@ function SettingsPageInner() {
 
   return (
     <AppShell>
-      {drivePick && <DrivePickReviewBar variant={drivePick} surface="settings" />}
       {/* Identity gap/verify dialogs + replace confirmations — surface here
           (above the tabs) so they cover the whole settings view regardless
           of which tab is active when the parse returns. */}
