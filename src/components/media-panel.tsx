@@ -2092,13 +2092,6 @@ function CarouselFlow({
       </div>
 
       {/* 2. Actions — previews live in the dialog, not in the panel. */}
-      {isAiTemplate && openAiConnected !== false && (
-        <p className="text-xs-body text-text-neutral-default">
-          טמפלט AI מצייר כל שקופית עם gpt-image-2 דרך מפתח ה-OpenAI שלכם —
-          זה לוקח כמה דקות.
-        </p>
-      )}
-
       {/* An AI template with no OpenAI key connected can only fail, so the
           generate button is replaced by the way to fix it. The satori
           templates are unaffected — picking one brings the button back. */}
@@ -3829,30 +3822,6 @@ function MediaUploadFlow({
             <MediaCreditsCard />
           ) : (
             <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
-              {/* Camera illustration — split into two assets so the tile
-                  reads as centered while the sparkle cluster hangs off to
-                  its upper-left. */}
-              <div className="relative size-10 shrink-0">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/images/ai-camera.png"
-                  alt=""
-                  className="size-full object-contain"
-                />
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/images/ai-camera-sparkle.png"
-                  alt=""
-                  className="pointer-events-none absolute -left-3.5 -top-1 w-5"
-                />
-              </div>
-              <span className="text-small font-semibold text-text-primary-default">
-                יצירת תמונה בלחיצה
-              </span>
-              <span className="max-w-[286px] text-center text-xs leading-relaxed text-text-neutral-default">
-                ניצור תמונה מעוצבת לפי תוכן הפוסט, עם הטקסט של הפורמט משולב
-                בעיצוב
-              </span>
               <MediaStylePicker
                 value={mediaStyle.style}
                 onChange={mediaStyle.setStyle}
@@ -4067,26 +4036,6 @@ function MediaUploadFlow({
             <MediaCreditsCard />
           ) : (
             <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
-              <div className="relative size-10 shrink-0">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/images/ai-camera.png"
-                  alt=""
-                  className="size-full object-contain"
-                />
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/images/ai-camera-sparkle.png"
-                  alt=""
-                  className="pointer-events-none absolute -left-3.5 -top-1 w-5"
-                />
-              </div>
-              <span className="text-small font-semibold text-text-primary-default">
-                יצירת תמונה בלחיצה
-              </span>
-              <span className="max-w-[286px] text-center text-xs leading-relaxed text-text-neutral-default">
-                ניצור רקע שמתאים לתוכן הפוסט ונשלב עליו את הטקסט של הסטורי
-              </span>
               <MediaStylePicker
                 value={mediaStyle.style}
                 onChange={mediaStyle.setStyle}
@@ -4281,27 +4230,6 @@ function MediaUploadFlow({
           {isBRoll && !hydrating && openAiConnected === true && (
             <>
               <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
-                <div className="relative size-10 shrink-0">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src="/images/ai-camera.png"
-                    alt=""
-                    className="size-full object-contain"
-                  />
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src="/images/ai-camera-sparkle.png"
-                    alt=""
-                    className="pointer-events-none absolute -left-3.5 -top-1 w-5"
-                  />
-                </div>
-                <span className="text-small font-semibold text-text-primary-default">
-                  יצירת בי-רול בלחיצה
-                </span>
-                <span className="max-w-[286px] text-center text-xs leading-relaxed text-text-neutral-default">
-                  ניצור רקע שמתאים לתוכן הפוסט, ו-Claude יבנה עליו אנימציה של
-                  ההוק בפונטים ובצבעי המותג שלך
-                </span>
                 <MediaStylePicker
                   value={mediaStyle.style}
                   onChange={mediaStyle.setStyle}
