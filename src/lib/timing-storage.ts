@@ -148,6 +148,7 @@ export type CorePostFormatMeta = {
    * shows no caption controls. Undefined = not checked yet.
    */
   bakedText?: boolean
+  /**
    * ISO timestamp of the moment the user approved this format's media as
    * finished ("אישור"). Only an approved format is offered for scheduling.
    * Absent = not approved (the default for every format, old and new).
