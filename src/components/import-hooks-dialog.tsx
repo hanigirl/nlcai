@@ -21,9 +21,14 @@ interface ImportHooksDialogProps {
   /** Called once a valid source is chosen. The dialog closes itself first. */
   onImportFile: (file: File) => void
   onImportDocsUrl: (url: string) => void
+  /** Called for tabular files (xlsx/csv) when a column has been chosen. */
+  onImportTable?: (file: File, columnIndex: number) => void
 }
 
 const isWordFile = (file: File) => /\.docx?$/i.test(file.name)
+const isTableFile = (file: File) => /\.(xlsx|csv)$/i.test(file.name)
+const isMarkdownFile = (file: File) => /\.md$/i.test(file.name)
+const isSupportedFile = (file: File) => isWordFile(file) || isTableFile(file) || isMarkdownFile(file)
 
 /**
  * Where an import starts: a Google Docs link or a Word file from the computer.
@@ -33,11 +38,18 @@ const isWordFile = (file: File) => /\.docx?$/i.test(file.name)
  * catch before sending — a link that isn't a Docs link, a file that isn't
  * Word — are shown inline so the dialog stays open to fix them.
  */
-export function ImportHooksDialog({ open, onOpenChange, onImportFile, onImportDocsUrl }: ImportHooksDialogProps) {
+export function ImportHooksDialog({ open, onOpenChange, onImportFile, onImportDocsUrl, onImportTable }: ImportHooksDialogProps) {
   const [url, setUrl] = useState("")
   const [urlError, setUrlError] = useState("")
   const [fileError, setFileError] = useState("")
   const [dragging, setDragging] = useState(false)
+
+  // Column selection state for tabular files
+  const [pendingTableFile, setPendingTableFile] = useState<File | null>(null)
+  const [columns, setColumns] = useState<string[]>([])
+  const [selectedColumn, setSelectedColumn] = useState<number>(0)
+  const [columnLoading, setColumnLoading] = useState(false)
+
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const reset = () => {
@@ -45,6 +57,10 @@ export function ImportHooksDialog({ open, onOpenChange, onImportFile, onImportDo
     setUrlError("")
     setFileError("")
     setDragging(false)
+    setPendingTableFile(null)
+    setColumns([])
+    setSelectedColumn(0)
+    setColumnLoading(false)
   }
 
   const handleOpenChange = (next: boolean) => {
@@ -62,14 +78,72 @@ export function ImportHooksDialog({ open, onOpenChange, onImportFile, onImportDo
     onImportDocsUrl(value)
   }
 
-  const pickFile = (file: File | undefined) => {
+  const submitTableWithColumn = () => {
+    if (!pendingTableFile) return
+    handleOpenChange(false)
+    if (onImportTable) {
+      onImportTable(pendingTableFile, selectedColumn)
+    } else {
+      onImportFile(pendingTableFile)
+    }
+  }
+
+  const pickFile = async (file: File | undefined) => {
     if (!file) return
-    if (!isWordFile(file)) {
-      setFileError("אפשר להעלות רק קובץ Word (doc או docx)")
+    if (!isSupportedFile(file)) {
+      setFileError("אפשר להעלות קובץ Word, Excel, CSV או Markdown")
       return
     }
-    handleOpenChange(false)
-    onImportFile(file)
+    setFileError("")
+
+    if (isMarkdownFile(file) || isWordFile(file)) {
+      handleOpenChange(false)
+      onImportFile(file)
+      return
+    }
+
+    // Tabular file: POST to get columns
+    setColumnLoading(true)
+    setPendingTableFile(file)
+    setColumns([])
+    setSelectedColumn(0)
+
+    try {
+      const formData = new FormData()
+      formData.append("file", file)
+
+      const res = await fetch("/api/hooks/import", {
+        method: "POST",
+        body: formData,
+      })
+
+      if (!res.ok) {
+        setFileError("שגיאה בקריאת הקובץ. אנא נסה שנית.")
+        setPendingTableFile(null)
+        setColumnLoading(false)
+        return
+      }
+
+      const data = await res.json()
+
+      if (data.needsColumnSelection && Array.isArray(data.columns) && data.columns.length > 0) {
+        setColumns(data.columns)
+        setSelectedColumn(0)
+      } else {
+        // No column selection needed — treat as direct import
+        handleOpenChange(false)
+        if (onImportTable) {
+          onImportTable(file, 0)
+        } else {
+          onImportFile(file)
+        }
+      }
+    } catch {
+      setFileError("שגיאה בקריאת הקובץ. אנא נסה שנית.")
+      setPendingTableFile(null)
+    } finally {
+      setColumnLoading(false)
+    }
   }
 
   return (
@@ -141,6 +215,8 @@ export function ImportHooksDialog({ open, onOpenChange, onImportFile, onImportDo
               e.preventDefault()
               setDragging(false)
               setFileError("")
+              setPendingTableFile(null)
+              setColumns([])
               pickFile(e.dataTransfer.files?.[0])
             }}
             className={`flex flex-col items-center justify-center gap-1.5 rounded-[12px] border border-dashed px-4 py-6 text-center transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
@@ -151,17 +227,49 @@ export function ImportHooksDialog({ open, onOpenChange, onImportFile, onImportDo
           >
             <FileUp className="size-5 text-text-neutral-default" />
             <span className="text-small text-text-primary-default">העלאת קובץ מהמחשב</span>
-            <span className="text-xs-body text-text-neutral-default">גוררים לכאן או לוחצים לבחירה · doc או docx</span>
+            <span className="text-xs-body text-text-neutral-default">גוררים לכאן או לוחצים לבחירה · doc, docx, xlsx, csv או md</span>
           </button>
           {fileError && (
             <p className="text-xs-body text-button-destructive-default" role="alert">
               {fileError}
             </p>
           )}
+
+          {/* Column picker — shown only for tabular files */}
+          {columnLoading && (
+            <p className="text-xs-body text-text-neutral-default" role="status">
+              קורא את הקובץ…
+            </p>
+          )}
+          {!columnLoading && columns.length > 0 && pendingTableFile && (
+            <div className="flex flex-col gap-2 rounded-[10px] border border-border-neutral-default bg-bg-surface-secondary-default p-3">
+              <Label htmlFor="import-column-select" className="text-small text-text-primary-default">
+                איזו עמודה מכילה את ההוקים?
+              </Label>
+              {/* TODO: Replace with Select component from '@/components/ui/select' when available */}
+              <select
+                id="import-column-select"
+                value={selectedColumn}
+                onChange={(e) => setSelectedColumn(Number(e.target.value))}
+                className="w-full rounded-md border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-1.5 text-small text-text-primary-default focus:outline-none focus:ring-2 focus:ring-yellow-50"
+                dir="rtl"
+              >
+                {columns.map((col, idx) => (
+                  <option key={idx} value={idx}>
+                    {col || `עמודה ${idx + 1}`}
+                  </option>
+                ))}
+              </select>
+              <Button type="button" size="sm" onClick={submitTableWithColumn}>
+                ייבוא
+              </Button>
+            </div>
+          )}
+
           <input
             ref={fileInputRef}
             type="file"
-            accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword"
+            accept=".docx,.doc,.xlsx,.csv,.md,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/markdown"
             className="hidden"
             aria-hidden="true"
             tabIndex={-1}
@@ -170,6 +278,8 @@ export function ImportHooksDialog({ open, onOpenChange, onImportFile, onImportDo
               // Reset so picking the same file again still fires onChange.
               e.target.value = ""
               setFileError("")
+              setPendingTableFile(null)
+              setColumns([])
               pickFile(file)
             }}
           />

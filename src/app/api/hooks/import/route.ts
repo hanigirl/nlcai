@@ -14,6 +14,7 @@ import {
   parseGoogleDocId,
   splitHookList,
 } from "@/lib/hook-import"
+import * as XLSX from "xlsx"
 
 // Only the prose path calls a model, and extraction is a short job — but a
 // Gemini Pro call with thinking can still run past Vercel's 10s default.
@@ -25,14 +26,19 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024
 const MAX_TEXT_FOR_MODEL = 20_000
 
 /**
- * POST /api/hooks/import — multipart, field "file" (.docx or .doc),
+ * POST /api/hooks/import — multipart, field "file" (.docx, .doc, .xlsx, .csv, .md),
  * or JSON { url } with a Google Docs link shared as "anyone with the link".
+ *
+ * For xlsx/csv: reads optional `columnIndex` form field (number). If absent,
+ * returns { needsColumnSelection: true, columns: string[] } so the client can
+ * show the column picker before re-submitting.
  *
  * Reads the file and returns the hooks found in it. It does NOT write them:
  * the warehouse page inserts them through the same path a hand-written hook
  * takes, so an imported hook is indistinguishable from a manual one.
  *
  * Response: { hooks: string[], duplicates: number, method: "list" | "ai" }
+ *         | { needsColumnSelection: true, columns: string[] }
  * Errors:   unsupported_type | file_too_large | empty_file | file_unreadable
  *           | invalid_docs_url | private_doc | doc_not_found | doc_fetch_failed
  *           | gemini_* | anthropic_overloaded | credits_exhausted
@@ -45,7 +51,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Two ways in: a Word file (multipart, field "file") or a Google Docs
+    // Two ways in: a Word/Excel/CSV/MD file (multipart, field "file") or a Google Docs
     // link (JSON { url }). Both end up as plain text for the same pipeline.
     let text: string
     if (req.headers.get("content-type")?.includes("application/json")) {
@@ -62,24 +68,96 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "file_required" }, { status: 400 })
       }
       const name = file.name.toLowerCase()
-      if (!name.endsWith(".docx") && !name.endsWith(".doc")) {
+      const isWord = name.endsWith(".docx") || name.endsWith(".doc")
+      const isExcel = name.endsWith(".xlsx")
+      const isCsv = name.endsWith(".csv")
+      const isMarkdown = name.endsWith(".md")
+
+      if (!isWord && !isExcel && !isCsv && !isMarkdown) {
         return NextResponse.json({ error: "unsupported_type" }, { status: 400 })
       }
       if (file.size > MAX_FILE_BYTES) {
         return NextResponse.json({ error: "file_too_large" }, { status: 400 })
       }
 
-      const buffer = Buffer.from(await file.arrayBuffer())
-      const content = await extractFileContent(file.name, buffer)
-      if (content.kind !== "text") {
-        const message = content.kind === "unsupported" ? content.message : ""
-        const isEmpty = /ריק/.test(message)
-        return NextResponse.json(
-          { error: isEmpty ? "empty_file" : "file_unreadable", message },
-          { status: 400 },
-        )
+      if (isExcel || isCsv) {
+        const buffer = Buffer.from(await file.arrayBuffer())
+        const workbook = XLSX.read(buffer, { type: "buffer" })
+        const sheetName = workbook.SheetNames[0]
+        if (!sheetName) {
+          return NextResponse.json({ error: "empty_file" }, { status: 400 })
+        }
+        const sheet = workbook.Sheets[sheetName]
+        const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: "" }) as string[][]
+        if (!rows.length) {
+          return NextResponse.json({ error: "empty_file" }, { status: 400 })
+        }
+
+        // First row is treated as headers
+        const headerRow = rows[0].map((cell) => String(cell ?? ""))
+        const columnIndexRaw = formData.get("columnIndex")
+
+        if (columnIndexRaw === null || columnIndexRaw === "") {
+          // Client needs to pick a column first
+          return NextResponse.json({ needsColumnSelection: true, columns: headerRow })
+        }
+
+        const columnIndex = parseInt(String(columnIndexRaw), 10)
+        if (isNaN(columnIndex) || columnIndex < 0 || columnIndex >= headerRow.length) {
+          return NextResponse.json({ error: "invalid_column_index" }, { status: 400 })
+        }
+
+        // Extract values from the chosen column, skipping the header row
+        const lines = rows
+          .slice(1)
+          .map((row) => String(row[columnIndex] ?? "").trim())
+          .filter(Boolean)
+
+        if (!lines.length) {
+          return NextResponse.json({ error: "empty_file" }, { status: 400 })
+        }
+
+        text = lines.join("\n")
+      } else if (isMarkdown) {
+        const buffer = Buffer.from(await file.arrayBuffer())
+        const raw = buffer.toString("utf8").replace(/^\uFEFF/, "")
+        // Strip common markdown formatting, keeping the text content line by line
+        text = raw
+          .split("\n")
+          .map((line) =>
+            line
+              // Remove heading markers
+              .replace(/^#+\s*/, "")
+              // Remove bold/italic markers
+              .replace(/[*_]{1,3}([^*_]+)[*_]{1,3}/g, "$1")
+              // Remove inline code
+              .replace(/`([^`]+)`/g, "$1")
+              // Remove blockquote markers
+              .replace(/^>\s*/, "")
+              // Remove list markers (-, *, +, numbered)
+              .replace(/^[-*+]\s+/, "")
+              .replace(/^\d+\.\s+/, "")
+              .trim(),
+          )
+          .filter(Boolean)
+          .join("\n")
+        if (!text) {
+          return NextResponse.json({ error: "empty_file" }, { status: 400 })
+        }
+      } else {
+        // Word files — existing path
+        const buffer = Buffer.from(await file.arrayBuffer())
+        const content = await extractFileContent(file.name, buffer)
+        if (content.kind !== "text") {
+          const message = content.kind === "unsupported" ? content.message : ""
+          const isEmpty = /ריק/.test(message)
+          return NextResponse.json(
+            { error: isEmpty ? "empty_file" : "file_unreadable", message },
+            { status: 400 },
+          )
+        }
+        text = content.text
       }
-      text = content.text
     }
 
     // Whatever's already in the warehouse is skipped, so importing the same

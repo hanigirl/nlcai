@@ -1,14 +1,17 @@
 import mammoth from "mammoth"
 import WordExtractor from "word-extractor"
+import * as XLSX from "xlsx"
 
 export type FileContent =
   | { kind: "text"; text: string }
   | { kind: "pdf"; base64: string }
+  | { kind: "tabular"; columns: string[]; sheetData: string[][] }
   | { kind: "unsupported"; message: string }
 
 export async function extractFileContent(
   fileName: string,
-  buffer: Buffer
+  buffer: Buffer,
+  columnIndex?: number
 ): Promise<FileContent> {
   const name = fileName.toLowerCase()
 
@@ -45,6 +48,66 @@ export async function extractFileContent(
     }
   }
 
+  if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+    try {
+      const workbook = XLSX.read(buffer, { type: "buffer" })
+      const sheetName = workbook.SheetNames[0]
+      if (!sheetName) {
+        return { kind: "unsupported", message: "קובץ האקסל ריק." }
+      }
+      const sheet = workbook.Sheets[sheetName]
+      const rows: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as string[][]
+      if (!rows.length) {
+        return { kind: "unsupported", message: "קובץ האקסל ריק." }
+      }
+      const columns = rows[0].map((c) => String(c ?? ""))
+      if (columnIndex !== undefined) {
+        const lines = rows
+          .slice(1)
+          .map((row) => String(row[columnIndex] ?? "").trim())
+          .filter(Boolean)
+        if (!lines.length) {
+          return { kind: "unsupported", message: "העמודה הנבחרת ריקה." }
+        }
+        return { kind: "text", text: lines.join("\n") }
+      }
+      return { kind: "tabular", columns, sheetData: rows }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { kind: "unsupported", message: `לא הצלחנו לקרוא את קובץ האקסל (${msg})` }
+    }
+  }
+
+  if (name.endsWith(".csv")) {
+    try {
+      const workbook = XLSX.read(buffer, { type: "buffer" })
+      const sheetName = workbook.SheetNames[0]
+      if (!sheetName) {
+        return { kind: "unsupported", message: "קובץ ה-CSV ריק." }
+      }
+      const sheet = workbook.Sheets[sheetName]
+      const rows: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" }) as string[][]
+      if (!rows.length) {
+        return { kind: "unsupported", message: "קובץ ה-CSV ריק." }
+      }
+      const columns = rows[0].map((c) => String(c ?? ""))
+      if (columnIndex !== undefined) {
+        const lines = rows
+          .slice(1)
+          .map((row) => String(row[columnIndex] ?? "").trim())
+          .filter(Boolean)
+        if (!lines.length) {
+          return { kind: "unsupported", message: "העמודה הנבחרת ריקה." }
+        }
+        return { kind: "text", text: lines.join("\n") }
+      }
+      return { kind: "tabular", columns, sheetData: rows }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { kind: "unsupported", message: `לא הצלחנו לקרוא את קובץ ה-CSV (${msg})` }
+    }
+  }
+
   if (name.endsWith(".txt") || name.endsWith(".md")) {
     const text = buffer.toString("utf8").trim()
     if (!text) {
@@ -70,7 +133,7 @@ export async function extractFileContent(
     }
   }
 
-  return { kind: "unsupported", message: "פורמט לא נתמך. תומכים ב-pdf, docx, doc, txt, md." }
+  return { kind: "unsupported", message: "פורמט לא נתמך. אפשר להעלות קובץ Word, Excel, CSV או Markdown." }
 }
 
 /**
