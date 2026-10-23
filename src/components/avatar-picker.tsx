@@ -14,10 +14,9 @@ export interface Avatar {
   preview_image_url: string
   preview_video_url: string
   /**
-   * Which HeyGen character shape this id belongs to. Must reach
-   * /api/videos/generate — a photo avatar sent as a video avatar is rejected.
-   * Optional so older cached shapes still typecheck; the route defaults to
-   * "avatar".
+   * Video avatar or photo avatar. The picker only shows video ones; on v3
+   * /api/videos/generate addresses both the same way, by look id. Optional so
+   * older cached shapes still typecheck.
    */
   type?: "avatar" | "talking_photo"
 }
@@ -26,11 +25,12 @@ interface AvatarPickerProps {
   onSelect: (avatar: Avatar) => void
 }
 
-// _v2 on purpose: the key is versioned so a shape change or a fix to what the
+// _v3 on purpose: the key is versioned so a shape change or a fix to what the
 // route returns invalidates every stale list already sitting in a browser.
 // Without that bump, users kept seeing a day-old snapshot and no amount of
-// server-side fixing reached them.
-const CACHE_KEY = "heygen_avatars_cache_v2"
+// server-side fixing reached them. Bumped for the HeyGen v3 move: ids are now
+// look ids, and a v2-era id left in the cache could be one v3 rejects.
+const CACHE_KEY = "heygen_avatars_cache_v3"
 const CACHE_TTL = 24 * 60 * 60 * 1000 // 24 hours
 
 // Per-user cache. Avatars come from the user's own HeyGen API key, so two

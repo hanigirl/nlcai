@@ -21,26 +21,34 @@ export async function GET(
   }
 
   const res = await fetch(
-    `https://api.heygen.com/v1/video_status.get?video_id=${id}`,
+    `https://api.heygen.com/v3/videos/${encodeURIComponent(id)}`,
     {
       headers: { "X-Api-Key": apiKey, Accept: "application/json" },
     }
   );
 
-  const data = await res.json();
+  const data = await res.json().catch(() => null);
 
-  if (data.code !== 100) {
+  if (!res.ok || !data?.data) {
     return NextResponse.json(
-      { error: data.message || "Failed to get video status" },
+      { error: data?.error?.message || "Failed to get video status" },
       { status: 400 }
     );
   }
 
+  const video = data.data;
+
+  // Same shape the pollers read on v1. v3 splits the failure into
+  // failure_code / failure_message; folding it back into `error` keeps
+  // `data.error?.message || data.error` working in every client.
   return NextResponse.json({
-    status: data.data.status,
-    video_url: data.data.video_url,
-    thumbnail_url: data.data.thumbnail_url,
-    duration: data.data.duration,
-    error: data.data.error,
+    status: video.status,
+    video_url: video.video_url,
+    thumbnail_url: video.thumbnail_url,
+    duration: video.duration,
+    error:
+      video.status === "failed"
+        ? { code: video.failure_code ?? null, message: video.failure_message || "Video generation failed" }
+        : null,
   });
 }

@@ -10,7 +10,7 @@ interface Avatar {
   avatar_name: string;
   preview_image_url: string;
   preview_video_url: string;
-  /** Video avatar vs photo avatar — HeyGen needs a different character shape. */
+  /** Video avatar vs photo avatar. Sent to /api/videos/generate; v3 no longer needs it. */
   type?: "avatar" | "talking_photo";
 }
 

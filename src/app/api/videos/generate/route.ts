@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getUserApiKey } from "@/lib/api-keys";
 
+const HEYGEN = "https://api.heygen.com/v3";
+
 export async function POST(request: Request) {
   const supabase = await createClient();
 
@@ -16,7 +18,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: msg }, { status: 401 });
   }
 
-  const { avatar_id, audio_url, avatar_type } = await request.json();
+  // avatar_type is still sent by every client but no longer matters: v3 takes
+  // a video avatar and a photo avatar the same way, by look id.
+  const { avatar_id, audio_url } = await request.json();
 
   if (!avatar_id || !audio_url) {
     return NextResponse.json(
@@ -25,44 +29,52 @@ export async function POST(request: Request) {
     );
   }
 
-  // HeyGen addresses the two kinds of avatar differently: a video avatar is
-  // {type:"avatar", avatar_id}, a photo avatar is
-  // {type:"talking_photo", talking_photo_id}. Sending a photo avatar's id
-  // under "avatar" is rejected. Defaults to "avatar" so older clients that
-  // don't send the field keep working — every avatar they could pick before
-  // this change was a video one.
-  const character =
-    avatar_type === "talking_photo"
-      ? { type: "talking_photo", talking_photo_id: avatar_id }
-      : { type: "avatar", avatar_id };
+  const engine = await pickEngine(apiKey, avatar_id);
 
-  const res = await fetch("https://api.heygen.com/v2/video/generate", {
+  const res = await fetch(`${HEYGEN}/videos`, {
     method: "POST",
     headers: {
       "X-Api-Key": apiKey,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      video_inputs: [
-        {
-          character,
-          voice: {
-            type: "audio",
-            audio_url,
-          },
-        },
-      ],
+      type: "avatar",
+      avatar_id,
+      audio_url,
+      ...(engine ? { engine: { type: engine } } : {}),
     }),
   });
 
-  const data = await res.json();
+  const data = await res.json().catch(() => null);
 
-  if (data.error) {
+  if (!res.ok || !data?.data?.video_id) {
     return NextResponse.json(
-      { error: data.error.message || "Failed to generate video" },
+      { error: data?.error?.message || "Failed to generate video" },
       { status: 400 }
     );
   }
 
   return NextResponse.json({ video_id: data.data.video_id });
+}
+
+/**
+ * v2 rendered every avatar on the legacy Avatar III engine. v3 defaults to
+ * Avatar IV, a different model with its own per-second rate, so the
+ * migration asks for v3's Avatar III whenever the look supports it and keeps
+ * the videos users get, and what HeyGen bills them, as close to v2 as v3
+ * allows. A look that doesn't list it, or a lookup that fails, falls back to
+ * HeyGen's default.
+ */
+async function pickEngine(apiKey: string, lookId: string): Promise<"avatar_iii" | null> {
+  try {
+    const res = await fetch(`${HEYGEN}/avatars/looks/${encodeURIComponent(lookId)}`, {
+      headers: { "X-Api-Key": apiKey, Accept: "application/json" },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const engines = (data?.data?.supported_api_engines ?? []) as string[];
+    return engines.includes("avatar_iii") ? "avatar_iii" : null;
+  } catch {
+    return null;
+  }
 }

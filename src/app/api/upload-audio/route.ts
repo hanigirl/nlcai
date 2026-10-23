@@ -23,26 +23,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "No audio file provided" }, { status: 400 });
   }
 
-  const buffer = Buffer.from(await file.arrayBuffer());
+  // v3 takes the file as multipart `file`. The browser recorder hands us
+  // webm; a blob that arrived untyped reaches us as application/octet-stream,
+  // which HeyGen won't accept as audio, so label it webm again.
+  const name = file.name || "recording.webm";
+  const typed = /^(audio|video)\//.test(file.type)
+    ? file
+    : new File([file], name, { type: "audio/webm" });
+  const upload = new FormData();
+  upload.append("file", typed, name);
 
-  // Upload directly to HeyGen's asset endpoint
-  const res = await fetch("https://upload.heygen.com/v1/asset", {
+  const res = await fetch("https://api.heygen.com/v3/assets", {
     method: "POST",
-    headers: {
-      "X-Api-Key": apiKey,
-      "Content-Type": "video/webm",
-    },
-    body: buffer,
+    headers: { "X-Api-Key": apiKey },
+    body: upload,
   });
 
-  const data = await res.json();
+  const data = await res.json().catch(() => null);
 
-  if (data.code !== 100 || !data.data?.url) {
+  if (!res.ok || !data?.data?.url) {
     return NextResponse.json(
-      { error: data.message || "Failed to upload audio to HeyGen" },
+      { error: data?.error?.message || "Failed to upload audio to HeyGen" },
       { status: 400 }
     );
   }
 
-  return NextResponse.json({ url: data.data.url });
+  return NextResponse.json({ url: data.data.url, asset_id: data.data.asset_id });
 }

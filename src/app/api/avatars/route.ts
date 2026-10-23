@@ -2,15 +2,18 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getUserApiKey } from "@/lib/api-keys";
 
-const HEYGEN = "https://api.heygen.com/v2";
+const HEYGEN = "https://api.heygen.com/v3";
+
+/** v3 lists are cursor-paginated at 50 a page. 10 pages is far past any real account. */
+const MAX_PAGES = 10;
 
 /**
  * An avatar the user owns, in the one shape the UI needs.
  *
- * `type` matters downstream: HeyGen's video API takes a video avatar as
- * `{type:"avatar", avatar_id}` and a photo avatar as
- * `{type:"talking_photo", talking_photo_id}`. Getting it wrong is rejected at
- * generation time, so the picker has to carry the kind, not just the id.
+ * On v3 every look, video or photo, is addressed the same way by
+ * POST /v3/videos (`avatar_id` = the look id), so `type` no longer changes the
+ * request. It is kept because the picker filters on it and clients already
+ * send it back to /api/videos/generate.
  */
 interface OwnedAvatar {
   avatar_id: string;
@@ -20,11 +23,15 @@ interface OwnedAvatar {
   type: "avatar" | "talking_photo";
 }
 
-interface AvatarGroup {
+interface Look {
   id: string;
   name: string;
-  /** PRIVATE = video avatar; PHOTO / GENERATED_PHOTO = talking photo. */
-  group_type?: string;
+  /** digital_twin / studio_avatar = recorded on video; photo_avatar = from a still. */
+  avatar_type: "studio_avatar" | "digital_twin" | "photo_avatar";
+  preview_image_url?: string | null;
+  preview_video_url?: string | null;
+  /** Only on private looks: processing | completed | failed. */
+  status?: string | null;
 }
 
 export async function GET() {
@@ -52,50 +59,51 @@ export async function GET() {
 }
 
 /**
+ * Follows a v3 list endpoint's `next_token` until `has_more` is false.
+ * Throws on the first non-2xx so the caller decides what an outage means.
+ */
+async function listAll<T>(url: string, headers: Record<string, string>): Promise<T[]> {
+  const out: T[] = [];
+  let token: string | null = null;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const pageUrl: string = token ? `${url}&token=${encodeURIComponent(token)}` : url;
+    const res = await fetch(pageUrl, { headers });
+    if (!res.ok) throw new Error(`${url} returned ${res.status}`);
+    const data = await res.json();
+    out.push(...((data?.data ?? []) as T[]));
+    token = data?.has_more ? (data?.next_token ?? null) : null;
+    if (!token) break;
+  }
+  return out;
+}
+
+/**
  * The user's own recorded video avatars.
  *
- * Asks HeyGen which groups belong to this account (`include_public=false`)
- * and reads each group's looks, instead of guessing ownership from the shape
- * of an id. The old approach kept ids matching /^[0-9a-f]{32}$/ off
- * `/v2/avatars`; verified across all 12 connected accounts, that heuristic
- * happened to select exactly the same video avatars this does — but it was a
- * guess about id formatting, and it would go wrong the day HeyGen mints an id
- * that doesn't look like a UUID. This asks the question directly.
+ * `ownership=private` asks HeyGen for the looks that belong to this account,
+ * so ownership is never guessed from the shape of an id. v3 also types each
+ * look itself (`avatar_type`), which replaces the v2 trick of telling a video
+ * avatar from a photo one by which id field it carried. A private group can
+ * still mix both: Hani's "Hani Buskila in studio" holds one video avatar and
+ * five photo looks, and only the first belongs on this screen.
  */
 async function fetchOwnedAvatars(headers: Record<string, string>): Promise<OwnedAvatar[]> {
-  let groups: AvatarGroup[] = [];
+  let looks: Look[];
   try {
-    const res = await fetch(`${HEYGEN}/avatar_group.list?include_public=false`, { headers });
-    if (!res.ok) throw new Error(`avatar_group.list returned ${res.status}`);
-    const data = await res.json();
-    groups = (data?.data?.avatar_group_list ?? data?.data?.avatar_groups ?? []) as AvatarGroup[];
+    looks = await listAll<Look>(`${HEYGEN}/avatars/looks?ownership=private&limit=50`, headers);
   } catch (err) {
-    console.error("[api/avatars] group listing failed, falling back to /v2/avatars", err);
-    return fetchLegacyAvatars(headers);
+    console.error("[api/avatars] look listing failed", err);
+    return [];
   }
-
-  const perGroup = await Promise.all(
-    groups.map(async (group) => {
-      try {
-        const res = await fetch(`${HEYGEN}/avatar_group/${group.id}/avatars`, { headers });
-        if (!res.ok) return [];
-        const data = await res.json();
-        const list = (data?.data?.avatar_list ?? []) as Record<string, unknown>[];
-        return list.filter(isReady).map((raw) => normalize(raw, group));
-      } catch (err) {
-        console.error(`[api/avatars] group ${group.id} (${group.name}) failed`, err);
-        return [];
-      }
-    }),
-  );
 
   // Video avatars only (Hani, 2026-08-12). This screen is "דיבור למצלמה" —
   // she wants the avatars she recorded herself on video, not the ones
   // generated from a photo or a look. Photo avatars are still normalized and
-  // typed above, so surfacing them later is a matter of dropping this filter.
+  // typed below, so surfacing them later is a matter of dropping this filter.
   const seen = new Set<string>();
-  return perGroup
-    .flat()
+  return looks
+    .filter(isReady)
+    .map(normalize)
     .filter((a) => a.type === "avatar")
     .filter((a) => {
       if (!a.avatar_id || seen.has(a.avatar_id)) return false;
@@ -105,80 +113,28 @@ async function fetchOwnedAvatars(headers: Record<string, string>): Promise<Owned
 }
 
 /**
- * Photo avatars carry a `status` while HeyGen is still training them —
- * "pending" looks have no thumbnail yet and are rejected if used, so offering
- * one means a blank tile that fails on click. Video avatars have no status
- * field at all, hence the undefined pass.
+ * A look still training has no thumbnail yet and is rejected if used, so
+ * offering one means a blank tile that fails on click. HeyGen only reports
+ * `status` on some looks, so a look without one passes.
  */
-function isReady(raw: Record<string, unknown>): boolean {
-  return typeof raw.status !== "string" || raw.status === "completed";
+function isReady(look: Look): boolean {
+  return typeof look.status !== "string" || look.status === "completed";
 }
 
-/**
- * The two kinds return different field names for the same concepts — video
- * avatars use avatar_id/avatar_name/preview_image_url, photo avatars use
- * id/name/image_url. Flatten both into one shape here so nothing downstream
- * has to know the difference except when it builds the HeyGen character.
- *
- * The kind is decided per look, from its own fields — NOT from group_type.
- * A "PRIVATE" group is not the same thing as a group of video avatars: Hani's
- * "Hani Buskila in studio" holds one video avatar and five photo looks. Typing
- * by group would label those five as video avatars and HeyGen would reject
- * every one at generation time.
- */
-function normalize(raw: Record<string, unknown>, group: AvatarGroup): OwnedAvatar {
-  const str = (v: unknown) => (typeof v === "string" ? v : "");
-  const isVideoAvatar = typeof raw.avatar_id === "string" && raw.avatar_id.length > 0;
-
+function normalize(look: Look): OwnedAvatar {
   return {
-    avatar_id: isVideoAvatar ? str(raw.avatar_id) : str(raw.id),
-    // The look's own name is usually the descriptive one ("Hani Buskila at her
-    // desk"); the group name is the fallback for looks HeyGen auto-named badly.
-    avatar_name: str(raw.avatar_name) || str(raw.name) || group.name,
-    preview_image_url: str(raw.preview_image_url) || str(raw.image_url),
-    preview_video_url: str(raw.preview_video_url) || str(raw.motion_preview_url),
-    type: isVideoAvatar ? "avatar" : "talking_photo",
+    avatar_id: look.id,
+    avatar_name: look.name ?? "",
+    preview_image_url: look.preview_image_url ?? "",
+    preview_video_url: look.preview_video_url ?? "",
+    type: look.avatar_type === "photo_avatar" ? "talking_photo" : "avatar",
   };
 }
 
-/**
- * Previous behaviour, kept only for when the group endpoint is unavailable:
- * video avatars whose id looks like a custom UUID. Misses photo avatars, which
- * is exactly the bug this route was changed to fix — so it is a last resort,
- * not a code path we want taken.
- */
-async function fetchLegacyAvatars(headers: Record<string, string>): Promise<OwnedAvatar[]> {
-  const res = await fetch(`${HEYGEN}/avatars`, { headers });
-  if (!res.ok) return [];
-  const data = await res.json();
-  const all = (data?.data?.avatars ?? []) as Record<string, unknown>[];
-  const seen = new Set<string>();
-  return all
-    .filter((a) => typeof a.avatar_id === "string" && /^[0-9a-f]{32}$/.test(a.avatar_id))
-    .filter((a) => {
-      const id = a.avatar_id as string;
-      if (seen.has(id)) return false;
-      seen.add(id);
-      return true;
-    })
-    .map((a) => ({
-      avatar_id: a.avatar_id as string,
-      avatar_name: typeof a.avatar_name === "string" ? a.avatar_name : "",
-      preview_image_url: typeof a.preview_image_url === "string" ? a.preview_image_url : "",
-      preview_video_url: typeof a.preview_video_url === "string" ? a.preview_video_url : "",
-      type: "avatar" as const,
-    }));
-}
-
+/** The voices the user cloned (`type=private`), not HeyGen's shared library. */
 async function fetchCustomVoices(headers: Record<string, string>) {
   try {
-    const res = await fetch(`${HEYGEN}/voices`, { headers });
-    if (!res.ok) return [];
-    const data = await res.json();
-    const all = (data?.data?.voices ?? []) as { voice_id: string }[];
-    return all.filter(
-      (v) => /^[0-9a-f]{32}$/.test(v.voice_id) || /^[A-Za-z0-9]{20,}$/.test(v.voice_id),
-    );
+    return await listAll<{ voice_id: string }>(`${HEYGEN}/voices?type=private&limit=100`, headers);
   } catch (err) {
     console.error("[api/avatars] voice listing failed", err);
     return [];

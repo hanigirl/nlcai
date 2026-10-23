@@ -4,8 +4,10 @@ const nextConfig: NextConfig = {
   devIndicators: false,
   images: {
     remotePatterns: [
-      { hostname: "files2.heygen.ai" },
-      { hostname: "resource2.heygen.ai" },
+      // HeyGen avatar previews. v2 served them from files2/resource2; v3's
+      // examples come from files.heygen.ai. Any subdomain, so the next host
+      // swap doesn't crash the avatar picker on an unconfigured hostname.
+      { hostname: "**.heygen.ai" },
       // Our own storage bucket. Without this entry next/image refuses the
       // host and every preview falls back to a raw <img> — which meant a
       // 200px slot downloading the full 1080x1920 PNG the generator saved
