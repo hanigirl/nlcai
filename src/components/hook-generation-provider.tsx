@@ -13,7 +13,7 @@ import { GEMINI_USAGE_URL, handleGeminiQuotaFrame } from "@/lib/gemini-quota-toa
 import { createClient } from "@/lib/supabase/client"
 import { userKey } from "@/lib/user-scoped-storage"
 import { getCurrentUser } from "@/lib/supabase/current-user"
-import { CLAUDE_BILLING_URL, CLAUDE_CREDITS_MESSAGE } from "@/lib/claude-credits"
+import { CLAUDE_BILLING_URL, CLAUDE_CREDITS_MESSAGE, CLAUDE_KEY_INVALID_MESSAGE, CLAUDE_KEY_SETTINGS_URL } from "@/lib/claude-credits"
 
 export interface StreamedHook {
   id: string
@@ -87,23 +87,27 @@ const ERROR_MESSAGES: Record<string, string> = {
   anthropic_not_connected: "לא חובר מפתח Anthropic. צריך לחבר אותו בהגדרות.",
   anthropic_overloaded: "השרתים של Anthropic עמוסים כרגע. נסו שוב בעוד דקה.",
   credits_exhausted: CLAUDE_CREDITS_MESSAGE,
+  anthropic_key_invalid: CLAUDE_KEY_INVALID_MESSAGE,
 }
 
 /** The error toast — with a way to top up when the cause is Claude credits. */
 function showHookError(code: unknown) {
   const outOfCredits = code === "credits_exhausted"
   const geminiQuota = code === "gemini_quota_exceeded" || code === "gemini_daily_limit"
+  const keyInvalid = code === "anthropic_key_invalid"
   toast.error(hookErrorMessage(code), {
     id: TOAST_ID,
-    duration: outOfCredits ? 30000 : geminiQuota ? 20000 : 6000,
+    duration: outOfCredits || keyInvalid ? 30000 : geminiQuota ? 20000 : 6000,
     action: outOfCredits
       ? {
           label: "לטעינת קרדיטים",
           onClick: () => window.open(CLAUDE_BILLING_URL, "_blank", "noopener,noreferrer"),
         }
-      : geminiQuota
-        ? geminiLimitsAction
-        : undefined,
+      : keyInvalid
+        ? { label: "להגדרות", onClick: () => { window.location.href = CLAUDE_KEY_SETTINGS_URL } }
+        : geminiQuota
+          ? geminiLimitsAction
+          : undefined,
   })
 }
 

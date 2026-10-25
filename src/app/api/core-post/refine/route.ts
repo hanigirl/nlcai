@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { isInvalidClaudeKey } from "@/lib/claude-credits"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
@@ -122,14 +123,17 @@ export async function POST(req: NextRequest) {
     console.error("Core post refine error:", msg)
     const isCredits = /credit|billing|insufficient_quota|payment|402/.test(msg)
     const isOverloaded = /overloaded|529|503/.test(msg)
-    const errCode = isCredits
+    const isKeyInvalid = isInvalidClaudeKey(msg)
+    const errCode = isKeyInvalid
+      ? "anthropic_key_invalid"
+      : isCredits
       ? "credits_exhausted"
       : isOverloaded
         ? "anthropic_overloaded"
         : `Failed to refine post: ${msg}`
     return NextResponse.json(
       { error: errCode },
-      { status: isCredits ? 402 : isOverloaded ? 503 : 500 },
+      { status: isKeyInvalid ? 400 : isCredits ? 402 : isOverloaded ? 503 : 500 },
     )
   }
 }

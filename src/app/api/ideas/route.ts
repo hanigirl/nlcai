@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { isInvalidClaudeKey } from "@/lib/claude-credits"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
@@ -879,7 +880,7 @@ JSONL:
               const msg = err2 instanceof Error ? err2.message : String(err2)
               const isCredits = /credit|billing|insufficient_quota|payment|402/.test(msg)
               const isOverloaded = /overloaded|529|503/.test(msg)
-              const errCode = isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : msg
+              const errCode = isInvalidClaudeKey(msg) ? "anthropic_key_invalid" : isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : msg
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: errCode })}\n\n`))
               controller.close()
               return
@@ -888,7 +889,7 @@ JSONL:
           const msg = err instanceof Error ? err.message : String(err)
           const isCredits = /credit|billing|insufficient_quota|payment|402/.test(msg)
           const isOverloaded = /overloaded|529|503/.test(msg)
-          const errCode = isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : msg
+          const errCode = isInvalidClaudeKey(msg) ? "anthropic_key_invalid" : isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : msg
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: errCode })}\n\n`))
           controller.close()
         }
@@ -907,7 +908,7 @@ JSONL:
     console.error("Ideas generation error:", msg)
     const isCredits = /credit|billing|insufficient_quota|payment|402/.test(msg)
     const isOverloaded = /overloaded|529|503/.test(msg)
-    const errCode = isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : msg
+    const errCode = isInvalidClaudeKey(msg) ? "anthropic_key_invalid" : isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : msg
     return NextResponse.json({ error: errCode }, { status: isCredits ? 402 : isOverloaded ? 503 : 500 })
   }
 }

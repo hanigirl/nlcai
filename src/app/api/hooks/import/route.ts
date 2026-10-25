@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { isInvalidClaudeKey } from "@/lib/claude-credits"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
@@ -114,7 +115,7 @@ export async function POST(req: NextRequest) {
     const isCredits = /credit|billing|insufficient_quota|payment|402/.test(message)
     const isOverloaded = /overloaded|529|503/.test(message)
     return NextResponse.json(
-      { error: isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : "import_failed" },
+      { error: isInvalidClaudeKey(message) ? "anthropic_key_invalid" : isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : "import_failed" },
       { status: isCredits ? 402 : isOverloaded ? 503 : 500 },
     )
   }

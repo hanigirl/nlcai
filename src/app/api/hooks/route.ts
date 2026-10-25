@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { isInvalidClaudeKey } from "@/lib/claude-credits"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
@@ -479,10 +480,11 @@ export async function POST(req: NextRequest) {
     }
     const isCredits = /credit|billing|insufficient_quota|payment|402/.test(message)
     const isOverloaded = /overloaded|529|503/.test(message)
-    const errCode = isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : `Failed to generate hooks: ${message}`
+    const isKeyInvalid = isInvalidClaudeKey(message)
+    const errCode = isKeyInvalid ? "anthropic_key_invalid" : isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : `Failed to generate hooks: ${message}`
     return NextResponse.json(
       { error: errCode },
-      { status: isCredits ? 402 : isOverloaded ? 503 : 500 }
+      { status: isKeyInvalid ? 400 : isCredits ? 402 : isOverloaded ? 503 : 500 }
     )
   }
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { isInvalidClaudeKey } from "@/lib/claude-credits"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
@@ -1032,7 +1033,7 @@ ${formatTemplatesForPrompt()}
           const isOverloaded = /overloaded|529|503/i.test(msg)
           const errCode =
             geminiErrorCode(err) ||
-            (isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : msg)
+            (isInvalidClaudeKey(msg) ? "anthropic_key_invalid" : isCredits ? "credits_exhausted" : isOverloaded ? "anthropic_overloaded" : msg)
           safeEnqueue(encoder.encode(`data: ${JSON.stringify({ error: errCode })}\n\n`))
           safeClose()
         }

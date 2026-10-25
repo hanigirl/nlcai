@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { CLAUDE_KEY_INVALID_MESSAGE } from "@/lib/claude-credits"
 import { X, ArrowUp, Loader2, Check } from "lucide-react"
 import { toast } from "sonner"
 
@@ -52,6 +53,7 @@ const ERROR_COPY: Record<string, string> = {
   anthropic_not_connected: "כדי לערוך בשיחה צריך לחבר את חשבון Claude בהגדרות.",
   credits_exhausted: "נגמרו הקרדיטים ב-Claude. בדקו את החשבון ונסו שוב.",
   anthropic_overloaded: "השרתים של Claude עמוסים כרגע. נסו שוב בעוד רגע.",
+  anthropic_key_invalid: CLAUDE_KEY_INVALID_MESSAGE,
 }
 
 const INTRO: ChatMessage = {

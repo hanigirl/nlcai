@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import { CLAUDE_KEY_INVALID_MESSAGE } from "@/lib/claude-credits"
 import { useRouter } from "next/navigation"
 import { Anchor, Loader2, Sparkles, LayoutGrid, List, Star, Search, ChevronDown, Check, Plus, FileText, MoreVertical } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
@@ -69,6 +70,7 @@ const IMPORT_ERRORS: Record<string, string> = {
   file_unreadable: "לא הצלחנו לקרוא את הקובץ. שמרו אותו מחדש כ-docx ונסו שוב.",
   credits_exhausted: "נגמר הקרדיט במפתח ה-AI, ולכן לא הצלחנו לאתר את ההוקים בקובץ.",
   anthropic_overloaded: "השרתים עמוסים כרגע. נסו שוב בעוד רגע.",
+  anthropic_key_invalid: CLAUDE_KEY_INVALID_MESSAGE,
   gemini_overloaded: "השרתים עמוסים כרגע. נסו שוב בעוד רגע.",
   gemini_quota_exceeded: "נגמרה המכסה במפתח ה-Gemini, ולכן לא הצלחנו לאתר את ההוקים בקובץ.",
   gemini_key_invalid: "מפתח ה-Gemini לא תקין. בדקו אותו בהגדרות.",

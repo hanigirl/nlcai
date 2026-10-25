@@ -24,7 +24,14 @@ import {
   type OnboardingBannerVariant,
 } from "@/components/onboarding-progress-banner"
 import { getCurrentUser } from "@/lib/supabase/current-user"
-import { CLAUDE_BILLING_URL, CLAUDE_BILLING_LABEL, CLAUDE_CREDITS_MESSAGE } from "@/lib/claude-credits"
+import {
+  CLAUDE_BILLING_URL,
+  CLAUDE_BILLING_LABEL,
+  CLAUDE_CREDITS_MESSAGE,
+  CLAUDE_KEY_INVALID_MESSAGE,
+  CLAUDE_KEY_SETTINGS_LABEL,
+  CLAUDE_KEY_SETTINGS_URL,
+} from "@/lib/claude-credits"
 
 interface IdeaNote {
   text: string
@@ -357,7 +364,7 @@ function HomeContent() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        const known = ["audience_missing", "credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "core_identity_missing", "unauthorized", "no_trends_found", "no_creator_content", "trend_search_failed", "search_not_configured"]
+        const known = ["audience_missing", "credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "anthropic_key_invalid", "anthropic_key_invalid", "core_identity_missing", "unauthorized", "no_trends_found", "no_creator_content", "trend_search_failed", "search_not_configured"]
         const raw = data.error === "Unauthorized" ? "unauthorized" : data.error === "Core identity not found." ? "core_identity_missing" : data.error
         setIdeasError(known.includes(raw) ? raw : (raw || "generic"))
         return
@@ -384,7 +391,7 @@ function HomeContent() {
             const idea = JSON.parse(data)
             if (idea.model_fallback) { setModelFallback(true); continue }
             if (idea.error) {
-              const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "no_ideas_generated", "all_ideas_duplicate"]
+              const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "anthropic_key_invalid", "no_ideas_generated", "all_ideas_duplicate"]
               setIdeasError(known.includes(idea.error) ? idea.error : (idea.error || "generic"))
               continue
             }
@@ -879,7 +886,7 @@ function HomeContent() {
               </Button>
             )}
             {ideasError && (() => {
-              const infoStyles = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_ideas_generated", "all_ideas_duplicate", "trend_search_failed", "search_not_configured"]
+              const infoStyles = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "anthropic_key_invalid", "audience_missing", "core_identity_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_ideas_generated", "all_ideas_duplicate", "trend_search_failed", "search_not_configured"]
               const isInfo = infoStyles.includes(ideasError)
               const config: Record<string, { message: string; action?: { href: string; label: string; external?: boolean } }> = {
                 credits_exhausted: {
@@ -888,6 +895,10 @@ function HomeContent() {
                 },
                 anthropic_overloaded: {
                   message: "השרתים של Anthropic עמוסים כרגע. נסו שוב בעוד דקה",
+                },
+                anthropic_key_invalid: {
+                  message: CLAUDE_KEY_INVALID_MESSAGE,
+                  action: { href: CLAUDE_KEY_SETTINGS_URL, label: CLAUDE_KEY_SETTINGS_LABEL },
                 },
                 anthropic_not_connected: {
                   message: "לא חובר מפתח Anthropic API. צריך לחבר אותו בהגדרות כדי להתחיל",

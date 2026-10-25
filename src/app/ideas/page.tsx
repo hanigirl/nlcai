@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
+import { CLAUDE_KEY_INVALID_MESSAGE, CLAUDE_KEY_SETTINGS_LABEL, CLAUDE_KEY_SETTINGS_URL } from "@/lib/claude-credits"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Lightbulb, Loader2, Sparkles, LayoutGrid, List, Star, Search, ChevronDown, Check } from "lucide-react"
@@ -398,7 +399,7 @@ export default function IdeasPage() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "niche_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_fresh_content", "apify_quota_exceeded"]
+        const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "anthropic_key_invalid", "audience_missing", "core_identity_missing", "niche_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_fresh_content", "apify_quota_exceeded"]
         const raw = data.error
         setError(known.includes(raw) ? raw : (raw || "generic"))
         return
@@ -450,7 +451,7 @@ export default function IdeasPage() {
               continue
             }
             if (idea.error) {
-              const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "no_ideas_generated", "all_ideas_duplicate"]
+              const known = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "anthropic_key_invalid", "no_ideas_generated", "all_ideas_duplicate"]
               setError(known.includes(idea.error) ? idea.error : (idea.error || "generic"))
               continue
             }
@@ -747,7 +748,7 @@ export default function IdeasPage() {
         )}
 
         {error && (() => {
-          const infoCodes = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "audience_missing", "core_identity_missing", "niche_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_fresh_content", "no_ideas_generated", "all_ideas_duplicate", "apify_quota_exceeded"]
+          const infoCodes = ["credits_exhausted", "anthropic_overloaded", "anthropic_not_connected", "anthropic_key_invalid", "audience_missing", "core_identity_missing", "niche_missing", "unauthorized", "no_trends_found", "no_creator_content", "no_fresh_content", "no_ideas_generated", "all_ideas_duplicate", "apify_quota_exceeded"]
           const isInfo = infoCodes.includes(error)
           const config: Record<string, { message: string; action?: { href: string; label: string; external?: boolean } }> = {
             credits_exhausted: {
@@ -755,6 +756,10 @@ export default function IdeasPage() {
               action: { href: "https://console.anthropic.com/settings/billing", label: "לרכישת קרדיטים נוספים →", external: true },
             },
             anthropic_overloaded: { message: "השרתים של Anthropic עמוסים כרגע. נסו שוב בעוד דקה" },
+            anthropic_key_invalid: {
+              message: CLAUDE_KEY_INVALID_MESSAGE,
+              action: { href: CLAUDE_KEY_SETTINGS_URL, label: CLAUDE_KEY_SETTINGS_LABEL },
+            },
             anthropic_not_connected: {
               message: "לא חובר מפתח Anthropic API. צריך לחבר אותו בהגדרות כדי להתחיל",
               action: { href: "/settings?tab=connections", label: "לחיבור מפתח API ←" },

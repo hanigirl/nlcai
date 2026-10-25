@@ -27,7 +27,14 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipLabel } from "@/components/ui/tooltip"
 import { MediaPanel } from "@/components/media-panel"
-import { CLAUDE_BILLING_LABEL, CLAUDE_BILLING_URL, CLAUDE_CREDITS_MESSAGE } from "@/lib/claude-credits"
+import {
+  CLAUDE_BILLING_LABEL,
+  CLAUDE_BILLING_URL,
+  CLAUDE_CREDITS_MESSAGE,
+  CLAUDE_KEY_INVALID_MESSAGE,
+  CLAUDE_KEY_SETTINGS_LABEL,
+  CLAUDE_KEY_SETTINGS_URL,
+} from "@/lib/claude-credits"
 import { useFormatMediaBusy } from "@/hooks/use-format-media-busy"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { CorePostCelebration } from "@/components/core-post-celebration"
@@ -1747,6 +1754,12 @@ function ProjectPageInner() {
             body: JSON.stringify({ corePostText: corePost }),
           })
           const data = await res.json()
+          if (data.error === "anthropic_key_invalid") {
+            toast.error(CLAUDE_KEY_INVALID_MESSAGE, {
+              id: "claude-key-invalid",
+              action: { label: "להגדרות", onClick: () => router.push(CLAUDE_KEY_SETTINGS_URL) },
+            })
+          }
           const text = data.text || corePost
           results[fid] = text
           setFormatPosts((prev) => ({ ...prev, [fid]: text }))
@@ -2127,6 +2140,13 @@ function ProjectPageInner() {
                           לעמוד ההגדרות ←
                         </Link>
                       </>
+                    ) : error === "anthropic_key_invalid" ? (
+                      <>
+                        <span className="text-small text-text-primary-default">{CLAUDE_KEY_INVALID_MESSAGE}</span>
+                        <Link href={CLAUDE_KEY_SETTINGS_URL} className="text-small-bold text-text-primary-default hover:underline">
+                          {CLAUDE_KEY_SETTINGS_LABEL}
+                        </Link>
+                      </>
                     ) : error === "credits_exhausted" ? (
                       <>
                         <span className="text-small text-text-primary-default">{CLAUDE_CREDITS_MESSAGE}</span>
@@ -2318,6 +2338,13 @@ function ProjectPageInner() {
                         <span className="text-small text-button-destructive-default">
                           השרתים של אנתרופיק עמוסים ולא ניתן זמנית לייצר תוכן. אפשר לנסות שוב בעוד כמה דקות.
                         </span>
+                      </>
+                    ) : postError === "anthropic_key_invalid" ? (
+                      <>
+                        <span className="text-small-bold text-button-destructive-default">{CLAUDE_KEY_INVALID_MESSAGE}</span>
+                        <Link href={CLAUDE_KEY_SETTINGS_URL} className="text-small-bold text-text-primary-default hover:underline">
+                          {CLAUDE_KEY_SETTINGS_LABEL}
+                        </Link>
                       </>
                     ) : postError === "credits_exhausted" ? (
                       <>

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { isInvalidClaudeKey } from "@/lib/claude-credits"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
@@ -74,6 +75,7 @@ export function createFormatRoute(config: FormatRouteConfig) {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
       console.error("Format generation error:", msg)
+      if (isInvalidClaudeKey(msg)) return NextResponse.json({ error: "anthropic_key_invalid" }, { status: 400 })
       return NextResponse.json({ error: `Failed to generate format: ${msg}` }, { status: 500 })
     }
   }

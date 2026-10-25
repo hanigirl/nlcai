@@ -9,6 +9,8 @@
  * whatever the status and translates the common OpenAI failures.
  */
 
+import { CLAUDE_KEY_INVALID_MESSAGE, CLAUDE_KEY_SETTINGS_URL, isInvalidClaudeKey } from "@/lib/claude-credits"
+
 export type CarouselErrorInfo = {
   message: string
   action?: { label: string; href: string }
@@ -24,7 +26,12 @@ export function carouselErrorInfo(status: number, body: unknown): CarouselErrorI
   if (typeof data.message === "string" && data.message.trim()) {
     return {
       message: data.message,
-      action: code === "openai_not_connected" ? { label: "לחיבור OpenAI", href: "/settings?tab=connections&sub=openai" } : undefined,
+      action:
+        code === "openai_not_connected"
+          ? { label: "לחיבור OpenAI", href: "/settings?tab=connections&sub=openai" }
+          : code === "anthropic_key_invalid"
+            ? { label: "לעדכון מפתח Claude", href: CLAUDE_KEY_SETTINGS_URL }
+            : undefined,
     }
   }
 
@@ -51,6 +58,10 @@ export function carouselErrorInfo(status: number, body: unknown): CarouselErrorI
       message: "OpenAI דורשת לאמת את הארגון בחשבון שלכם לפני שאפשר לייצר תמונות. זה נעשה פעם אחת בהגדרות של OpenAI.",
       action: { label: "לאימות הארגון", href: OPENAI_ORG },
     }
+  }
+  // Anthropic's 401 also says "401" — it is her Claude key, not OpenAI's.
+  if (isInvalidClaudeKey(raw)) {
+    return { message: CLAUDE_KEY_INVALID_MESSAGE, action: { label: "לעדכון מפתח Claude", href: CLAUDE_KEY_SETTINGS_URL } }
   }
   if (/incorrect api key|invalid api key|invalid_api_key|401/i.test(raw)) {
     return {

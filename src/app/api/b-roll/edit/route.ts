@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
@@ -114,6 +115,9 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("[b-roll/edit]", msg)
+    if (isInvalidClaudeKey(msg)) {
+      return NextResponse.json({ error: "anthropic_key_invalid", message: CLAUDE_KEY_INVALID_MESSAGE }, { status: 400 })
+    }
     const message =
       msg === "composition_invalid" || msg === "composition_not_seekable"
         ? "העריכה לא הצליחה הפעם. נסו שוב, אולי בניסוח אחר."
