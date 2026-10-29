@@ -32,7 +32,6 @@ import { FormatStatusChipLink } from "@/components/format-status-chip"
 import { useSchedulingAccess } from "@/lib/use-scheduling-access"
 import {
   TIMING_KEYS,
-  getCorePostMeta,
   getFormatReadiness,
   getPublishedMark,
   getScheduledByPostAndFormat,
@@ -82,14 +81,6 @@ function readStatusParam(): StatusFilter {
   return STATUS_FILTERS.some((f) => f.id === v) ? (v as StatusFilter) : "all"
 }
 
-/** Approval is stored per format on the post's meta by the approval step. */
-function isFormatApproved(corePostId: string, format: FormatId): boolean {
-  const slice = getCorePostMeta(corePostId).byFormat?.[format] as
-    | { approvedAt?: string }
-    | undefined
-  return !!slice?.approvedAt
-}
-
 function matchesStatus(post: SavedPost, status: StatusFilter): boolean {
   if (status === "all") return true
   const input: ReadinessPostInput = {
@@ -108,9 +99,10 @@ function matchesStatus(post: SavedPost, status: StatusFilter): boolean {
         states.some(({ f, s }) => post.formats.includes(f) && (s === "empty" || s === "incomplete"))
       )
     case "approved":
-      return states.some(({ f, s }) => s === "ready" && isFormatApproved(post.id, f))
+      // readiness already says "approved" for an approved format with media.
+      return states.some(({ s }) => s === "approved")
     case "pending":
-      return states.some(({ f, s }) => s === "ready" && !isFormatApproved(post.id, f))
+      return states.some(({ s }) => s === "ready")
     case "scheduled":
       return states.some(({ s }) => s === "scheduled")
     case "published":

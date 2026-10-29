@@ -1245,7 +1245,7 @@ export function CorePostSheet({
               </span>
               <Button
                 onClick={handleGoToCalendar}
-                disabled={readinessByFormat[selectedFormat] !== "ready"}
+                disabled={readinessByFormat[selectedFormat] !== "ready" && readinessByFormat[selectedFormat] !== "approved"}
                 className="gap-1.5"
               >
                 <CalendarPlus className="size-4" />

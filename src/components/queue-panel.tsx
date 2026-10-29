@@ -473,7 +473,10 @@ export function QueuePanel({
       const hook =
         post.hookText?.trim() || post.title?.trim() || "פוסט ללא הוק"
       for (const format of HEADER_CHIP_FORMATS) {
-        if (getFormatReadiness(readinessInput, format) !== "ready") continue
+        // An approved format reads "approved", not "ready" — it belongs here
+        // most of all (Hani, 2026-10-29: approved posts were missing).
+        const s = getFormatReadiness(readinessInput, format)
+        if (s !== "ready" && s !== "approved") continue
         cards.push({
           id: `${post.corePostId}:${format}`,
           corePostId: post.corePostId,
