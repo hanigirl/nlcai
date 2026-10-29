@@ -306,25 +306,19 @@ function DoneChip({ n, className = "" }: { n: number; className?: string }) {
 // it gives way to a primary "תזמון כל הפוסטים" with a secondary "ביטול" (undo
 // the arranging) beside it. Schedule settings live in a ⋮ menu. No re-arrange.
 
-function FlowMenu({ view, actions }: { view: FlowView; actions: FlowActions }) {
-  const stage = stageOf(view)
+/** ⋮ after everything went in: undo the scheduling. */
+function FlowMenu({ actions }: { actions: FlowActions }) {
   return (
     <DropdownMenu dir="rtl">
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label="עוד פעולות" disabled={stage === "scheduling"}>
+        <Button variant="ghost" size="icon-sm" aria-label="עוד פעולות">
           <MoreVertical className="size-4" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {stage === "done" && (
-          <DropdownMenuItem onClick={actions.undo}>
-            <Undo2 className="size-4" />
-            <span>ביטול התזמון</span>
-          </DropdownMenuItem>
-        )}
-        <DropdownMenuItem onClick={actions.openSettings}>
-          <Settings2 className="size-4" />
-          <span>הגדרות התזמון</span>
+        <DropdownMenuItem onClick={actions.undo}>
+          <Undo2 className="size-4" />
+          <span>ביטול התזמון</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -333,23 +327,12 @@ function FlowMenu({ view, actions }: { view: FlowView; actions: FlowActions }) {
 
 export function FlowHeaderButton({ view, actions }: { view: FlowView; actions: FlowActions }) {
   const stage = stageOf(view)
-  const menu = <FlowMenu view={view} actions={actions} />
-
   if (stage === "empty" || stage === "arrange" || stage === "no-routine") {
     return (
-      <div className="flex items-center gap-1">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={stage === "no-routine" ? actions.openSettings : actions.arrange}
-          disabled={stage === "empty"}
-          className="tabular-nums"
-        >
-          <CalendarClock className="size-4" aria-hidden />
-          {stage === "no-routine" ? "קביעת ימים ושעות" : "סידור אוטומטי בלוח"}
-        </Button>
-        {menu}
-      </div>
+      <Button size="sm" variant="outline" onClick={actions.arrange} disabled={stage === "empty"}>
+        <CalendarClock className="size-4" aria-hidden />
+        סידור אוטומטי בלוח
+      </Button>
     )
   }
 
@@ -364,7 +347,7 @@ export function FlowHeaderButton({ view, actions }: { view: FlowView; actions: F
         ) : (
           <DoneChip n={view.lastBatch.length} />
         )}
-        {menu}
+        <FlowMenu actions={actions} />
       </div>
     )
   }
@@ -399,7 +382,6 @@ export function FlowHeaderButton({ view, actions }: { view: FlowView; actions: F
               ? "תזמון הנותרים"
               : "תזמון כל הפוסטים"}
       </Button>
-      {menu}
     </div>
   )
 }
@@ -665,12 +647,8 @@ export function FlowRoutineEditNote({ view }: { view: FlowView }) {
 export const FLOW_STATES = [
   "idle",
   "empty",
-  "no-routine",
   "arranged",
   "moved",
-  "rearrange",
-  "settings",
-  "routine-changed",
   "scheduling",
   "partial",
   "error",
@@ -681,12 +659,8 @@ export type FlowState = (typeof FLOW_STATES)[number]
 export const FLOW_STATE_LABELS: Record<FlowState, string> = {
   idle: "שלב 1 · לפני סידור",
   empty: "אין פוסטים",
-  "no-routine": "אין לו״ז",
   arranged: "שלב 2 · טיוטה על הלוח",
   moved: "אחרי גרירה ידנית",
-  rearrange: "אזהרת סידור מחדש",
-  settings: "הגדרות פתוחות",
-  "routine-changed": "אחרי שינוי לו״ז",
   scheduling: "בזמן תזמון",
   partial: "חלק לא נכנס",
   error: "שגיאה",
@@ -869,13 +843,9 @@ export function useScheduleFlowHarness({
     if (railCards.length < SEED_CARD_COUNT) return
     setPendingState(null)
     if (s === "idle") return
-    if (s === "no-routine") {
-      setHasRoutine(false)
-      return
-    }
     const placed = arrangeWith(routine)
     if (!placed) return
-    if (s === "moved" || s === "rearrange") {
+    if (s === "moved") {
       // Two drafts dragged one day later, like a real edit.
       const shift = placed.slice(0, 2).map((p) => {
         const [y, m, d] = p.scheduledDate.split("-").map(Number)
@@ -885,11 +855,6 @@ export function useScheduleFlowHarness({
       })
       setPlanned([...shift, ...placed.slice(2)])
       setMoved(new Set(shift.map(keyOf)))
-      if (s === "rearrange") setAskRearrange(true)
-    } else if (s === "settings") {
-      openSettings()
-    } else if (s === "routine-changed") {
-      setRoutineChanged(true)
     } else if (s === "scheduling") {
       setPhase("scheduling")
       setProgress({ done: Math.min(3, placed.length - 1), total: placed.length })
@@ -926,10 +891,9 @@ export function useScheduleFlowHarness({
   }
 
   const actions: FlowActions = {
-    arrange: () => {
-      if (!hasRoutine) return openSettings()
-      arrangeWith(routine)
-    },
+    // Settings are out of this flow (a separate task designs them): with no
+    // routine of her own, the default one lays the posts out.
+    arrange: () => arrangeWith(routine),
     confirm: () => {
       if (planned.length === 0) return
       runCommit(planned)

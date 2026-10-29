@@ -62,7 +62,6 @@ import {
   FlowHeaderButton,
   FlowHeaderDetail,
   FlowReviewBar,
-  FlowRoutineEditNote,
   FlowTray,
   parseFlowState,
   useScheduleFlowHarness,
@@ -203,69 +202,50 @@ function formatWeekRange(weekStart: Date, weekEnd: Date): string {
  *   - Published format → opacity-60 on the whole card.
  */
 /**
- * A post "סידור אוטומטי בלוח" laid on the board, not scheduled yet: dashed,
- * no menu. Can be dragged to another day before "תזמון כל הפוסטים".
+ * A post "סידור אוטומטי בלוח" laid on the board, not scheduled yet. Drawn
+ * exactly like the scheduled card — image, time badge, hook, format chip —
+ * and the ONLY difference is the dashed border (Hani, 2026-10-29). Can be
+ * dragged to another day before "תזמון כל הפוסטים".
  */
 function PlannedCard({ slot, committed = false }: { slot: PlannedSlot; committed?: boolean }) {
   const formatLabel = getFormatChipLabel(slot.format)
   // `committed` — review harness only: a seeded post that "went in", drawn
   // solid and read-only (the real scheduled card carries live actions).
-  if (committed) {
-    return (
-      <div
-        aria-label={`${formatLabel} תוזמן: ${slot.hook}`}
-        className="relative w-full min-w-0 flex flex-col gap-1.5 rounded-lg border border-border-neutral-default bg-white dark:bg-gray-10 p-1.5 animate-in fade-in duration-300"
-      >
-        <div className="relative aspect-[4/5] w-full overflow-hidden rounded-md bg-gray-95">
-          <FormatThumbnail
-            url={slot.mediaUrl}
-            format={slot.format}
-            className="absolute inset-0 w-full h-full"
-            iconClassName="size-5"
-            fit={slot.format === "carousel" ? "contain" : "cover"}
-          />
-        </div>
-        <div className="flex flex-col gap-1 px-0.5">
-          <p className="line-clamp-2 text-xs-body leading-tight text-text-primary-default">{slot.hook}</p>
-          <div className="flex items-center gap-1 flex-wrap">
-            <FormatStatusChip format={slot.format} state="ready" size="xs" />
-            <span className="text-[10px] leading-none text-text-neutral-default tabular-nums">
-              {slot.scheduledTime} · תוזמן
-            </span>
-          </div>
-        </div>
-      </div>
-    )
-  }
   return (
     <div
-      draggable
+      draggable={!committed}
       onDragStart={(e) => {
+        if (committed) return
         e.dataTransfer.setData(
           "application/x-schedule-ghost",
           JSON.stringify({ corePostId: slot.corePostId, format: slot.format }),
         )
         e.dataTransfer.effectAllowed = "move"
       }}
-      aria-label={`${formatLabel} מוצע לתזמון, עוד לא תוזמן: ${slot.hook}`}
-      className="relative w-full min-w-0 flex flex-col gap-1.5 rounded-lg border border-dashed border-gray-70 bg-bg-surface dark:bg-gray-20 p-1.5 cursor-grab active:cursor-grabbing transition-all hover:bg-gray-95 hover:border-gray-80"
+      aria-label={committed ? `${formatLabel} תוזמן: ${slot.hook}` : `${formatLabel} טיוטה, עוד לא תוזמן: ${slot.hook}`}
+      className={`relative w-full min-w-0 flex flex-col gap-1.5 rounded-lg border bg-white dark:bg-gray-10 p-1.5 transition-all ${
+        committed
+          ? "border-border-neutral-default animate-in fade-in duration-300"
+          : "border-dashed border-gray-70 cursor-grab active:cursor-grabbing hover:bg-bg-surface-hover hover:border-gray-80"
+      }`}
     >
-      <div className="relative aspect-[4/5] w-full overflow-hidden rounded-md bg-gray-95 opacity-70">
+      <div className="relative aspect-[4/5] w-full overflow-hidden rounded-md bg-gray-95">
         <FormatThumbnail
           url={slot.mediaUrl}
           format={slot.format}
-          className="absolute inset-0 w-full h-full"
+          className="size-full"
           iconClassName="size-5"
+          fallbackClassName="bg-gray-95"
           fit={slot.format === "carousel" ? "contain" : "cover"}
         />
+        <Badge className="absolute top-1 start-1 z-10 bg-button-primary-default text-white dark:text-gray-10 tabular-nums">
+          {slot.scheduledTime}
+        </Badge>
       </div>
-      <div className="flex flex-col gap-1 px-0.5">
+      <div className="flex min-w-0 flex-col gap-1">
         <p className="line-clamp-2 text-xs-body leading-tight text-text-primary-default">{slot.hook}</p>
-        <div className="flex items-center gap-1 flex-wrap">
+        <div className="flex">
           <FormatStatusChip format={slot.format} state="ready" size="xs" />
-          <span className="text-[10px] leading-none text-text-neutral-default tabular-nums">
-            {slot.scheduledTime} · עוד לא תוזמן
-          </span>
         </div>
       </div>
     </div>
@@ -1361,7 +1341,6 @@ export default function CalendarPage() {
                     toast.success("הלו״ז נשמר (תצוגה בלבד)")
                   }}
                 />
-                <FlowRoutineEditNote view={flow.view} />
               </>
             ) : rulesVariant === "a" && routineEditing ? (
               <RoutineEditBar
