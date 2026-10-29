@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from "react"
-import { useCoverDefaultColor } from "@/lib/use-cover-brand-colors"
 import Image from "next/image"
 import { X, Smartphone, Video, Layers, Image as ImageIcon, Film, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, ChevronLeft, ChevronRight, Link2, Trash2, Type, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
@@ -89,7 +88,6 @@ import {
 } from "@/lib/timing-storage"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { carouselErrorInfo } from "@/lib/carousel-errors"
-import { saveCarouselIfLeft, startLongWait } from "@/lib/long-wait"
 
 // Every format the panel can open MUST have an entry here: the header block
 // (title + close button) is gated on `meta`, so a missing key renders a panel
@@ -504,9 +502,9 @@ function TalkingHeadFlow({
 
   // --- cover generation state ---
   const [coverLoading, setCoverLoading] = useState(false)
-  // Pill colour for the cover's text background: her primary brand colour
-  // (black when she has none). Changing it lives on the main project canvas.
-  const pillColor = useCoverDefaultColor()
+  // Pill colour for the cover's text background. Always black inside the
+  // media panel — colour customisation lives on the main project canvas.
+  const pillColor = "#000000"
 
   // Load mic devices
   useEffect(() => {
@@ -1694,12 +1692,11 @@ function CarouselFlow({
     // panel and still lands its slides on the canvas, so the skeleton must
     // too — it comes down in `finally`, whoever is mounted by then.
     onBusyChange?.("carousel", true)
-    const genToast = `carousel-gen-${Date.now()}`
-    startLongWait(
-      genToast,
+    const genToast = toast.loading(
       isAiTemplate
         ? `מציירים קרוסלת AI (${templateName})... זה לוקח כמה דקות`
         : `יוצרים קרוסלה (${templateName})...`,
+      { duration: Infinity },
     )
 
     try {
@@ -1765,8 +1762,6 @@ function CarouselFlow({
           setFormatMeta(postId, "carousel", { templateId: genId })
         }
         setSavedTemplateId(genId === DRIVE_IMPORT_KEY ? undefined : genId)
-        // She left /project mid-generation: the page that saves is gone.
-        void saveCarouselIfLeft(postId, data.images)
         setDialogFor(genId)
         setPreviewIndex(0)
         toast.success(`הקרוסלה (${templateName}) מוכנה`, {
@@ -3928,8 +3923,6 @@ function MediaUploadFlow({
               {drivePick ? (
                 <DriveFolderEntry
                   format="image_post"
-                  pulling={drivePulling}
-                  error={driveError}
                   onImport={(links) => {
                     setDriveUrl(links[0])
                     lastDriveRef.current = links[0]
@@ -4449,8 +4442,6 @@ function MediaUploadFlow({
           {drivePick && isBRoll ? (
             <DriveFolderEntry
               format={format}
-              pulling={drivePulling}
-              error={driveError}
               onImport={(links) => {
                 setDriveUrl(links[0])
                 lastDriveRef.current = links[0]

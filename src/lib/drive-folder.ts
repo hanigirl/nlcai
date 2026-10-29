@@ -23,7 +23,7 @@ export type DriveFolderItem = {
 export type DriveFolderListing = { name: string; items: DriveFolderItem[] }
 
 const VIDEO_EXT = /\.(mp4|mov|m4v|webm|avi|mkv|3gp)$/i
-const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif|bmp|tiff?|avif)$/i
+const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif|bmp|tiff?)$/i
 
 /** The folder id from a share link, or why there isn't one. */
 export function parseFolderLink(raw: string): { id: string } | { error: DriveFolderError } {
@@ -81,12 +81,7 @@ export async function listPublicFolder(
     // Sub-folders link to /drive/folders/ — not media.
     if (/\/folders\//.test(body)) continue
     const fileName = decodeEntities(rawName.trim())
-    // By extension first; a file named without one (a phone export, a
-    // renamed upload) falls back to the type icon Drive draws for it
-    // (…/type/image/jpeg, …/type/video/mp4). Before, those were dropped and an
-    // images folder could read as empty.
-    const mime = body.match(/\/type\/(image|video)\//)?.[1] as "image" | "video" | undefined
-    const kind = VIDEO_EXT.test(fileName) ? "video" : IMAGE_EXT.test(fileName) ? "image" : (mime ?? null)
+    const kind = VIDEO_EXT.test(fileName) ? "video" : IMAGE_EXT.test(fileName) ? "image" : null
     if (!kind) continue
     seen.add(id)
     // The entry's own preview image; its size suffix (=s190) is asked bigger.

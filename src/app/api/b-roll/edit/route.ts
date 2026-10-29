@@ -23,11 +23,9 @@ export const maxDuration = 300
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
   try {
-    const { postId, instruction, learn } = (await req.json().catch(() => ({}))) as {
+    const { postId, instruction } = (await req.json().catch(() => ({}))) as {
       postId?: string
       instruction?: string
-      /** false: already learned via the 👎 feedback (style-feedback route). */
-      learn?: boolean
     }
     const text = instruction?.trim()
     if (!postId || !text) {
@@ -93,7 +91,7 @@ export async function POST(req: NextRequest) {
     // ("the brush thin and yellow") applies to every format from now on.
     const [template, remembered] = await Promise.all([
       reviseBRoll(anthropicKey, composition.brief, composition.template, text),
-      learn === false ? Promise.resolve(null) : learnFromInstruction(supabase, user.id, anthropicKey, text, "b-roll"),
+      learnFromInstruction(supabase, user.id, anthropicKey, text, "b-roll"),
     ])
 
     const stamp = crypto.randomUUID()

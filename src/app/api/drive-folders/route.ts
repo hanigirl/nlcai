@@ -103,11 +103,6 @@ export async function POST(req: NextRequest) {
   // shown as the error with its fix, not quietly remembered.
   if ("error" in listing) return NextResponse.json({ error: listing.error })
 
-  // Re-read right before writing. Listing the folder takes seconds, and
-  // `saved` from before it is stale: connecting the images folder while the
-  // b-roll one was still being checked wrote back the old set and silently
-  // dropped one of them — "connected" on screen, gone on the next load.
-  const fresh = await readSaved(user.id)
-  await writeSaved(user.id, { ...fresh, [key]: { link: trimmed, id: parsed.id, name: listing.name } })
+  await writeSaved(user.id, { ...saved, [key]: { link: trimmed, id: parsed.id, name: listing.name } })
   return NextResponse.json({ folder: { link: trimmed, name: listing.name, items: listing.items } })
 }

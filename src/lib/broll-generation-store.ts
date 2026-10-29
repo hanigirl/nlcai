@@ -1,7 +1,6 @@
 import { rememberAiStyle } from "@/lib/ai-style-provenance"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import { toast } from "sonner"
-import { startLongWait } from "@/lib/long-wait"
 import { flushPendingSaves } from "@/lib/pending-saves"
 
 /**
@@ -133,7 +132,10 @@ export function startBRollGeneration(
   if (!postId) return
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   const toastId = `broll-gen-${++toastSeq}`
-  startLongWait(toastId, "מייצרים בי-רול... זה יכול לקחת כשתי דקות")
+  toast.loading("מייצרים בי-רול... זה יכול לקחת כשתי דקות", {
+    id: toastId,
+    duration: Infinity,
+  })
 
   void (async () => {
     try {
@@ -186,21 +188,23 @@ export function startBRollEdit(
   postId: string,
   instruction: string,
   /** The chat panel reports progress itself — no toasts then. */
-  /** learn: false — the instruction was already learned (her 👎 feedback). */
-  opts: { quiet?: boolean; learn?: boolean } = {},
+  opts: { quiet?: boolean } = {},
 ): Promise<{ ok: true; url: string; remembered?: string | null } | { ok: false; message: string }> {
   if (!postId || !instruction.trim()) return Promise.resolve({ ok: false, message: "" })
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   const toastId = `broll-edit-${++toastSeq}`
   if (!opts.quiet) {
-    startLongWait(toastId, "מעדכנים את הבי-רול לפי ההוראות... זה יכול לקחת כדקה")
+    toast.loading("מעדכנים את הבי-רול לפי ההוראות... זה יכול לקחת כדקה", {
+      id: toastId,
+      duration: Infinity,
+    })
   }
   return (async () => {
     try {
       const res = await fetch("/api/b-roll/edit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, instruction, ...(opts.learn === false ? { learn: false } : {}) }),
+        body: JSON.stringify({ postId, instruction }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         url?: string

@@ -22,16 +22,12 @@ interface ColorSwatchPickerProps {
   // (commit, cancel-click-outside, or quick-pick) so the host can drop the
   // overlay and let the regenerated source-of-truth take over.
   onLivePreview?: (color: string | null) => void
-  // "custom" draws the trigger as a colour-wheel "+" instead of the current
-  // colour — for hosts that already show the current colour in their own
-  // swatch row and only need this as the "another colour" entry.
-  trigger?: "swatch" | "custom"
 }
 
 const STORAGE_KEY = "recentSwatchColors_v1"
 const MAX_RECENT = 6
 
-export function ColorSwatchPicker({ value, onChange, userId, label = "צבע", onLivePreview, trigger = "swatch" }: ColorSwatchPickerProps) {
+export function ColorSwatchPicker({ value, onChange, userId, label = "צבע", onLivePreview }: ColorSwatchPickerProps) {
   const [open, setOpen] = useState(false)
   const [recent, setRecent] = useState<string[]>([])
   // Local draft colour shown inside the popover and on the swatch while
@@ -120,26 +116,14 @@ export function ColorSwatchPicker({ value, onChange, userId, label = "צבע", o
 
   return (
     <div className="relative inline-flex items-center gap-2" ref={wrapperRef} dir="rtl" data-no-pan>
-      {trigger === "swatch" && <span className="text-small text-text-primary-default">{label}</span>}
-      {trigger === "custom" ? (
-        <button
-          type="button"
-          onClick={open ? closeAndCommit : handleOpen}
-          className="relative size-7 rounded-full border border-border-neutral-default shrink-0 cursor-pointer transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-          style={{ background: "conic-gradient(from 90deg, #ff4d4d, #ffc300, #3ddc84, #3d8bff, #b04dff, #ff4d4d)" }}
-          aria-label={label}
-        >
-          <span className="absolute inset-[5px] rounded-full bg-white dark:bg-gray-10 flex items-center justify-center text-xs font-bold text-text-primary-default leading-none">+</span>
-        </button>
-      ) : (
-        <button
-          type="button"
-          onClick={open ? closeAndCommit : handleOpen}
-          className="size-7 rounded-full border border-border-neutral-default shrink-0 cursor-pointer transition-transform hover:scale-105"
-          style={{ backgroundColor: swatchPreview }}
-          aria-label={`${label}: ${swatchPreview}`}
-        />
-      )}
+      <span className="text-small text-text-primary-default">{label}</span>
+      <button
+        type="button"
+        onClick={open ? closeAndCommit : handleOpen}
+        className="size-7 rounded-full border border-border-neutral-default shrink-0 cursor-pointer transition-transform hover:scale-105"
+        style={{ backgroundColor: swatchPreview }}
+        aria-label={`${label}: ${swatchPreview}`}
+      />
       {open && (
         <div
           data-no-pan

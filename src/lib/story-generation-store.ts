@@ -1,7 +1,6 @@
 import { rememberAiStyle } from "@/lib/ai-style-provenance"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import { toast } from "sonner"
-import { startLongWait } from "@/lib/long-wait"
 import { flushPendingSaves } from "@/lib/pending-saves"
 
 /**
@@ -117,7 +116,10 @@ export function startStoryGeneration(postId: string, style?: MediaStyle): void {
   // Steers this attempt toward a palette distinct from the previous ones.
   const variationIndex = nextVariationIndex(postId)
   const toastId = `story-gen-${++toastSeq}`
-  startLongWait(toastId, "מייצרים סטורי עם AI... זה יכול לקחת עד דקה")
+  toast.loading("מייצרים סטורי עם AI... זה יכול לקחת עד דקה", {
+    id: toastId,
+    duration: Infinity,
+  })
 
   void (async () => {
     try {

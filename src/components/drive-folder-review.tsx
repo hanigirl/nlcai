@@ -23,7 +23,6 @@ import {
   ExternalLink,
   FolderOpen,
   GripVertical,
-  Image as ImageIcon,
   Loader2,
   Play,
   RefreshCw,
@@ -44,8 +43,6 @@ type MediaItem = {
   id: string
   name: string
   thumb: string
-  /** Tried in order when `thumb` doesn't load — see DriveThumb. */
-  fallbacks?: string[]
   kind: "image" | "video"
   /** "0:24" — videos only. */
   duration?: string
@@ -180,13 +177,6 @@ const toItem = (it: ApiItem): MediaItem => ({
   // drive.google.com/thumbnail (needs a Google session in the browser) and not
   // the folder view's own image URL (refused when our page is the referrer).
   thumb: `https://lh3.googleusercontent.com/d/${it.id}=w400`,
-  // That URL comes back empty for some files (screenshots, phone exports), so
-  // each picture keeps backups: the folder view's own thumbnail (it refused
-  // our page as referrer — DriveThumb sends none) and Drive's thumbnail endpoint.
-  fallbacks: [
-    ...(it.thumb ? [it.thumb] : []),
-    `https://drive.google.com/thumbnail?id=${it.id}&sz=w400`,
-  ],
   src: `https://drive.google.com/file/d/${it.id}/view`,
 })
 
@@ -198,72 +188,6 @@ const fromApi = (f: ApiFolder | null): Folder =>
       : { status: "connected", link: f.link, name: f.name, items: f.items.map(toItem), error: null, editorLink: false }
 
 let loadedOnce: Promise<void> | null = null
-
-/**
- * A Drive thumbnail that moves to the next URL when one fails, and sends no
- * referrer (Google refuses some thumbnails when our page is the referrer).
- * If every URL fails it shows a quiet placeholder instead of a broken image.
- */
-function DriveThumb({
-  item,
-  className,
-  ...img
-}: { item: Pick<MediaItem, "thumb" | "fallbacks"> } & Omit<React.ImgHTMLAttributes<HTMLImageElement>, "src">) {
-  // Remember which URLs failed, not a position, so a new item starts fresh.
-  const [failed, setFailed] = useState<string[]>([])
-  const src = [item.thumb, ...(item.fallbacks ?? [])].find((u) => !failed.includes(u))
-  if (!src) {
-    return (
-      <span aria-hidden className={cn("flex items-center justify-center bg-gray-95 text-gray-70 dark:bg-gray-20", className)}>
-        <ImageIcon className="size-5" />
-      </span>
-    )
-  }
-  return (
-    <img
-      {...img}
-      src={src}
-      referrerPolicy="no-referrer"
-      className={className}
-      onError={() => setFailed((f) => [...f, src])}
-    />
-  )
-}
-
-/* ---------------------------------------------- state preview (/test only) */
-
-/**
- * /test/drive-folder renders the real panel pieces in each state. It seeds the
- * folders here and switches every request off: no listing, no save, no
- * import. Nothing in the app calls this.
- */
-let previewOnly = false
-export type DrivePreviewState = "nofolder" | "noaccess" | "empty" | "ready"
-const PREVIEW_THUMBS = ["/images/onboarding-hero.png", "/images/idea.png", "/images/hook.png", "/images/letter.png", "/images/calendar-min.png", "/images/paper-plane-celebrate.png"]
-function previewFolder(k: FolderKey, state: DrivePreviewState): Folder {
-  const link = "https://drive.google.com/drive/folders/sample-folder"
-  if (state === "nofolder") return unset()
-  if (state === "noaccess") return { ...unset(), status: "error", link, error: "not_public" }
-  const video = k === "broll" || k === "talking"
-  const items: MediaItem[] =
-    state === "empty"
-      ? []
-      : PREVIEW_THUMBS.map((thumb, i) => ({
-          id: `sample-${k}-${i}`,
-          name: video ? `clip-${i + 1}.mp4` : `photo-${i + 1}.jpg`,
-          kind: video ? "video" : "image",
-          ...(video ? { duration: `0:${String(8 + i * 3).padStart(2, "0")}` } : {}),
-          thumb,
-          src: `https://drive.google.com/file/d/sample-${k}-${i}/view`,
-        }))
-  return { status: "connected", link, name: FOLDER_META[k].driveName, items, error: null, editorLink: false }
-}
-export function setDrivePreviewState(state: DrivePreviewState) {
-  previewOnly = true
-  loadedOnce = Promise.resolve()
-  const folders = Object.fromEntries(FOLDER_ORDER.map((k) => [k, previewFolder(k, state)])) as Record<FolderKey, Folder>
-  set({ folders, picked: {}, importing: null, importProgress: "" })
-}
 
 /** Her saved folders, listed live. Once per page load; `force` re-reads. */
 export function loadDriveFolders(force = false): Promise<void> {
@@ -287,34 +211,18 @@ export function loadDriveFolders(force = false): Promise<void> {
   return loadedOnce
 }
 
-/**
- * Re-read one folder from the server — opening the picker shows what's in
- * Drive NOW, and what's saved NOW.
- *
- * Bug (2026-10-22, Nataliya): this used to return early unless the folder was
- * already "connected" in this page's memory. The folders are read once per
- * page load, so a folder connected after that (Settings in another tab, on
- * another device, or a first load that failed) stayed "not connected" here
- * for the rest of the session — the panel asked her to connect a folder she
- * had already set. Every open, and every return to the tab, now asks the
- * server. Skipped only while a connect is in flight, so an older answer
- * can't overwrite the one being saved.
- */
+/** Re-list one folder — opening the picker shows what's in Drive NOW. */
 export async function refreshDriveFolder(k: FolderKey): Promise<void> {
-  if (previewOnly || store.folders[k].status === "checking") return
+  if (store.folders[k].status !== "connected") return
   try {
     const d = (await fetch(`/api/drive-folders?key=${k}`).then((r) => r.json())) as { folder?: ApiFolder | null }
-    if (d.folder !== undefined && (store.folders[k].status as Folder["status"]) !== "checking") setFolder(k, fromApi(d.folder))
+    if (d.folder !== undefined) setFolder(k, fromApi(d.folder))
   } catch {
     // Keep what we had; the gallery still works from the last listing.
   }
 }
 
 export async function connectFolder(k: FolderKey, link: string) {
-  if (previewOnly) {
-    if (link.trim()) setFolder(k, previewFolder(k, "ready"))
-    return
-  }
   if (!link.trim()) {
     setFolder(k, unset())
     return
@@ -335,7 +243,6 @@ export async function connectFolder(k: FolderKey, link: string) {
 
 export function disconnectFolder(k: FolderKey) {
   setFolder(k, unset())
-  if (previewOnly) return
   void fetch("/api/drive-folders", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -360,10 +267,6 @@ export function registerDriveImporter(format: string, fn: ((links: string[]) => 
 
 function runImport(format: string, items: MediaItem[]) {
   if (items.length === 0) return
-  if (previewOnly) {
-    set({ picked: { ...store.picked, [format]: items }, pickerFor: null })
-    return
-  }
   const importer = importers.get(format)
   if (!importer) return
   set({ picked: { ...store.picked, [format]: items }, pickerFor: null })
@@ -497,7 +400,7 @@ function FolderSummary({ f, folderKey }: { f: Folder; folderKey: FolderKey }) {
       <span className="flex -space-x-1.5 space-x-reverse" aria-hidden>
         {f.items.slice(0, 3).map((it) => (
           // eslint-disable-next-line @next/next/no-img-element
-          <DriveThumb key={it.id} item={it} alt="" className={cn("rounded-[4px] border border-white object-cover dark:border-gray-10", miniFor(FOLDER_FORMAT[folderKey]))} />
+          <img key={it.id} src={it.thumb} alt="" className={cn("rounded-[4px] border border-white object-cover dark:border-gray-10", miniFor(FOLDER_FORMAT[folderKey]))} />
         ))}
       </span>
       {filesLabel(f.items.length)}
@@ -565,7 +468,7 @@ function FolderRow({
                 {f.items.slice(0, 6).map((it) => (
                   <div key={it.id} className={cn("relative shrink-0 overflow-hidden rounded-lg bg-gray-90", thumbFor(FOLDER_FORMAT[folderKey]))}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <DriveThumb item={it} alt={it.name} className="size-full object-cover" />
+                    <img src={it.thumb} alt={it.name} className="size-full object-cover" />
                     {it.kind === "video" && (
                       <Play className="absolute inset-0 m-auto size-3.5 fill-white text-white drop-shadow" aria-hidden />
                     )}
@@ -627,17 +530,10 @@ function FolderRow({
 export function DriveFolderEntry({
   format,
   onImport,
-  pulling,
-  error,
 }: {
   format: string
   /** The format's own Drive import — receives the picked files' links, in order. */
   onImport?: (links: string[]) => void
-  /** The import after a pick is still running (the panel's own Drive pull). */
-  pulling?: boolean
-  /** The import after a pick failed — shown here, where she picked. Before
-   *  this, the picker closed and a failed pull said nothing at all. */
-  error?: string | null
 }) {
   const s = useDrivePickStore()
   const k = FORMAT_FOLDER[format] ?? "images"
@@ -653,9 +549,6 @@ export function DriveFolderEntry({
     registerDriveImporter(format, (links) => importRef.current?.(links))
     return () => registerDriveImporter(format, null)
   }, [format])
-  // Back from Drive / Settings in another tab: re-read, so a folder she just
-  // connected or re-shared is there without a reload.
-  useRefreshOnFocus(k)
   const f = s.folders[k]
   const picked = s.picked[format]
   const multi = format === "carousel" || format === "story"
@@ -679,7 +572,7 @@ export function DriveFolderEntry({
                 )}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <DriveThumb item={it} alt={it.name} className="size-full object-cover" />
+                <img src={it.thumb} alt={it.name} className="size-full object-cover" />
                 {multi && (
                   <span className="absolute top-0.5 start-0.5 flex size-4 items-center justify-center rounded-full bg-gray-10/80 text-[10px] text-white">
                     {i + 1}
@@ -693,45 +586,19 @@ export function DriveFolderEntry({
           </div>
         </div>
       )}
-      <Button variant="outline" onClick={() => openDrivePicker(format)} disabled={!!pulling} className="w-full gap-2">
+      <Button variant="outline" onClick={() => openDrivePicker(format)} className="w-full gap-2">
         <DriveMark />
         מדיה משלכם מ Google Drive
       </Button>
-      {pulling ? (
-        <p className="flex items-center gap-2 text-xs text-text-neutral-default" role="status">
-          <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          מחברים את המדיה מהדרייב...
-        </p>
-      ) : error ? (
-        <p role="alert" className="flex items-start gap-1.5 text-xs text-button-destructive-default">
-          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-          {error}
-        </p>
-      ) : (
-        <p className="text-xs-body text-text-neutral-default">
-          {f.status === "connected"
-            ? `מתיקיית „${f.name}” · ${filesLabel(f.items.length)}`
-            : f.status === "error"
-              ? "אין גישה לתיקייה שחוברה — אפשר לתקן כאן"
-              : "עוד לא חוברה תיקייה ל" + FOLDER_META[k].label}
-        </p>
-      )}
+      <p className="text-xs-body text-text-neutral-default">
+        {f.status === "connected"
+          ? `מתיקיית „${f.name}” · ${filesLabel(f.items.length)}`
+          : f.status === "error"
+            ? "אין גישה לתיקייה שחוברה — אפשר לתקן בהגדרות"
+            : "עוד לא חוברה תיקייה ל" + FOLDER_META[k].label}
+      </p>
     </div>
   )
-}
-
-function useRefreshOnFocus(k: FolderKey) {
-  useEffect(() => {
-    const onFocus = () => {
-      if (document.visibilityState === "visible") void refreshDriveFolder(k)
-    }
-    window.addEventListener("focus", onFocus)
-    document.addEventListener("visibilitychange", onFocus)
-    return () => {
-      window.removeEventListener("focus", onFocus)
-      document.removeEventListener("visibilitychange", onFocus)
-    }
-  }, [k])
 }
 
 /* ================================================================ the picker */
@@ -789,7 +656,7 @@ function Tile({
       )}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <DriveThumb item={item} alt="" className="size-full object-cover" loading="lazy" />
+      <img src={item.thumb} alt="" className="size-full object-cover" loading="lazy" />
       {item.kind === "video" && (
         // Logical `end` — the badge itself must not carry dir="ltr", or "end"
         // flips to the right and lands on the selection badge.
@@ -853,7 +720,6 @@ export function DriveFolderPicker({
   const f = s.folders[k]
   const meta = FOLDER_META[k]
 
-  useRefreshOnFocus(k)
   // Opening re-lists the folder, so a file she just dropped into Drive is there.
   const [opening, setOpening] = useState(true)
   useEffect(() => {
@@ -892,9 +758,8 @@ export function DriveFolderPicker({
             <button
               type="button"
               onClick={() => {
-                // A real re-read (it used to only flash the skeleton).
                 setOpening(true)
-                void refreshDriveFolder(k).finally(() => setOpening(false))
+                setTimeout(() => setOpening(false), 650)
               }}
               aria-label="רענון התיקייה"
               title="רענון — לקבצים שהוספתם עכשיו לדרייב"
@@ -951,7 +816,7 @@ function NoFolder({ folderKey }: { folderKey: FolderKey }) {
   const meta = FOLDER_META[folderKey]
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-border-neutral-default p-4">
-      <p className="text-small-bold text-text-primary-default">עוד לא חוברה תיקייה ל{meta.label}</p>
+      <p className="text-small-bold text-text-primary-default">חברו תיקייה ל{meta.label}</p>
       <p className="text-xs-body text-text-neutral-default">
         הדביקו כאן קישור לתיקייה בדרייב. היא תישמר גם בהגדרות, ובפעם הבאה תיפתח ישר.
       </p>
@@ -1021,7 +886,7 @@ function SinglePickConfirm({ format, items }: { format: string; items: MediaItem
           <div className="flex items-center gap-3">
             {item ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <DriveThumb item={item} alt="" className="h-[50px] w-10 shrink-0 rounded-lg object-cover" />
+              <img src={item.thumb} alt="" className="h-[50px] w-10 shrink-0 rounded-lg object-cover" />
             ) : (
               <span className="h-[50px] w-10 shrink-0 rounded-lg border border-dashed border-border-neutral-default" aria-hidden />
             )}
@@ -1162,7 +1027,7 @@ function OrderFirstPicker({ format, items, scriptText }: { format: string; items
                       )}
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <DriveThumb item={it} alt="" className="pointer-events-none size-full object-cover" />
+                      <img src={it.thumb} alt="" className="pointer-events-none size-full object-cover" />
                       <span className="absolute top-0.5 start-0.5 flex size-4 items-center justify-center rounded-full bg-gray-10/80 text-[10px] text-white">
                         {i + 1}
                       </span>
