@@ -23,6 +23,7 @@ import {
   ExternalLink,
   FolderOpen,
   GripVertical,
+  Image as ImageIcon,
   Loader2,
   Play,
   RefreshCw,
@@ -43,6 +44,8 @@ type MediaItem = {
   id: string
   name: string
   thumb: string
+  /** Tried in order when `thumb` doesn't load — see DriveThumb. */
+  fallbacks?: string[]
   kind: "image" | "video"
   /** "0:24" — videos only. */
   duration?: string
@@ -177,6 +180,13 @@ const toItem = (it: ApiItem): MediaItem => ({
   // drive.google.com/thumbnail (needs a Google session in the browser) and not
   // the folder view's own image URL (refused when our page is the referrer).
   thumb: `https://lh3.googleusercontent.com/d/${it.id}=w400`,
+  // That URL comes back empty for some files (screenshots, phone exports), so
+  // each picture keeps backups: the folder view's own thumbnail (it refused
+  // our page as referrer — DriveThumb sends none) and Drive's thumbnail endpoint.
+  fallbacks: [
+    ...(it.thumb ? [it.thumb] : []),
+    `https://drive.google.com/thumbnail?id=${it.id}&sz=w400`,
+  ],
   src: `https://drive.google.com/file/d/${it.id}/view`,
 })
 
@@ -188,6 +198,37 @@ const fromApi = (f: ApiFolder | null): Folder =>
       : { status: "connected", link: f.link, name: f.name, items: f.items.map(toItem), error: null, editorLink: false }
 
 let loadedOnce: Promise<void> | null = null
+
+/**
+ * A Drive thumbnail that moves to the next URL when one fails, and sends no
+ * referrer (Google refuses some thumbnails when our page is the referrer).
+ * If every URL fails it shows a quiet placeholder instead of a broken image.
+ */
+function DriveThumb({
+  item,
+  className,
+  ...img
+}: { item: Pick<MediaItem, "thumb" | "fallbacks"> } & Omit<React.ImgHTMLAttributes<HTMLImageElement>, "src">) {
+  // Remember which URLs failed, not a position, so a new item starts fresh.
+  const [failed, setFailed] = useState<string[]>([])
+  const src = [item.thumb, ...(item.fallbacks ?? [])].find((u) => !failed.includes(u))
+  if (!src) {
+    return (
+      <span aria-hidden className={cn("flex items-center justify-center bg-gray-95 text-gray-70 dark:bg-gray-20", className)}>
+        <ImageIcon className="size-5" />
+      </span>
+    )
+  }
+  return (
+    <img
+      {...img}
+      src={src}
+      referrerPolicy="no-referrer"
+      className={className}
+      onError={() => setFailed((f) => [...f, src])}
+    />
+  )
+}
 
 /* ---------------------------------------------- state preview (/test only) */
 
@@ -456,7 +497,7 @@ function FolderSummary({ f, folderKey }: { f: Folder; folderKey: FolderKey }) {
       <span className="flex -space-x-1.5 space-x-reverse" aria-hidden>
         {f.items.slice(0, 3).map((it) => (
           // eslint-disable-next-line @next/next/no-img-element
-          <img key={it.id} src={it.thumb} alt="" className={cn("rounded-[4px] border border-white object-cover dark:border-gray-10", miniFor(FOLDER_FORMAT[folderKey]))} />
+          <DriveThumb key={it.id} item={it} alt="" className={cn("rounded-[4px] border border-white object-cover dark:border-gray-10", miniFor(FOLDER_FORMAT[folderKey]))} />
         ))}
       </span>
       {filesLabel(f.items.length)}
@@ -524,7 +565,7 @@ function FolderRow({
                 {f.items.slice(0, 6).map((it) => (
                   <div key={it.id} className={cn("relative shrink-0 overflow-hidden rounded-lg bg-gray-90", thumbFor(FOLDER_FORMAT[folderKey]))}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={it.thumb} alt={it.name} className="size-full object-cover" />
+                    <DriveThumb item={it} alt={it.name} className="size-full object-cover" />
                     {it.kind === "video" && (
                       <Play className="absolute inset-0 m-auto size-3.5 fill-white text-white drop-shadow" aria-hidden />
                     )}
@@ -638,7 +679,7 @@ export function DriveFolderEntry({
                 )}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={it.thumb} alt={it.name} className="size-full object-cover" />
+                <DriveThumb item={it} alt={it.name} className="size-full object-cover" />
                 {multi && (
                   <span className="absolute top-0.5 start-0.5 flex size-4 items-center justify-center rounded-full bg-gray-10/80 text-[10px] text-white">
                     {i + 1}
@@ -748,7 +789,7 @@ function Tile({
       )}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={item.thumb} alt="" className="size-full object-cover" loading="lazy" />
+      <DriveThumb item={item} alt="" className="size-full object-cover" loading="lazy" />
       {item.kind === "video" && (
         // Logical `end` — the badge itself must not carry dir="ltr", or "end"
         // flips to the right and lands on the selection badge.
@@ -980,7 +1021,7 @@ function SinglePickConfirm({ format, items }: { format: string; items: MediaItem
           <div className="flex items-center gap-3">
             {item ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={item.thumb} alt="" className="h-[50px] w-10 shrink-0 rounded-lg object-cover" />
+              <DriveThumb item={item} alt="" className="h-[50px] w-10 shrink-0 rounded-lg object-cover" />
             ) : (
               <span className="h-[50px] w-10 shrink-0 rounded-lg border border-dashed border-border-neutral-default" aria-hidden />
             )}
@@ -1121,7 +1162,7 @@ function OrderFirstPicker({ format, items, scriptText }: { format: string; items
                       )}
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={it.thumb} alt="" className="pointer-events-none size-full object-cover" />
+                      <DriveThumb item={it} alt="" className="pointer-events-none size-full object-cover" />
                       <span className="absolute top-0.5 start-0.5 flex size-4 items-center justify-center rounded-full bg-gray-10/80 text-[10px] text-white">
                         {i + 1}
                       </span>
