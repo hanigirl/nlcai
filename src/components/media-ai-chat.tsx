@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react"
+import { AI_ERROR_BOX, aiErrorMessage } from "@/lib/ai-error-message"
 import { ArrowUp, Check, Loader2, X } from "lucide-react"
 import { AiSparkle } from "@/components/ai-refine-button"
 import { Button } from "@/components/ui/button"
@@ -359,7 +360,7 @@ export function MediaAiChat({
         ...s.messages,
         result.ok
           ? { role: "assistant", content: copy.done, done: true, remembered: result.remembered }
-          : { role: "assistant", content: result.message || "העריכה לא הצליחה. נסו שוב.", error: true },
+          : { role: "assistant", content: aiErrorMessage(result.message || "העריכה לא הצליחה. נסו שוב."), error: true },
       ],
     }))
     revealChatReply(key, result.ok ? AWAY_COPY[format].done : AWAY_COPY[format].failed)
@@ -396,7 +397,7 @@ export function MediaAiChat({
     const r = full as Awaited<ReturnType<typeof runOwnMediaEdit>> | null
     const reply: ChatMessage =
       !result.ok || !r || !r.ok
-        ? { role: "assistant", content: (r && r.message) || "העריכה לא הצליחה. נסו שוב.", error: true }
+        ? { role: "assistant", content: aiErrorMessage((r && r.message) || "העריכה לא הצליחה. נסו שוב."), error: true }
         : !r.changed
           ? { role: "assistant", content: r.message }
           : { role: "assistant", content: r.message || copy.done, done: true, remembered: null, noStyle: !r.styleChange }
@@ -469,7 +470,7 @@ export function MediaAiChat({
                 m.role === "user"
                   ? "bg-bg-surface-primary-default text-text-primary-default rounded-ss-sm"
                   : m.error
-                    ? "bg-bg-surface text-button-destructive-default rounded-se-sm"
+                    ? `${AI_ERROR_BOX} rounded-se-sm`
                     : "bg-bg-surface text-text-primary-default rounded-se-sm"
               }`}
             >

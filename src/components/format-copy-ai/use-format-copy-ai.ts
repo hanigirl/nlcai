@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { aiErrorMessage } from "@/lib/ai-error-message"
 import {
   requestFormatCopyRefine,
   COPY_NOUN,
@@ -185,7 +186,7 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder, 
         patchKey(key, (s) => ({
           ...s,
           busy: false,
-          extra: { ...s.extra, error: err instanceof Error ? err.message : "משהו השתבש. נסו שוב." },
+          extra: { ...s.extra, error: aiErrorMessage(err) },
         }))
         revealChatReply(key, `עריכת ${COPY_NOUN[fid]} לא הצליחה`)
       }

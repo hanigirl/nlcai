@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef } from "react"
+import { AI_ERROR_BOX, aiErrorMessage } from "@/lib/ai-error-message"
 import { CLAUDE_KEY_INVALID_MESSAGE } from "@/lib/claude-credits"
 import { X, ArrowUp, Loader2, Check } from "lucide-react"
 import { toast } from "sonner"
@@ -236,7 +237,7 @@ export function CorePostChat({
       }))
     } catch (err) {
       console.error("[core-post-chat] refine failed", err)
-      fail("שגיאת רשת. נסו שוב.")
+      fail(aiErrorMessage(err))
     } finally {
       patchKey((s) => ({ ...s, busy: false }))
       // Closed meanwhile: this post's page reopens the chat on the reply.
@@ -341,8 +342,8 @@ export function CorePostChat({
         )}
 
         {error && (
-          <p role="alert" className="text-small text-button-destructive-default">
-            {error}
+          <p role="alert" className={AI_ERROR_BOX}>
+            {aiErrorMessage(error)}
           </p>
         )}
       </div>

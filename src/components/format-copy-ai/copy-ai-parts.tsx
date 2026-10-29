@@ -1,6 +1,7 @@
 "use client"
 
 import { ArrowUp, Check, Loader2, RotateCw } from "lucide-react"
+import { AI_ERROR_BOX, aiErrorMessage } from "@/lib/ai-error-message"
 import { Chip } from "@/components/ui/chip"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -92,7 +93,7 @@ export function CopyLoadingLine() {
 export function CopyErrorLine({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div role="alert" className="flex flex-col items-start gap-2">
-      <p className="text-small text-button-destructive-default">{message}</p>
+      <p className={AI_ERROR_BOX}>{aiErrorMessage(message)}</p>
       <Button size="sm" variant="outline" onClick={onRetry} className="gap-1.5">
         <RotateCw className="size-3.5" />
         ניסיון חוזר
