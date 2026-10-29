@@ -38,10 +38,16 @@ export function DriveVideoPreview({
   url,
   label,
   className = "",
+  onOpen,
 }: {
   url: string
   label?: string
   className?: string
+  /**
+   * On a canvas card: a click opens the media panel instead of the player
+   * dialog — the big player lives in the panel (Hani, 2026-10-29).
+   */
+  onOpen?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const [posterFailed, setPosterFailed] = useState(false)
@@ -54,12 +60,17 @@ export function DriveVideoPreview({
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={(e) => {
+          if (onOpen) {
+            e.stopPropagation()
+            onOpen()
+          } else setOpen(true)
+        }}
         // The canvas behind these cards drags on pointer-down. Without this
         // the press is swallowed before it ever reaches the button.
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
-        aria-label={`הפעלת ${title}`}
+        aria-label={onOpen ? `החלפת ${label ?? "הסרטון"}` : `הפעלת ${title}`}
         className={`group relative block size-full overflow-hidden bg-gray-95 cursor-pointer ${className}`}
       >
         {!posterFailed && (

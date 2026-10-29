@@ -3343,12 +3343,12 @@ function FormatTree({
                       <ApprovalHeaderTag status={approvalStatus} />
                     </div>
                     <div className="px-6 flex flex-col gap-4">
-                      {/* Clicking the video opens the media panel to change
-                          it (Hani, 2026-10-29); the play control on it still
-                          plays. No AI edit for a talking head. */}
+                      {/* Clicking the video only opens the media panel — no
+                          player here; it plays large inside the panel (Hani,
+                          2026-10-29). No AI edit for a talking head. */}
                       <div className="flex justify-center">
                         <MediaPreviewZone onOpen={onThReRecord} openLabel="החלפת הוידאו">
-                          <VideoPlayer url={thVideoUrl} clickToOpen />
+                          <VideoPlayer url={thVideoUrl} clickToOpen onOpen={onThReRecord} />
                         </MediaPreviewZone>
                       </div>
                       {mediaFooter(
@@ -4191,13 +4191,15 @@ function MediaSkeletonCard({
 /*  Minimal Video Player — play/pause overlay, portrait, no controls  */
 /* ------------------------------------------------------------------ */
 
-function VideoPlayer({ url, clickToOpen = false }: {
+function VideoPlayer({ url, clickToOpen = false, onOpen }: {
   url: string
   /**
-   * Inside a MediaPreviewZone: only the round play control plays, so a click
-   * anywhere else on the video opens the media panel (Hani, 2026-10-29).
+   * Inside a MediaPreviewZone: the card doesn't play — any click opens the
+   * media panel, and the video plays large from there (Hani, 2026-10-29).
    */
   clickToOpen?: boolean
+  /** With clickToOpen: what a click on a Drive video does (opens the panel). */
+  onOpen?: () => void
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [playing, setPlaying] = useState(false)
@@ -4248,7 +4250,7 @@ function VideoPlayer({ url, clickToOpen = false }: {
   if (isDriveUrl(url)) {
     return (
       <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden bg-gray-95">
-        <DriveVideoPreview url={url} label="הוידאו שלכם" />
+        <DriveVideoPreview url={url} label="הוידאו שלכם" onOpen={clickToOpen ? onOpen : undefined} />
       </div>
     )
   }
@@ -4311,20 +4313,11 @@ function VideoPlayer({ url, clickToOpen = false }: {
         onError={() => setMediaLoaded(true)}
       />
       <div className={`absolute inset-0 flex items-center justify-center transition-opacity ${mediaLoaded ? (playing ? "opacity-0 hover:opacity-100" : "opacity-100") : "opacity-0"}`}>
-        {clickToOpen ? (
-          <button
-            type="button"
-            aria-label={playing ? "השהייה" : "ניגון"}
-            onClick={toggle}
-            className="size-12 rounded-full bg-black/40 flex items-center justify-center backdrop-blur-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-          >
-            {playing ? <Pause className="size-5 text-white" /> : <Play className="size-5 text-white ms-0.5" />}
-          </button>
-        ) : (
-          <div className="size-12 rounded-full bg-black/40 flex items-center justify-center backdrop-blur-sm">
-            {playing ? <Pause className="size-5 text-white" /> : <Play className="size-5 text-white ms-0.5" />}
-          </div>
-        )}
+        {/* On the card (clickToOpen) the icon is only a sign it's a video;
+            the click goes to the media panel. */}
+        <div className="size-12 rounded-full bg-black/40 flex items-center justify-center backdrop-blur-sm">
+          {playing ? <Pause className="size-5 text-white" /> : <Play className="size-5 text-white ms-0.5" />}
+        </div>
       </div>
     </div>
   )
