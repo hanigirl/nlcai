@@ -7,10 +7,12 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
+import { usePreviewAccess } from "@/lib/use-scheduling-access"
 import {
   ANCHOR_LABELS,
   EXAMPLE_KIND_LABELS,
@@ -184,6 +186,16 @@ export function VisualLanguagePanel({
   }, [supabase, publicUrl])
 
   // ── Colours ──
+  // Each colour picks its role; the order IS the role (Hani, 2026-10-29,
+  // her account only for now). Picking a taken role swaps the two colours.
+  const colorRolesOn = usePreviewAccess() === true
+  const setColorRole = (from: number, to: number) => {
+    if (from === to) return
+    const next = [...colors]
+    ;[next[from], next[to]] = [next[to], next[from]]
+    void saveColors(next)
+  }
+
   const saveColors = async (next: string[]) => {
     setColors(next)
     if (!userId) return
@@ -578,18 +590,49 @@ export function VisualLanguagePanel({
           )
         }
       >
-        <p className="text-small text-text-neutral-default">עד {MAX_BRAND_COLORS} צבעים, לפי סדר החשיבות.</p>
+        <p className="text-small text-text-neutral-default">
+          {colorRolesOn
+            ? `עד ${MAX_BRAND_COLORS} צבעים. לכל צבע בחרו אם הוא ראשי, משני או שלישי.`
+            : `עד ${MAX_BRAND_COLORS} צבעים, לפי סדר החשיבות.`}
+        </p>
         <div className="flex flex-wrap items-center gap-3">
-          {colors.map((color, i) => (
-            <BrandColorField
-              // Keyed by value so a saved/removed colour remounts with a fresh draft.
-              key={`${i}-${color}`}
-              index={i}
-              value={color}
-              onCommit={(c) => saveColors(colors.map((x, j) => (j === i ? c : x)))}
-              onRemove={() => saveColors(colors.filter((_, j) => j !== i))}
-            />
-          ))}
+          {colors.map((color, i) =>
+            colorRolesOn ? (
+              <div key={`${i}-${color}`} className="flex items-center gap-2">
+                <BrandColorField
+                  index={i}
+                  value={color}
+                  onCommit={(c) => saveColors(colors.map((x, j) => (j === i ? c : x)))}
+                  onRemove={() => saveColors(colors.filter((_, j) => j !== i))}
+                />
+                <div className="w-24 shrink-0">
+                  <Select
+                    selectSize="small"
+                    variant="homepage"
+                    value={String(i)}
+                    onChange={(e) => setColorRole(i, Number(e.target.value))}
+                    aria-label={`תפקיד הצבע ${color}`}
+                    disabled={colors.length < 2}
+                  >
+                    {colors.map((_, j) => (
+                      <option key={j} value={j}>
+                        {COLOR_ROLE_LABELS[j]}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+            ) : (
+              <BrandColorField
+                // Keyed by value so a saved/removed colour remounts with a fresh draft.
+                key={`${i}-${color}`}
+                index={i}
+                value={color}
+                onCommit={(c) => saveColors(colors.map((x, j) => (j === i ? c : x)))}
+                onRemove={() => saveColors(colors.filter((_, j) => j !== i))}
+              />
+            ),
+          )}
           {colors.length < MAX_BRAND_COLORS && (
             <Button
               size="sm"
@@ -837,6 +880,9 @@ function AltVersionSlot({
     </div>
   )
 }
+
+/** Brand colour roles, by position: the first is the main one. */
+const COLOR_ROLE_LABELS = ["ראשי", "משני", "שלישי"]
 
 function BrandColorField({
   index,
