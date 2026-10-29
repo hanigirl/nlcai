@@ -3923,6 +3923,8 @@ function MediaUploadFlow({
               {drivePick ? (
                 <DriveFolderEntry
                   format="image_post"
+                  pulling={drivePulling}
+                  error={driveError}
                   onImport={(links) => {
                     setDriveUrl(links[0])
                     lastDriveRef.current = links[0]
@@ -4442,6 +4444,8 @@ function MediaUploadFlow({
           {drivePick && isBRoll ? (
             <DriveFolderEntry
               format={format}
+              pulling={drivePulling}
+              error={driveError}
               onImport={(links) => {
                 setDriveUrl(links[0])
                 lastDriveRef.current = links[0]

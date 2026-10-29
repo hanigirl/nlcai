@@ -76,7 +76,81 @@ type Store = {
   /** The format last worked on — the review bar keeps pointing at it after
    *  a pick closes the panel. */
   lastFormat: string | null
+  /** Review harness for the "no folder" fix (?drivefix=a|b&state=…). Null in
+   *  production: nothing below changes unless the param is on. */
+  review: DriveFixReview | null
 }
+
+/* ================================================================ review harness */
+
+/**
+ * ?drivefix=a|b picks the "no folder for this format" direction, &state=…
+ * lands on one state with seeded folders. While it's on, NOTHING reaches the
+ * network: no folder listing, no save, no import — a pick is simulated.
+ */
+export type DriveFixVariant = "a" | "b"
+export const DRIVE_FIX_STATES = ["nofolder", "noaccess", "empty", "ready", "importing", "importerror"] as const
+export type DriveFixState = (typeof DRIVE_FIX_STATES)[number]
+export type DriveFixReview = { variant: DriveFixVariant; state: DriveFixState }
+
+export function readDriveFixParams(search: string): DriveFixReview | null {
+  const q = new URLSearchParams(search)
+  const v = q.get("drivefix")
+  if (v !== "a" && v !== "b") return null
+  const st = q.get("state") as DriveFixState | null
+  return { variant: v, state: st && (DRIVE_FIX_STATES as readonly string[]).includes(st) ? st : "nofolder" }
+}
+
+const SAMPLE_THUMBS = [
+  "/images/onboarding-hero.png",
+  "/images/idea.png",
+  "/images/hook.png",
+  "/images/letter.png",
+  "/images/calendar-min.png",
+  "/images/paper-plane-celebrate.png",
+]
+
+function seedFolder(k: FolderKey, state: DriveFixState): Folder {
+  const link = "https://drive.google.com/drive/folders/sample-review-folder"
+  if (state === "nofolder") return unset()
+  if (state === "noaccess") return { ...unset(), status: "error", link, error: "not_public" }
+  const video = k === "broll" || k === "talking"
+  const items: MediaItem[] =
+    state === "empty"
+      ? []
+      : SAMPLE_THUMBS.map((thumb, i) => ({
+          id: `sample-${k}-${i}`,
+          name: video ? `clip-${i + 1}.mp4` : `photo-${i + 1}.jpg`,
+          kind: video ? "video" : "image",
+          ...(video ? { duration: `0:${String(8 + i * 3).padStart(2, "0")}` } : {}),
+          thumb,
+          src: `https://drive.google.com/file/d/sample-${k}-${i}/view`,
+        }))
+  return { status: "connected", link, name: FOLDER_META[k].driveName, items, error: null, editorLink: false }
+}
+
+/** Turn the harness on (or off with null). Seeds every folder for the state. */
+export function setDriveFixReview(r: DriveFixReview | null) {
+  if (!r) {
+    set({ review: null })
+    return
+  }
+  const folders = Object.fromEntries(FOLDER_ORDER.map((k) => [k, seedFolder(k, r.state)])) as Record<FolderKey, Folder>
+  set({ review: r, folders, picked: {}, importing: null, importProgress: "" })
+}
+
+/** Reads ?drivefix on mount — the panels call this, so the real /project
+ *  page takes the param too (open any post, open the b-roll / image card). */
+export function useDriveFixFromUrl() {
+  useEffect(() => {
+    if (store.review) return
+    const r = readDriveFixParams(window.location.search)
+    if (r) setDriveFixReview(r)
+  }, [])
+}
+
+/** Where "connect a folder" sends her: Settings → מדיה → Google Drive, on this format's row. */
+export const driveSettingsHref = (k: FolderKey) => `/settings?tab=media&sub=drive&folder=${k}`
 
 /* ================================================================ seed */
 
@@ -118,6 +192,7 @@ let store: Store = {
   importing: null,
   importProgress: "",
   lastFormat: null,
+  review: null,
 }
 const listeners = new Set<() => void>()
 const set = (patch: Partial<Store>) => {
@@ -191,6 +266,7 @@ let loadedOnce: Promise<void> | null = null
 
 /** Her saved folders, listed live. Once per page load; `force` re-reads. */
 export function loadDriveFolders(force = false): Promise<void> {
+  if (store.review) return Promise.resolve()
   if (loadedOnce && !force) return loadedOnce
   FOLDER_ORDER.forEach((k) => {
     if (store.folders[k].status === "unset") setFolder(k, { status: "checking" })
@@ -211,9 +287,19 @@ export function loadDriveFolders(force = false): Promise<void> {
   return loadedOnce
 }
 
-/** Re-list one folder — opening the picker shows what's in Drive NOW. */
+/**
+ * Re-read one folder from the server — opening the picker shows what's in
+ * Drive NOW, and what's saved NOW.
+ *
+ * Bug (2026-10-22, Nataliya): this used to return early unless the folder was
+ * already "connected" in this page's memory. The folders are read once per
+ * page load, so a folder connected after that (Settings in another tab, on
+ * another device, or a load that failed) stayed "not connected" here for the
+ * rest of the session — the picker asked her to connect a folder she had
+ * already set. Every open now asks the server.
+ */
 export async function refreshDriveFolder(k: FolderKey): Promise<void> {
-  if (store.folders[k].status !== "connected") return
+  if (store.review) return
   try {
     const d = (await fetch(`/api/drive-folders?key=${k}`).then((r) => r.json())) as { folder?: ApiFolder | null }
     if (d.folder !== undefined) setFolder(k, fromApi(d.folder))
@@ -223,6 +309,11 @@ export async function refreshDriveFolder(k: FolderKey): Promise<void> {
 }
 
 export async function connectFolder(k: FolderKey, link: string) {
+  if (store.review) {
+    // Review: a pasted link "connects" to the sample folder, no request.
+    if (link.trim()) setFolder(k, seedFolder(k, "ready"))
+    return
+  }
   if (!link.trim()) {
     setFolder(k, unset())
     return
@@ -243,6 +334,7 @@ export async function connectFolder(k: FolderKey, link: string) {
 
 export function disconnectFolder(k: FolderKey) {
   setFolder(k, unset())
+  if (store.review) return
   void fetch("/api/drive-folders", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -267,6 +359,12 @@ export function registerDriveImporter(format: string, fn: ((links: string[]) => 
 
 function runImport(format: string, items: MediaItem[]) {
   if (items.length === 0) return
+  if (store.review) {
+    // Simulated: never hand sample links to the real import (it would
+    // probe Drive and write the post's media).
+    set({ picked: { ...store.picked, [format]: items }, pickerFor: null })
+    return
+  }
   const importer = importers.get(format)
   if (!importer) return
   set({ picked: { ...store.picked, [format]: items }, pickerFor: null })
@@ -348,7 +446,13 @@ export function DriveFoldersSettings() {
   useEffect(() => {
     void loadDriveFolders()
   }, [])
-  const [open, setOpen] = useState<FolderKey | null>("images")
+  // "חיבור תיקייה בהגדרות" from a format's panel lands on that format's row
+  // (?folder=broll), not on the images row every time.
+  const [open, setOpen] = useState<FolderKey | null>(() => {
+    if (typeof window === "undefined") return "images"
+    const k = new URLSearchParams(window.location.search).get("folder")
+    return k && (FOLDER_ORDER as string[]).includes(k) ? (k as FolderKey) : "images"
+  })
   const connectedCount = FOLDER_ORDER.filter((k) => s.folders[k].status === "connected").length
 
   return (
@@ -530,13 +634,21 @@ function FolderRow({
 export function DriveFolderEntry({
   format,
   onImport,
+  pulling,
+  error,
 }: {
   format: string
   /** The format's own Drive import — receives the picked files' links, in order. */
   onImport?: (links: string[]) => void
+  /** The import after a pick is still running (the panel's own Drive pull). */
+  pulling?: boolean
+  /** The import after a pick failed — shown here, where she picked. Before
+   *  this, the picker closed and a failed pull said nothing at all. */
+  error?: string | null
 }) {
   const s = useDrivePickStore()
   const k = FORMAT_FOLDER[format] ?? "images"
+  useDriveFixFromUrl()
   useEffect(() => {
     void loadDriveFolders()
   }, [])
@@ -549,9 +661,25 @@ export function DriveFolderEntry({
     registerDriveImporter(format, (links) => importRef.current?.(links))
     return () => registerDriveImporter(format, null)
   }, [format])
+  // Back from Settings in another tab: re-read, so a folder she just
+  // connected is there without a reload.
+  useRefreshOnFocus(k)
   const f = s.folders[k]
   const picked = s.picked[format]
   const multi = format === "carousel" || format === "story"
+  const review = s.review
+  const isPulling = review ? review.state === "importing" : !!pulling
+  const pullError = review
+    ? review.state === "importerror"
+      ? "הקובץ לא ציבורי. שנו את ההרשאה ל„כל מי שיש לו הקישור” ונסו שוב."
+      : null
+    : (error ?? null)
+
+  // Direction B: no folder (or no access) → the entry itself is the empty
+  // state. The button never opens a gallery that has nothing to show.
+  if (review?.variant === "b" && (f.status === "unset" || f.status === "error")) {
+    return <EntryNoFolder format={format} folderKey={k} folder={f} onImport={(links) => importRef.current?.(links)} />
+  }
 
   return (
     <div className="flex flex-col gap-2">
@@ -586,17 +714,144 @@ export function DriveFolderEntry({
           </div>
         </div>
       )}
-      <Button variant="outline" onClick={() => openDrivePicker(format)} className="w-full gap-2">
+      <Button
+        variant="outline"
+        onClick={() => openDrivePicker(format)}
+        disabled={isPulling}
+        className="w-full gap-2"
+      >
         <DriveMark />
         מדיה משלכם מ Google Drive
       </Button>
-      <p className="text-xs-body text-text-neutral-default">
-        {f.status === "connected"
-          ? `מתיקיית „${f.name}” · ${filesLabel(f.items.length)}`
-          : f.status === "error"
-            ? "אין גישה לתיקייה שחוברה — אפשר לתקן בהגדרות"
-            : "עוד לא חוברה תיקייה ל" + FOLDER_META[k].label}
-      </p>
+      {isPulling ? (
+        <p className="flex items-center gap-2 text-xs text-text-neutral-default" role="status">
+          <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          מחברים את המדיה מהדרייב...
+        </p>
+      ) : pullError ? (
+        <p role="alert" className="flex items-start gap-1.5 text-xs text-button-destructive-default">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          {pullError}
+        </p>
+      ) : (
+        <p className="text-xs-body text-text-neutral-default">
+          {f.status === "connected"
+            ? `מתיקיית „${f.name}” · ${filesLabel(f.items.length)}`
+            : f.status === "error"
+              ? "אין גישה לתיקייה שחוברה — אפשר לתקן בהגדרות"
+              : "עוד לא חוברה תיקייה ל" + FOLDER_META[k].label}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function useRefreshOnFocus(k: FolderKey) {
+  useEffect(() => {
+    const onFocus = () => {
+      if (document.visibilityState === "visible") void refreshDriveFolder(k)
+    }
+    window.addEventListener("focus", onFocus)
+    document.addEventListener("visibilitychange", onFocus)
+    return () => {
+      window.removeEventListener("focus", onFocus)
+      document.removeEventListener("visibilitychange", onFocus)
+    }
+  }, [k])
+}
+
+/** "חיבור תיקייה בהגדרות" — a new tab, so the post she's working on stays open. */
+function SettingsLink({ folderKey, children, asButton }: { folderKey: FolderKey; children: React.ReactNode; asButton?: boolean }) {
+  if (asButton) {
+    return (
+      <Button asChild variant="outline" className="w-full gap-2">
+        <a href={driveSettingsHref(folderKey)} target="_blank" rel="noopener noreferrer">
+          <DriveMark />
+          {children}
+          <ExternalLink className="size-3.5 text-text-neutral-default" aria-hidden />
+        </a>
+      </Button>
+    )
+  }
+  return (
+    <Button asChild size="sm" className="self-start gap-1.5">
+      <a href={driveSettingsHref(folderKey)} target="_blank" rel="noopener noreferrer">
+        {children}
+        <ExternalLink className="size-3.5" aria-hidden />
+      </a>
+    </Button>
+  )
+}
+
+/**
+ * Direction B — the entry tells the truth BEFORE the click. No folder: say so,
+ * send her to Settings for the folder, and keep the one-file link working
+ * right here, so bringing a clip today never waits on setting up a folder.
+ */
+function EntryNoFolder({
+  format,
+  folderKey,
+  folder,
+  onImport,
+}: {
+  format: string
+  folderKey: FolderKey
+  folder: Folder
+  onImport: (links: string[]) => void
+}) {
+  const meta = FOLDER_META[folderKey]
+  const multi = format === "carousel" || format === "story"
+  const [link, setLink] = useState("")
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current)
+  }, [])
+  const noAccess = folder.status === "error"
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-border-neutral-default p-4">
+      <div className="flex flex-col gap-1">
+        <p className="flex items-center gap-2 text-small-bold text-text-primary-default">
+          {noAccess ? (
+            <AlertTriangle className="size-4 shrink-0 text-button-destructive-default" aria-hidden />
+          ) : (
+            <DriveMark />
+          )}
+          {noAccess ? `אין גישה לתיקיית ה${meta.label}` : `עוד לא חוברה תיקייה ל${meta.label}`}
+        </p>
+        <p className="text-xs-body text-text-neutral-default">
+          {noAccess
+            ? "התיקייה שחוברה לא פתוחה לצפייה. אפשר לתקן את השיתוף בדרייב או לחבר תיקייה אחרת בהגדרות."
+            : `חברו פעם אחת תיקייה מגוגל דרייב בהגדרות, ומאז תבחרו ממנה ${meta.kindLabel} כאן בלחיצה.`}
+        </p>
+      </div>
+      <SettingsLink folderKey={folderKey} asButton>
+        {noAccess ? "תיקון בהגדרות" : "חיבור תיקייה בהגדרות"}
+      </SettingsLink>
+      {!multi && (
+        <>
+          <div className="flex items-center gap-3" role="separator">
+            <span className="h-px flex-1 bg-border-neutral-default" />
+            <span className="text-xs text-text-neutral-default">או קובץ אחד עכשיו</span>
+            <span className="h-px flex-1 bg-border-neutral-default" />
+          </div>
+          <Input
+            dir="ltr"
+            inputSize="small"
+            type="url"
+            value={link}
+            onChange={(e) => {
+              const next = e.target.value
+              setLink(next)
+              if (timer.current) clearTimeout(timer.current)
+              // Pasting is the instruction (same rule as every Drive field).
+              if (/\/file\/d\/|[?&]id=/.test(next)) timer.current = setTimeout(() => onImport([next.trim()]), 500)
+            }}
+            placeholder="https://drive.google.com/file/d/..."
+            aria-label={`קישור לקובץ ${meta.label} בדרייב`}
+            className="text-xs"
+          />
+        </>
+      )}
     </div>
   )
 }
@@ -720,6 +975,8 @@ export function DriveFolderPicker({
   const f = s.folders[k]
   const meta = FOLDER_META[k]
 
+  useDriveFixFromUrl()
+  useRefreshOnFocus(k)
   // Opening re-lists the folder, so a file she just dropped into Drive is there.
   const [opening, setOpening] = useState(true)
   useEffect(() => {
@@ -758,8 +1015,9 @@ export function DriveFolderPicker({
             <button
               type="button"
               onClick={() => {
+                // A real re-read (it used to only flash the skeleton).
                 setOpening(true)
-                setTimeout(() => setOpening(false), 650)
+                void refreshDriveFolder(k).finally(() => setOpening(false))
               }}
               aria-label="רענון התיקייה"
               title="רענון — לקבצים שהוספתם עכשיו לדרייב"
@@ -784,9 +1042,9 @@ export function DriveFolderPicker({
       {loading ? (
         <GridSkeleton format={format} />
       ) : f.status === "unset" ? (
-        <NoFolder folderKey={k} />
+        s.review ? <PickerNoFolder folderKey={k} /> : <NoFolder folderKey={k} />
       ) : f.status === "error" ? (
-        <NoAccess folderKey={k} />
+        s.review ? <PickerNoFolder folderKey={k} error={f.error ?? "not_public"} /> : <NoAccess folderKey={k} />
       ) : f.items.length === 0 ? (
         <div role="status" className="flex flex-col items-center gap-2 rounded-xl border border-border-neutral-default bg-bg-surface px-6 py-8 text-center">
           <FolderOpen className="size-6 text-text-neutral-default" aria-hidden />
@@ -821,6 +1079,46 @@ function NoFolder({ folderKey }: { folderKey: FolderKey }) {
         הדביקו כאן קישור לתיקייה בדרייב. היא תישמר גם בהגדרות, ובפעם הבאה תיפתח ישר.
       </p>
       <FolderLinkField folderKey={folderKey} autoFocus />
+    </div>
+  )
+}
+
+/**
+ * Direction A — the click still opens the gallery, and the gallery is an
+ * honest empty state: what's missing, one way to fix it (Settings, new tab),
+ * and a way back. Coming back to this tab re-reads the folder, so after she
+ * connects it the gallery fills in by itself.
+ */
+function PickerNoFolder({ folderKey, error }: { folderKey: FolderKey; error?: FolderError }) {
+  const meta = FOLDER_META[folderKey]
+  return (
+    <div
+      role="status"
+      className="flex flex-col items-center gap-3 rounded-xl border border-border-neutral-default bg-bg-surface px-6 py-8 text-center"
+    >
+      {error ? (
+        <AlertTriangle className="size-6 text-button-destructive-default" aria-hidden />
+      ) : (
+        <FolderOpen className="size-6 text-text-neutral-default" aria-hidden />
+      )}
+      <p className="text-small-bold text-text-primary-default">
+        {error ? ERROR_COPY[error].title : `עוד לא חוברה תיקייה ל${meta.label}`}
+      </p>
+      <p className="text-xs-body text-text-neutral-default">
+        {error
+          ? "בדרייב: לחיצה ימנית על התיקייה ← שיתוף ← „כל מי שיש לו את הקישור” ← צופה. או חברו תיקייה אחרת בהגדרות. כשתחזרו לכאן, הגלריה תתעדכן לבד."
+          : `כאן יופיעו ${meta.kindLabel} מתיקייה בגוגל דרייב. מחברים אותה פעם אחת בהגדרות, ומאז כל קובץ שתוסיפו לה יחכה כאן.`}
+      </p>
+      <div className="flex flex-col items-center gap-2 pt-1">
+        <SettingsLink folderKey={folderKey}>{error ? "תיקון בהגדרות" : "חיבור תיקייה בהגדרות"}</SettingsLink>
+        <button
+          type="button"
+          onClick={closeDrivePicker}
+          className="rounded-md px-2 py-1 text-xs text-text-neutral-default transition-colors hover:bg-gray-95 hover:text-text-primary-default dark:hover:bg-gray-20"
+        >
+          חזרה לפאנל
+        </button>
+      </div>
     </div>
   )
 }
