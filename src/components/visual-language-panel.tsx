@@ -12,7 +12,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
-import { usePreviewAccess } from "@/lib/use-scheduling-access"
 import {
   ANCHOR_LABELS,
   EXAMPLE_KIND_LABELS,
@@ -186,9 +185,8 @@ export function VisualLanguagePanel({
   }, [supabase, publicUrl])
 
   // ── Colours ──
-  // Each colour picks its role; the order IS the role (Hani, 2026-10-29,
-  // her account only for now). Picking a taken role swaps the two colours.
-  const colorRolesOn = usePreviewAccess() === true
+  // Each colour picks its role; the order IS the role (Hani, 2026-10-29).
+  // Picking a taken role swaps the two colours.
   const setColorRole = (from: number, to: number) => {
     if (from === to) return
     const next = [...colors]
@@ -591,13 +589,10 @@ export function VisualLanguagePanel({
         }
       >
         <p className="text-small text-text-neutral-default">
-          {colorRolesOn
-            ? `עד ${MAX_BRAND_COLORS} צבעים. לכל צבע בחרו אם הוא ראשי, משני או שלישי.`
-            : `עד ${MAX_BRAND_COLORS} צבעים, לפי סדר החשיבות.`}
+          עד {MAX_BRAND_COLORS} צבעים. לכל צבע בחרו אם הוא ראשי, משני או שלישי.
         </p>
         <div className="flex flex-wrap items-center gap-3">
-          {colors.map((color, i) =>
-            colorRolesOn ? (
+          {colors.map((color, i) => (
               <div key={`${i}-${color}`} className="flex items-center gap-2">
                 <BrandColorField
                   index={i}
@@ -622,17 +617,7 @@ export function VisualLanguagePanel({
                   </Select>
                 </div>
               </div>
-            ) : (
-              <BrandColorField
-                // Keyed by value so a saved/removed colour remounts with a fresh draft.
-                key={`${i}-${color}`}
-                index={i}
-                value={color}
-                onCommit={(c) => saveColors(colors.map((x, j) => (j === i ? c : x)))}
-                onRemove={() => saveColors(colors.filter((_, j) => j !== i))}
-              />
-            ),
-          )}
+          ))}
           {colors.length < MAX_BRAND_COLORS && (
             <Button
               size="sm"
