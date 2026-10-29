@@ -7,6 +7,9 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { startBRollEdit } from "@/lib/broll-generation-store"
 import { getAiStyle, recordAiStyleVote, rememberAiStyle } from "@/lib/ai-style-provenance"
+import { dislikeInstruction, type AiEditOpening } from "@/lib/ai-edit-intent"
+import { DislikeReasonChips } from "@/components/dislike-reason-chips"
+import { DISLIKE_REASONS, type DislikeReason } from "@/lib/visual-language/types"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
@@ -22,6 +25,9 @@ interface ChatMessage {
   /** A lasting preference distilled from her instruction (Hebrew). */
   remembered?: string | null
 }
+
+/** The first turn when 👎 opened the panel (lib/ai-edit-intent). */
+const DISLIKE_ASK = "מה לא אהבתם? ספרו לנו, ואעדכן את זה עכשיו. מה שתכתבו נשמר גם לשפה הוויזואלית שלכם, לפעמים הבאות."
 
 /**
  * After an edit the card shows new media — move this format's AI provenance
@@ -86,6 +92,7 @@ export function MediaAiChat({
   open,
   onOpenChange,
   onUpdated,
+  opening,
 }: {
   postId: string
   format: AiEditFormat
@@ -93,14 +100,25 @@ export function MediaAiChat({
   onOpenChange: (open: boolean) => void
   /** Image formats: the saved set, in order, after an edit. */
   onUpdated?: (format: AiEditFormat, urls: string[]) => void
+  /** Opened by 👎 on the card: ask what she didn't like, with the reasons. */
+  opening?: AiEditOpening | null
 }) {
   const copy = COPY[format]
-  const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: copy.intro }])
-  // A different format's chat starts its own conversation.
-  const [chatFormat, setChatFormat] = useState(format)
-  if (chatFormat !== format) {
-    setChatFormat(format)
-    setMessages([{ role: "assistant", content: copy.intro }])
+  const firstTurn = (o?: AiEditOpening | null): ChatMessage => ({
+    role: "assistant",
+    content: o ? DISLIKE_ASK : copy.intro,
+  })
+  const [messages, setMessages] = useState<ChatMessage[]>([firstTurn(opening)])
+  // A different format's chat, or a fresh 👎, starts its own conversation.
+  const [chatFormat, setChatFormat] = useState(`${format}:${opening?.id ?? ""}`)
+  // Until her first answer: the reason chips, and that answer teaches the style.
+  const [asking, setAsking] = useState<AiEditOpening | null>(opening ?? null)
+  const [reasons, setReasons] = useState<DislikeReason[]>([])
+  if (chatFormat !== `${format}:${opening?.id ?? ""}`) {
+    setChatFormat(`${format}:${opening?.id ?? ""}`)
+    setMessages([firstTurn(opening)])
+    setAsking(opening ?? null)
+    setReasons([])
   }
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
@@ -111,18 +129,29 @@ export function MediaAiChat({
   }, [messages, loading])
 
   const send = async () => {
-    const text = input.trim()
+    let text = input.trim()
+    // Her 👎 answer: the style-feedback route learns from it, so the edit
+    // doesn't learn it a second time (learn: false).
+    const fromFeedback = !!asking
+    if (asking) {
+      if ((!text && !reasons.length) || loading) return
+      asking.onFeedback(reasons, text)
+      text = dislikeInstruction(reasons.map((r) => DISLIKE_REASONS[r]), text)
+      setAsking(null)
+      setReasons([])
+    }
     if (!text || loading) return
     setInput("")
     setMessages((prev) => [...prev, { role: "user", content: text }])
     setLoading(true)
+    const learn = !fromFeedback
     const result =
       format === "b_roll"
-        ? await startBRollEdit(postId, text, { quiet: true }).then((r) => {
+        ? await startBRollEdit(postId, text, { quiet: true, learn }).then((r) => {
             if (r.ok) markAiMade(postId, "b_roll", r.url)
             return r
           })
-        : await editImages(text)
+        : await editImages(text, learn)
     setLoading(false)
     setMessages((prev) => [
       ...prev,
@@ -134,12 +163,13 @@ export function MediaAiChat({
 
   async function editImages(
     text: string,
+    learn = true,
   ): Promise<{ ok: true; remembered?: string | null } | { ok: false; message: string }> {
     try {
       const res = await fetch("/api/media/ai-edit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, format, instruction: text }),
+        body: JSON.stringify({ postId, format, instruction: text, ...(learn ? {} : { learn: false }) }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         urls?: string[]
@@ -194,6 +224,9 @@ export function MediaAiChat({
             >
               {m.content}
             </div>
+            {asking && i === 0 && (
+              <DislikeReasonChips value={reasons} onChange={setReasons} className="max-w-[85%] justify-end" />
+            )}
             {m.done && (
               <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
                 <Check className="size-3.5 text-yellow-30" />
@@ -228,7 +261,7 @@ export function MediaAiChat({
                 void send()
               }
             }}
-            placeholder="מה תרצו לשנות?"
+            placeholder={asking ? "מה לא אהבתם? ספרו לנו" : "מה תרצו לשנות?"}
             rows={1}
             autoFocus
             className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent p-1 text-small shadow-none focus-visible:ring-0"
@@ -236,7 +269,7 @@ export function MediaAiChat({
           <Button
             size="icon-sm"
             onClick={() => void send()}
-            disabled={!input.trim() || loading}
+            disabled={(!input.trim() && !(asking && reasons.length)) || loading}
             aria-label="שליחה"
             className="shrink-0 rounded-full"
           >
