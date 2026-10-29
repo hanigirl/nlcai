@@ -34,12 +34,15 @@ const STATES = [
 ] as const
 type State = (typeof STATES)[number]["id"]
 
-/** Canned answers for the flow's two routes; everything else is refused. */
+/** Canned answers for the routes the flow calls; everything else is refused. */
 function stubFetch(state: State) {
   const json = (body: unknown, status = 200) =>
     Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }))
   window.fetch = ((input: RequestInfo | URL) => {
     const url = String(input instanceof Request ? input.url : input)
+    // The save-to-visual-language chip under the panel: a canned "kept" answer.
+    if (url.includes("/api/visual-language/style-memory"))
+      return json({ ok: true, summary: "כתוביות גדולות יותר, בתחתית המסך" })
     if (url.includes("/api/visual-language/style-feedback"))
       return json({ ok: true, message: "עדכנו את השפה: פחות עומס וצבעים רכים יותר." })
     if (url.includes("/api/media/ai-edit")) {
