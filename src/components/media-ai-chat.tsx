@@ -5,6 +5,7 @@ import { ArrowUp, Check, Loader2, X } from "lucide-react"
 import { AiSparkle } from "@/components/ai-refine-button"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { useDismissOnOutsideClick } from "@/lib/use-dismiss-on-outside-click"
 import { startBRollEdit } from "@/lib/broll-generation-store"
 import { getAiStyle, recordAiStyleVote, rememberAiStyle } from "@/lib/ai-style-provenance"
 import { LongWaitBusyRow } from "@/components/long-wait-busy-row"
@@ -138,6 +139,8 @@ export function MediaAiChat({
   const [loading, setLoading] = useState(false)
   const isWatching = useIsWatching()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  useDismissOnOutsideClick(panelRef, open, () => onOpenChange(false))
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
@@ -214,10 +217,11 @@ export function MediaAiChat({
 
   return (
     <div
+      ref={panelRef}
       dir="rtl"
       role="dialog"
       aria-label={copy.title}
-      className="fixed bottom-6 right-6 z-40 flex max-h-[72vh] w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl"
+      className="fixed bottom-6 right-6 z-50 flex max-h-[72vh] w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl"
     >
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">

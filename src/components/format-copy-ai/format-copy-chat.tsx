@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { X } from "lucide-react"
 import { AiSparkle } from "@/components/ai-refine-button"
+import { useDismissOnOutsideClick } from "@/lib/use-dismiss-on-outside-click"
 import { COPY_NOUN } from "@/lib/format-copy-refine"
 import type { FormatCopyAiController } from "./use-format-copy-ai"
 import {
@@ -34,6 +35,9 @@ export function FormatCopyChat({
   const fid = ctrl.activeFid
   const [input, setInput] = useState("")
   const scrollRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  // Only the floating panel closes on an outside click; the /test page renders it in flow.
+  useDismissOnOutsideClick(panelRef, floating && !!fid, ctrl.close)
   const session = fid ? ctrl.session(fid) : null
 
   useEffect(() => {
@@ -50,10 +54,11 @@ export function FormatCopyChat({
 
   return (
     <div
+      ref={panelRef}
       dir="rtl"
       role="dialog"
       aria-label={`עריכת ${COPY_NOUN[fid]} עם AI`}
-      className={`${floating ? "fixed bottom-6 right-6 z-40 max-h-[72vh]" : "relative max-h-[560px]"} flex w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl`}
+      className={`${floating ? "fixed bottom-6 right-6 z-50 max-h-[72vh]" : "relative max-h-[560px]"} flex w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl`}
     >
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">
         <AiSparkle />

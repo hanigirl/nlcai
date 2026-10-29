@@ -8,6 +8,7 @@ import { toast } from "sonner"
 import { AiSparkle } from "@/components/ai-refine-button"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { useDismissOnOutsideClick } from "@/lib/use-dismiss-on-outside-click"
 import { logLearningEdit, type LearningOutcome } from "@/lib/learning-capture"
 
 interface ChatMessage {
@@ -86,6 +87,8 @@ export function CorePostChat({
   const [error, setError] = useState("")
 
   const scrollRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  useDismissOnOutsideClick(panelRef, open, () => onOpenChange(false))
   // Read the latest post at open-time without re-seeding on every keystroke
   // the parent makes to corePost.
   const corePostRef = useRef(corePost)
@@ -219,10 +222,11 @@ export function CorePostChat({
 
   return (
     <div
+      ref={panelRef}
       dir="rtl"
       role="dialog"
       aria-label="עריכת פוסט ליבה"
-      className="fixed bottom-6 right-6 z-40 flex max-h-[72vh] w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl"
+      className="fixed bottom-6 right-6 z-50 flex max-h-[72vh] w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl"
     >
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">
