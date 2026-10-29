@@ -148,7 +148,7 @@ function DialogBody({
       <div className="flex min-h-0 flex-col">
         <div className="flex items-start gap-3 border-b border-border-neutral-default px-6 py-4">
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <div className="flex"><FormatStatusChip format={data.format} state="ready" size="xs" /></div>
+            <div className="flex"><FormatStatusChip format={data.format} state={data.scheduledDate ? "scheduled" : "ready"} size="xs" /></div>
             <DialogTitle className="line-clamp-2 text-p-bold text-text-primary-default">
               {data.hook}
             </DialogTitle>
