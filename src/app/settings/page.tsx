@@ -33,6 +33,8 @@ import {
   AudienceIdentityGapDialog,
 } from "@/components/identity-gap-dialog"
 import { ConfirmModal } from "@/components/confirm-modal"
+import { ScheduleSettings } from "@/components/schedule-settings"
+import { useScheduleAllA } from "@/lib/use-scheduling-access"
 import { DriveFoldersSettings } from "@/components/drive-folder-review"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 
@@ -47,7 +49,7 @@ const GOOGLE_FONTS = [
 ]
 
 type KeyName = "anthropic_api_key" | "heygen_api_key" | "apify_api_key" | "openai_api_key" | "gemini_api_key"
-type SettingsTab = "connections" | "business" | "products" | "creators" | "media"
+type SettingsTab = "connections" | "business" | "products" | "creators" | "media" | "schedule"
 
 interface KeyConfig {
   key: KeyName
@@ -225,6 +227,8 @@ const SUB_SECTIONS: Record<SettingsTab, { id: string; label: string; icon: typeo
   creators: [
     { id: "list", label: "היוצרים שלכם", icon: Type },
   ],
+  // Schedule settings — the same component as the calendar's ⚙ modal.
+  schedule: [],
   media: [
     // The brand itself (colours, fonts, graphic elements) and how it looks in
     // use (examples per format) are separate pages; the analysis on the first
@@ -248,6 +252,7 @@ function SettingsPageInner() {
   type Product = ProductEntry
 
   const searchParams = useSearchParams()
+  const scheduleAllA = useScheduleAllA() === true
   const initialTab = (searchParams.get("tab") as SettingsTab) || "connections"
   // Settings → מדיה → "מדיה מ-Google Drive": one shared folder per kind of
   // media, read on the canvas by "מדיה משלכם מ Google Drive" (Hani, 2026-10-22).
@@ -1073,6 +1078,9 @@ function SettingsPageInner() {
     { id: "products", label: "מוצרים" },
     { id: "creators", label: "יוצרים מובילים" },
     { id: "media", label: "מדיה" },
+    // Schedule settings — the calendar's ⚙ modal, as a page (Hani, 2026-10-29).
+    // Hani only while the schedule-all redesign is hers alone.
+    ...(scheduleAllA ? [{ id: "schedule" as const, label: "תזמון" }] : []),
   ]
 
   // Reset the sub-section when the tab ACTUALLY changes — never on mount.
@@ -1538,6 +1546,9 @@ function SettingsPageInner() {
                 </div>
               </div>
             )}
+
+            {/* ==================== SCHEDULE TAB ==================== */}
+            {activeTab === "schedule" && scheduleAllA && <ScheduleSettings />}
 
             {/* ==================== MEDIA TAB ==================== */}
             {activeTab === "media" && (

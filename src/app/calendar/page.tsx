@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import {
   CalendarCheck,
   CalendarClock,
+  Settings2,
   ChevronRight,
   ChevronLeft,
   MoreVertical,
@@ -44,6 +45,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { toast } from "sonner"
 import { QueuePanel, type QueueApprovalMode } from "@/components/queue-panel"
 import { FormatPreviewDialog } from "@/components/format-preview/format-preview-dialog"
+import { ScheduleSettingsDialog } from "@/components/schedule-settings"
 import {
   canvasHref,
   type FormatPreviewData,
@@ -748,6 +750,7 @@ export default function CalendarPage() {
   const [planned, setPlanned] = useState<PlannedSlot[] | null>(null)
   const [plannedUnmatched, setPlannedUnmatched] = useState<PlanInputCard[]>([])
   const [noSettingsOpen, setNoSettingsOpen] = useState(false)
+  const [scheduleSettingsOpen, setScheduleSettingsOpen] = useState(false)
   // When the drafts were laid out — a confirm right after is a double click.
   const arrangedAtRef = useRef(0)
   const onArrange = () => {
@@ -1596,10 +1599,26 @@ export default function CalendarPage() {
                   </Button>
                 </div>
               ) : (
-                <Button size="sm" variant="outline" onClick={onArrange} disabled={railCards.length === 0}>
-                  <CalendarClock className="size-4" aria-hidden />
-                  סידור אוטומטי בלוח
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button size="sm" variant="outline" onClick={onArrange} disabled={railCards.length === 0}>
+                    <CalendarClock className="size-4" aria-hidden />
+                    סידור אוטומטי בלוח
+                  </Button>
+                  {/* Schedule settings (Hani, 2026-10-29) — the modal's design is on its way. */}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => setScheduleSettingsOpen(true)}
+                        aria-label="הגדרות תזמון"
+                      >
+                        <Settings2 className="size-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>הגדרות תזמון</TooltipContent>
+                  </Tooltip>
+                </div>
               )
             ) : schedulingOn ? (
               <ScheduleAllButton
@@ -1657,6 +1676,14 @@ export default function CalendarPage() {
           data={previewData}
           content={previewContentState}
           {...previewHandlers}
+        />
+      )}
+
+      {scheduleAllA && (
+        <ScheduleSettingsDialog
+          open={scheduleSettingsOpen}
+          onOpenChange={setScheduleSettingsOpen}
+          onSaved={routine.reload}
         />
       )}
 

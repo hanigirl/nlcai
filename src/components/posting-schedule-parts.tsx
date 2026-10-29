@@ -189,13 +189,17 @@ export function usePostingSchedule() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(false)
 
-  useEffect(() => {
+  /** Re-read the stored routine — e.g. after the settings modal saved it. */
+  const reload = useCallback(() => {
     const stored = getPostingSchedule()
     if (!stored) return
     setSaved(stored)
     setDraft(cloneSchedule(stored))
     setHasCustom(true)
   }, [])
+  useEffect(() => {
+    reload()
+  }, [reload])
 
   const save = useCallback((onDone?: () => void) => {
     setSaving(true)
@@ -228,5 +232,6 @@ export function usePostingSchedule() {
     saveError,
     save,
     discard,
+    reload,
   }
 }
