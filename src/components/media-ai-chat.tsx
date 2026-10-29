@@ -9,6 +9,7 @@ import { startBRollEdit } from "@/lib/broll-generation-store"
 import { getAiStyle, recordAiStyleVote, rememberAiStyle } from "@/lib/ai-style-provenance"
 import { LongWaitBusyRow } from "@/components/long-wait-busy-row"
 import { AWAY_COPY, trackAwayResult, useIsWatching } from "@/lib/long-wait"
+import { SaveToVisualLanguageChip } from "@/components/save-to-visual-language-chip"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
@@ -21,7 +22,7 @@ interface ChatMessage {
   /** Assistant turn that landed a new clip. */
   done?: boolean
   error?: boolean
-  /** A lasting preference distilled from her instruction (Hebrew). */
+  /** A lasting preference distilled from her instruction (Hebrew) — shown by the save chip. */
   remembered?: string | null
 }
 
@@ -38,6 +39,17 @@ function markAiMade(postId: string, format: AiEditFormat, mediaKey: string) {
   }
   const prev = getAiStyle(postId, format)
   rememberAiStyle(postId, format, prev?.style && prev.style !== "niche" ? prev.style : "brand", mediaKey)
+}
+
+/** The newest edit that landed, with the instruction that asked for it. */
+function lastLandedEdit(messages: ChatMessage[]) {
+  for (let i = messages.length - 1; i > 0; i--) {
+    if (messages[i].done) {
+      const ask = messages.slice(0, i).reverse().find((m) => m.role === "user")
+      return ask ? { index: i, instruction: ask.content, remembered: messages[i].remembered ?? null } : null
+    }
+  }
+  return null
 }
 
 export type AiEditFormat = "b_roll" | "carousel" | "story" | "image_post"
@@ -165,6 +177,8 @@ export function MediaAiChat({
     }
   }
 
+  const lastEdit = lastLandedEdit(messages)
+
   if (!open) return null
 
   return (
@@ -205,13 +219,8 @@ export function MediaAiChat({
             </div>
             {m.done && (
               <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
-                <Check className="size-3.5 text-yellow-30" />
-                הוחל. אהבתם? סמנו 👍 או 👎 בכרטיס, כדי שה-AI ילמד את הסגנון שלכם.
-              </span>
-            )}
-            {m.remembered && (
-              <span className="max-w-[85%] rounded-xl border border-border-neutral-default px-3 py-1.5 text-xs-body text-text-neutral-default">
-                אזכור את זה גם להבא, בכל הפורמטים: {m.remembered}
+                <Check className="size-3.5 text-green-success-50" />
+                הוחל.
               </span>
             )}
           </div>
@@ -224,6 +233,14 @@ export function MediaAiChat({
 
       {/* Composer */}
       <div className="border-t border-border-neutral-default p-3">
+        {lastEdit && !loading && (
+          <SaveToVisualLanguageChip
+            key={`${chatFormat}:${lastEdit.index}`}
+            instruction={lastEdit.instruction}
+            format={format}
+            remembered={lastEdit.remembered}
+          />
+        )}
         <div className="flex items-end gap-2 rounded-[12px] border border-border-neutral-default bg-white dark:bg-gray-10 p-2 focus-within:border-yellow-50 transition-colors">
           <Textarea
             value={input}

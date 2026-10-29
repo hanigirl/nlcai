@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk"
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { stripDashes } from "@/lib/strip-dashes"
 
 /**
  * Standing style preferences, across ALL formats (Hani, 2026-10-22).
@@ -125,4 +126,70 @@ export async function learnFromInstruction(
     console.error("[style-memory] learn failed", err)
     return null
   }
+}
+
+/**
+ * "לשמור לשפה הוויזואלית שלי" (Hani, 2026-10-29): she tapped the chip after an
+ * AI edit she liked, so this one IS lasting — no judging whether to keep it,
+ * only distilling it into a rule. Always appended (never replaces an older
+ * rule), so undo can take it back cleanly. Returns the saved rule.
+ */
+export async function saveInstructionAsRule(
+  supabase: SupabaseClient,
+  userId: string,
+  anthropicKey: string,
+  instruction: string,
+  source: string,
+): Promise<StyleRule> {
+  const existing = await loadStyleRules(supabase, userId)
+  const client = new Anthropic({ apiKey: anthropicKey })
+  const msg = await client.messages.create({
+    model: "claude-opus-5-5",
+    max_tokens: 600,
+    system:
+      "You maintain a creator's standing style preferences for her AI-designed social media (carousels, stories, image posts, animated b-roll). Reply with JSON only.",
+    messages: [
+      {
+        role: "user",
+        content: [
+          `While editing a ${source} she asked for this change (Hebrew): ${JSON.stringify(instruction)}`,
+          "She liked the result and explicitly asked to keep this look for all her future designs, in every format.",
+          "Turn it into a lasting style preference: keep what it says about how things look (elements, typography, colour, motion, layout, mood); drop one-off content such as specific words or slide numbers.",
+          "",
+          'Return {"rule": "<one precise English rule a designer can follow>", "summary_he": "<short Hebrew summary for her>"}.',
+        ].join("\n"),
+      },
+    ],
+  })
+  const text = msg.content.map((c) => (c.type === "text" ? c.text : "")).join("")
+  const json = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)) as {
+    rule?: string
+    summary_he?: string
+  }
+  const rule: StyleRule = {
+    rule: json.rule?.trim() || instruction,
+    summary_he: stripDashes(json.summary_he?.trim() || instruction),
+    source,
+    at: new Date().toISOString(),
+  }
+  await saveStyleRules(supabase, userId, [...existing, rule].slice(-MAX_RULES))
+  return rule
+}
+
+/**
+ * Undo for the chip: remove the newest rule with this Hebrew summary (the one
+ * she was just shown). Returns whether one was removed.
+ */
+export async function forgetStyleRule(supabase: SupabaseClient, userId: string, summaryHe: string): Promise<boolean> {
+  const rules = await loadStyleRules(supabase, userId)
+  let idx = -1
+  for (let i = rules.length - 1; i >= 0; i--) {
+    if (rules[i].summary_he === summaryHe) {
+      idx = i
+      break
+    }
+  }
+  if (idx < 0) return false
+  await saveStyleRules(supabase, userId, [...rules.slice(0, idx), ...rules.slice(idx + 1)])
+  return true
 }
