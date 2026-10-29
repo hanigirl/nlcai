@@ -333,6 +333,12 @@ export interface ScheduledPostRow {
   publish_error: string | null;
   publish_synced_at: string | null;
 
+  // ---- story frame spacing (041) ----
+  /** Minutes between story frames. Null = every frame in one post at the slot time. */
+  story_gap_minutes: number | null;
+  /** Every provider post the slot holds, frame order. `provider_post_id` = the first. Null pre-041. */
+  provider_post_ids: string[] | null;
+
   created_at: string;
   updated_at: string;
 }
@@ -345,7 +351,7 @@ export type ScheduledPostInsert = Pick<
   ScheduledPostRow,
   "user_id" | "core_post_id" | "format" | "scheduled_date"
 > &
-  Partial<Pick<ScheduledPostRow, "scheduled_time" | "published_at" | "hook">>;
+  Partial<Pick<ScheduledPostRow, "scheduled_time" | "published_at" | "hook" | "story_gap_minutes">>;
 
 export type ScheduledPostUpdate = Partial<
   Pick<
@@ -356,6 +362,8 @@ export type ScheduledPostUpdate = Partial<
     | "hook"
     | "social_account_id"
     | "provider_post_id"
+    | "provider_post_ids"
+    | "story_gap_minutes"
     | "publish_status"
     | "publish_error"
     | "publish_synced_at"

@@ -17,9 +17,12 @@
  *    board's time. Every other outcome is `failed` with a reason she can act
  *    on, or `pending` while a call is in flight. Never a quiet in-between.
  *
- * 3. One slot, one provider post. A row with a provider id is moved, never
- *    re-created; a row being worked on is locked (`pending`), so a double
- *    click, a retry and a fast second drag cannot create two posts.
+ * 3. One slot, one set of provider posts. A row with provider ids is moved,
+ *    never re-created; a row being worked on is locked (`pending`), so a
+ *    double click, a retry and a fast second drag cannot create two posts.
+ *    The set is one post for everything except a multi-frame story with a
+ *    gap, which is one post per frame (041, `splitStoryFrames`). Every path
+ *    below — create, move, cancel, read-back, status — acts on all of them.
  *
  * 4. Nothing leaves the queue without the provider confirming it. Removing a
  *    slot, deleting its post, or disconnecting the account cancels at the
@@ -36,7 +39,7 @@ import type {
   ScheduledPostRow,
   SocialAccountRow,
 } from "@/lib/supabase/types"
-import { assembleScheduledPost } from "./assemble"
+import { assembleScheduledPost, splitStoryFrames } from "./assemble"
 import { getSocialPublisher } from "./index"
 import {
   PUBLISH_FLOOR_MS,
@@ -46,7 +49,7 @@ import {
   type PublishState,
 } from "./publish-state"
 import { slotToInstant } from "./slot-time"
-import { SocialPublishError, type SocialPublisher } from "./types"
+import { SocialPublishError, type SchedulePostInput, type SocialPublisher } from "./types"
 
 type Db = SupabaseClient<Database>
 
@@ -60,7 +63,7 @@ const READBACK_TOLERANCE_MS = 60 * 1000
 const SENT_GRACE_MS = 15 * 60 * 1000
 
 const SLOT_COLUMNS =
-  "id, user_id, core_post_id, format, scheduled_date, scheduled_time, published_at, social_account_id, provider_post_id, publish_status, publish_error, publish_synced_at"
+  "id, user_id, core_post_id, format, scheduled_date, scheduled_time, published_at, social_account_id, provider_post_id, provider_post_ids, story_gap_minutes, publish_status, publish_error, publish_synced_at"
 
 type SlotRow = Pick<
   ScheduledPostRow,
@@ -73,6 +76,8 @@ type SlotRow = Pick<
   | "published_at"
   | "social_account_id"
   | "provider_post_id"
+  | "provider_post_ids"
+  | "story_gap_minutes"
   | "publish_status"
   | "publish_error"
   | "publish_synced_at"
@@ -83,6 +88,7 @@ type SlotPatch = Partial<
     ScheduledPostRow,
     | "social_account_id"
     | "provider_post_id"
+    | "provider_post_ids"
     | "publish_status"
     | "publish_error"
     | "publish_synced_at"
@@ -93,6 +99,20 @@ type SlotPatch = Partial<
 const GENERIC_FAILURE = "משהו השתבש מול אינסטגרם, והפוסט לא תוזמן. אפשר לנסות שוב."
 
 export const slotKey = (corePostId: string, format: string) => `${corePostId}:${format}`
+
+/**
+ * Every provider post the slot holds, in frame order. A row from before 041
+ * (or one that was never split) carries only the single id.
+ */
+function providerIds(row: Pick<SlotRow, "provider_post_id" | "provider_post_ids">): string[] {
+  if (row.provider_post_ids && row.provider_post_ids.length > 0) return row.provider_post_ids
+  return row.provider_post_id ? [row.provider_post_id] : []
+}
+
+/** The id columns for a set of posts. `provider_post_id` stays the first, for every reader of one id. */
+function idsPatch(ids: string[]): SlotPatch {
+  return { provider_post_id: ids[0] ?? null, provider_post_ids: ids.length > 0 ? ids : null }
+}
 
 // ---------------------------------------------------------------------------
 // reading
@@ -260,6 +280,24 @@ async function markAccountLost(db: Db, userId: string, accountId: string) {
     .in("publish_status", ["queued", "sent"])
 }
 
+/**
+ * Cancel every one of a slot's posts. Returns the ids the provider would not
+ * let go of — the caller keeps those on the row, so they can still be pulled
+ * later rather than going out with nothing on the board pointing at them.
+ */
+async function cancelAll(publisher: SocialPublisher, userId: string, ids: string[]): Promise<string[]> {
+  const stuck: string[] = []
+  for (const id of ids) {
+    try {
+      await publisher.cancelPost(userId, id)
+    } catch (err) {
+      describe(err, "cancel-frame")
+      stuck.push(id)
+    }
+  }
+  return stuck
+}
+
 // ---------------------------------------------------------------------------
 // the sync
 // ---------------------------------------------------------------------------
@@ -340,11 +378,34 @@ async function syncSlotInner(
   }
 
   const publisher = getSocialPublisher(db)
-  let providerPostId = row.provider_post_id
+  // In frame order. One id for everything but a spaced multi-frame story.
+  let ids = providerIds(row)
   // "update" needs no path of its own: a move is a full replace at the
   // provider (see `reschedulePost`), so re-pushing in place sends the current
   // caption and media. Kept as a distinct mode so callers say what they mean.
   void mode
+
+  /** Some posts refused to be pulled. They stay on the row, and she is told. */
+  const stuckFailure = async (stuck: string[], message: string) => {
+    ids = stuck
+    const patch: SlotPatch = { ...failurePatch("cancel_failed", message), ...idsPatch(stuck) }
+    await patchSlot(db, row!, patch)
+    return toPublishState({ ...row!, ...patch } as SlotRow)
+  }
+
+  const plan = async (r: SlotRow): Promise<SchedulePostInput[]> =>
+    splitStoryFrames(
+      await assembleScheduledPost({
+        db,
+        userId,
+        corePostId,
+        format,
+        socialAccountId: account.id,
+        scheduledDate: r.scheduled_date,
+        scheduledTime: r.scheduled_time,
+      }),
+      r.story_gap_minutes,
+    )
 
   try {
     // Re-read-and-repeat: the board can change while we are mid-call (a
@@ -353,139 +414,198 @@ async function syncSlotInner(
     for (let round = 0; round < 3; round++) {
       const publishAt = slotToInstant(row.scheduled_date, row.scheduled_time)
 
+      // The first frame is the earliest, so the slot time is the one to test.
       if (publishAt.getTime() - Date.now() < PUBLISH_FLOOR_MS) {
         // A queued post must not keep its old time when the board says
         // something it can't honour — that is a post going out at a time she
         // already moved it away from.
-        if (providerPostId) {
-          await publisher.cancelPost(userId, providerPostId)
-          providerPostId = null
+        if (ids.length > 0) {
+          const stuck = await cancelAll(publisher, userId, ids)
+          if (stuck.length > 0) {
+            return await stuckFailure(
+              stuck,
+              "לא הצלחנו להוציא את הפוסט מהתור באינסטגרם, והוא עדיין עלול להתפרסם. אפשר לנסות שוב.",
+            )
+          }
+          ids = []
         }
         const patch: SlotPatch = {
           ...failurePatch(
             "too_soon",
             "השעה שנבחרה כבר עברה או קרובה מדי, ולכן הפוסט לא תוזמן. צריך לבחור מועד מאוחר יותר.",
           ),
-          provider_post_id: null,
+          ...idsPatch([]),
         }
         await patchSlot(db, row, patch)
         return toPublishState({ ...row, ...patch } as SlotRow)
       }
 
-      if (providerPostId) {
+      let frames: SchedulePostInput[] = []
+
+      if (ids.length > 0) {
+        let reshaped = false
         try {
-          const input = await assembleScheduledPost({
-            db,
-            userId,
-            corePostId,
-            format,
-            socialAccountId: account.id,
-            scheduledDate: row.scheduled_date,
-            scheduledTime: row.scheduled_time,
-          })
-          await publisher.reschedulePost(input, providerPostId)
-        } catch (err) {
-          // The move failed, so the provider still holds the OLD time. Leaving
-          // it there means a post going out when she said it shouldn't. Pull
-          // it, and say so.
-          const { code, message } = describe(err, "reschedule")
-          try {
-            await publisher.cancelPost(userId, providerPostId)
-            const patch: SlotPatch = {
-              ...failurePatch(
-                code,
-                code === "provider_error"
-                  ? "לא הצלחנו להזיז את הפוסט באינסטגרם. כדי שלא יצא בשעה הקודמת, הוצאנו אותו מהתור. אפשר לנסות שוב."
-                  : `${message} כדי שהפוסט לא יצא בשעה הקודמת, הוצאנו אותו מהתור.`,
-              ),
-              provider_post_id: null,
+          frames = await plan(row)
+          if (frames.length !== ids.length) {
+            // The shape changed — the gap was turned on or off, or a frame
+            // was added or removed. Posts can't be moved one-to-one onto a
+            // different number of frames, so they are pulled and queued afresh.
+            reshaped = true
+          } else {
+            for (let i = 0; i < frames.length; i++) {
+              await publisher.reschedulePost(frames[i], ids[i])
             }
-            await patchSlot(db, row, patch)
-            return toPublishState({ ...row, ...patch } as SlotRow)
-          } catch (cancelErr) {
-            describe(cancelErr, "reschedule-cancel")
-            const patch = failurePatch(
-              "cancel_failed",
+          }
+        } catch (err) {
+          // The move failed, so the provider still holds the OLD time (for
+          // some frames, at least). Leaving it there means a post going out
+          // when she said it shouldn't. Pull every frame, and say so.
+          const { code, message } = describe(err, "reschedule")
+          const stuck = await cancelAll(publisher, userId, ids)
+          if (stuck.length > 0) {
+            return await stuckFailure(
+              stuck,
               "לא הצלחנו להזיז את הפוסט, והוא עדיין בתור במועד הקודם. אפשר לנסות שוב.",
             )
-            await patchSlot(db, row, patch)
-            return toPublishState({ ...row, ...patch } as SlotRow)
           }
+          ids = []
+          const patch: SlotPatch = {
+            ...failurePatch(
+              code,
+              code === "provider_error"
+                ? "לא הצלחנו להזיז את הפוסט באינסטגרם. כדי שלא יצא בשעה הקודמת, הוצאנו אותו מהתור. אפשר לנסות שוב."
+                : `${message} כדי שהפוסט לא יצא בשעה הקודמת, הוצאנו אותו מהתור.`,
+            ),
+            ...idsPatch([]),
+          }
+          await patchSlot(db, row, patch)
+          return toPublishState({ ...row, ...patch } as SlotRow)
         }
-      } else {
-        const input = await assembleScheduledPost({
-          db,
-          userId,
-          corePostId,
-          format,
-          socialAccountId: account.id,
-          scheduledDate: row.scheduled_date,
-          scheduledTime: row.scheduled_time,
-        })
-        const created = await publisher.schedulePost(input)
-        providerPostId = created.providerPostId
 
-        // Write the id the moment we have it: an id we lose is a post we can
-        // never move or cancel again.
-        const stillThere = await patchSlot(db, row, {
-          provider_post_id: providerPostId,
-          social_account_id: account.id,
-        })
-        if (!stillThere) {
-          // Either the slot was removed while we were creating it, or the id
-          // couldn't be saved. Both leave a post we could never move or
-          // cancel again — so it comes out of her queue now.
-          await publisher.cancelPost(userId, providerPostId)
-          providerPostId = null
-          if (await loadSlot(db, userId, corePostId, format)) {
-            throw new SocialPublishError("could not persist provider id", "provider_error", false)
+        if (reshaped) {
+          const stuck = await cancelAll(publisher, userId, ids)
+          if (stuck.length > 0) {
+            return await stuckFailure(
+              stuck,
+              "לא הצלחנו לעדכן את הסטורי באינסטגרם, וחלק מהפריימים עדיין בתור במועד הקודם. אפשר לנסות שוב.",
+            )
           }
-          return { status: "idle" }
+          ids = []
+          await patchSlot(db, row, idsPatch([]))
         }
       }
 
-      // Read it back. "The call didn't fail" is not the same as "the provider
-      // holds this time".
-      const held = await publisher.getPost(userId, providerPostId)
-      if (held.outcome === "missing") {
-        // Cancelled somewhere else. The board still wants it: queue it afresh.
-        providerPostId = null
-        await patchSlot(db, row, { provider_post_id: null })
+      if (ids.length === 0) {
+        if (frames.length === 0) frames = await plan(row)
+        for (const frame of frames) {
+          let createdId: string
+          try {
+            createdId = (await publisher.schedulePost(frame)).providerPostId
+          } catch (err) {
+            // Frame k failed. The frames before it would go out as a story
+            // missing its end — not what she scheduled. Pull them; the
+            // failure itself is reported below exactly as for a single post.
+            if (ids.length > 0) {
+              const stuck = await cancelAll(publisher, userId, ids)
+              if (stuck.length > 0) {
+                return await stuckFailure(
+                  stuck,
+                  "חלק מהסטורי לא נכנס לתור, וחלק מהפריימים שכבר נכנסו לא יצאו ממנו. אפשר לנסות שוב.",
+                )
+              }
+              ids = []
+            }
+            throw err
+          }
+          ids = [...ids, createdId]
+
+          // Write the ids the moment we have them: an id we lose is a post we
+          // can never move or cancel again.
+          const stillThere = await patchSlot(db, row, {
+            ...idsPatch(ids),
+            social_account_id: account.id,
+          })
+          if (!stillThere) {
+            // Either the slot was removed while we were creating it, or the id
+            // couldn't be saved. Both leave posts we could never move or
+            // cancel again — so they come out of her queue now.
+            const stuck = await cancelAll(publisher, userId, ids)
+            if (stuck.length > 0) {
+              console.error("[social/bridge] orphaned provider posts", row.id, stuck)
+            }
+            ids = []
+            if (await loadSlot(db, userId, corePostId, format)) {
+              throw new SocialPublishError("could not persist provider id", "provider_error", false)
+            }
+            return { status: "idle" }
+          }
+        }
+      }
+
+      // Read every frame back. "The call didn't fail" is not the same as "the
+      // provider holds this time".
+      let missing = false
+      for (let i = 0; i < ids.length; i++) {
+        const want = frames[i].publishAt
+        const held = await publisher.getPost(userId, ids[i])
+        if (held.outcome === "missing") {
+          missing = true
+          break
+        }
+        if (
+          held.outcome !== "scheduled" ||
+          !held.scheduledAt ||
+          Math.abs(held.scheduledAt.getTime() - want.getTime()) > READBACK_TOLERANCE_MS
+        ) {
+          console.error(
+            "[social/bridge] read-back mismatch",
+            row.id,
+            i,
+            want.toISOString(),
+            held.outcome,
+            held.scheduledAt?.toISOString(),
+          )
+          const patch = failurePatch(
+            "provider_mismatch",
+            "אינסטגרם לא אישרה את המועד שעל הלוח. אפשר לנסות שוב.",
+          )
+          await patchSlot(db, row, patch)
+          return toPublishState({ ...row, ...patch } as SlotRow)
+        }
+      }
+      if (missing) {
+        // Cancelled somewhere else (all of it, or one frame). The board still
+        // wants the whole thing: pull what's left and queue it afresh.
+        const stuck = await cancelAll(publisher, userId, ids)
+        if (stuck.length > 0) {
+          return await stuckFailure(
+            stuck,
+            "לא הצלחנו לעדכן את הפוסט באינסטגרם, והוא עדיין עלול להתפרסם. אפשר לנסות שוב.",
+          )
+        }
+        ids = []
+        await patchSlot(db, row, idsPatch([]))
         continue
-      }
-      if (
-        held.outcome !== "scheduled" ||
-        !held.scheduledAt ||
-        Math.abs(held.scheduledAt.getTime() - publishAt.getTime()) > READBACK_TOLERANCE_MS
-      ) {
-        console.error(
-          "[social/bridge] read-back mismatch",
-          row.id,
-          publishAt.toISOString(),
-          held.outcome,
-          held.scheduledAt?.toISOString(),
-        )
-        const patch = failurePatch(
-          "provider_mismatch",
-          "אינסטגרם לא אישרה את המועד שעל הלוח. אפשר לנסות שוב.",
-        )
-        await patchSlot(db, row, patch)
-        return toPublishState({ ...row, ...patch } as SlotRow)
       }
 
       // Did the board move while we were busy? Then go round again.
       const fresh = await loadSlot(db, userId, corePostId, format)
       if (!fresh) {
-        await publisher.cancelPost(userId, providerPostId)
+        const stuck = await cancelAll(publisher, userId, ids)
+        if (stuck.length > 0) {
+          console.error("[social/bridge] orphaned provider posts", row.id, stuck)
+        }
         return { status: "idle" }
       }
       const moved =
-        fresh.scheduled_date !== row.scheduled_date || fresh.scheduled_time !== row.scheduled_time
+        fresh.scheduled_date !== row.scheduled_date ||
+        fresh.scheduled_time !== row.scheduled_time ||
+        (fresh.story_gap_minutes ?? null) !== (row.story_gap_minutes ?? null)
       row = fresh
       if (moved) continue
 
       const patch: SlotPatch = {
-        provider_post_id: providerPostId,
+        ...idsPatch(ids),
         social_account_id: account.id,
         publish_status: "queued",
         publish_error: null,
@@ -498,14 +618,14 @@ async function syncSlotInner(
     // Three rounds and the board is still moving under us. Stop chasing and
     // let the next write settle it, but don't claim anything we haven't seen.
     const patch = failurePatch("provider_error", "התזמון השתנה כמה פעמים ברצף. אפשר לנסות שוב.")
-    await patchSlot(db, row, { ...patch, provider_post_id: providerPostId })
+    await patchSlot(db, row, { ...patch, ...idsPatch(ids) })
     return toPublishState({ ...row, ...patch } as SlotRow)
   } catch (err) {
     if (err instanceof SocialPublishError && err.accountLost) {
       await markAccountLost(db, userId, account.id)
     }
     const { code, message } = describe(err, "sync")
-    const patch: SlotPatch = { ...failurePatch(code, message), provider_post_id: providerPostId }
+    const patch: SlotPatch = { ...failurePatch(code, message), ...idsPatch(ids) }
     await patchSlot(db, row, patch)
     return toPublishState({ ...row, ...patch } as SlotRow)
   }
@@ -517,7 +637,7 @@ async function syncSlotInner(
 
 /** Rows that still have something sitting at the provider. */
 function holdsProviderPost(row: SlotRow): boolean {
-  return !!row.provider_post_id && !row.published_at && row.publish_status !== "published"
+  return providerIds(row).length > 0 && !row.published_at && row.publish_status !== "published"
 }
 
 /**
@@ -545,25 +665,25 @@ export async function cancelSlots(
   const stuck: SlotRow[] = []
   let cancelled = 0
   for (const row of rows) {
-    try {
-      await publisher.cancelPost(userId, row.provider_post_id as string)
+    // Every frame of a spaced story. A frame that won't come out keeps the
+    // row: the ones that did are dropped from it, the stuck ones stay on it.
+    const left = await cancelAll(publisher, userId, providerIds(row))
+    if (left.length === 0) {
       await patchSlot(db, row, {
-        provider_post_id: null,
+        ...idsPatch([]),
         publish_status: "idle",
         publish_error: null,
         publish_synced_at: new Date().toISOString(),
       })
       cancelled++
-    } catch (err) {
-      describe(err, "cancel")
-      await patchSlot(
-        db,
-        row,
-        failurePatch(
+    } else {
+      await patchSlot(db, row, {
+        ...failurePatch(
           "cancel_failed",
           "לא הצלחנו להוציא את הפוסט מהתור באינסטגרם, והוא עדיין עלול להתפרסם. אפשר לנסות שוב.",
         ),
-      )
+        ...idsPatch(left),
+      })
       stuck.push(row)
     }
   }
@@ -620,6 +740,12 @@ export async function resumeAfterConnect(db: Db, userId: string): Promise<number
  *   - A connection that lapsed: every queued slot on it is marked.
  *
  * Returns the state of every row it looked at, keyed `corePostId:format`.
+ *
+ * A spaced story (one post per frame) is read like this, to keep it to one
+ * provider read per slot: it has "left" (`sent`) once the FIRST frame's time
+ * — the slot time — is past, and it is `published` (or `failed`) by what the
+ * LAST frame reports, since that is the moment the whole story is out. A
+ * middle frame that fails on its own is not detected here.
  */
 export async function refreshPublishStates(
   db: Db,
@@ -660,9 +786,11 @@ export async function refreshPublishStates(
 
     try {
       if (row.publish_status === "published") {
-        if (row.provider_post_id && permalinkReads < 10 && now - instant < 30 * 86400_000) {
+        const ids = providerIds(row)
+        if (ids.length > 0 && permalinkReads < 10 && now - instant < 30 * 86400_000) {
           permalinkReads++
-          const held = await getPublisher().getPost(userId, row.provider_post_id)
+          // The last frame — the same one that reported the story published.
+          const held = await getPublisher().getPost(userId, ids[ids.length - 1])
           out[key] = toPublishState(row, { permalink: held.permalink ?? null })
         } else {
           out[key] = toPublishState(row)
@@ -675,7 +803,7 @@ export async function refreshPublishStates(
         if (now - lockedAt > LOCK_STALE_MS) {
           // A request died mid-call. Ask the provider what it actually holds
           // instead of guessing in either direction.
-          if (row.provider_post_id) {
+          if (providerIds(row).length > 0) {
             await syncSlot(db, userId, row.core_post_id, row.format)
             const after = await loadSlot(db, userId, row.core_post_id, row.format)
             out[key] = after ? toPublishState(after) : { status: "idle" }
@@ -701,8 +829,10 @@ export async function refreshPublishStates(
         continue
       }
 
-      if (instant <= now && row.provider_post_id) {
-        const held = await getPublisher().getPost(userId, row.provider_post_id)
+      const ids = providerIds(row)
+      if (instant <= now && ids.length > 0) {
+        // The last frame decides "published" (see above). For one post, it is the post.
+        const held = await getPublisher().getPost(userId, ids[ids.length - 1])
         if (held.outcome === "published") {
           const publishedAt = (held.publishedAt ?? new Date()).toISOString()
           const patch: SlotPatch = {

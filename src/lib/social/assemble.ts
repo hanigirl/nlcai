@@ -158,6 +158,33 @@ export async function assembleScheduledPost(
   }
 }
 
+/**
+ * The provider posts one slot becomes, in frame order.
+ *
+ * A story with a gap (the routine's "מרווח בין פריימים בסטורי") goes out one
+ * frame per post: frame 1 at the slot time, frame 2 at +gap, frame 3 at
+ * +2·gap. Handed over as ONE post, the provider publishes every frame in the
+ * same minute (verified live 2026-10-29) — the gap she picked meant nothing.
+ *
+ * Everything else — a reel, a carousel, a single-frame story, a story with no
+ * gap on its row (pre-041, or written before the client sent one) — stays
+ * one post, exactly as before.
+ */
+export function splitStoryFrames(
+  input: SchedulePostInput,
+  gapMinutes: number | null | undefined
+): SchedulePostInput[] {
+  if (input.kind !== "story" || !gapMinutes || gapMinutes <= 0 || input.media.length < 2) {
+    return [input]
+  }
+  const start = input.publishAt.getTime()
+  return input.media.map((m, i) => ({
+    ...input,
+    media: [m],
+    publishAt: new Date(start + i * gapMinutes * 60_000),
+  }))
+}
+
 /** A URL the provider can download a real image/video file from. */
 const VIDEO_FILE = /\.(mp4|mov|m4v|webm)(\?|#|$)/i
 

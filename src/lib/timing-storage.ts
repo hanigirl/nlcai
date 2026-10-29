@@ -49,6 +49,7 @@
 
 import { toast } from "sonner"
 import type { PublishState } from "@/lib/social/publish-state"
+import { defaultPostingSchedule, getPostingSchedule } from "@/lib/posting-schedule"
 
 export type FormatId = "talking_head" | "carousel" | "image_post" | string
 
@@ -332,11 +333,21 @@ function mirrorFailed(action: string, detail: unknown): void {
   console.warn(`[timing-storage] server mirror failed (${action})`, detail)
 }
 
-/** The wire never carries `publish` upward — the server owns it. */
-function forWire(row: ScheduledPost): Omit<ScheduledPost, "publish"> {
+/**
+ * The wire never carries `publish` upward — the server owns it.
+ *
+ * A story carries her routine's frame gap ("מרווח בין פריימים בסטורי"): the
+ * routine lives only in this browser, and the server needs the gap to space
+ * the frames at Instagram — now and on every later move or retry. Until she
+ * saves a routine, the default routine's gap is what the settings show, so
+ * that is what is sent.
+ */
+function forWire(row: ScheduledPost): Omit<ScheduledPost, "publish"> & { storyGapMinutes?: number } {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { publish, ...rest } = row
-  return rest
+  if (row.format !== "story") return rest
+  const routine = getPostingSchedule() ?? defaultPostingSchedule()
+  return { ...rest, storyGapMinutes: routine.storyGapMinutes }
 }
 
 /**

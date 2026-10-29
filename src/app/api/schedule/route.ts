@@ -9,6 +9,7 @@ import {
   toPublishState,
 } from "@/lib/social/bridge"
 import type { PublishState } from "@/lib/social/publish-state"
+import { destinationForFormat } from "@/lib/social/media-spec"
 import { canUseScheduling } from "@/lib/scheduling-access"
 import type { SchedulePublishStatus } from "@/lib/supabase/types"
 
@@ -39,6 +40,7 @@ type Row = {
   hook: string | null
   publish_status: SchedulePublishStatus
   publish_error: string | null
+  story_gap_minutes?: number | null
 }
 
 type WireRow = {
@@ -48,6 +50,13 @@ type WireRow = {
   scheduledTime: string | null
   publishedAt: string | null
   hook?: string
+  /**
+   * Stories only: minutes between frames, from her posting routine. Sent up
+   * by the client (the routine lives in the browser) so the bridge can space
+   * the frames on its own later — a move, a retry, a content update. Absent
+   * or null = every frame in one post, as before 041.
+   */
+  storyGapMinutes?: number | null
   /**
    * Where this slot stands with Instagram. Read-only from the client's side:
    * the server computes it, a PUT never sets it. Any surface showing publish
@@ -87,8 +96,17 @@ function parseWire(input: unknown): WireRow | null {
   const scheduledTime = TIME_RE.test(rawTime) ? rawTime : "09:00"
   const publishedAt = typeof r.publishedAt === "string" ? r.publishedAt : null
   const hook = typeof r.hook === "string" ? r.hook : undefined
+  const gap = r.storyGapMinutes
+  const storyGapMinutes =
+    destinationForFormat(format) === "story" &&
+    typeof gap === "number" &&
+    Number.isInteger(gap) &&
+    gap >= 1 &&
+    gap <= 240
+      ? gap
+      : null
 
-  return { corePostId, format, scheduledDate, scheduledTime, publishedAt, hook }
+  return { corePostId, format, scheduledDate, scheduledTime, publishedAt, hook, storyGapMinutes }
 }
 
 // GET — the whole board for the signed-in user.
@@ -160,17 +178,20 @@ export async function PUT(req: NextRequest) {
     scheduled_time: r.scheduledTime ?? "09:00",
     published_at: r.publishedAt,
     hook: r.hook ?? null,
+    // Always written, null for anything that isn't a spaced story: a batch
+    // upsert nulls missing keys anyway, so being explicit costs nothing.
+    story_gap_minutes: r.storyGapMinutes ?? null,
   }))
 
   // What the board said before this write — so a PUT that only re-saves the
   // same slot (a published tick, a hook refresh) doesn't touch the provider.
   const { data: beforeRows } = await supabase
     .from("scheduled_posts")
-    .select("core_post_id, format, scheduled_date, scheduled_time, publish_status")
+    .select("core_post_id, format, scheduled_date, scheduled_time, publish_status, story_gap_minutes")
     .eq("user_id", user.id)
     .in("core_post_id", [...new Set(parsed.map((r) => r.corePostId))])
   const before = new Map(
-    ((beforeRows ?? []) as Pick<Row, "core_post_id" | "format" | "scheduled_date" | "scheduled_time" | "publish_status">[]).map(
+    ((beforeRows ?? []) as Pick<Row, "core_post_id" | "format" | "scheduled_date" | "scheduled_time" | "publish_status" | "story_gap_minutes">[]).map(
       (r) => [slotKey(r.core_post_id, r.format), r],
     ),
   )
@@ -199,7 +220,10 @@ export async function PUT(req: NextRequest) {
       const moved =
         !prev ||
         prev.scheduled_date !== r.scheduledDate ||
-        prev.scheduled_time !== (r.scheduledTime ?? "09:00")
+        prev.scheduled_time !== (r.scheduledTime ?? "09:00") ||
+        // A new story gap re-times every frame after the first (or splits /
+        // joins the story), so it is a move too.
+        (prev.story_gap_minutes ?? null) !== (r.storyGapMinutes ?? null)
       // A failed slot re-saved in place is a retry; an untouched queued one
       // is not news.
       if (!moved && prev.publish_status !== "failed") continue
