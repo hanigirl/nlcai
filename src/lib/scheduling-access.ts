@@ -17,7 +17,7 @@ export function canUseScheduling(email: string | null | undefined): boolean {
  * schedule settings on the board (task 4084d905, direction A). Hani only,
  * while she tries it (2026-10-29).
  */
-export const SCHEDULE_ALL_A_EMAILS = ["hanigirl@gmail.com"]
+export const SCHEDULE_ALL_A_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 
 export function canUseScheduleAllA(email: string | null | undefined): boolean {
   return !!email && SCHEDULE_ALL_A_EMAILS.includes(email.toLowerCase())
@@ -29,7 +29,7 @@ export function canUseScheduleAllA(email: string | null | undefined): boolean {
  * format takes it off the calendar back to "מאושר". The rest of that day's
  * batch is open to everyone.
  */
-export const PREVIEW_EMAILS = ["hanigirl@gmail.com"]
+export const PREVIEW_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 
 export function canUsePreview(email: string | null | undefined): boolean {
   return !!email && PREVIEW_EMAILS.includes(email.toLowerCase())
