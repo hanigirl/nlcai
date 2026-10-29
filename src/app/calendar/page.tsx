@@ -748,6 +748,8 @@ export default function CalendarPage() {
   const [planned, setPlanned] = useState<PlannedSlot[] | null>(null)
   const [plannedUnmatched, setPlannedUnmatched] = useState<PlanInputCard[]>([])
   const [noSettingsOpen, setNoSettingsOpen] = useState(false)
+  // When the drafts were laid out — a confirm right after is a double click.
+  const arrangedAtRef = useRef(0)
   const onArrange = () => {
     if (scheduleAllA) {
       // No settings on the board: her saved routine, or the default one.
@@ -760,6 +762,7 @@ export default function CalendarPage() {
         toast("לפורמטים שנשארו אין משבצת פנויה בלו״ז")
         return
       }
+      arrangedAtRef.current = Date.now()
       setPlanned(plan.placed)
       setPlannedUnmatched(plan.unmatched)
       const first = [...plan.placed].sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate))[0]
@@ -1526,7 +1529,21 @@ export default function CalendarPage() {
           headerAction={
             scheduleAllA ? (
               planned ? (
+                // "ביטול" takes the spot "סידור אוטומטי בלוח" was in, so a
+                // second click on that spot cancels instead of scheduling
+                // everything for real (Hani, 2026-10-29 — that is how 18
+                // posts went into the Instagram queue).
                 <div className="flex items-center gap-1.5">
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (Date.now() - arrangedAtRef.current < 1000) return
+                      onConfirmPlanned()
+                    }}
+                  >
+                    <CalendarCheck className="size-4" aria-hidden />
+                    תזמון כל הפוסטים
+                  </Button>
                   <Button
                     size="sm"
                     variant="outline"
@@ -1536,10 +1553,6 @@ export default function CalendarPage() {
                     }}
                   >
                     ביטול
-                  </Button>
-                  <Button size="sm" onClick={onConfirmPlanned}>
-                    <CalendarCheck className="size-4" aria-hidden />
-                    תזמון כל הפוסטים
                   </Button>
                 </div>
               ) : (
