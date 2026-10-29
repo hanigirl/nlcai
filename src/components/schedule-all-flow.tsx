@@ -24,18 +24,23 @@ import {
   CalendarClock,
   Check,
   Loader2,
+  MoreVertical,
   PanelLeftOpen,
   RotateCcw,
   Settings2,
   Undo2,
-  X,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { FormatStatusChip } from "@/components/format-status-chip"
 import {
-  ScheduleAllButton,
   UnmatchedNote,
   shortDayLabel,
 } from "@/components/schedule-all"
@@ -172,9 +177,6 @@ function statusLine(v: FlowView, stage: Stage): string {
 
 // --- shared pieces -------------------------------------------------------------
 
-const linkButton =
-  "inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs-body text-text-neutral-default hover:bg-gray-95 hover:text-text-primary-default dark:hover:bg-gray-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 disabled:opacity-50"
-
 function ProgressTrack({ done, total }: { done: number; total: number }) {
   const pct = total > 0 ? Math.round((done / total) * 100) : 0
   return (
@@ -297,117 +299,121 @@ function DoneChip({ n, className = "" }: { n: number; className?: string }) {
   )
 }
 
-// --- A: the header button + its strip ----------------------------------------
+// --- A: the header row --------------------------------------------------------
+//
+// Hani, 2026-10-29: no explanations under the button. One row in the panel
+// header: "סידור אוטומטי בלוח" is secondary; once the drafts are on the board
+// it gives way to a primary "תזמון כל הפוסטים" with a secondary "ביטול" (undo
+// the arranging) beside it. Schedule settings live in a ⋮ menu. No re-arrange.
 
-export function FlowHeaderButton({ view, actions }: { view: FlowView; actions: FlowActions }) {
+function FlowMenu({ view, actions }: { view: FlowView; actions: FlowActions }) {
   const stage = stageOf(view)
-  if (stage === "empty" || stage === "arrange") {
-    return (
-      <ScheduleAllButton
-        label="סידור אוטומטי בלוח"
-        count={view.readyCount}
-        onClick={actions.arrange}
-      />
-    )
-  }
-  if (stage === "done") return <DoneChip n={view.lastBatch.length} />
-  const icon =
-    stage === "scheduling" ? (
-      <Loader2 className="size-4 animate-spin" aria-hidden />
-    ) : stage === "error" ? (
-      <RotateCcw className="size-4" aria-hidden />
-    ) : stage === "no-routine" ? (
-      <Settings2 className="size-4" aria-hidden />
-    ) : (
-      <CalendarCheck className="size-4" aria-hidden />
-    )
-  const onClick = stage === "no-routine" ? actions.openSettings : actions.confirm
   return (
-    <Button
-      size="sm"
-      onClick={onClick}
-      disabled={stage === "scheduling"}
-      aria-busy={stage === "scheduling" || undefined}
-      className="tabular-nums"
-    >
-      {icon}
-      {primaryLabel(view, stage)}
-    </Button>
+    <DropdownMenu dir="rtl">
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon-sm" aria-label="עוד פעולות" disabled={stage === "scheduling"}>
+          <MoreVertical className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {stage === "done" && (
+          <DropdownMenuItem onClick={actions.undo}>
+            <Undo2 className="size-4" />
+            <span>ביטול התזמון</span>
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem onClick={actions.openSettings}>
+          <Settings2 className="size-4" />
+          <span>הגדרות התזמון</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
-export function FlowHeaderDetail({ view, actions }: { view: FlowView; actions: FlowActions }) {
+export function FlowHeaderButton({ view, actions }: { view: FlowView; actions: FlowActions }) {
   const stage = stageOf(view)
-  const step = stepOf(stage)
+  const menu = <FlowMenu view={view} actions={actions} />
+
+  if (stage === "empty" || stage === "arrange" || stage === "no-routine") {
+    return (
+      <div className="flex items-center gap-1">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={stage === "no-routine" ? actions.openSettings : actions.arrange}
+          disabled={stage === "empty"}
+          className="tabular-nums"
+        >
+          <CalendarClock className="size-4" aria-hidden />
+          {stage === "no-routine" ? "קביעת ימים ושעות" : "סידור אוטומטי בלוח"}
+        </Button>
+        {menu}
+      </div>
+    )
+  }
+
+  if (stage === "done") {
+    return (
+      <div className="flex items-center gap-1">
+        {view.readyCount > 0 ? (
+          <Button size="sm" variant="outline" onClick={actions.arrangeMore}>
+            <CalendarClock className="size-4" aria-hidden />
+            סידור אוטומטי בלוח
+          </Button>
+        ) : (
+          <DoneChip n={view.lastBatch.length} />
+        )}
+        {menu}
+      </div>
+    )
+  }
+
   const busy = stage === "scheduling"
   return (
+    <div className="flex items-center gap-1.5">
+      {!busy && (
+        <Button size="sm" variant="outline" onClick={actions.cancel}>
+          ביטול
+        </Button>
+      )}
+      <Button
+        size="sm"
+        onClick={actions.confirm}
+        disabled={busy}
+        aria-busy={busy || undefined}
+        className="tabular-nums"
+      >
+        {busy ? (
+          <Loader2 className="size-4 animate-spin" aria-hidden />
+        ) : stage === "error" ? (
+          <RotateCcw className="size-4" aria-hidden />
+        ) : (
+          <CalendarCheck className="size-4" aria-hidden />
+        )}
+        {busy
+          ? `מתזמנים ${view.progress.done} מתוך ${view.progress.total}...`
+          : stage === "error"
+            ? "ניסיון חוזר"
+            : stage === "partial"
+              ? "תזמון הנותרים"
+              : "תזמון כל הפוסטים"}
+      </Button>
+      {menu}
+    </div>
+  )
+}
+
+/** Under the row: only the progress while scheduling, and what didn't go in. */
+export function FlowHeaderDetail({ view }: { view: FlowView; actions: FlowActions }) {
+  const stage = stageOf(view)
+  if (stage !== "scheduling" && stage !== "partial") {
+    return <div className="border-b border-border-neutral-default" />
+  }
+  return (
     <div className="px-4 pb-3 border-b border-border-neutral-default flex flex-col gap-2">
-      <div className="flex flex-col gap-0.5">
-        <p className="text-xs-body text-text-neutral-default">
-          {stage === "done" ? (
-            "הסתיים"
-          ) : (
-            <>
-              <span className="tabular-nums">שלב {step} מתוך 2</span> ·{" "}
-              {step === 1 ? "סידור בלוח" : "תזמון"}
-            </>
-          )}
-        </p>
-        <p className={`text-xs-body ${stage === "error" ? "text-button-destructive-default" : "text-text-primary-default"}`}>
-          {statusLine(view, stage)}
-          {stage === "review" && view.laterCount > 0 && (
-            <>
-              {" "}
-              <button type="button" onClick={actions.showLater} className="underline underline-offset-2 hover:text-text-neutral-default">
-                {view.laterCount === 1 ? "אחד בשבוע הבא" : `${view.laterCount} בשבועות הבאים`}
-              </button>
-            </>
-          )}
-        </p>
-      </div>
-
-      {busy && <ProgressTrack done={view.progress.done} total={view.progress.total} />}
-      {stage === "review" && view.askRearrange && <RearrangeConfirm moved={view.movedCount} actions={actions} />}
-      {stage === "review" && view.routineChanged && !view.askRearrange && <RoutineChangedNote actions={actions} />}
+      {stage === "scheduling" && <ProgressTrack done={view.progress.done} total={view.progress.total} />}
       {stage === "partial" && <FailedList failed={view.failed} />}
-      {(stage === "review" || stage === "error") && <UnmatchedNote cards={view.unmatched} />}
-
-      {/* Secondary actions — small, always the same row, always in reach. */}
-      <div className="flex items-center gap-1 flex-wrap -ms-1.5">
-        {(stage === "review" || stage === "error" || stage === "partial") && (
-          <button type="button" className={linkButton} onClick={actions.cancel}>
-            <X className="size-3.5" aria-hidden />
-            {stage === "partial" ? "השארת הנותרים ברשימה" : "ביטול הסידור"}
-          </button>
-        )}
-        {stage === "review" && (
-          <button type="button" className={linkButton} onClick={actions.requestRearrange}>
-            <RotateCcw className="size-3.5" aria-hidden />
-            סידור מחדש
-          </button>
-        )}
-        {stage === "done" && (
-          <>
-            <button type="button" className={linkButton} onClick={actions.undo}>
-              <Undo2 className="size-3.5" aria-hidden />
-              ביטול התזמון
-            </button>
-            <button
-              type="button"
-              className={linkButton}
-              onClick={view.readyCount > 0 ? actions.arrangeMore : actions.dismissDone}
-            >
-              {view.readyCount > 0 ? "סידור הפוסטים הנותרים" : "סגירה"}
-            </button>
-          </>
-        )}
-        {stage !== "done" && stage !== "no-routine" && (
-          <button type="button" className={linkButton} onClick={actions.openSettings} disabled={busy}>
-            <Settings2 className="size-3.5" aria-hidden />
-            הגדרות תזמון
-          </button>
-        )}
-      </div>
     </div>
   )
 }
