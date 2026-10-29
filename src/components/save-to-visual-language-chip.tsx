@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Check, Loader2, RotateCcw, Sparkles } from "lucide-react"
+import { Check, Loader2, RotateCcw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 
@@ -81,11 +81,7 @@ export function SaveToVisualLanguageChipView({
   return (
     <div className="mb-2 flex flex-wrap gap-1.5">
       <Chip disabled={busy} aria-busy={busy} onClick={onSave}>
-        {busy ? (
-          <Loader2 className="size-3.5 animate-spin text-text-neutral-default" aria-hidden />
-        ) : (
-          <Sparkles className="size-3.5 text-text-neutral-default" aria-hidden />
-        )}
+        {busy && <Loader2 className="size-3.5 animate-spin text-text-neutral-default" aria-hidden />}
         {busy ? "שומרים לשפה הוויזואלית..." : "לשמור לשפה הוויזואלית שלי"}
       </Chip>
     </div>
