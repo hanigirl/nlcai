@@ -43,6 +43,10 @@ import { CorePostChat } from "@/components/core-post-chat"
 import { AiRefineButton } from "@/components/ai-refine-button"
 import { StoryPlayer, storyFrameSrc } from "@/components/story-player"
 import { ColorSwatchPicker } from "@/components/color-swatch-picker"
+import { CoverColorControl } from "@/components/th-cover/cover-color-control"
+import { ThCoverReview, isThCoverState, SAMPLE_FRAME } from "@/components/th-cover/th-cover-review"
+import { readThCoverVariant, useCoverBrandColors } from "@/lib/use-cover-brand-colors"
+import { defaultCoverColor } from "@/lib/cover-brand-color"
 import type { Avatar } from "@/components/avatar-picker"
 import type { SlideData } from "@/lib/carousel-templates"
 import { createClient } from "@/lib/supabase/client"
@@ -219,6 +223,11 @@ function ProjectPageInner() {
   const hookParam = searchParams.get("hook") ?? ""
   const hookIdParam = searchParams.get("hook_id") ?? ""
   const postId = searchParams.get("post_id") ?? ""
+  // Design review: talking-head cover defaults to her brand colour
+  // (?thcover=a|b). Without &state=live it lands on a seeded cover card.
+  const thCoverVariant = readThCoverVariant(searchParams)
+  const thCoverStateParam = searchParams.get("state")
+  const thCoverSeeded = thCoverVariant !== null && thCoverStateParam !== "live"
   // Media approval before scheduling — part of the scheduling release, live
   // for the accounts in lib/scheduling-access only. Off = page unchanged.
   const approveVariant: "a" | null = useSchedulingAccess() ? "a" : null
@@ -303,6 +312,15 @@ function ProjectPageInner() {
   // we show a CSS pill overlay so colour changes feel instant; the PNG
   // is only regenerated once on commit.
   const [livePillColor, setLivePillColor] = useState<string | null>(null)
+  // ?thcover review: her brand colours, and whether the pill colour was set
+  // by her (a pick, or the colour restored from the saved post) — only an
+  // untouched pill adopts the brand default.
+  const thCoverBrand = useCoverBrandColors(thCoverVariant !== null)
+  const pillTouchedRef = useRef(false)
+  useEffect(() => {
+    if (thCoverVariant === null || !thCoverBrand.ready || pillTouchedRef.current) return
+    setPillColor(defaultCoverColor(thCoverBrand.colors))
+  }, [thCoverVariant, thCoverBrand.ready, thCoverBrand.colors])
   // Confirmation modal — opened from the trash icon on the video card. The
   // actual delete only fires after the user clicks "כן, למחוק". The cover has
   // no standalone delete action; it lives and dies with the video.
@@ -847,6 +865,7 @@ function ProjectPageInner() {
           // the localStorage hydrator below if the server didn't store one
           // (older covers, pre-metadata).
           if (typeof data.post.coverPillColor === "string") {
+            pillTouchedRef.current = true
             setPillColor(data.post.coverPillColor as string)
           }
 
@@ -1900,6 +1919,77 @@ function ProjectPageInner() {
     if (formatsLocked && chatOpen) setChatOpen(false)
   }, [formatsLocked, chatOpen])
 
+  // Design review ?thcover=a|b: land straight on the talking-head cover card,
+  // seeded. No generation, no fetch, no save (savedPostId stays null).
+  if (thCoverSeeded && thCoverVariant) {
+    const noop = () => {}
+    return (
+      <AppShell idea="דיבור למצלמה · קאבר">
+        <ThCoverReview
+          variant={thCoverVariant}
+          initialState={isThCoverState(thCoverStateParam) ? thCoverStateParam : "brand"}
+          focusOn={(el) => canvasRef.current?.focusOn(el)}
+          render={(seed) => (
+            <InfiniteCanvas handleRef={canvasRef}>
+              <div className="flex items-start gap-0 pt-24 pr-24" dir="rtl">
+                <FormatTree
+                  formats={["talking_head"]}
+                  formatPosts={{ talking_head: seed.coverText }}
+                  onPostChange={noop}
+                  onRegenerateFormat={noop}
+                  formatSaveStatus={{}}
+                  activeCard="talking_head"
+                  onActiveChange={noop}
+                  selectedFormat={null}
+                  onSelectFormat={noop}
+                  hookText={seed.coverText}
+                  thVideoUrl={null}
+                  thVideoLoading={false}
+                  mediaBusy={{}}
+                  thVideoCardRef={thVideoCardRef}
+                  onThReRecord={noop}
+                  onThDelete={noop}
+                  thCoverImage="seeded"
+                  thCoverLoading={seed.coverLoading}
+                  coverText={seed.coverText}
+                  onCoverTextChange={seed.onCoverTextChange}
+                  onCoverRegenerate={seed.onCoverRegenerate}
+                  pillColor={seed.pillColor}
+                  onPillColorChange={seed.onPillColorChange}
+                  livePillColor={seed.livePillColor}
+                  onLivePillPreview={seed.onLivePillPreview}
+                  coverColorReview={{ variant: thCoverVariant, brandColors: seed.brandColors }}
+                  thVideoFrameDataUrl={SAMPLE_FRAME}
+                  userId={userId}
+                  savedPostId={null}
+                  carouselDriveLinks={null}
+                  onCarouselImagesChange={noop}
+                  carouselImages={null}
+                  carouselCardRef={carouselCardRef}
+                  onCarouselEdit={noop}
+                  imagePostUrl={null}
+                  imagePostCardRef={imagePostCardRef}
+                  onImagePostEdit={noop}
+                  onImagePostUrlChange={noop}
+                  storyImages={null}
+                  storyCardRef={storyCardRef}
+                  onStoryEdit={noop}
+                  storyVideoUrl={null}
+                  bRollUrl={null}
+                  onBRollUrlChange={noop}
+                  bRollCardRef={bRollCardRef}
+                  onBRollEdit={noop}
+                  onAiEdit={noop}
+                  onDeleteMedia={noop}
+                />
+              </div>
+            </InfiniteCanvas>
+          )}
+        />
+      </AppShell>
+    )
+  }
+
   return (
     <AppShell idea={shortenTitle(idea || hookParam || (postId ? "עריכת פוסט" : ""))}>
       {/* Media Panel — sibling to InfiniteCanvas, slides from left */}
@@ -2610,6 +2700,7 @@ function ProjectPageInner() {
                           onCoverRegenerate={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
                           pillColor={pillColor}
                           onPillColorChange={(next) => {
+                            pillTouchedRef.current = true
                             setPillColor(next)
                             // The picker leaves `livePillColor` armed when it
                             // commits; we drop the CSS overlay only after the
@@ -2620,6 +2711,7 @@ function ProjectPageInner() {
                           }}
                           livePillColor={livePillColor}
                           onLivePillPreview={setLivePillColor}
+                          coverColorReview={thCoverVariant ? { variant: thCoverVariant, brandColors: thCoverBrand.colors } : undefined}
                           thVideoFrameDataUrl={thVideoFrameDataUrl}
                           userId={userId}
                           carouselImages={carouselImages}
@@ -2944,6 +3036,7 @@ function FormatTree({
   onPillColorChange,
   livePillColor,
   onLivePillPreview,
+  coverColorReview,
   thVideoFrameDataUrl,
   userId,
   carouselImages,
@@ -2994,6 +3087,8 @@ function FormatTree({
   onPillColorChange: (color: string) => void
   livePillColor: string | null
   onLivePillPreview: (color: string | null) => void
+  /** Design review ?thcover=a|b — brand-default colour control. Absent = today's picker. */
+  coverColorReview?: { variant: "a" | "b"; brandColors: string[] }
   thVideoFrameDataUrl: string | null
   userId: string | null
   savedPostId: string | null
@@ -3400,6 +3495,17 @@ function FormatTree({
                           child), download button on the left. Matches the
                           shared layout pattern from the Figma. */}
                       <div className="flex items-center justify-between gap-3" dir="rtl">
+                        {coverColorReview ? (
+                          <CoverColorControl
+                            variant={coverColorReview.variant}
+                            value={pillColor}
+                            brandColors={coverColorReview.brandColors}
+                            onChange={onPillColorChange}
+                            onLivePreview={onLivePillPreview}
+                            userId={userId}
+                            disabled={thCoverLoading}
+                          />
+                        ) : (
                         <ColorSwatchPicker
                           value={pillColor}
                           onChange={onPillColorChange}
@@ -3407,6 +3513,7 @@ function FormatTree({
                           userId={userId}
                           label="רקע הכותרת"
                         />
+                        )}
                         <TooltipLabel label="הורד קאבר">
                           <Button
                             asChild

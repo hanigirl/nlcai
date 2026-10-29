@@ -4,6 +4,7 @@ import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import type { BrandStyle } from "@/lib/supabase/types"
 import { getAuthUser } from "@/lib/auth-user"
+import { cleanBrandColors, defaultCoverColor, isCoverHex } from "@/lib/cover-brand-color"
 
 const COVER_WIDTH = 1080
 const COVER_HEIGHT = 1920 // 9:16 aspect ratio
@@ -353,8 +354,17 @@ export async function POST(req: NextRequest) {
     // pill_color (optional hex) overrides only the text-background colour
     // so the user can pick the pill tone from the UI without losing the
     // rest of the default style. Anything else stays consistent.
-    const style: BrandStyle = pill_color
-      ? { ...DEFAULT_BRAND_STYLE, text_background_color: pill_color }
+    //
+    // No pill_color → her primary brand colour (Settings → שפה ויזואלית),
+    // black when she has none. Every caller sends one today, so this only
+    // matters for a caller that leaves the choice to the server.
+    let pillHex = isCoverHex(pill_color) ? pill_color : undefined
+    if (!pillHex && pill_color === undefined) {
+      const { data: row } = await supabase.from("users").select("brand_colors").eq("id", user.id).single()
+      pillHex = defaultCoverColor(cleanBrandColors((row as { brand_colors?: unknown } | null)?.brand_colors))
+    }
+    const style: BrandStyle = pillHex
+      ? { ...DEFAULT_BRAND_STYLE, text_background_color: pillHex }
       : DEFAULT_BRAND_STYLE
 
     // Fetch thumbnail if provided (supports data URLs and regular URLs)
