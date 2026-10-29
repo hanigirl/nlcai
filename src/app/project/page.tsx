@@ -4,7 +4,7 @@ import { CardStyleFeedback } from "@/components/style-feedback-strip"
 import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
-import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
+import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Plus, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
 import { MediaAiChat, isEditableBRollUrl, type AiEditFormat } from "@/components/media-ai-chat"
 import { useAiEditRequests, type AiEditOpening } from "@/lib/ai-edit-intent"
 import { clearBRollUrl } from "@/lib/broll-generation-store"
@@ -41,7 +41,9 @@ import { ConfirmModal } from "@/components/confirm-modal"
 import { CorePostCelebration } from "@/components/core-post-celebration"
 import { ScheduleInCalendarBar } from "@/components/schedule-in-calendar-bar"
 import { CorePostChat } from "@/components/core-post-chat"
-import { AiRefineButton } from "@/components/ai-refine-button"
+import { AI_HOVER_ZONE, AiHoverEditButton } from "@/components/ai-hover-edit"
+import { IconActionButton } from "@/components/icon-action-button"
+import { MediaPreviewZone } from "@/components/media-preview-zone"
 import { StoryPlayer, storyFrameSrc } from "@/components/story-player"
 import { ColorSwatchPicker } from "@/components/color-swatch-picker"
 import { CoverColorSwatches } from "@/components/cover-color-swatches"
@@ -74,7 +76,7 @@ import { ApprovalCardFooter } from "@/components/format-approval/approval-card-f
 import { usePreviewAccess, useSchedulingAccess } from "@/lib/use-scheduling-access"
 // "עריכה עם AI" on every format's copy (Hani, 2026-10-29).
 import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
-import { FormatCopyActionRow } from "@/components/format-copy-ai/format-copy-entry"
+import { FormatCopyActionRow, FormatCopyAiHoverButton } from "@/components/format-copy-ai/format-copy-entry"
 import type { FormatCopyAiController } from "@/components/format-copy-ai/use-format-copy-ai"
 
 type Flow = "idea" | "hook" | "saved"
@@ -2474,38 +2476,34 @@ function ProjectPageInner() {
                       )}
                     </div>
                     <div className="flex flex-col gap-4 px-6 items-end" data-demo="core-post-body">
-                      <RichBodyEditor
-                        value={corePost}
-                        onChange={setCorePost}
-                        onFocus={() => setActiveCard("post")}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        className={`w-full min-h-[250px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text ${chatBusy ? "ai-text-shimmer pointer-events-none" : ""}`}
-                      />
+                      {/* ✨ AI edit is the hover sparkle in the text box's
+                          corner (Hani, 2026-10-29). Usable only until the post
+                          is duplicated to formats — then the core post is
+                          frozen and the sparkle says why. */}
+                      <div className={`${AI_HOVER_ZONE} w-full`}>
+                        <RichBodyEditor
+                          value={corePost}
+                          onChange={setCorePost}
+                          onFocus={() => setActiveCard("post")}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          className={`w-full min-h-[250px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 pt-2 pb-12 shadow-none text-small leading-relaxed select-text ${chatBusy ? "ai-text-shimmer pointer-events-none" : ""}`}
+                        />
+                        <AiHoverEditButton
+                          target="text"
+                          disabled={formatsLocked}
+                          disabledLabel="אי אפשר לערוך בשיחה אחרי שיכפול לפורמטים"
+                          busy={chatBusy}
+                          visible={chatOpen}
+                          onClick={() => setChatOpen(true)}
+                        />
+                      </div>
                       <p className="flex w-full items-center gap-1.5 text-xs-body text-text-neutral-default">
                         <Info className="size-4 shrink-0" aria-hidden="true" />
                         <span>כל עריכה שלכם תשפיע על הלמידה של ה-AI להבין את סגנון הכתיבה שלכם ולהשתפר</span>
                       </p>
-                      <div className="flex items-center gap-2">
-                        {/* Chat about the post — usable only until the post is
-                            duplicated to formats (then the core post is frozen
-                            and this is disabled). Wrapped in a span so the
-                            tooltip still fires while the button is disabled. */}
-                        <TooltipLabel
-                          label={
-                            formatsLocked
-                              ? "אי אפשר לערוך בשיחה אחרי שיכפול לפורמטים"
-                              : "עריכה עם AI"
-                          }
-                        >
-                          <span className="inline-flex">
-                            <AiRefineButton
-                              disabled={formatsLocked}
-                              busy={chatBusy}
-                              onClick={() => setChatOpen(true)}
-                            />
-                          </span>
-                        </TooltipLabel>
+                      <div className="flex w-full items-center gap-2">
                         <Button
+                          className="w-full"
                           disabled={activeCard !== "post"}
                           onClick={() => {
                             // Learning log: flush any pending core post edit
@@ -2934,23 +2932,9 @@ function isStoredImageUrl(url: string | null | undefined): boolean {
   return !!url && /\/storage\/v1\/object\/public\//.test(url) && !/\.(mp4|mov|webm)(?:[?#]|$)/i.test(url)
 }
 
-/** Trash button for a result card — same look as the b-roll's. */
-function MediaTrashButton({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <TooltipLabel label={label}>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation()
-          onClick()
-        }}
-        aria-label={label}
-        className="flex items-center justify-center size-9 shrink-0 rounded-lg hover:bg-red-95 transition-colors cursor-pointer"
-      >
-        <Trash2 className="size-4 text-button-destructive-default" />
-      </button>
-    </TooltipLabel>
-  )
+/** A media card's icon actions when approval is off for the account. */
+function MediaActionRow({ children }: { children: React.ReactNode }) {
+  return <div className="flex w-full items-center gap-3">{children}</div>
 }
 
 /** Media approval wiring handed to the format tree (design review). */
@@ -3129,7 +3113,10 @@ function FormatTree({
           // on the media card; variant B only shows the result there (the
           // action lives in the floating checklist).
           const approvalStatus = approval?.statusOf(fid)
-          const approvalFooter =
+          // The media card's bottom row: "אישור לתזמון" (when approval is on
+          // for this account) and the card's icon actions, in ONE row (Hani,
+          // 2026-10-29).
+          const mediaFooter = (actions: React.ReactNode) =>
             approval?.variant === "a" && approvalStatus ? (
               <ApprovalCardFooter
                 status={approvalStatus}
@@ -3137,8 +3124,11 @@ function FormatTree({
                 onApprove={() => approval.approve(fid)}
                 onRevoke={() => approval.revoke(fid)}
                 calendarHref={approval.calendarHref}
+                actions={actions}
               />
-            ) : null
+            ) : (
+              <MediaActionRow>{actions}</MediaActionRow>
+            )
 
           return (
             <div key={fid} className="flex flex-col items-center" style={{ width: CARD_WIDTH }}>
@@ -3191,7 +3181,7 @@ function FormatTree({
                         e.stopPropagation()
                         onRegenerateFormat(fid)
                       }}
-                      className="ms-auto flex items-center justify-center size-8 shrink-0 rounded-lg transition-colors cursor-pointer hover:bg-bg-surface-hover disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="ms-auto flex items-center justify-center size-8 shrink-0 rounded-lg transition-colors cursor-pointer hover:bg-gray-95 dark:hover:bg-gray-20 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <RotateCw
                         className={`size-4 text-text-neutral-default ${isGenerating ? "animate-spin" : ""}`}
@@ -3200,7 +3190,7 @@ function FormatTree({
                   </TooltipLabel>
                 </div>
                 <div className="px-6 flex flex-col gap-3">
-                  <div className="relative group">
+                  <div className={`${AI_HOVER_ZONE} group`}>
                     <RichBodyEditor
                       value={formatPosts[fid] ?? ""}
                       onChange={(text) => onPostChange(fid, text)}
@@ -3210,13 +3200,15 @@ function FormatTree({
                       onClick={(e) => e.stopPropagation()}
                       className={
                         copyAi
-                          ? `min-h-[200px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text ${copyAi.isBusy(fid) ? "ai-text-shimmer pointer-events-none" : ""}`
+                          ? `min-h-[200px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 pt-2 pb-12 shadow-none text-small leading-relaxed select-text ${copyAi.isBusy(fid) ? "ai-text-shimmer pointer-events-none" : ""}`
                           : "min-h-[200px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text"
                       }
                     />
                     <CopyButton text={formatPosts[fid] ?? ""} />
+                    {/* ✨ AI edit on this format's copy — the hover sparkle
+                        in the text box's corner (Hani, 2026-10-29). */}
+                    <FormatCopyAiHoverButton ctrl={copyAi} fid={fid} />
                   </div>
-                  {/* ✨ "עריכה עם AI" sits beside this button (Hani, 2026-10-29). */}
                   <FormatCopyActionRow
                     ctrl={copyAi}
                     fid={fid}
@@ -3231,8 +3223,8 @@ function FormatTree({
                   <Button
                     variant="outline"
                     // For talking_head, we disable the button once a video
-                    // exists — editing then happens via the video card's
-                    // "עריכת סרטון" button below. For other formats, the
+                    // exists — editing then happens by clicking the video on
+                    // the card below. For other formats, the
                     // button always opens MediaPanel (MediaUploadFlow handles
                     // upload + Drive link, just like the avatar module).
                     disabled={fid === "talking_head" && !!thVideoUrl}
@@ -3243,8 +3235,8 @@ function FormatTree({
                     }}
                     className="w-full rounded-[10px] border-border-neutral-default text-text-primary-default text-small gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <Icon className="size-4" />
-                    {copyAi ? "הוספת מדיה" : <>הוספת מדיה ל{format.label}</>}
+                    <Plus className="size-4" />
+                    הוספת מדיה
                   </Button>
                   </FormatCopyActionRow>
                   {approval?.variant === "a" && approvalStatus === "no-media" && (
@@ -3301,19 +3293,19 @@ function FormatTree({
                       <ApprovalHeaderTag status={approvalStatus} />
                     </div>
                     <div className="px-6 flex flex-col gap-4">
+                      {/* Clicking the video opens the media panel to change
+                          it (Hani, 2026-10-29); the play control on it still
+                          plays. No AI edit for a talking head. */}
                       <div className="flex justify-center">
-                        <VideoPlayer url={thVideoUrl} />
+                        <MediaPreviewZone onOpen={onThReRecord} openLabel="החלפת הוידאו">
+                          <VideoPlayer url={thVideoUrl} clickToOpen />
+                        </MediaPreviewZone>
                       </div>
-                      <div className="flex gap-3 w-full items-center">
-                        <Button variant="outline" className="flex-1" onClick={onThReRecord}>
-                          עריכת סרטון
-                        </Button>
-                        <TooltipLabel label="הורד וידאו">
-                          <Button
-                            variant="outline"
-                            type="button"
-                            aria-label="הורד וידאו"
-                            className="w-11 px-0"
+                      {mediaFooter(
+                        <>
+                          <IconActionButton
+                            label="הורדה"
+                            icon={Download}
                             onClick={async () => {
                               if (!thVideoUrl) return
                               try {
@@ -3335,22 +3327,10 @@ function FormatTree({
                                 window.open(thVideoUrl, "_blank")
                               }
                             }}
-                          >
-                            <Download className="size-4" />
-                          </Button>
-                        </TooltipLabel>
-                        <TooltipLabel label="מחק וידאו">
-                          <button
-                            type="button"
-                            onClick={onThDelete}
-                            aria-label="מחק וידאו"
-                            className="flex items-center justify-center size-9 shrink-0 rounded-lg hover:bg-red-95 transition-colors cursor-pointer"
-                          >
-                            <Trash2 className="size-4 text-button-destructive-default" />
-                          </button>
-                        </TooltipLabel>
-                      </div>
-                      {approvalFooter}
+                          />
+                          <IconActionButton label="מחיקה" icon={Trash2} destructive onClick={onThDelete} />
+                        </>,
+                      )}
                     </div>
                   </div>
                 </>
@@ -3492,18 +3472,12 @@ function FormatTree({
                             label="רקע הכותרת"
                           />
                         )}
-                        <TooltipLabel label="הורד קאבר">
-                          <Button
-                            asChild
-                            variant="outline"
-                            aria-label="הורד קאבר"
-                            className="w-11 px-0"
-                          >
-                            <a href={`data:image/png;base64,${thCoverImage}`} download="reel-cover.png">
-                              <Download className="size-4" />
-                            </a>
-                          </Button>
-                        </TooltipLabel>
+                        <IconActionButton
+                          label="הורדת הקאבר"
+                          icon={Download}
+                          href={`data:image/png;base64,${thCoverImage}`}
+                          download="reel-cover.png"
+                        />
                       </div>
                     </div>
                   </div>
@@ -3525,7 +3499,7 @@ function FormatTree({
                   driveLinks={carouselDriveLinks}
                   onImagesChange={onCarouselImagesChange}
                   approvalStatus={approvalStatus}
-                  approvalFooter={approvalFooter}
+                  footer={mediaFooter}
                 />
               )}
 
@@ -3559,7 +3533,7 @@ function FormatTree({
                     onDelete={() => onDeleteMedia("story")}
                     postId={savedPostId}
                     approvalStatus={approvalStatus}
-                    approvalFooter={approvalFooter}
+                    footer={mediaFooter}
                   />
                 )
               })()}
@@ -3595,30 +3569,42 @@ function FormatTree({
                     </div>
                     <CardStyleFeedback postId={savedPostId} format="b_roll" mediaUrl={bRollUrl} />
                     <div className="px-6 flex flex-col gap-4">
+                      {/* Click the b-roll → media panel; hover → ✨ AI edit,
+                          only on a clip the Opus engine made (a clip it didn't
+                          make has no composition to revise). The clip's own
+                          controls still play it (Hani, 2026-10-29). */}
                       <div className="flex justify-center">
-                        <div className="w-[200px] aspect-[9/16] overflow-hidden rounded-xl border border-border-neutral-default bg-bg-surface">
-                          {isStillUrl(bRollUrl) ? (
-                            /* eslint-disable-next-line @next/next/no-img-element */
-                            <img
-                              src={bRollUrl}
-                              alt="הסטיל של הבי-רול"
-                              className="w-full h-full object-cover"
-                              onMouseDown={(e) => e.stopPropagation()}
-                            />
-                          ) : (
-                            <video
-                              src={`${bRollUrl}#t=0.001`}
-                              controls
-                              playsInline
-                              muted
-                              // Metadata only — the card sits on the canvas
-                              // whether or not she plays it.
-                              preload="metadata"
-                              className="w-full h-full object-cover"
-                              onMouseDown={(e) => e.stopPropagation()}
-                            />
-                          )}
-                        </div>
+                        <MediaPreviewZone
+                          onOpen={onBRollEdit}
+                          openLabel="החלפת הבי-רול"
+                          onAiEdit={isEditableBRollUrl(bRollUrl) ? () => onAiEdit("b_roll") : undefined}
+                          // Above the clip's native control bar.
+                          aiClassName={isStillUrl(bRollUrl) ? undefined : "bottom-12"}
+                        >
+                          <div className="w-[200px] aspect-[9/16] overflow-hidden rounded-xl border border-border-neutral-default bg-bg-surface">
+                            {isStillUrl(bRollUrl) ? (
+                              /* eslint-disable-next-line @next/next/no-img-element */
+                              <img
+                                src={bRollUrl}
+                                alt="הסטיל של הבי-רול"
+                                className="w-full h-full object-cover"
+                                onMouseDown={(e) => e.stopPropagation()}
+                              />
+                            ) : (
+                              <video
+                                src={`${bRollUrl}#t=0.001`}
+                                controls
+                                playsInline
+                                muted
+                                // Metadata only — the card sits on the canvas
+                                // whether or not she plays it.
+                                preload="metadata"
+                                className="w-full h-full object-cover"
+                                onMouseDown={(e) => e.stopPropagation()}
+                              />
+                            )}
+                          </div>
+                        </MediaPreviewZone>
                       </div>
 
                       {/* Only on the still. Once the clip is burned the words
@@ -3635,38 +3621,14 @@ function FormatTree({
                         />
                       )}
 
-                      {/* The AI edit acts on the clip, so it lives here on the
-                          result card, with a trash to start over (Hani,
-                          2026-10-22). A clip the Opus engine didn't make has no
-                          composition to revise — it keeps the plain edit. */}
-                      <div className="flex items-center gap-2">
-                        {isEditableBRollUrl(bRollUrl) ? (
-                          <span className="flex flex-1" onClick={(e) => e.stopPropagation()}>
-                            <AiRefineButton
-                              onClick={() => onAiEdit("b_roll")}
-                              className="w-full"
-                            />
-                          </span>
-                        ) : (
-                          <Button variant="outline" className="flex-1" onClick={onBRollEdit}>
-                            עריכת בי-רול
-                          </Button>
-                        )}
-                        <TooltipLabel label="מחיקת הבי-רול">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              onDeleteMedia("b_roll")
-                            }}
-                            aria-label="מחיקת הבי-רול"
-                            className="flex items-center justify-center size-9 shrink-0 rounded-lg hover:bg-red-95 transition-colors cursor-pointer"
-                          >
-                            <Trash2 className="size-4 text-button-destructive-default" />
-                          </button>
-                        </TooltipLabel>
-                      </div>
-                      {approvalFooter}
+                      {mediaFooter(
+                        <IconActionButton
+                          label="מחיקה"
+                          icon={Trash2}
+                          destructive
+                          onClick={() => onDeleteMedia("b_roll")}
+                        />,
+                      )}
                     </div>
                   </div>
                 </>
@@ -3694,15 +3656,23 @@ function FormatTree({
                     </div>
                     <CardStyleFeedback postId={savedPostId} format="image_post" mediaUrl={imagePostUrl} />
                     <div className="px-6 flex flex-col gap-4">
+                      {/* Click the image → media panel; hover → ✨ AI edit on a
+                          stored image (Hani, 2026-10-29). */}
                       <div className="flex justify-center">
-                        <div className="relative w-[200px] aspect-[4/5] rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={imagePostUrl}
-                            alt="התמונה שנוצרה לפוסט"
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
+                        <MediaPreviewZone
+                          onOpen={onImagePostEdit}
+                          openLabel="החלפת התמונה"
+                          onAiEdit={isStoredImageUrl(imagePostUrl) ? () => onAiEdit("image_post") : undefined}
+                        >
+                          <div className="relative w-[200px] aspect-[4/5] rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={imagePostUrl}
+                              alt="התמונה שנוצרה לפוסט"
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                        </MediaPreviewZone>
                       </div>
                       <StillCaptionSettings
                         postId={savedPostId}
@@ -3711,22 +3681,11 @@ function FormatTree({
                         onUrlChange={onImagePostUrlChange}
                       />
 
-                      <div className="flex gap-3 w-full items-center">
-                        {isStoredImageUrl(imagePostUrl) ? (
-                          <span className="flex flex-1" onClick={(e) => e.stopPropagation()}>
-                            <AiRefineButton onClick={() => onAiEdit("image_post")} className="w-full" />
-                          </span>
-                        ) : (
-                          <Button variant="outline" className="flex-1" onClick={onImagePostEdit}>
-                            עריכת תמונה
-                          </Button>
-                        )}
-                        <TooltipLabel label="הורד תמונה">
-                          <Button
-                            variant="outline"
-                            type="button"
-                            aria-label="הורד תמונה"
-                            className="w-11 px-0"
+                      {mediaFooter(
+                        <>
+                          <IconActionButton
+                            label="הורדה"
+                            icon={Download}
                             onClick={async () => {
                               try {
                                 const res = await fetch(imagePostUrl)
@@ -3747,13 +3706,15 @@ function FormatTree({
                                 window.open(imagePostUrl, "_blank")
                               }
                             }}
-                          >
-                            <Download className="size-4" />
-                          </Button>
-                        </TooltipLabel>
-                        <MediaTrashButton label="מחיקת התמונה" onClick={() => onDeleteMedia("image_post")} />
-                      </div>
-                      {approvalFooter}
+                          />
+                          <IconActionButton
+                            label="מחיקה"
+                            icon={Trash2}
+                            destructive
+                            onClick={() => onDeleteMedia("image_post")}
+                          />
+                        </>,
+                      )}
                     </div>
                   </div>
                 </>
@@ -3834,15 +3795,16 @@ function CarouselResultCard({
   driveLinks,
   onImagesChange,
   approvalStatus,
-  approvalFooter,
+  footer,
 }: {
   approvalStatus?: ApprovalStatus
-  approvalFooter?: React.ReactNode
+  /** The card's bottom row — approval + the icon actions handed in. */
+  footer: (actions: React.ReactNode) => React.ReactNode
   images: string[]
   cardRef: React.RefObject<HTMLDivElement | null>
-  /** Opens the media panel. Non-destructive — see `onCarouselEdit`. */
+  /** Click on the slide — opens the media panel. Non-destructive — see `onCarouselEdit`. */
   onEdit: () => void
-  /** "עריכה עם AI" — the carousel's AI side panel. */
+  /** The hover ✨ on the slide — the carousel's AI side panel. */
   onAiEdit: () => void
   /** Trash — confirm, then remove the slides. */
   onDelete: () => void
@@ -3907,6 +3869,17 @@ function CarouselResultCard({
         <div className="px-6 flex flex-col items-center gap-4">
           {/* Slide preview — no fixed aspect: templates are square (1080²)
               or IG-portrait (1080×1350); the img sets its natural ratio. */}
+          {/* Click the slide → media panel; hover → ✨ AI edit (Hani,
+              2026-10-29). The card holds the slides as base64 (for the
+              caption tools), so "saved" is judged by the source: anything
+              not pulled from Drive links is a stored set the AI route can
+              read back. */}
+          <MediaPreviewZone
+            onOpen={onEdit}
+            openLabel="החלפת הקרוסלה"
+            onAiEdit={postId && images.length > 0 && !(driveLinks?.length) ? onAiEdit : undefined}
+            className="w-full"
+          >
           <div className="relative w-full rounded-xl overflow-hidden bg-gray-95">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -3923,6 +3896,7 @@ function CarouselResultCard({
               onMouseDown={(e) => e.stopPropagation()}
             />
           </div>
+          </MediaPreviewZone>
 
           {/* Navigation */}
           <div className="flex items-center gap-3">
@@ -3971,30 +3945,19 @@ function CarouselResultCard({
             </div>
           )}
 
-          {/* Actions */}
-          <div className="flex gap-3 w-full items-center">
-            <Button onClick={handleDownloadAll} disabled={downloading} className="flex-1 gap-2">
-              <Download className="size-4" />
-              {downloading ? "מוריד..." : "הורד הכל"}
-            </Button>
-            {/* "עריכת קרוסלה", not "צור מחדש" — the label now matches what
-                the click does. Same wording + behaviour as the image_post and
-                story result cards. */}
-            {/* The card holds the slides as base64 (for the caption tools),
-                so "saved" is judged by the source: anything not pulled from
-                Drive links is a stored set the AI route can read back. */}
-            {postId && images.length > 0 && !(driveLinks?.length) ? (
-              <span className="flex flex-1" onClick={(e) => e.stopPropagation()}>
-                <AiRefineButton onClick={onAiEdit} className="w-full" />
-              </span>
-            ) : (
-              <Button variant="outline" className="flex-1" onClick={onEdit}>
-                עריכת קרוסלה
-              </Button>
+          <div className="w-full">
+            {footer(
+              <>
+                <IconActionButton
+                  label="הורדה"
+                  icon={Download}
+                  busy={downloading}
+                  onClick={handleDownloadAll}
+                />
+                <IconActionButton label="מחיקה" icon={Trash2} destructive onClick={onDelete} />
+              </>,
             )}
-            <MediaTrashButton label="מחיקת הקרוסלה" onClick={onDelete} />
           </div>
-          {approvalFooter}
         </div>
       </div>
     </>
@@ -4013,14 +3976,16 @@ function StoryResultCard({
   onDelete,
   postId,
   approvalStatus,
-  approvalFooter,
+  footer,
 }: {
   approvalStatus?: ApprovalStatus
-  approvalFooter?: React.ReactNode
+  /** The card's bottom row — approval + the icon actions handed in. */
+  footer: (actions: React.ReactNode) => React.ReactNode
   frames: string[]
   cardRef: React.RefObject<HTMLDivElement | null>
+  /** Click on the story — opens the media panel. */
   onEdit: () => void
-  /** "עריכה עם AI" — the story's AI side panel. */
+  /** The hover ✨ on the story — the story's AI side panel. */
   onAiEdit: () => void
   /** Trash — confirm, then remove the frames. */
   onDelete: () => void
@@ -4076,40 +4041,33 @@ function StoryResultCard({
         <div className="px-6 flex flex-col items-center gap-4">
           {/* Plays on Instagram's clock rather than sitting on frame 1 — the
               point of the preview is to show the pacing the audience gets. */}
-          <StoryPlayer
-            frames={frames}
-            className="w-[200px] aspect-[9/16] border border-border-neutral-default"
-          />
+          {/* Click the story → media panel (the player's own tap zones
+              and play/replay keep theirs); hover → ✨ AI edit on stored
+              frames (Hani, 2026-10-29). */}
+          <MediaPreviewZone
+            onOpen={onEdit}
+            openLabel="החלפת הסטורי"
+            onAiEdit={frames.every(isStoredImageUrl) ? onAiEdit : undefined}
+          >
+            <StoryPlayer
+              frames={frames}
+              className="w-[200px] aspect-[9/16] border border-border-neutral-default"
+            />
+          </MediaPreviewZone>
 
-          <div className="flex gap-3 w-full items-center">
-            {frames.every(isStoredImageUrl) ? (
-              <span className="flex flex-1" onClick={(e) => e.stopPropagation()}>
-                <AiRefineButton onClick={onAiEdit} className="w-full" />
-              </span>
-            ) : (
-              <Button variant="outline" className="flex-1" onClick={onEdit}>
-                עריכת סטורי
-              </Button>
+          <div className="w-full">
+            {footer(
+              <>
+                <IconActionButton
+                  label="הורדה"
+                  icon={Download}
+                  busy={downloading}
+                  onClick={handleDownload}
+                />
+                <IconActionButton label="מחיקה" icon={Trash2} destructive onClick={onDelete} />
+              </>,
             )}
-            <TooltipLabel label={frames.length > 1 ? "הורד הכל" : "הורד סטורי"}>
-              <Button
-                variant="outline"
-                type="button"
-                aria-label={frames.length > 1 ? "הורד הכל" : "הורד סטורי"}
-                className="w-11 px-0"
-                disabled={downloading}
-                onClick={handleDownload}
-              >
-                {downloading ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <Download className="size-4" />
-                )}
-              </Button>
-            </TooltipLabel>
-            <MediaTrashButton label="מחיקת הסטורי" onClick={onDelete} />
           </div>
-          {approvalFooter}
         </div>
       </div>
     </>
@@ -4182,7 +4140,14 @@ function MediaSkeletonCard({
 /*  Minimal Video Player — play/pause overlay, portrait, no controls  */
 /* ------------------------------------------------------------------ */
 
-function VideoPlayer({ url }: { url: string }) {
+function VideoPlayer({ url, clickToOpen = false }: {
+  url: string
+  /**
+   * Inside a MediaPreviewZone: only the round play control plays, so a click
+   * anywhere else on the video opens the media panel (Hani, 2026-10-29).
+   */
+  clickToOpen?: boolean
+}) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [playing, setPlaying] = useState(false)
   // Skeleton overlay until the underlying media (img / video) fires its
@@ -4276,7 +4241,11 @@ function VideoPlayer({ url }: { url: string }) {
 
   // Playable video (blob or direct mp4)
   return (
-    <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden bg-gray-95 cursor-pointer" onClick={toggle} onMouseDown={(e) => e.stopPropagation()}>
+    <div
+      className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden bg-gray-95 cursor-pointer"
+      onClick={clickToOpen ? undefined : toggle}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
       {skeleton}
       <video
         ref={videoRef}
@@ -4291,9 +4260,20 @@ function VideoPlayer({ url }: { url: string }) {
         onError={() => setMediaLoaded(true)}
       />
       <div className={`absolute inset-0 flex items-center justify-center transition-opacity ${mediaLoaded ? (playing ? "opacity-0 hover:opacity-100" : "opacity-100") : "opacity-0"}`}>
-        <div className="size-12 rounded-full bg-black/40 flex items-center justify-center backdrop-blur-sm">
-          {playing ? <Pause className="size-5 text-white" /> : <Play className="size-5 text-white ms-0.5" />}
-        </div>
+        {clickToOpen ? (
+          <button
+            type="button"
+            aria-label={playing ? "השהייה" : "ניגון"}
+            onClick={toggle}
+            className="size-12 rounded-full bg-black/40 flex items-center justify-center backdrop-blur-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+          >
+            {playing ? <Pause className="size-5 text-white" /> : <Play className="size-5 text-white ms-0.5" />}
+          </button>
+        ) : (
+          <div className="size-12 rounded-full bg-black/40 flex items-center justify-center backdrop-blur-sm">
+            {playing ? <Pause className="size-5 text-white" /> : <Play className="size-5 text-white ms-0.5" />}
+          </div>
+        )}
       </div>
     </div>
   )

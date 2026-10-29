@@ -1,18 +1,47 @@
 "use client"
 
 import type { ReactNode } from "react"
-import { AiRefineButton } from "@/components/ai-refine-button"
+import { AiHoverEditButton } from "@/components/ai-hover-edit"
 import { COPY_NOUN, isCopyFormat } from "@/lib/format-copy-refine"
 import type { FormatCopyAiController } from "./use-format-copy-ai"
 import { CopyMediaNote } from "./copy-ai-parts"
 
 /**
- * The action row under a format card's text: ✨ "עריכה עם AI" beside the
- * card's other button ("הוספת מדיה"), side by side (Hani, 2026-10-29: "שני
- * הכפתורים אחד ליד השני ולא מתחת"). The AI button opens FormatCopyChat.
+ * The way into "עריכה עם AI" on a format's copy: the hover sparkle pinned to
+ * the bottom corner of the card's text box (Hani, 2026-10-29 — it replaced the
+ * "עריכה עם AI" pill that sat beside "הוספת מדיה"). Opens FormatCopyChat;
+ * pressing it again while that format's panel is open closes it.
  *
- * `children` is the card's existing button, passed through untouched — and
- * rendered alone when there is no controller or the id isn't a copy format.
+ * Render inside the text box's `AI_HOVER_ZONE` wrapper. Nothing without a
+ * controller, or for an id that isn't a copy format.
+ */
+export function FormatCopyAiHoverButton({
+  ctrl,
+  fid,
+  visible = false,
+}: {
+  ctrl?: FormatCopyAiController
+  fid: string
+  /** Keep it shown without hover (design preview). */
+  visible?: boolean
+}) {
+  if (!ctrl || !isCopyFormat(fid)) return null
+  const isOpen = ctrl.activeFid === fid
+  return (
+    <AiHoverEditButton
+      target="text"
+      data-demo="copy-ai-button"
+      busy={ctrl.session(fid).loading}
+      visible={visible || isOpen}
+      onClick={() => (isOpen ? ctrl.close() : ctrl.open(fid))}
+    />
+  )
+}
+
+/**
+ * Under a format card's text: the card's own button ("הוספת מדיה"), passed
+ * through untouched, plus — while that format's copy is open in the AI panel —
+ * the note that media already made won't follow the copy change.
  */
 export function FormatCopyActionRow({
   ctrl,
@@ -30,23 +59,7 @@ export function FormatCopyActionRow({
   const isOpen = ctrl.activeFid === fid
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2 [&>*]:flex-1 [&>*]:min-w-0">
-        <span
-          data-demo="copy-ai-button"
-          className="inline-flex"
-          // The canvas pans on mousedown; keep a click on the button a click.
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <AiRefineButton
-            busy={ctrl.session(fid).loading}
-            onClick={() => (isOpen ? ctrl.close() : ctrl.open(fid))}
-            label="עריכה עם AI"
-            className="w-full rounded-[10px] border-border-neutral-default text-small"
-          />
-        </span>
-        {children}
-      </div>
+      {children}
       {isOpen && hasMedia && <CopyMediaNote />}
       <span className="sr-only" aria-live="polite">
         {isOpen ? `עריכת ${COPY_NOUN[fid]} עם AI פתוחה` : ""}

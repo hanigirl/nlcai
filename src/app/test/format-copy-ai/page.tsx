@@ -11,17 +11,18 @@
 
 import { Suspense, useEffect, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
-import { Layers } from "lucide-react"
+import { Layers, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { COPY_REFINE_ERROR_COPY } from "@/lib/format-copy-refine"
 import { FormatCopyChat } from "@/components/format-copy-ai/format-copy-chat"
-import { FormatCopyActionRow } from "@/components/format-copy-ai/format-copy-entry"
+import { FormatCopyActionRow, FormatCopyAiHoverButton } from "@/components/format-copy-ai/format-copy-entry"
+import { AI_HOVER_ZONE } from "@/components/ai-hover-edit"
 import { useFormatCopyAi, type CopyRefineResponder } from "@/components/format-copy-ai/use-format-copy-ai"
 
 type PreviewState = "closed" | "open" | "generating" | "proposal" | "applied" | "error"
 
 const STATES: { id: PreviewState; title: string; description: string }[] = [
-  { id: "closed", title: "סגור", description: "שני הכפתורים אחד ליד השני מתחת לטקסט של הכרטיס." },
+  { id: "closed", title: "סגור", description: "הספרקל מופיע בפינת הטקסט במעבר עכבר; מתחת רק „הוספת מדיה”." },
   { id: "open", title: "פאנל פתוח", description: "הפאנל של פוסט הליבה, לפורמט אחד, עם הצעות מהירות לפורמט." },
   { id: "generating", title: "בזמן יצירה", description: "הטקסט בכרטיס מהבהב, הפאנל מראה שהוא עובד." },
   { id: "proposal", title: "הצעה לשינוי", description: "השינוי כבר בכרטיס. שמירה או ביטול בפאנל. ביטול לא מלמד כלום." },
@@ -118,17 +119,20 @@ function StatePreview({ state }: { state: PreviewState }) {
           <Layers className="size-4 text-text-neutral-default" />
         </div>
         <div className="flex flex-col gap-3 px-6">
-          <div
-            className={`min-h-[200px] whitespace-pre-wrap rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 text-small leading-relaxed text-text-primary-default ${ctrl.isBusy("carousel") ? "ai-text-shimmer" : ""}`}
-          >
-            {text}
+          <div className={AI_HOVER_ZONE}>
+            <div
+              className={`min-h-[200px] whitespace-pre-wrap rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 pt-2 pb-12 text-small leading-relaxed text-text-primary-default ${ctrl.isBusy("carousel") ? "ai-text-shimmer" : ""}`}
+            >
+              {text}
+            </div>
+            <FormatCopyAiHoverButton ctrl={ctrl} fid="carousel" visible />
           </div>
           <FormatCopyActionRow ctrl={ctrl} fid="carousel" hasMedia={false}>
             <Button
               variant="outline"
               className="w-full rounded-[10px] border-border-neutral-default text-text-primary-default text-small gap-2"
             >
-              <Layers className="size-4" />
+              <Plus className="size-4" />
               הוספת מדיה
             </Button>
           </FormatCopyActionRow>
