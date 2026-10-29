@@ -186,7 +186,8 @@ export function startBRollEdit(
   postId: string,
   instruction: string,
   /** The chat panel reports progress itself — no toasts then. */
-  opts: { quiet?: boolean } = {},
+  /** learn: false — the instruction was already learned (her 👎 feedback). */
+  opts: { quiet?: boolean; learn?: boolean } = {},
 ): Promise<{ ok: true; url: string; remembered?: string | null } | { ok: false; message: string }> {
   if (!postId || !instruction.trim()) return Promise.resolve({ ok: false, message: "" })
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
@@ -199,7 +200,7 @@ export function startBRollEdit(
       const res = await fetch("/api/b-roll/edit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, instruction }),
+        body: JSON.stringify({ postId, instruction, ...(opts.learn === false ? { learn: false } : {}) }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         url?: string

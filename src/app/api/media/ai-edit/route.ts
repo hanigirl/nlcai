@@ -123,10 +123,12 @@ function editPrompt(edit: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { postId, format, instruction } = (await req.json().catch(() => ({}))) as {
+    const { postId, format, instruction, learn } = (await req.json().catch(() => ({}))) as {
       postId?: string
       format?: unknown
       instruction?: string
+      /** false: already learned via the 👎 feedback (style-feedback route). */
+      learn?: boolean
     }
     const text = instruction?.trim()
     if (!postId || !text || !isEditableFormat(format)) {
@@ -188,7 +190,10 @@ export async function POST(req: NextRequest) {
       throw e
     }
 
-    const learning = learnFromInstruction(supabase, user.id, anthropicKey, text, NOUN[format])
+    const learning =
+      learn === false
+        ? Promise.resolve(null)
+        : learnFromInstruction(supabase, user.id, anthropicKey, text, NOUN[format])
 
     // A carousel laid out in code is edited in its layout — exact and
     // obedient — and only the illustrations she asks about are redrawn. Only
