@@ -145,6 +145,7 @@ export function ScheduleInCalendarBar({ corePostId, hasUploadedMedia = false }: 
   return (
     <div
       dir="rtl"
+      data-demo="schedule-bar"
       className="pointer-events-none fixed bottom-8 start-8 z-40 flex items-center gap-3"
     >
       {scheduled.length > 0 ? (

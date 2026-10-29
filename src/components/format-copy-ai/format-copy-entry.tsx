@@ -32,6 +32,7 @@ export function FormatCopyActionRow({
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2 [&>*]:flex-1 [&>*]:min-w-0">
         <span
+          data-demo="copy-ai-button"
           className="inline-flex"
           // The canvas pans on mousedown; keep a click on the button a click.
           onMouseDown={(e) => e.stopPropagation()}

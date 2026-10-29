@@ -3,6 +3,7 @@ import { Rubik } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "sonner";
 import { LongWaitNavigator } from "@/components/long-wait-navigator";
+import { PhebeDemoDriver } from "@/components/phebe-demo-driver";
 import { HookGenerationProvider } from "@/components/hook-generation-provider";
 import { SystemNoticeToasts } from "@/components/system-notice-toasts";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -54,6 +55,8 @@ export default function RootLayout({
             </HookGenerationProvider>
             <SystemNoticeToasts />
             <LongWaitNavigator />
+            {/* Phebe's live demo — inert unless Phebe opened this page. */}
+            <PhebeDemoDriver />
           </TooltipProvider>
           <Toaster
             position="bottom-center"

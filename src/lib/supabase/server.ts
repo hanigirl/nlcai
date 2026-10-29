@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { EMBED_MARKER, embedCookieOptions } from "@/lib/phebe-demo";
 import type { Database } from "./types";
 
 export async function createClient() {
@@ -9,6 +10,8 @@ export async function createClient() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      // Phebe's demo frame — see lib/phebe-demo.ts.
+      cookieOptions: embedCookieOptions(!!cookieStore.get(EMBED_MARKER)),
       cookies: {
         getAll() {
           return cookieStore.getAll();

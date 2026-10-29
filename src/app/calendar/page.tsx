@@ -213,6 +213,8 @@ function PlannedCard({
   // A click opens the post; a drag still moves it (the browser fires no click after a drag).
   const open = onOpen
     ? {
+        // Phebe's live demo may open a draft (lib/phebe-demo.ts).
+        "data-demo": "planned-card",
         role: "button" as const,
         tabIndex: 0,
         onClick: onOpen,
@@ -1590,6 +1592,7 @@ export default function CalendarPage() {
                   <Button
                     size="sm"
                     variant="outline"
+                    data-demo="calendar-arrange-cancel"
                     onClick={() => {
                       setPlanned(null)
                       setPlannedUnmatched([])
@@ -1600,7 +1603,7 @@ export default function CalendarPage() {
                 </div>
               ) : (
                 <div className="flex items-center gap-1">
-                  <Button size="sm" variant="outline" onClick={onArrange} disabled={railCards.length === 0}>
+                  <Button size="sm" variant="outline" data-demo="calendar-arrange" onClick={onArrange} disabled={railCards.length === 0}>
                     <CalendarClock className="size-4" aria-hidden />
                     סידור אוטומטי בלוח
                   </Button>

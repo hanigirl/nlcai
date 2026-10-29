@@ -2473,7 +2473,7 @@ function ProjectPageInner() {
                         </span>
                       )}
                     </div>
-                    <div className="flex flex-col gap-4 px-6 items-end">
+                    <div className="flex flex-col gap-4 px-6 items-end" data-demo="core-post-body">
                       <RichBodyEditor
                         value={corePost}
                         onChange={setCorePost}

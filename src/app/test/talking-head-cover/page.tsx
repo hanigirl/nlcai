@@ -71,7 +71,7 @@ function CoverCard({ state }: { state: State }) {
           </Button>
         </div>
         <div className="flex justify-center">
-          <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden">
+          <div data-demo="cover-preview" className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={SAMPLE_FRAME} alt="" className="absolute inset-0 w-full h-full object-cover" />
             <div className="absolute inset-0 flex items-center justify-center px-[11px]">
@@ -93,7 +93,7 @@ function CoverCard({ state }: { state: State }) {
             </div>
           </div>
         </div>
-        <div className="flex items-center justify-between gap-3" dir="rtl">
+        <div className="flex items-center justify-between gap-3" dir="rtl" data-demo="cover-swatches">
           <CoverColorSwatches
             value={pill}
             brandColors={brandColors}

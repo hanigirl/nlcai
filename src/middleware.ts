@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { EMBED_MARKER, embedCookieOptions } from "@/lib/phebe-demo";
 
 // Onboarding gate. Two jobs:
 //   1. Send anonymous users to /login.
@@ -71,6 +72,8 @@ export async function middleware(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      // Phebe's demo frame — see lib/phebe-demo.ts.
+      cookieOptions: embedCookieOptions(!!request.cookies.get(EMBED_MARKER)),
       cookies: {
         getAll() {
           return request.cookies.getAll();

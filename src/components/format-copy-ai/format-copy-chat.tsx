@@ -54,6 +54,7 @@ export function FormatCopyChat({
   return (
     <div
       ref={panelRef}
+      data-demo="copy-ai-panel"
       dir="rtl"
       role="dialog"
       aria-label={`עריכת ${COPY_NOUN[fid]} עם AI`}

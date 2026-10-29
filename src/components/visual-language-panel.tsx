@@ -571,7 +571,7 @@ export function VisualLanguagePanel({
       </div>
 
       {/* ── 1. Brand colours ── */}
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3" data-demo="brand-colors">
       <AccordionSection
         title="צבעי מותג"
         open={openSection === "colors"}

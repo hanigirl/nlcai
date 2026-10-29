@@ -15,7 +15,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { LongWaitBusyRow } from "@/components/long-wait-busy-row"
-import { AWAY_COPY, startLongWait } from "@/lib/long-wait"
+import { AWAY_COPY, longWaitDone, startLongWait } from "@/lib/long-wait"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { isOwner } from "@/lib/owner"
@@ -25,13 +25,16 @@ type StateId = "running" | "parallel" | "done" | "error" | "ai-edit" | "ai-edit-
 const STATES: { id: StateId; title: string; description: string }[] = [
   { id: "running", title: "בזמן יצירה", description: "טוסט הטעינה של הקרוסלה, עם ההערה בשורה השנייה." },
   { id: "parallel", title: "כמה יצירות במקביל", description: "קרוסלה, בי-רול וסטורי רצים יחד: שלושה טוסטים, כל אחד עם ההערה." },
-  { id: "done", title: "הסתיים", description: "אותו טוסט הופך ל״מוכן״. מגיע בכל מסך, גם אחרי שעברו." },
+  { id: "done", title: "הסתיים", description: "אותו טוסט הופך ל״מוכן״, עם „לצפייה בפוסט”. מגיע בכל מסך, גם אחרי שעברו." },
   { id: "error", title: "שגיאה", description: "אותו טוסט הופך לשגיאה." },
   { id: "ai-edit", title: "עריכה עם AI בזמן עבודה", description: "שורת ״מעדכנים…״ בחלון העריכה, וההערה מתחתיה." },
   { id: "ai-edit-away", title: "עריכה הסתיימה אחרי יציאה", description: "החלון כבר לא פתוח, אז התוצאה מגיעה כטוסט." },
 ]
 
 const CAROUSEL_TITLE = "מציירים קרוסלת AI (מותג)... זה לוקח כמה דקות"
+// A sample post id: "לצפייה בפוסט" shows as it does away from the post (the
+// link itself leads to a post that doesn't exist).
+const SAMPLE_POST_ID = "preview-long-wait-post"
 
 function fire(state: StateId) {
   const id = `long-wait-preview-${state}-${Date.now()}`
@@ -48,7 +51,7 @@ function fire(state: StateId) {
       break
     case "done":
       startLongWait(id, CAROUSEL_TITLE)
-      window.setTimeout(() => toast.success("הקרוסלה (מותג) מוכנה", { id, duration: 6000 }), 2500)
+      window.setTimeout(() => longWaitDone(id, "הקרוסלה (מותג) מוכנה", { postId: SAMPLE_POST_ID, duration: 10000 }), 2500)
       break
     case "error":
       startLongWait(id, CAROUSEL_TITLE)
@@ -58,7 +61,7 @@ function fire(state: StateId) {
       )
       break
     case "ai-edit-away":
-      toast.success(AWAY_COPY.carousel.done, { id, duration: 8000 })
+      longWaitDone(id, AWAY_COPY.carousel.done, { postId: SAMPLE_POST_ID, duration: 10000 })
       break
     case "ai-edit":
       break

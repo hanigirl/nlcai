@@ -36,6 +36,24 @@ const nextConfig: NextConfig = {
     "/api/media/ai-edit": ["./node_modules/@sparticuz/chromium/bin/**"],
   },
   typescript: { ignoreBuildErrors: true },
+  // Who may show the app inside a frame: the app itself and Phebe (Hani's
+  // dashboard, in production and on her Mac) — for Phebe's live demo
+  // (lib/phebe-demo.ts, keep the two lists together). Until now any site
+  // could frame it; with the demo's SameSite=None sign-in that would be a
+  // clickjacking risk, so the list is closed rather than left open.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: "frame-ancestors 'self' https://phebe-dashboard.vercel.app http://localhost:* http://127.0.0.1:*",
+          },
+        ],
+      },
+    ]
+  },
 };
 
 export default nextConfig;
