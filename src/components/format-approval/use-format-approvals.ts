@@ -34,7 +34,7 @@ import {
   type FormatId,
 } from "@/lib/timing-storage"
 import { toast } from "sonner"
-import { usePreviewAccess } from "@/lib/use-scheduling-access"
+import { useSchedulingPreview } from "@/lib/use-scheduling-access"
 
 /** "scheduled" = approved AND already on the calendar. */
 export type ApprovalStatus = "no-media" | "pending" | "approved" | "scheduled" | "edited"
@@ -74,7 +74,7 @@ export function useFormatApprovals({
   const [entries, setEntries] = useState<Record<string, Entry>>({})
   const [edited, setEdited] = useState<Record<string, boolean>>({})
   const [scheduled, setScheduled] = useState<Record<string, boolean>>({})
-  const previewOn = usePreviewAccess() === true
+  const previewOn = useSchedulingPreview() === true
 
   const formatsKey = formats.join(",")
   const sigKey = formats.map((f) => `${f}=${mediaSigs[f] ?? ""}`).join("\n")

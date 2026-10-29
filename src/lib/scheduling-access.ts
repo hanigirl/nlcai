@@ -24,11 +24,10 @@ export function canUseScheduleAllA(email: string | null | undefined): boolean {
 }
 
 /**
- * Today's batch (format copy AI edit, Drive media fixes, brand-colour cover,
- * save-to-visual-language chip, dislike opens AI edit, the long-wait note,
- * AI edit panels above the bar, calendar auto-arranged card opens its edit).
- * Live for Hani only while she tries it (2026-10-29); everyone else gets the
- * app as before.
+ * Scheduling changes Hani is still trying (2026-10-29): a post laid on the
+ * board by "סידור אוטומטי" opens its edit modal, and editing a scheduled
+ * format takes it off the calendar back to "מאושר". The rest of that day's
+ * batch is open to everyone.
  */
 export const PREVIEW_EMAILS = ["hanigirl@gmail.com"]
 

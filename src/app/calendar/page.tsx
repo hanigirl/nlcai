@@ -51,7 +51,7 @@ import {
   type PreviewSlide,
   type PublishStatus as PreviewPublishStatus,
 } from "@/components/format-preview/shared"
-import { usePreviewAccess, useScheduleAllA, useSchedulingAccess } from "@/lib/use-scheduling-access"
+import { useScheduleAllA, useSchedulingAccess, useSchedulingPreview } from "@/lib/use-scheduling-access"
 import {
   hasAnySlot,
   planScheduleAll,
@@ -556,7 +556,7 @@ export default function CalendarPage() {
   // slots + in-place edit), the approved-only rail and the format preview.
   const schedulingOn = useSchedulingAccess() === true
   // Today's batch (2026-10-29): a click on an auto-arranged card opens it — Hani only.
-  const previewOn = usePreviewAccess() === true
+  const previewOn = useSchedulingPreview() === true
   // Direction A of "schedule all" (task 4084d905): one row in the panel
   // header, drafts drawn like scheduled cards, no schedule settings on the
   // board. Hani only for now (lib/scheduling-access).

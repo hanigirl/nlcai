@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { getAuthUser } from "@/lib/auth-user"
-import { canUsePreview } from "@/lib/scheduling-access"
 import {
   listPublicFolder,
   parseFolderLink,
@@ -61,7 +60,7 @@ export async function GET(req: NextRequest) {
   const user = await getAuthUser(supabase)
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const saved = await readSaved(user.id)
-  const preview = canUsePreview(user.email)
+  const preview = true
 
   const key = req.nextUrl.searchParams.get("key")
   if (key) {
@@ -84,7 +83,7 @@ export async function POST(req: NextRequest) {
   const { key, link } = (await req.json().catch(() => ({}))) as { key?: unknown; link?: unknown }
   if (!isKey(key)) return NextResponse.json({ error: "bad key" }, { status: 400 })
   const saved = await readSaved(user.id)
-  const preview = canUsePreview(user.email)
+  const preview = true
 
   const trimmed = typeof link === "string" ? link.trim() : ""
   if (!trimmed) {

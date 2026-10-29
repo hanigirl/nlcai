@@ -4,7 +4,6 @@ import { isInvalidClaudeKey } from "@/lib/claude-credits"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
-import { canUsePreview } from "@/lib/scheduling-access"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import { stripDashes } from "@/lib/strip-dashes"
 import { buildFormatCopyRefinerPrompt } from "@/lib/agents/format-copy-refiner"
@@ -22,7 +21,6 @@ export async function POST(req: NextRequest) {
     const supabase = await createClient()
     const user = await getAuthUser(supabase)
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    if (!canUsePreview(user.email)) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
     const { format, currentText, hook, messages } = (await req.json()) as {
       format?: string

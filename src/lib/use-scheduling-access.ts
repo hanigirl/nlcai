@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useSyncExternalStore } from "react"
+import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { canUsePreview, canUseScheduleAllA, canUseScheduling } from "@/lib/scheduling-access"
@@ -15,49 +15,24 @@ export function useScheduleAllA(): boolean | null {
   return useEmailGate(canUseScheduleAllA)
 }
 
-/** Today's batch (2026-10-29) — Hani only while she tries it. */
-export function usePreviewAccess(): boolean | null {
-  const on = useEmailGate(canUsePreview)
-  // Fill the shared cache too, so a store's first toast already knows.
-  useEffect(() => {
-    if (on !== null) setPreviewNow(on)
-  }, [on])
-  return on
+/** The scheduling changes still in trial — Hani only (see PREVIEW_EMAILS). */
+export function useSchedulingPreview(): boolean | null {
+  return useEmailGate(canUsePreview)
 }
 
 /**
- * The same gate for code outside React (the generation stores' toasts) and
- * for small components drawn many times (Drive thumbnails), which share one
- * session read instead of one each. False until it's known, so anything
- * that runs before the session is read keeps the old behaviour.
+ * The 2026-10-29 batch was tried on Hani's account, then opened to everyone
+ * the same day. These stay as always-on switches until the old code paths
+ * behind them are removed.
  */
-let previewNow: boolean | null = null
-let previewAsked = false
-const previewListeners = new Set<() => void>()
-function setPreviewNow(on: boolean) {
-  if (previewNow === on) return
-  previewNow = on
-  previewListeners.forEach((l) => l())
+export function usePreviewAccess(): boolean | null {
+  return true
 }
 export function previewAccessNow(): boolean {
-  if (!previewAsked && typeof window !== "undefined") {
-    previewAsked = true
-    getCurrentUser(createClient())
-      .then(({ data }) => setPreviewNow(canUsePreview(data.user?.email)))
-      .catch(() => setPreviewNow(false))
-  }
-  return previewNow === true
+  return true
 }
-function subscribePreview(l: () => void) {
-  previewListeners.add(l)
-  previewAccessNow()
-  return () => {
-    previewListeners.delete(l)
-  }
-}
-/** Shared-read variant of usePreviewAccess; false while unknown. */
 export function usePreviewAccessShared(): boolean {
-  return useSyncExternalStore(subscribePreview, () => previewNow === true, () => false)
+  return true
 }
 
 function useEmailGate(allowed: (email: string | null | undefined) => boolean): boolean | null {
