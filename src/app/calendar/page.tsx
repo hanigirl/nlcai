@@ -57,6 +57,9 @@ import {
   type PlannedSlot,
 } from "@/lib/schedule-all"
 import { NoSettingsDialog, PreviewBar, ScheduleAllButton } from "@/components/schedule-all"
+// Review only (?schedset=a|b): scheduling settings as a floating modal.
+import { CalendarScheduleSettings, DayHeaderRoutineHint } from "@/components/schedule-settings-review"
+import { useSchedsetParams } from "@/lib/schedule-settings-review"
 import { CorePostSheet, type CorePostSheetData } from "@/components/core-post-sheet"
 import { FormatThumbnail } from "@/components/format-thumbnail"
 import { InstagramConnectionControl } from "@/components/instagram-connect"
@@ -492,6 +495,8 @@ export default function CalendarPage() {
   const schedulingOn = useSchedulingAccess() === true
   const rulesVariant: "a" | null = schedulingOn ? "a" : null
   const routine = usePostingSchedule()
+  // Review only: `?schedset=a|b` swaps the on-board routine for the settings modal.
+  const schedset = useSchedsetParams()
   const [routineEditing, setRoutineEditing] = useState(false)
   const panelBeforeEditRef = useRef(false)
   const startRoutineEdit = () => {
@@ -1267,7 +1272,9 @@ export default function CalendarPage() {
                 </Button>
               </div>
               <div className="flex items-center gap-2">
-                {rulesVariant === "a" && (
+                {schedset.variant ? (
+                  <CalendarScheduleSettings variant={schedset.variant} initialState={schedset.state} />
+                ) : rulesVariant === "a" && (
                   <RoutineButton schedule={routine.saved} onEdit={startRoutineEdit} />
                 )}
                 <Button variant="outline" size="sm" onClick={goThisWeek} disabled={isCurrentWeek}>
@@ -1335,6 +1342,7 @@ export default function CalendarPage() {
                       )}
                     </div>
                     )}
+                    {schedset.variant === "b" && <DayHeaderRoutineHint dayIndex={day.getDay()} />}
                   </div>
                 )
               })}
@@ -1390,6 +1398,7 @@ export default function CalendarPage() {
                       {/* Variant A: the routine's still-open slots for this
                           day, as dashed ghosts. Upcoming days only. */}
                       {rulesVariant === "a" &&
+                        !schedset.variant &&
                         routine.hasCustom &&
                         !past &&
                         unfilledSlots(

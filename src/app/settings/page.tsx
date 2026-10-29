@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
+import { ScheduleSettingsTab } from "@/components/schedule-settings-review"
+import { SCHEDSET_STATES, type SchedsetState, type SchedsetVariant } from "@/lib/schedule-settings-review"
 import { Loader2, Link2, Unlink, Plus, Trash2, Upload, X, Sparkles, Check, Type, Image as ImageIcon, Search, Download, AlertCircle, AlertTriangle, FolderOpen } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { VisualLanguagePanel, type ExamplesTab } from "@/components/visual-language-panel"
@@ -47,7 +49,7 @@ const GOOGLE_FONTS = [
 ]
 
 type KeyName = "anthropic_api_key" | "heygen_api_key" | "apify_api_key" | "openai_api_key" | "gemini_api_key"
-type SettingsTab = "connections" | "business" | "products" | "creators" | "media"
+type SettingsTab = "connections" | "business" | "products" | "creators" | "media" | "schedule"
 
 interface KeyConfig {
   key: KeyName
@@ -232,6 +234,8 @@ const SUB_SECTIONS: Record<SettingsTab, { id: string; label: string; icon: typeo
     { id: "visual", label: "שפה ויזואלית", icon: Sparkles },
     { id: "examples", label: "דוגמאות לשימוש", icon: ImageIcon },
   ],
+  // Review only (?schedset=a|b) — the "תזמון" tab has no sub-sections.
+  schedule: [],
 }
 
 export default function SettingsPage() {
@@ -248,6 +252,12 @@ function SettingsPageInner() {
   type Product = ProductEntry
 
   const searchParams = useSearchParams()
+  // Review only: `?schedset=a|b` adds the "תזמון" tab. Absent → unchanged.
+  const schedsetRaw = searchParams.get("schedset")
+  const schedset: SchedsetVariant | null = schedsetRaw === "a" || schedsetRaw === "b" ? schedsetRaw : null
+  const schedsetStateRaw = searchParams.get("state") as SchedsetState | null
+  const schedsetState: SchedsetState =
+    schedset && schedsetStateRaw && SCHEDSET_STATES[schedset].some((x) => x.id === schedsetStateRaw) ? schedsetStateRaw : "view"
   const initialTab = (searchParams.get("tab") as SettingsTab) || "connections"
   // Settings → מדיה → "מדיה מ-Google Drive": one shared folder per kind of
   // media, read on the canvas by "מדיה משלכם מ Google Drive" (Hani, 2026-10-22).
@@ -1073,6 +1083,7 @@ function SettingsPageInner() {
     { id: "products", label: "מוצרים" },
     { id: "creators", label: "יוצרים מובילים" },
     { id: "media", label: "מדיה" },
+    ...(schedset ? [{ id: "schedule" as const, label: "תזמון" }] : []),
   ]
 
   // Reset the sub-section when the tab ACTUALLY changes — never on mount.
@@ -1537,6 +1548,11 @@ function SettingsPageInner() {
                   />
                 </div>
               </div>
+            )}
+
+            {/* ==================== SCHEDULE TAB (review only) ==================== */}
+            {activeTab === "schedule" && schedset && (
+              <ScheduleSettingsTab variant={schedset} initialState={schedsetState} />
             )}
 
             {/* ==================== MEDIA TAB ==================== */}
