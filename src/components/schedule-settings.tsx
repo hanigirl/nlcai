@@ -31,11 +31,6 @@ const SCHEDULE_SETTINGS_DESCRIPTION =
 function ScheduleSettingsBody({ routine }: { routine: Routine }) {
   return (
     <div className="flex flex-col gap-4">
-      {!routine.hasCustom && (
-        <p className="text-xs-body text-text-neutral-default">
-          זו נקודת התחלה שהכנו לכם. מה שתגדירו כאן חל על כל הלוח.
-        </p>
-      )}
       <ScheduleSettingsForm draft={routine.draft} onChange={routine.setDraft} />
       {routine.saveError && <SaveErrorAlert onRetry={() => routine.save()} />}
     </div>
