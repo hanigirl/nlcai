@@ -258,21 +258,11 @@ export function MediaAiChat({
             {asking && i === 0 && (
               <DislikeReasonChips value={reasons} onChange={setReasons} className="max-w-[85%] justify-end" />
             )}
-            {m.done && preview && (
+            {/* The save-to-visual-language chip is open to everyone (Hani, 2026-10-29). */}
+            {m.done && (
               <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
                 <Check className="size-3.5 text-green-success-50" />
                 הוחל.
-              </span>
-            )}
-            {m.done && !preview && (
-              <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
-                <Check className="size-3.5 text-yellow-30" />
-                הוחל. אהבתם? סמנו 👍 או 👎 בכרטיס, כדי שה-AI ילמד את הסגנון שלכם.
-              </span>
-            )}
-            {m.remembered && !preview && (
-              <span className="max-w-[85%] rounded-xl border border-border-neutral-default px-3 py-1.5 text-xs-body text-text-neutral-default">
-                אזכור את זה גם להבא, בכל הפורמטים: {m.remembered}
               </span>
             )}
           </div>
@@ -291,7 +281,7 @@ export function MediaAiChat({
 
       {/* Composer */}
       <div className="border-t border-border-neutral-default p-3">
-        {preview && lastEdit && !loading && (
+        {lastEdit && !loading && (
           <SaveToVisualLanguageChip
             key={`${chatFormat}:${lastEdit.index}`}
             instruction={lastEdit.instruction}
