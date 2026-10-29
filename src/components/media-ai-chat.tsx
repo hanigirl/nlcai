@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { startBRollEdit } from "@/lib/broll-generation-store"
 import { getAiStyle, recordAiStyleVote, rememberAiStyle } from "@/lib/ai-style-provenance"
+import { LongWaitBusyRow } from "@/components/long-wait-busy-row"
+import { AWAY_COPY, trackAwayResult, useIsWatching } from "@/lib/long-wait"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
@@ -104,6 +106,7 @@ export function MediaAiChat({
   }
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
+  const isWatching = useIsWatching()
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -116,13 +119,19 @@ export function MediaAiChat({
     setInput("")
     setMessages((prev) => [...prev, { role: "user", content: text }])
     setLoading(true)
-    const result =
+    // If she leaves before it lands, the result arrives as a toast (the
+    // server has saved it either way) — see lib/long-wait.
+    const result = await trackAwayResult(
+      `ai-edit-${postId}-${format}-${Date.now()}`,
       format === "b_roll"
-        ? await startBRollEdit(postId, text, { quiet: true }).then((r) => {
+        ? startBRollEdit(postId, text, { quiet: true }).then((r) => {
             if (r.ok) markAiMade(postId, "b_roll", r.url)
             return r
           })
-        : await editImages(text)
+        : editImages(text),
+      isWatching,
+      AWAY_COPY[format],
+    )
     setLoading(false)
     setMessages((prev) => [
       ...prev,
@@ -209,10 +218,7 @@ export function MediaAiChat({
         ))}
 
         {loading && (
-          <div className="flex items-center gap-2 text-small text-text-neutral-default">
-            <Loader2 className="size-4 animate-spin text-yellow-50" />
-            <span>{copy.busy}</span>
-          </div>
+          <LongWaitBusyRow text={copy.busy} />
         )}
       </div>
 
