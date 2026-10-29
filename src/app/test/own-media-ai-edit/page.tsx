@@ -11,6 +11,13 @@
  *   Here the render is stubbed: the "clip" is a CSS stand-in drawn by this
  *   page. On a carousel / single image the planner's answer offers the story
  *   instead (never "can't animate").
+ *   …&state=anim-edit-working|anim-edit-done|anim-edit-error|anim-edit-remade —
+ *   a story whose frame 3 is an animated frame the AI made (loud white
+ *   background). She asks: "בפריים 3 תוריד את הרקע הבומבסטי הלבן, ופשוט
+ *   תכתוב בלבן…". The plan is edit_animated_frame: frame 3 is changed IN
+ *   PLACE (plain dark background, white text) — no second frame is added.
+ *   `remade`: an older frame with no stored composition, made again, and the
+ *   reply says so in one line. These states always use the image story.
  *                               &state=idle|working|caption|slide|refused|error|reopen
  *
  * `reopen` — the panel keeps its conversation (lib/ai-chat-session-store):
@@ -122,6 +129,10 @@ const STATES = [
   { id: "anim-rendering", label: "מונפש: מרנדרים" },
   { id: "anim-added", label: "מונפש: נוסף" },
   { id: "anim-error", label: "מונפש: שגיאה" },
+  { id: "anim-edit-working", label: "עריכת מונפש: בעבודה" },
+  { id: "anim-edit-done", label: "עריכת מונפש: עודכן" },
+  { id: "anim-edit-error", label: "עריכת מונפש: שגיאה" },
+  { id: "anim-edit-remade", label: "עריכת מונפש: פריים ישן, נוצר מחדש" },
   { id: "reopen", label: "סגירה ופתיחה מחדש" },
 ] as const
 type State = (typeof STATES)[number]["id"]
@@ -130,6 +141,17 @@ const ANIM_ASK = "להוסיף בסוף פריים עם טקסט מונפש: ר�
 const ANIM_TEXT = "רוצים תיק שמספר איך אתם חושבים?"
 /** Stands in for the rendered clip: the page draws the animated text itself. */
 const ANIM_CLIP = "/preview/ai-anim.mp4"
+/** An animated frame the AI made, at the path the executor recognises as one. */
+const ANIM_FRAME = "/preview/story/ai-anim-00000000-0000-4000-8000-000000000000.mp4"
+const ANIM_FRAME_TEXT = "רוצים תיק שמספר איך אתם חושבים?"
+const EDIT_ASK = "אהבתי מאוד, אבל בפריים 3 תוריד את הרקע הבומבסטי הלבן, ופשוט תכתוב בלבן ״תיק שמראה איך אתם חושבים״"
+const EDIT_TEXT = "תיק שמראה איך אתם חושבים"
+const isAnimEdit = (s: State) => s.startsWith("anim-edit-")
+
+/** Where a stand-in clip says what it shows: its words and its look. */
+function animUrl(base: string, text: string, look: "loud" | "plain") {
+  return `${base}?t=${Date.now()}&anim=${encodeURIComponent(text)}&look=${look}`
+}
 
 /** What the preview auto-sends for each non-idle state. */
 const ASK: Record<Exclude<State, "idle">, string> = {
@@ -142,6 +164,10 @@ const ASK: Record<Exclude<State, "idle">, string> = {
   "anim-rendering": ANIM_ASK,
   "anim-added": ANIM_ASK,
   "anim-error": ANIM_ASK,
+  "anim-edit-working": EDIT_ASK,
+  "anim-edit-done": EDIT_ASK,
+  "anim-edit-error": EDIT_ASK,
+  "anim-edit-remade": EDIT_ASK,
   reopen: "לשנות את הכיתוב ל: התיק שלכם מספר את הסיפור הלא נכון",
 }
 
@@ -180,6 +206,20 @@ function cannedPlan(state: State, instruction: string, frames: OwnFrameInfo[], f
       : /הרקע|להבהיר|תבהירי|פילטר/.test(instruction) ? "refused"
       : "caption"
     : state
+  if (isAnimEdit(state)) {
+    return {
+      reply: `בפריים ${n} הורדתי את הרקע הלבן הבומבסטי, ועכשיו כתוב עליו בלבן ״${EDIT_TEXT}״, פשוט ונקי.`,
+      ops: [
+        {
+          op: "edit_animated_frame",
+          frame: n,
+          instruction: instruction,
+          design: "בלי הרקע הבומבסטי הלבן, רקע פשוט, טקסט לבן ופשוט",
+          headline: EDIT_TEXT,
+        },
+      ],
+    }
+  }
   const animKind = state === "anim-planning" ? "working" : state.startsWith("anim-") ? "anim" : kind
   if (animKind === "working") return "hang"
   if (animKind === "anim") {
@@ -220,6 +260,13 @@ function cannedPlan(state: State, instruction: string, frames: OwnFrameInfo[], f
   }
 }
 
+/** The AI-made animated frame the anim-edit states start with (one URL per page load). */
+let startAnimUrl: string | null = null
+function animFrameInfo(): OwnFrameInfo {
+  startAnimUrl ??= animUrl(ANIM_FRAME, ANIM_FRAME_TEXT, "loud")
+  return { url: startAnimUrl, kind: "video", aiMade: true, caption: "baked" }
+}
+
 function stubFetch(state: State, sample: Sample) {
   const ok = (body: unknown, status = 200, delay = 700) =>
     new Promise<Response>((resolve) =>
@@ -239,8 +286,23 @@ function stubFetch(state: State, sample: Sample) {
         const text = encodeURIComponent(String(body.headline ?? ANIM_TEXT))
         return ok({ url: `${ANIM_CLIP}?t=${Date.now()}&anim=${text}` }, 200, 2500)
       }
+      if (body.action === "edit_animated_frame") {
+        if (state === "anim-edit-working") return new Promise<Response>(() => {})
+        if (state === "anim-edit-error") {
+          return ok({ message: "העריכה של הפריים המונפש לא יצאה תקינה הפעם. נסו שוב." }, 500, 1500)
+        }
+        const words = String(body.headline ?? ANIM_FRAME_TEXT)
+        return ok(
+          {
+            url: animUrl(ANIM_FRAME.replace("00000000-0000-4000-8000-000000000000", "11111111-1111-4111-8111-111111111111"), words, "plain"),
+            remade: state === "anim-edit-remade",
+          },
+          200,
+          2500,
+        )
+      }
       if (body.action === "save") return ok({ urls: body.urls }, 200, 300)
-      const frames: OwnFrameInfo[] = sample.frames.map((f, i) => {
+      const frames: OwnFrameInfo[] = [...sample.frames.map((f, i): OwnFrameInfo => {
         const u = frameUrl(f, i)
         return {
           url: u,
@@ -249,7 +311,7 @@ function stubFetch(state: State, sample: Sample) {
           caption: "ours",
           record: { v: 1, sourceUrl: f.kind === "video" ? `${f.src}?v=${i}.mp4` : `${f.src}?i=${i}`, caption: { headline: f.caption, position: "bottom" } },
         }
-      })
+      }), ...(isAnimEdit(state) ? [animFrameInfo()] : [])]
       const plan = cannedPlan(state, String(body.instruction ?? ""), frames, sample.format)
       if (plan === "hang") return new Promise<Response>(() => {})
       if (plan === "error") return ok({ message: "העריכה לא הצליחה הפעם. נסו שוב." }, 500)
@@ -280,7 +342,10 @@ export default function Page() {
 function Preview() {
   const params = useSearchParams()
   const state = (STATES.find((s) => s.id === params.get("state"))?.id ?? "idle") as State
-  const sample = MEDIA.find((m) => m.id === params.get("media")) ?? MEDIA[0]
+  // Editing an animated frame is a story thing: those states use the image story.
+  const sample = isAnimEdit(state)
+    ? MEDIA.find((m) => m.id === "image-story")!
+    : (MEDIA.find((m) => m.id === params.get("media")) ?? MEDIA[0])
   // A fresh stage per media × state, so each starts from its own sample.
   return <Stage key={`${sample.id}:${state}`} state={state} sample={sample} />
 }
@@ -289,7 +354,10 @@ function Stage({ state, sample }: { state: State; sample: Sample }) {
   // Its own conversation per media × state (the panel keeps conversations).
   // (`-own-`: conversations from the earlier scripted `reopen` are left behind.)
   const postId = `${POST_ID}-own-${sample.id}-${state}`
-  const [urls, setUrls] = useState<string[]>(() => sample.frames.map(frameUrl))
+  const [urls, setUrls] = useState<string[]>(() => [
+    ...sample.frames.map(frameUrl),
+    ...(isAnimEdit(state) ? [animFrameInfo().url] : []),
+  ])
   const [open, setOpen] = useState(state !== "idle")
   // Stub the network before anything on the stage can call it. The scripted
   // states start clean; `reopen` keeps its conversation across reloads.
@@ -300,7 +368,8 @@ function Stage({ state, sample }: { state: State; sample: Sample }) {
     }
     return true
   })
-  const [index, setIndex] = useState(0)
+  // anim-edit: frame 3 (the animated one) is on screen when she asks.
+  const [index, setIndex] = useState(() => (isAnimEdit(state) ? sample.frames.length : 0))
   // As on /project: a reply that lands while the panel is closed reopens it.
   useChatRevealer({
     owns: (key) => key === mediaChatKey(postId, sample.format, true),
@@ -310,7 +379,9 @@ function Stage({ state, sample }: { state: State; sample: Sample }) {
 
   const current = urls[Math.min(index, urls.length - 1)] ?? urls[0]
   const shown = readCaption(current)
-  const anim = current.startsWith(ANIM_CLIP) ? new URL(current, "http://preview.local").searchParams.get("anim") : null
+  const currentParams = new URL(current, "http://preview.local").searchParams
+  const anim = currentParams.get("anim")
+  const look = currentParams.get("look") === "loud" ? "loud" : "plain"
   const isVideo = /\.mp4/.test(current) && anim === null
   const Icon = sample.icon
 
@@ -352,7 +423,7 @@ function Stage({ state, sample }: { state: State; sample: Sample }) {
           <div className={AI_HOVER_ZONE}>
             <div className={`relative overflow-hidden rounded-xl border border-border-neutral-default bg-gray-95 ${sample.aspect}`}>
               {anim !== null ? (
-                <AnimatedStandIn text={anim} />
+                <AnimatedStandIn text={anim} look={look} />
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={shown.src} alt="" className="h-full w-full object-contain" />
@@ -408,6 +479,7 @@ function Stage({ state, sample }: { state: State; sample: Sample }) {
             // reopen: no scripted ask — each media's thread is what she writes in it.
             autoSend={state === "idle" || state === "reopen" ? undefined : ASK[state]}
             currentUrls={urls}
+            currentFrame={isAnimEdit(state) ? index + 1 : undefined}
             open
             onOpenChange={(o) => setOpen(o)}
             onUpdated={(_, next) => {
@@ -422,13 +494,22 @@ function Stage({ state, sample }: { state: State; sample: Sample }) {
   )
 }
 
-/** The rendered clip, faked: per-word entrance on a dark background, looping. */
-function AnimatedStandIn({ text }: { text: string }) {
+/**
+ * The rendered clip, faked: per-word entrance, looping. `plain` = a dark,
+ * quiet background with white text; `loud` = the bombastic white one she
+ * asked to take off.
+ */
+function AnimatedStandIn({ text, look = "plain" }: { text: string; look?: "loud" | "plain" }) {
   const words = text.split(/\s+/).filter(Boolean)
+  const loud = look === "loud"
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-b from-gray-10 to-gray-20 px-5">
+    <div
+      className={`absolute inset-0 flex items-center justify-center px-5 ${
+        loud ? "bg-[radial-gradient(circle_at_50%_40%,#fff_0%,#fff7d6_45%,#ffd84d_100%)]" : "bg-gradient-to-b from-gray-10 to-gray-20"
+      }`}
+    >
       <style>{`@keyframes own-anim-word{0%{opacity:0;transform:translateY(14px)}12%,85%{opacity:1;transform:none}100%{opacity:0}}`}</style>
-      <p dir="rtl" className="text-center text-p-bold leading-snug text-white">
+      <p dir="rtl" className={`text-center leading-snug ${loud ? "text-[20px] font-black text-gray-10" : "text-p-bold text-white"}`}>
         {words.map((w, i) => (
           <span
             key={i}

@@ -13,7 +13,7 @@ import { resolveDesignDirection } from "@/lib/visual-language/direction"
 import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
 import { fetchDriveFile } from "@/lib/drive-fetch"
 import { planOwnMediaEdit, slidePrompt } from "@/lib/own-media-plan"
-import { makeAnimatedStoryFrame } from "@/lib/own-media-animated"
+import { editAnimatedStoryFrame, isAnimatedFrameUrl, makeAnimatedStoryFrame } from "@/lib/own-media-animated"
 import {
   canAddAnimatedFrame,
   isCaptionedRenderUrl,
@@ -41,6 +41,11 @@ export const maxDuration = 300
  *   action "animated_slide" — story only: one NEW frame with animated text,
  *                    a 7s clip from the b-roll engine (lib/own-media-animated).
  *                    Stored, URL returned; the set is saved by "save".
+ *   action "edit_animated_frame" — story only: an animated frame made by
+ *                    "animated_slide" changed in place — her instruction
+ *                    applied to its stored composition, re-rendered, new URL
+ *                    returned (`remade` when it had none and was made again).
+ *                    Only ever an AI-made clip of hers; her own frames never.
  *   action "save"  — the finished set, in order, becomes the format's media.
  *
  * The caption itself is drawn by the existing routes (story/generate-video-
@@ -49,7 +54,7 @@ export const maxDuration = 300
  */
 
 type Body = {
-  action?: "plan" | "slide" | "animated_slide" | "save"
+  action?: "plan" | "slide" | "animated_slide" | "edit_animated_frame" | "save"
   postId?: string
   format?: unknown
   instruction?: string
@@ -60,6 +65,11 @@ type Body = {
   headline?: string
   body?: string
   role?: ImageRole
+  /** Her own words about the look (new slide / animated frame / its edit). */
+  design?: string
+  /** edit_animated_frame: the frame's current clip. */
+  url?: string
+  newBackground?: boolean
   urls?: string[]
   driveLinks?: string[] | null
 }
@@ -164,12 +174,59 @@ export async function POST(req: NextRequest) {
           body: input.body,
           role,
           post: { title: post.title, hook: post.hook_text, body: post.body },
+          design: input.design,
         })
         return json({ url })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         if (msg === "composition_invalid" || msg === "composition_not_seekable") {
           return json({ error: msg, message: "האנימציה לא יצאה תקינה הפעם. נסו שוב." }, 500)
+        }
+        if (msg === "no_text") return json({ error: msg, message: "כתבו מה יהיה כתוב בפריים ואנפיש אותו." }, 400)
+        throw err
+      }
+    }
+
+    /* ------------------------ edit an animated frame ----------------------- */
+    if (input.action === "edit_animated_frame") {
+      const instruction = input.instruction?.trim()
+      if (!canAddAnimatedFrame(format)) return json({ error: "not_a_story" }, 400)
+      if (!instruction) return json({ error: "instruction is required" }, 400)
+      // Only a clip the AI made for her — never one of her own frames.
+      if (!input.url || !isAnimatedFrameUrl(input.url, user.id)) {
+        return json({ error: "not_ai_frame", message: "את הפריים הזה צילמתם בעצמכם, ואותו אני לא משנה." }, 400)
+      }
+      let anthropicKey: string
+      try {
+        anthropicKey = await getUserApiKey(supabase, "anthropic_api_key")
+      } catch {
+        return json(
+          { error: "anthropic_not_connected", message: "כדי לערוך את הפריים המונפש צריך לחבר מפתח Claude בהגדרות." },
+          400,
+        )
+      }
+      const role: ImageRole = input.role === "cover" || input.role === "content" ? input.role : "closing"
+      try {
+        const done = await editAnimatedStoryFrame(supabase, user.id, {
+          anthropicKey,
+          openaiKey: () => getUserApiKey(supabase, "openai_api_key"),
+          url: input.url,
+          instruction,
+          design: input.design,
+          headline: input.headline,
+          body: input.body,
+          newBackground: input.newBackground === true,
+          role,
+          post: { title: post.title, hook: post.hook_text, body: post.body },
+        })
+        return json(done)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (msg === "composition_invalid" || msg === "composition_not_seekable") {
+          return json({ error: msg, message: "העריכה של הפריים המונפש לא יצאה תקינה הפעם. נסו שוב." }, 500)
+        }
+        if (msg === "openai_not_connected") {
+          return json({ error: msg, message: "לרקע חדש צריך לחבר מפתח OpenAI בהגדרות." }, 400)
         }
         if (msg === "no_text") return json({ error: msg, message: "כתבו מה יהיה כתוב בפריים ואנפיש אותו." }, 400)
         throw err
@@ -201,6 +258,7 @@ export async function POST(req: NextRequest) {
           role,
           direction,
           context,
+          design: input.design?.trim() || undefined,
           width: W,
           height: H,
         }),

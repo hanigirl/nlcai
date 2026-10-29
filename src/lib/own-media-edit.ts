@@ -15,6 +15,9 @@ import type { CaptionSpec, OwnEditFormat, OwnEditOp, OwnEditPlan, OwnFrameInfo }
  *   - a new AI slide       → /api/media/own-edit {action:"slide"}
  *   - a new animated frame → /api/media/own-edit {action:"animated_slide"}
  *                            (story; the b-roll engine, ~3 min)
+ *   - change an animated frame the AI made → {action:"edit_animated_frame"}
+ *                            (its stored composition revised, re-rendered,
+ *                            replaced in place; never one of her own frames)
  *   - remove / reorder / duplicate → just the order of the set
  * and saves the finished set once, at the end.
  *
@@ -31,6 +34,17 @@ const FAIL = "העריכה לא הצליחה הפעם. נסו שוב."
 
 /** The busy row while the animated frame renders (it's the long one). */
 export const ANIMATING = "מנפישים פריים חדש עם הטקסט שלכם... זה לוקח כשלוש דקות"
+
+/** The busy row while an animated frame the AI made is re-rendered with her change. */
+export function reanimating(frame: number): string {
+  return `מעדכנים את פריים ${frame} לפי מה שביקשתם... זה לוקח כשתי דקות`
+}
+
+/** Said once when an older animated frame had nothing to edit and was made again. */
+export const REMADE_NOTE = "הפריים הזה נוצר לפני שהתחלנו לשמור את העיצוב שלו, אז יצרתי אותו מחדש לפי מה שביקשתם."
+
+/** A clip the animation engine made (lib/own-media-animated), not one of hers. */
+const AI_ANIM_CLIP = /\/story\/ai-anim-[0-9a-f-]{36}\.mp4/i
 
 async function postJson<T>(url: string, body: unknown): Promise<{ ok: boolean; data: T }> {
   const res = await fetch(url, {
@@ -113,7 +127,44 @@ async function execute(
   // caption ops resolve against `original`; structure ops then rebuild `set`.
   const original: Item[] = frames.map((f, i) => ({ ...f, link: driveLinks?.[i] }))
   const problems: string[] = []
+  const notes: string[] = []
   let styleChange = false
+
+  // An animated frame the AI made, changed in place — before the structure
+  // ops, so a reorder or a new slide still finds it at its number.
+  for (const op of plan.ops) {
+    if (op.op !== "edit_animated_frame") continue
+    const item = original[op.frame - 1]
+    if (!item) continue
+    if (!item.aiMade || item.kind !== "video" || !AI_ANIM_CLIP.test(item.url)) {
+      problems.push(
+        item.aiMade
+          ? "את השקופית הזאת אפשר לעצב מחדש כשקופית חדשה במקומה. בקשו ואחליף אותה."
+          : "את הפריים הזה צילמתם בעצמכם, ואותו אני לא משנה.",
+      )
+      continue
+    }
+    onProgress?.(reanimating(op.frame))
+    const made = await postJson<{ url?: string; remade?: boolean; message?: string }>("/api/media/own-edit", {
+      action: "edit_animated_frame",
+      postId,
+      format,
+      url: item.url,
+      instruction: op.instruction,
+      design: op.design,
+      headline: op.headline,
+      body: op.body,
+      newBackground: op.newBackground,
+      role: op.frame === 1 ? "cover" : op.frame === frames.length ? "closing" : "content",
+    })
+    if (!made.ok || !made.data.url) {
+      problems.push(made.data.message ?? "העדכון של הפריים המונפש לא הצליח.")
+      continue
+    }
+    if (made.data.remade && !notes.includes(REMADE_NOTE)) notes.push(REMADE_NOTE)
+    styleChange = true
+    original[op.frame - 1] = { ...item, url: made.data.url }
+  }
 
   for (const op of plan.ops) {
     if (op.op !== "set_caption" && op.op !== "remove_caption") continue
@@ -157,6 +208,7 @@ async function execute(
         headline: op.headline,
         body: op.body,
         role: op.role ?? "closing",
+        design: op.design,
       })
       if (!made.ok || !made.data.url) {
         problems.push(made.data.message ?? (animated ? "הפריים המונפש לא נוצר." : "השקופית החדשה לא נוצרה."))
@@ -199,7 +251,7 @@ async function execute(
     })
   }
 
-  const note = problems.length ? ` (${problems[0]})` : ""
+  const note = (notes.length ? ` ${notes.join(" ")}` : "") + (problems.length ? ` (${problems[0]})` : "")
   return {
     ok: true,
     changed: true,

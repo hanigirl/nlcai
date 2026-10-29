@@ -104,15 +104,24 @@ export function cleanCaptionSpec(spec: unknown): CaptionSpec | null {
  * What the AI may do to her own media. Every op is carried out by code that
  * already exists (the caption burn, the still caption render, the set save,
  * the b-roll animation engine); only `add_slide` / `add_animated_slide` make
- * new pixels, and those are a NEW frame, never hers.
+ * new pixels, and those are a NEW frame, never hers. `edit_animated_frame`
+ * re-renders a frame the AI made — again never hers.
  * Frame numbers are 1-based, as she says them.
  */
 export type OwnEditOp =
   | { op: "set_caption"; frames: number[]; headline?: string; body?: string; position?: OwnCaptionPosition; style?: CaptionStyle }
   | { op: "remove_caption"; frames: number[] }
-  | { op: "add_slide"; after: number; headline?: string; body?: string; role?: "closing" | "content" | "cover" }
+  /** `design`: her own words about the look (Hebrew), a hard instruction over the visual-language defaults. */
+  | { op: "add_slide"; after: number; headline?: string; body?: string; role?: "closing" | "content" | "cover"; design?: string }
   /** Story only: a NEW frame whose text is animated (the b-roll engine), a 7s clip. */
-  | { op: "add_animated_slide"; after: number; headline?: string; body?: string; role?: "closing" | "content" | "cover" }
+  | { op: "add_animated_slide"; after: number; headline?: string; body?: string; role?: "closing" | "content" | "cover"; design?: string }
+  /**
+   * An animated frame the AI made earlier, changed in place: her instruction
+   * applied to its stored composition and re-rendered (lib/own-media-animated).
+   * Never one of her own frames. headline/body: its NEW words, only when she
+   * changes them. newBackground: a fresh AI background picture.
+   */
+  | { op: "edit_animated_frame"; frame: number; instruction: string; design?: string; headline?: string; body?: string; newBackground?: boolean }
   | { op: "remove_slide"; frames: number[] }
   | { op: "duplicate_slide"; frame: number }
   | { op: "reorder"; order: number[] }

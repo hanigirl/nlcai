@@ -28,6 +28,8 @@ export function buildBackgroundPrompt(
   framing: string,
   context: string,
   extraLines: string[] = [],
+  /** Her own words about the look (Hebrew ok) — wins over the visual language. */
+  design?: string,
 ): string {
   return [
     "Design a premium vertical 9:16 background image for a social video (full-bleed).",
@@ -43,6 +45,14 @@ export function buildBackgroundPrompt(
     // calm or the type sits on top of the busiest part of the picture.
     "- COMPOSITION: animated Hebrew headline type will be laid over the middle of the frame afterwards — leave a calm, uncluttered area there and put the visual interest around it.",
     ...extraLines,
+    ...(design?.trim()
+      ? [
+          "",
+          "THE CREATOR'S OWN DESIGN INSTRUCTION (hard rule — it wins over the visual language above: background colour, how plain or bombastic, brightness, style). Follow it for the background; ignore anything in it about text, since no text goes in this image:",
+          `"""${design.trim()}"""`,
+          "",
+        ]
+      : []),
     "- The mood should relate to this post content (written in Hebrew): " +
       `"""${context}"""`,
   ]

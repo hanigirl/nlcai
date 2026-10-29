@@ -66,6 +66,22 @@ export interface CompositionBrief {
    * her story (lib/own-media-animated): its safe zone, reserved brand areas.
    */
   notes?: string[]
+  /**
+   * The creator's own words about the look (Hebrew ok), e.g. "בלי הרקע
+   * הבומבסטי הלבן, טקסט לבן פשוט". A hard instruction that wins over the
+   * visual-language defaults; later lines win over earlier ones.
+   */
+  design?: string
+}
+
+/** Her design wording as a hard instruction block, or nothing. */
+export function designOverrideLines(design: string | undefined): string[] {
+  const d = design?.trim()
+  if (!d) return []
+  return [
+    "THE CREATOR'S OWN DESIGN INSTRUCTION — HARD RULE, it wins over the visual language, the brand defaults and your own taste (background colour or no background, text colour, text size, motion style, plain vs. bombastic). Where lines conflict, the LATER line wins:",
+    d,
+  ]
 }
 
 /** The <head> fragment that loads her fonts. Injected by us, not written by Opus. */
@@ -92,13 +108,14 @@ You output ONE complete, self-contained HTML document. A headless browser render
 
 HARD RULES (the renderer depends on them):
 1. Canvas: html/body exactly ${COMPOSITION_WIDTH}px × ${COMPOSITION_HEIGHT}px, margin 0, overflow hidden. No responsive units tied to the viewport for layout of the frame itself — use px.
-2. The background image: use the URL token ${BACKGROUND_TOKEN} exactly as written (e.g. <img src="${BACKGROUND_TOKEN}"> or background-image:url('${BACKGROUND_TOKEN}')). It fills the frame (object-fit: cover). You may animate it (slow push-in, drift, parallax, colour treatment), never hide it entirely.
+2. The background image: use the URL token ${BACKGROUND_TOKEN} exactly as written (e.g. <img src="${BACKGROUND_TOKEN}"> or background-image:url('${BACKGROUND_TOKEN}')). It fills the frame (object-fit: cover). You may animate it (slow push-in, drift, parallax, colour treatment), never hide it entirely — unless THE CREATOR'S OWN DESIGN INSTRUCTION asks for a plain / solid / different background or no picture: then cover it with exactly what she asked for (keep the token in the document).
 3. Motion must be TIME-SEEKABLE. Use only: CSS @keyframes / transitions started on load, the Web Animations API, or GSAP 3 loaded from <script src="${GSAP_URL}"></script> with every tween on the global timeline (gsap.to/from/timeline — no custom tickers). Everything starts at t=0 when the page loads. FORBIDDEN: setTimeout, setInterval, requestAnimationFrame loops, Date, performance.now, Math.random, fetch, video/audio elements, other external scripts.
 4. The text must appear EXACTLY as given — same Hebrew words and order, no additions, no translation, no emoji. Hebrew is right-to-left: put dir="rtl" and lang="he" on <html>. If you split text into words/letters for animation, keep the visual reading order correct (RTL) and never split inside a Hebrew word into letters that would break final-letter forms or kerning badly — prefer per-word splitting.
 5. Instagram covers the top ~220px and bottom ~380px with UI. Keep all text inside the safe area between them, with ≥80px side margins. Every element — decorative lines, underlines, shapes — stays fully inside the frame at every moment; nothing stray or cut off at an edge.
 6. By t=${COMPOSITION_SECONDS - 1.5}s everything must have arrived and be fully legible, and it must HOLD — the last frame is used as the cover and gets screenshotted. No exit animations.
 7. Legibility first: strong contrast between text and whatever is behind it at every moment (shadows, scrims, shapes or colour — your call).
 8. Fonts: they are loaded for you in <head> (you'll see a marker to keep). Use the brand fonts by family name, by their role (the primary carries the text; a secondary font is only a small accent); Rubik / Heebo are Hebrew fallbacks. Do not add other font links.
+9. If the brief has THE CREATOR'S OWN DESIGN INSTRUCTION, follow it exactly — it overrides the visual language and every stylistic default here (colours, sizes, background, how loud or quiet the motion is). Only rules 1, 3, 4, 5 and 6 above stay above it.
 
 Return only the HTML document inside a single \`\`\`html code fence. Keep it tight (well under 300 lines).`
 
@@ -128,6 +145,7 @@ function briefText(b: CompositionBrief): string {
     "VISUAL LANGUAGE (the background was generated from this — match its character):",
     b.styleSpec.slice(0, 2500),
     ...(b.notes?.length ? ["", "THIS CLIP:", ...b.notes] : []),
+    ...(b.design?.trim() ? ["", ...designOverrideLines(b.design)] : []),
     "",
     `Put the marker ${FONT_MARKER} inside <head>; we replace it with the font loading.`,
   ].join("\n")

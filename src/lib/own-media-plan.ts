@@ -20,6 +20,11 @@ import { reservedZoneLines, type ImageRole } from "@/lib/visual-language/fixed-e
  * operation that repaints her pixels, so a request for one can only come back
  * as a kind refusal — one that offers what it can do instead, never "can't
  * animate".
+ *
+ * Frames the AI made are the opposite: new pixels of ours, so their look is
+ * fully in our hands (Hani, 2026-10-29: "למה הוא יכול כשאני איתו בקלוד אבל
+ * פה לא?"). Her design wording travels to the engine as `design`, and an
+ * animated frame is changed in place (edit_animated_frame), never re-rolled.
  */
 
 const NOUN: Record<OwnEditFormat, { item: string; set: string }> = {
@@ -32,8 +37,8 @@ const NOUN: Record<OwnEditFormat, { item: string; set: string }> = {
 function describeFrame(f: OwnFrameInfo, i: number): string {
   const who = f.aiMade
     ? f.kind === "video"
-      ? "AI-made frame with animated text (added earlier, a video clip)"
-      : "AI-made slide (added earlier)"
+      ? "AI-MADE frame with animated text (we made it earlier, a video clip) — fully ours: its background, colours, text, size and motion can all be changed with edit_animated_frame"
+      : "AI-MADE still slide (we made it earlier) — fully ours: to change its look, replace it (remove_slide + add_slide at the same spot, with her design wording)"
     : `HER OWN ${f.kind === "video" ? "video" : "photo/image"}`
   const cap =
     f.caption === "ours"
@@ -75,10 +80,11 @@ export async function planOwnMediaEdit(
     `{"op":"remove_caption","frames":[...]} — take our caption off (back to her file as she brought it).`,
     ...(isSet
       ? [
-          `{"op":"add_slide","after":0..${n},"headline"?:string,"body"?:string,"role"?:"closing"|"content"|"cover"} — a NEW STILL ${NOUN[format].item} (one image) designed by AI in her visual language, inserted after that position (0 = first). Write its Hebrew text from the post when she doesn't dictate it (a closing frame = a short CTA from the post).`,
+          `{"op":"add_slide","after":0..${n},"headline"?:string,"body"?:string,"role"?:"closing"|"content"|"cover","design"?:string} — a NEW STILL ${NOUN[format].item} (one image) designed by AI in her visual language, inserted after that position (0 = first). Write its Hebrew text from the post when she doesn't dictate it (a closing frame = a short CTA from the post). design = ${DESIGN_FIELD}`,
           ...(animated
             ? [
-                `{"op":"add_animated_slide","after":0..${n},"headline":string,"body"?:string,"role"?:"closing"|"content"|"cover"} — a NEW ${NOUN[format].item} with ANIMATED text: a 7-second vertical video clip, the same motion-design engine as our b-roll (her fonts, brand colours and visual language, kinetic Hebrew type over an AI background). Use it whenever she asks for animation / motion / moving or animated text / "מונפש" / "אנימציה" / "שזז" / "וידאו" for a new frame. headline = the main line (short, natural spoken Hebrew; from the post when she doesn't dictate it), body = an optional short second line. Takes ~3 minutes.`,
+                `{"op":"add_animated_slide","after":0..${n},"headline":string,"body"?:string,"role"?:"closing"|"content"|"cover","design"?:string} — a NEW ${NOUN[format].item} with ANIMATED text: a 7-second vertical video clip, the same motion-design engine as our b-roll (her fonts, brand colours and visual language, kinetic Hebrew type over an AI background). Use it whenever she asks for animation / motion / moving or animated text / "מונפש" / "אנימציה" / "שזז" / "וידאו" for a new frame. headline = the main line (short, natural spoken Hebrew; from the post when she doesn't dictate it), body = an optional short second line. design = ${DESIGN_FIELD} Takes ~3 minutes.`,
+                `{"op":"edit_animated_frame","frame":k,"instruction":string,"design"?:string,"headline"?:string,"body"?:string,"newBackground"?:boolean} — CHANGE an AI-made animated frame IN PLACE (only a frame marked AI-MADE with animated text; never her own). Applies her request to that frame's motion design and re-renders it: background colour / plain / none, text colour, size, motion style, calmer or bolder, its words. instruction = her request about this frame, in her own words (Hebrew, copied as she said it). design = ${DESIGN_FIELD} headline/body = the frame's NEW words, only when she changes the words (send every line that should be on it); omit both to keep its words. newBackground:true only when she wants a different background PICTURE (another image); a plain / solid / no background, or removing a loud one, needs no new picture. Takes ~2 minutes. Use this — never add_animated_slide — when she asks to change a frame we already animated.`,
               ]
             : []),
           `{"op":"remove_slide","frames":[...]}`,
@@ -89,7 +95,7 @@ export async function planOwnMediaEdit(
   ]
   const system = [
     "You plan edits on social media that a Hebrew-speaking creator FILMED OR PHOTOGRAPHED HERSELF. The rule: you may add on top of her media or take away from it — the caption over it, extra AI-made slides, the order — but you NEVER change, regenerate, repaint, retouch, recolour, crop, filter or 'fix' her own photo or video pixels.",
-    `If she asks for something that would change her own pixels (brighter, remove an object, change the background, make her look different, improve the photo…), do NOT plan it: return no ops, refused:true, and a kind one-line Hebrew reply saying you can't change what she filmed/photographed, plus what you CAN do instead (the caption over it${isSet ? `, or a NEW frame${animated ? " — still or with animated text" : ""}` : ""}).`,
+    `If she asks for something that would change HER OWN pixels — a frame marked HER OWN, never one marked AI-MADE — (brighter, remove an object, change the background, make her look different, improve the photo…), do NOT plan it: return no ops, refused:true, and a kind one-line Hebrew reply saying you can't change what she filmed/photographed, plus what you CAN do instead (the caption over it${isSet ? `, or a NEW frame${animated ? " — still or with animated text" : ""}` : ""}).`,
     ...(isSet
       ? [`Adding NEW frames is always allowed${animated ? " — still or animated —" : ""} because they are new pixels, not hers.`]
       : []),
@@ -99,8 +105,13 @@ export async function planOwnMediaEdit(
       : isSet
         ? "Animated frames exist only in a story here (a carousel item can't be a vertical video). If she asks for animation in this carousel, return no ops and a reply that offers a still slide instead and says an animated frame can be added in the story."
         : "This format is one piece of media, so no frames can be added here. If she asks for animation, return no ops and a reply that says an animated frame can be added in the story.",
+    "Frames marked AI-MADE are pixels WE made, not hers: you have FULL control over their look — background (colour, plain, none, a different picture), text colour, size, motion, how plain or bombastic. NEVER say you have no control over background, text colour or style of a frame you made, and never hedge (no \"if it still comes out…\", no \"I can't guarantee\"). Pass her design wording through as `design` — the engine treats it as a hard rule.",
+    ...(animated
+      ? ["To change an AI-made animated frame → edit_animated_frame on that frame (it is replaced in place). Never add a second animated frame for it, and never remove it to make a new one."]
+      : []),
     "If her request is unclear, return no ops and a short Hebrew question in reply.",
     "Reply with JSON only: {\"reply\": \"one short Hebrew line, plural addressing (אתם), saying what you did / why not\", \"ops\": [...], \"refused\"?: true}.",
+    "When you plan ops, the reply states what you changed, in her own words, short and sure (e.g. \"בפריים 3 הורדתי את הרקע הלבן הבומבסטי, והטקסט עכשיו לבן ופשוט.\") — no disclaimers, no promises to retry.",
     "Never stack a second caption over words that are already there: a frame marked as already having its own words gets no caption unless she explicitly asks to put text on it.",
     "Only touch the frames she means: a named one (\"פריים 2\", \"האחרון\", \"השקופית הזאת\" = the one on screen), otherwise all frames her request is about.",
   ].join("\n")
@@ -145,6 +156,10 @@ export async function planOwnMediaEdit(
   }
 }
 
+/** The `design` field, explained to the planner (one place for every op that has it). */
+const DESIGN_FIELD =
+  "her own wording about the LOOK (background, colours, text size, motion, plain vs. bombastic), copied in her words, Hebrew is fine; omit when she said nothing about the look. It is a hard instruction that wins over the visual-language defaults."
+
 const inRange = (v: unknown, n: number) => typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= n
 
 function frameList(v: unknown, n: number): number[] {
@@ -181,7 +196,24 @@ export function sanitiseOps(raw: unknown, n: number, isSet: boolean, animated = 
         const role = o.role === "closing" || o.role === "content" || o.role === "cover" ? o.role : undefined
         // Never quietly swap an animated ask for a still one where it can't be.
         if (o.op === "add_animated_slide" && !animated) break
-        out.push({ op: o.op, after, headline: str(o.headline), body: str(o.body), role })
+        out.push({ op: o.op, after, headline: str(o.headline), body: str(o.body), role, design: str(o.design) })
+        break
+      }
+      case "edit_animated_frame": {
+        // Which frames are AI-made is checked when it runs (lib/own-media-edit)
+        // and again by the route; here only the shape.
+        if (!animated || !inRange(o.frame, n)) break
+        const instruction = str(o.instruction) ?? str(o.design)
+        if (!instruction) break
+        out.push({
+          op: "edit_animated_frame",
+          frame: o.frame as number,
+          instruction,
+          design: str(o.design),
+          headline: str(o.headline),
+          body: str(o.body),
+          newBackground: o.newBackground === true || undefined,
+        })
         break
       }
       case "remove_slide": {
@@ -217,6 +249,8 @@ export function slidePrompt(input: {
   context: string
   width: number
   height: number
+  /** Her own words about the look — wins over the visual language. */
+  design?: string
 }): string {
   const text = [input.headline, input.body].filter(Boolean).join("\n")
   const story = input.format === "story"
@@ -238,6 +272,13 @@ export function slidePrompt(input: {
     "",
     "Design:",
     ...input.direction.lines,
+    ...(input.design
+      ? [
+          "",
+          "THE CREATOR'S OWN DESIGN INSTRUCTION (hard rule — it wins over the design lines above: background, text colour, size, plain vs. bombastic):",
+          `"""${input.design}"""`,
+        ]
+      : []),
     "",
     "Rules that always hold:",
     "- Correct Hebrew letterforms and right-to-left reading order; reproduce every character precisely.",
