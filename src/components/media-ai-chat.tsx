@@ -320,7 +320,6 @@ export function MediaAiChat({
         )}
         <ReferenceTray r={refs} />
         <div className="flex items-end gap-2 rounded-[12px] border border-border-neutral-default bg-white dark:bg-gray-10 p-2 focus-within:border-yellow-50 transition-colors">
-          <ReferenceButton r={refs} disabled={loading} />
           <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -336,6 +335,7 @@ export function MediaAiChat({
             autoFocus
             className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent px-1 py-2 text-small shadow-none focus-visible:ring-0"
           />
+          <ReferenceButton r={refs} disabled={loading} />
           <Button
             size="icon-sm"
             onClick={() => void send()}

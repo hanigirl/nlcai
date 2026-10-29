@@ -132,7 +132,8 @@ export function ReferenceButton({ r, disabled }: { r: ReferenceImages; disabled?
           onClick={() => inputRef.current?.click()}
           disabled={disabled || r.full}
           aria-label="הוספת רפרנס (צילום מסך)"
-          className="shrink-0 rounded-full text-text-neutral-default"
+          // Same footprint as the send button beside it: 32px circle, 16px icon; gray hover.
+          className="shrink-0 rounded-full text-text-primary-default hover:bg-gray-95 hover:text-text-primary-default dark:hover:bg-gray-20"
         >
           <ImagePlus className="size-4" />
         </Button>

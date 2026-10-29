@@ -144,7 +144,7 @@ export function FormatCopyChat({
           autoFocus
           canSendEmpty={refs.refs.length > 0}
           onPaste={refs.onPaste}
-          leading={<ReferenceButton r={refs} disabled={session.loading} />}
+          beforeSend={<ReferenceButton r={refs} disabled={session.loading} />}
         />
       </div>
     </div>

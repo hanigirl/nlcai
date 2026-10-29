@@ -120,7 +120,7 @@ export function CopyComposer({
   autoFocus,
   canSendEmpty,
   onPaste,
-  leading,
+  beforeSend,
 }: {
   value: string
   onChange: (v: string) => void
@@ -131,12 +131,11 @@ export function CopyComposer({
   /** Send is allowed with no text (e.g. references attached). */
   canSendEmpty?: boolean
   onPaste?: (e: ClipboardEvent) => void
-  /** Before the text, e.g. the reference-image icon. */
-  leading?: ReactNode
+  /** Right beside the send button, e.g. the reference-image icon. */
+  beforeSend?: ReactNode
 }) {
   return (
     <div className="flex items-end gap-2 rounded-[12px] border border-border-neutral-default bg-white dark:bg-gray-10 p-2 focus-within:border-yellow-50 transition-colors">
-      {leading}
       <Textarea
         value={value}
         autoFocus={autoFocus}
@@ -154,6 +153,7 @@ export function CopyComposer({
         rows={1}
         className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent px-1 py-2 text-small shadow-none focus-visible:ring-0"
       />
+      {beforeSend}
       <Button
         size="icon-sm"
         onClick={onSend}
