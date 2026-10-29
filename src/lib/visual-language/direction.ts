@@ -91,9 +91,13 @@ export async function resolveDesignDirection(
   userId: string,
   opts: { format: VisualFormat; allowReferences?: boolean; style?: MediaStyle },
 ): Promise<DesignDirection> {
+  // She picked the niche language (or its dark / light variant) to get away
+  // from her brand: her standing preferences came from brand edits and
+  // "override" everything, so they'd pull it straight back (Hani, 2026-10-29).
+  const nicheChosen = !!opts.style && opts.style !== "brand"
   const [direction, rules] = await Promise.all([
     resolveBaseDirection(supabase, userId, opts),
-    loadStyleRules(supabase, userId),
+    nicheChosen ? Promise.resolve([]) : loadStyleRules(supabase, userId),
   ])
   const extra = styleRuleLines(rules)
   return extra.length ? { ...direction, lines: [...direction.lines, "", ...extra] } : direction
@@ -170,7 +174,8 @@ async function resolveBaseDirection(
     return { source: "brand", lines, references, fixed }
   }
 
-  const colorLine = colors.length
+  // Brand colours only when she didn't ask for the niche look on purpose.
+  const colorLine = colors.length && !(opts.style && opts.style !== "brand")
     ? `The creator's brand colours are ${colors.join(", ")} — build the palette around them.`
     : null
 
