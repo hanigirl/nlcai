@@ -216,6 +216,10 @@ export type QueuePanelProps = {
   headerAction?: React.ReactNode
   /** Card ids laid out on the board as a not-yet-confirmed preview — dimmed here. */
   previewPlacedIds?: Set<string>
+  /** Block rendered under the header row, inside the header (schedule-all flow, variant A). */
+  headerDetail?: React.ReactNode
+  /** Block pinned to the bottom of the rail (schedule-all flow, variant B). */
+  footer?: React.ReactNode
 }
 
 /**
@@ -254,6 +258,8 @@ export function QueuePanel({
   onReadyCardsChange,
   headerAction,
   previewPlacedIds,
+  headerDetail,
+  footer,
 }: QueuePanelProps) {
   const [allPosts, setAllPosts] = useState<PanelItem[]>([])
   const [scheduledIds, setScheduledIds] = useState<Set<string>>(new Set())
@@ -630,7 +636,7 @@ export function QueuePanel({
       aria-label="פאנל פוסטים לתזמון"
       aria-hidden={collapsed}
     >
-      <div className="px-4 py-3 border-b border-border-neutral-default flex items-center gap-2">
+      <div className={`px-4 py-3 ${headerDetail ? "" : "border-b border-border-neutral-default "}flex items-center gap-2`}>
         <h3 className="text-text-primary-default text-p-bold flex-1">פוסטים לתזמון</h3>
         {/* Variant B carries its counts on the tabs, so the header badge
             would say the same number twice. */}
@@ -657,6 +663,7 @@ export function QueuePanel({
           </Tooltip>
         )}
       </div>
+      {headerDetail}
 
       {/* Variant A — the rail stays strictly "approved only"; formats that
           still wait for approval are one quiet row right under the header
@@ -896,6 +903,7 @@ export function QueuePanel({
         )}
       </div>
 
+      {footer}
     </aside>
   )
 }

@@ -57,6 +57,17 @@ import {
   type PlannedSlot,
 } from "@/lib/schedule-all"
 import { NoSettingsDialog, PreviewBar, ScheduleAllButton } from "@/components/schedule-all"
+import {
+  FlowCollapsedPill,
+  FlowHeaderButton,
+  FlowHeaderDetail,
+  FlowReviewBar,
+  FlowRoutineEditNote,
+  FlowTray,
+  parseFlowState,
+  useScheduleFlowHarness,
+  type FlowState,
+} from "@/components/schedule-all-flow"
 import { CorePostSheet, type CorePostSheetData } from "@/components/core-post-sheet"
 import { FormatThumbnail } from "@/components/format-thumbnail"
 import { InstagramConnectionControl } from "@/components/instagram-connect"
@@ -195,8 +206,37 @@ function formatWeekRange(weekStart: Date, weekEnd: Date): string {
  * A post "סידור אוטומטי בלוח" laid on the board, not scheduled yet: dashed,
  * no menu. Can be dragged to another day before "תזמון כל הפוסטים".
  */
-function PlannedCard({ slot }: { slot: PlannedSlot }) {
+function PlannedCard({ slot, committed = false }: { slot: PlannedSlot; committed?: boolean }) {
   const formatLabel = getFormatChipLabel(slot.format)
+  // `committed` — review harness only: a seeded post that "went in", drawn
+  // solid and read-only (the real scheduled card carries live actions).
+  if (committed) {
+    return (
+      <div
+        aria-label={`${formatLabel} תוזמן: ${slot.hook}`}
+        className="relative w-full min-w-0 flex flex-col gap-1.5 rounded-lg border border-border-neutral-default bg-white dark:bg-gray-10 p-1.5 animate-in fade-in duration-300"
+      >
+        <div className="relative aspect-[4/5] w-full overflow-hidden rounded-md bg-gray-95">
+          <FormatThumbnail
+            url={slot.mediaUrl}
+            format={slot.format}
+            className="absolute inset-0 w-full h-full"
+            iconClassName="size-5"
+            fit={slot.format === "carousel" ? "contain" : "cover"}
+          />
+        </div>
+        <div className="flex flex-col gap-1 px-0.5">
+          <p className="line-clamp-2 text-xs-body leading-tight text-text-primary-default">{slot.hook}</p>
+          <div className="flex items-center gap-1 flex-wrap">
+            <FormatStatusChip format={slot.format} state="ready" size="xs" />
+            <span className="text-[10px] leading-none text-text-neutral-default tabular-nums">
+              {slot.scheduledTime} · תוזמן
+            </span>
+          </div>
+        </div>
+      </div>
+    )
+  }
   return (
     <div
       draggable
@@ -490,7 +530,11 @@ export default function CalendarPage() {
   // board it was before. Includes the weekly routine on the board (ghost
   // slots + in-place edit), the approved-only rail and the format preview.
   const schedulingOn = useSchedulingAccess() === true
-  const rulesVariant: "a" | null = schedulingOn ? "a" : null
+  // Review gate for the one-control schedule-all flow (task 4084d905):
+  // `?variant=a|b[&state=…]` mounts direction A or B on seeded posts. Nothing
+  // under it saves, schedules or fetches. No param → production, unchanged.
+  const [flowReview, setFlowReview] = useState<{ variant: "a" | "b"; state: FlowState } | null>(null)
+  const rulesVariant: "a" | null = schedulingOn || flowReview ? "a" : null
   const routine = usePostingSchedule()
   const [routineEditing, setRoutineEditing] = useState(false)
   const panelBeforeEditRef = useRef(false)
@@ -513,7 +557,9 @@ export default function CalendarPage() {
   // What happened in the queue since the last visit — outcomes of slots
   // whose time passed, edits after queuing, a lapsed connection.
   useEffect(() => {
-    if (schedulingOn) void refreshPublishStatus()
+    // A review link (`?variant=`) never talks to the publisher.
+    const reviewLink = new URLSearchParams(window.location.search).has("variant")
+    if (schedulingOn && !reviewLink) void refreshPublishStatus()
   }, [schedulingOn])
 
   /**
@@ -711,19 +757,68 @@ export default function CalendarPage() {
     setPlannedUnmatched([])
     if (count > 0) toast.success(count === 1 ? "פוסט אחד תוזמן" : `${count} פוסטים תוזמנו`)
   }
+
+  const flow = useScheduleFlowHarness({
+    enabled: !!flowReview,
+    initialState: flowReview?.state ?? "idle",
+    railCards,
+    weekRange: { start: toDateKey(weekStart), end: toDateKey(weekEnd) },
+    onJumpTo: (key) => {
+      const [y, m, d] = key.split("-").map((n) => parseInt(n, 10))
+      setWeekStart(startOfWeek(new Date(y, m - 1, d)))
+    },
+    openSettings: () => startRoutineEdit(),
+  })
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const v = params.get("variant")
+    if (v !== "a" && v !== "b") return
+    const st = parseFlowState(params.get("state"))
+    setFlowReview({ variant: v, state: st })
+    flow.reset(st)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const switchFlowReview = (variant: "a" | "b", state: FlowState) => {
+    if (routineEditing) endRoutineEdit()
+    setFlowReview({ variant, state })
+    flow.reset(state)
+    const url = new URL(window.location.href)
+    url.searchParams.set("variant", variant)
+    if (state === "idle") url.searchParams.delete("state")
+    else url.searchParams.set("state", state)
+    window.history.replaceState({}, "", url.toString())
+  }
+  const flowApproval = useMemo<QueueApprovalMode | undefined>(
+    () =>
+      flowReview
+        ? { variant: "a", isApproved: () => true, pendingHref: "/core_posts?status=pending", seed: flow.seed }
+        : undefined,
+    [flowReview, flow.seed],
+  )
+  const boardPlanned = flowReview ? flow.view.planned : planned
+  const committedByDay = useMemo(() => {
+    const map = new Map<string, PlannedSlot[]>()
+    if (!flowReview) return map
+    for (const p of flow.committed) {
+      const list = map.get(p.scheduledDate) ?? []
+      list.push(p)
+      map.set(p.scheduledDate, list)
+    }
+    return map
+  }, [flowReview, flow.committed])
   const plannedByDay = useMemo(() => {
     const map = new Map<string, PlannedSlot[]>()
-    for (const p of planned ?? []) {
+    for (const p of boardPlanned ?? []) {
       const list = map.get(p.scheduledDate) ?? []
       list.push(p)
       map.set(p.scheduledDate, list)
     }
     for (const list of map.values()) list.sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime))
     return map
-  }, [planned])
+  }, [boardPlanned])
   const plannedIds = useMemo(
-    () => (planned ? new Set(planned.map((p) => `${p.corePostId}:${p.format}`)) : undefined),
-    [planned],
+    () => (boardPlanned ? new Set(boardPlanned.map((p) => `${p.corePostId}:${p.format}`)) : undefined),
+    [boardPlanned],
   )
 
   const isCurrentWeek = isSameDay(weekStart, startOfWeek(today))
@@ -785,6 +880,10 @@ export default function CalendarPage() {
           corePostId: string
           format: FormatId
         }
+        if (flowReview) {
+          flow.movePlanned(corePostId, format, dayKey)
+          return
+        }
         setPlanned((list) =>
           list
             ? list.map((x) =>
@@ -799,6 +898,8 @@ export default function CalendarPage() {
       }
       return
     }
+    // Review harness: nothing else may be scheduled from a review link.
+    if (flowReview) return
 
     // Source 1: card-to-card reschedule. A scheduled card stamps this MIME
     // type on dragstart with `{corePostId, format}` — the (post, format)
@@ -1214,6 +1315,13 @@ export default function CalendarPage() {
           {/* Header at the standard page width — keeps the title aligned
               with the rest of the system. */}
           <div className="max-w-[1200px] w-full mx-auto">
+            {flowReview && (
+              <FlowReviewBar
+                variant={flowReview.variant}
+                state={flowReview.state}
+                onChange={switchFlowReview}
+              />
+            )}
             {/* Level 1 — page identity. Title + leading illustration,
                 matching /core_posts + /hooks. Subtitle intentionally
                 omitted per Hani. */}
@@ -1235,7 +1343,27 @@ export default function CalendarPage() {
 
             {/* Level 2 — week navigation (or, in variant A edit mode, the
                 routine editor's bar). */}
-            {rulesVariant === "a" && routineEditing ? (
+            {flowReview && routineEditing ? (
+              <>
+                <RoutineEditBar
+                  draft={flow.routineDraft}
+                  saving={false}
+                  saveError={false}
+                  dirty={flow.routineDirty}
+                  onStoryGap={(m) => flow.setRoutineDraft({ ...flow.routineDraft, storyGapMinutes: m })}
+                  onCancel={() => {
+                    flow.discardRoutine()
+                    endRoutineEdit()
+                  }}
+                  onSave={() => {
+                    flow.saveRoutine()
+                    endRoutineEdit()
+                    toast.success("הלו״ז נשמר (תצוגה בלבד)")
+                  }}
+                />
+                <FlowRoutineEditNote view={flow.view} />
+              </>
+            ) : rulesVariant === "a" && routineEditing ? (
               <RoutineEditBar
                 draft={routine.draft}
                 saving={routine.saving}
@@ -1322,7 +1450,7 @@ export default function CalendarPage() {
                     </div>
                     {rulesVariant === "a" && routineEditing ? (
                       <div className="text-small-bold text-text-primary-default">
-                        {routine.draft.days[day.getDay()].length || "—"}
+                        {(flowReview ? flow.routineDraft : routine.draft).days[day.getDay()].length || "—"}
                       </div>
                     ) : (
                     <div className="text-small-bold text-text-primary-default tabular-nums">
@@ -1353,7 +1481,8 @@ export default function CalendarPage() {
                 const editingRoutine = rulesVariant === "a" && routineEditing
                 const past = !editingRoutine && isPastDate(day, today)
                 const isDragOver = dragOverDay === dayKey
-                const dayPosts = postsByDay.get(dayKey) ?? []
+                // Review harness: the board shows only the seeded flow.
+                const dayPosts = flowReview ? [] : postsByDay.get(dayKey) ?? []
 
                 // Today gets a very subtle warm tint (yellow-95 at 40%) —
                 // visible enough to read as "this is today" but light enough
@@ -1376,26 +1505,30 @@ export default function CalendarPage() {
                     {editingRoutine ? (
                       <RoutineDayEditor
                         dayIndex={dayOfWeek}
-                        draft={routine.draft}
-                        onChange={routine.setDraft}
+                        draft={flowReview ? flow.routineDraft : routine.draft}
+                        onChange={flowReview ? flow.setRoutineDraft : routine.setDraft}
                       />
                     ) : (
                     /* Cards stack from the top. `min-h-full` keeps the whole
                         column a drop target even when it's nearly empty. */
                     <div className="flex flex-col gap-1.5 p-2 min-h-full">
                       {dayPosts.map(renderCard)}
+                      {(committedByDay.get(dayKey) ?? []).map((slot) => (
+                        <PlannedCard key={`committed:${slot.corePostId}:${slot.format}`} slot={slot} committed />
+                      ))}
                       {(plannedByDay.get(dayKey) ?? []).map((slot) => (
                         <PlannedCard key={`planned:${slot.corePostId}:${slot.format}`} slot={slot} />
                       ))}
                       {/* Variant A: the routine's still-open slots for this
                           day, as dashed ghosts. Upcoming days only. */}
                       {rulesVariant === "a" &&
-                        routine.hasCustom &&
+                        (flowReview ? flow.view.hasRoutine : routine.hasCustom) &&
                         !past &&
                         unfilledSlots(
-                          slotsForDate(routine.saved, day),
+                          slotsForDate(flowReview ? flow.routine : routine.saved, day),
                           [
                             ...dayPosts.map((p) => p.format),
+                            ...(committedByDay.get(dayKey) ?? []).map((p) => p.format),
                             ...(plannedByDay.get(dayKey) ?? []).map((p) => p.format),
                           ],
                         ).map((slot) => (
@@ -1417,10 +1550,27 @@ export default function CalendarPage() {
             The panel itself uses `h-full` so its inner list scrolls
             independently of the calendar grid. */}
         <QueuePanel
-          onReadyCardsChange={schedulingOn ? setRailCards : undefined}
+          onReadyCardsChange={schedulingOn || flowReview ? setRailCards : undefined}
           previewPlacedIds={plannedIds}
+          {...(flowReview
+            ? {
+                approval: flowApproval,
+                headerDetail:
+                  flowReview.variant === "a" ? (
+                    <FlowHeaderDetail view={flow.view} actions={flow.actions} />
+                  ) : undefined,
+                footer:
+                  flowReview.variant === "b" ? (
+                    <FlowTray view={flow.view} actions={flow.actions} />
+                  ) : undefined,
+              }
+            : {})}
           headerAction={
-            schedulingOn ? (
+            flowReview ? (
+              flowReview.variant === "a" ? (
+                <FlowHeaderButton view={flow.view} actions={flow.actions} />
+              ) : undefined
+            ) : schedulingOn ? (
               <ScheduleAllButton
                 label="סידור אוטומטי בלוח"
                 count={railCards.length}
@@ -1431,7 +1581,9 @@ export default function CalendarPage() {
           collapsed={panelCollapsed}
           onToggleCollapse={() => setPanelCollapsed((v) => !v)}
           onItemClick={(corePostId, format) =>
-            schedulingOn && format
+            flowReview
+              ? toast("בתצוגת הסקירה הפוסטים לדוגמה בלבד")
+              : schedulingOn && format
               ? openPreview(corePostId, format)
               : openSheetForCorePost(corePostId, format, "preview")
           }
@@ -1441,7 +1593,10 @@ export default function CalendarPage() {
             to the end edge (left in RTL) just below the topbar, where the
             rail's collapse button sat, so the open/close controls live on
             the same edge. z-40 keeps it above the grid's dragOver ring. */}
-        {panelCollapsed && (
+        {panelCollapsed && flowReview && (
+          <FlowCollapsedPill view={flow.view} onReopen={() => setPanelCollapsed(false)} />
+        )}
+        {panelCollapsed && !flowReview && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
