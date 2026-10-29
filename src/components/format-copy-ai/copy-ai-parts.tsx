@@ -1,7 +1,7 @@
 "use client"
 
 import { ArrowUp, Check, Loader2, RotateCw } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
+import { Chip } from "@/components/ui/chip"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
@@ -9,7 +9,7 @@ import { COPY_SUGGESTIONS, type CopyFormat } from "@/lib/format-copy-refine"
 
 /**
  * Building blocks of the format-copy AI panel. All on existing components
- * (Button, Badge, Textarea) and the project's grey / green tokens — no new
+ * (Button, Chip, Textarea) and the project's grey / green tokens — no new
  * visual treatment (Hani, 2026-10-29: "לעבוד לפי דיזיין סיסטם קיים").
  */
 
@@ -28,28 +28,11 @@ export function CopySuggestionChips({
   return (
     <div className={cn("flex flex-wrap gap-1.5", className)}>
       {COPY_SUGGESTIONS[fid].map((s) => (
-        <Button
-          key={s}
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={disabled}
-          onClick={() => onPick(s)}
-          className="h-7 rounded-full px-3 text-xs-body font-normal"
-        >
+        <Chip key={s} disabled={disabled} onClick={() => onPick(s)}>
           {s}
-        </Button>
+        </Chip>
       ))}
     </div>
-  )
-}
-
-/** "6 שקופיות ← 4 שקופיות" — the measure this format is judged by. */
-export function CopyChangeBadge({ change }: { change?: string | null }) {
-  if (!change) return null
-  return (
-    // The neutral state of the project chip (format-status-chip "not-started").
-    <Badge className="border-transparent bg-gray-98 text-gray-50 dark:bg-gray-20 dark:text-gray-80">{change}</Badge>
   )
 }
 
@@ -74,7 +57,19 @@ export function CopyProposalActions({
   )
 }
 
-export function CopyAppliedNote({ canceled }: { canceled?: boolean }) {
+export function CopyAppliedNote({ canceled, remembered }: { canceled?: boolean; remembered?: boolean }) {
+  if (!canceled && remembered) {
+    // Same green line as the save-to-visual-language success.
+    return (
+      <div
+        role="status"
+        className="flex items-center gap-2 rounded-xl border border-green-success-50 bg-green-success-97 px-3 py-1.5 dark:bg-green-success-50/15"
+      >
+        <Check className="size-4 shrink-0 text-green-success-50 dark:text-green-80" aria-hidden />
+        <p className="text-xs-body font-semibold text-green-success-50 dark:text-green-80">נשמר גם לפעמים הבאות</p>
+      </div>
+    )
+  }
   return canceled ? (
     <span className="text-xs-body text-text-neutral-default">השינוי בוטל, הטקסט חזר למה שהיה</span>
   ) : (

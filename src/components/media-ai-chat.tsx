@@ -14,6 +14,7 @@ import { SaveToVisualLanguageChip } from "@/components/save-to-visual-language-c
 import { dislikeInstruction, type AiEditOpening } from "@/lib/ai-edit-intent"
 import { DislikeReasonChips } from "@/components/dislike-reason-chips"
 import { DISLIKE_REASONS, type DislikeReason } from "@/lib/visual-language/types"
+import { usePreviewAccess } from "@/lib/use-scheduling-access"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
@@ -119,6 +120,9 @@ export function MediaAiChat({
   opening?: AiEditOpening | null
 }) {
   const copy = COPY[format]
+  // Today's batch (2026-10-29), Hani only: z-50 + outside-click close, the
+  // leave-screen note, the save chip, 👎 opening. Off (or loading) = as before.
+  const preview = usePreviewAccess() === true
   const firstTurn = (o?: AiEditOpening | null): ChatMessage => ({
     role: "assistant",
     content: o ? DISLIKE_ASK : copy.intro,
@@ -140,7 +144,7 @@ export function MediaAiChat({
   const isWatching = useIsWatching()
   const scrollRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
-  useDismissOnOutsideClick(panelRef, open, () => onOpenChange(false))
+  useDismissOnOutsideClick(panelRef, open && preview, () => onOpenChange(false))
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
@@ -166,17 +170,16 @@ export function MediaAiChat({
     const learn = !fromFeedback
     // If she leaves before it lands, the result arrives as a toast (the
     // server has saved it either way) — see lib/long-wait.
-    const result = await trackAwayResult(
-      `ai-edit-${postId}-${format}-${Date.now()}`,
+    const run =
       format === "b_roll"
         ? startBRollEdit(postId, text, { quiet: true, learn }).then((r) => {
             if (r.ok) markAiMade(postId, "b_roll", r.url)
             return r
           })
-        : editImages(text, learn),
-      isWatching,
-      AWAY_COPY[format],
-    )
+        : editImages(text, learn)
+    const result = preview
+      ? await trackAwayResult(`ai-edit-${postId}-${format}-${Date.now()}`, run, isWatching, AWAY_COPY[format])
+      : await run
     setLoading(false)
     setMessages((prev) => [
       ...prev,
@@ -221,7 +224,7 @@ export function MediaAiChat({
       dir="rtl"
       role="dialog"
       aria-label={copy.title}
-      className="fixed bottom-6 right-6 z-50 flex max-h-[72vh] w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl"
+      className={`fixed bottom-6 right-6 ${preview ? "z-50" : "z-40"} flex max-h-[72vh] w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl`}
     >
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">
@@ -255,23 +258,40 @@ export function MediaAiChat({
             {asking && i === 0 && (
               <DislikeReasonChips value={reasons} onChange={setReasons} className="max-w-[85%] justify-end" />
             )}
-            {m.done && (
+            {m.done && preview && (
               <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
                 <Check className="size-3.5 text-green-success-50" />
                 הוחל.
               </span>
             )}
+            {m.done && !preview && (
+              <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
+                <Check className="size-3.5 text-yellow-30" />
+                הוחל. אהבתם? סמנו 👍 או 👎 בכרטיס, כדי שה-AI ילמד את הסגנון שלכם.
+              </span>
+            )}
+            {m.remembered && !preview && (
+              <span className="max-w-[85%] rounded-xl border border-border-neutral-default px-3 py-1.5 text-xs-body text-text-neutral-default">
+                אזכור את זה גם להבא, בכל הפורמטים: {m.remembered}
+              </span>
+            )}
           </div>
         ))}
 
-        {loading && (
+        {loading && preview && (
           <LongWaitBusyRow text={copy.busy} />
+        )}
+        {loading && !preview && (
+          <div className="flex items-center gap-2 text-small text-text-neutral-default">
+            <Loader2 className="size-4 animate-spin text-yellow-50" />
+            <span>{copy.busy}</span>
+          </div>
         )}
       </div>
 
       {/* Composer */}
       <div className="border-t border-border-neutral-default p-3">
-        {lastEdit && !loading && (
+        {preview && lastEdit && !loading && (
           <SaveToVisualLanguageChip
             key={`${chatFormat}:${lastEdit.index}`}
             instruction={lastEdit.instruction}

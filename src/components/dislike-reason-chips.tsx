@@ -1,7 +1,7 @@
 "use client"
 
 import { Check } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { Chip } from "@/components/ui/chip"
 import { DISLIKE_REASONS, type DislikeReason } from "@/lib/visual-language/types"
 
 /**
@@ -23,18 +23,10 @@ export function DislikeReasonChips({
       {(Object.keys(DISLIKE_REASONS) as DislikeReason[]).map((r) => {
         const on = value.includes(r)
         return (
-          <Button
-            key={r}
-            type="button"
-            variant="outline"
-            size="xs"
-            aria-pressed={on}
-            onClick={() => onChange(on ? value.filter((x) => x !== r) : [...value, r])}
-            className={`rounded-full ${on ? "bg-gray-95 dark:bg-gray-20 border-text-primary-default" : ""}`}
-          >
+          <Chip key={r} selected={on} onClick={() => onChange(on ? value.filter((x) => x !== r) : [...value, r])}>
             {on && <Check aria-hidden />}
             {DISLIKE_REASONS[r]}
-          </Button>
+          </Chip>
         )
       })}
     </div>

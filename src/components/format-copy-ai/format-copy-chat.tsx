@@ -8,7 +8,6 @@ import { COPY_NOUN } from "@/lib/format-copy-refine"
 import type { FormatCopyAiController } from "./use-format-copy-ai"
 import {
   CopyAppliedNote,
-  CopyChangeBadge,
   CopyComposer,
   CopyErrorLine,
   CopyLoadingLine,
@@ -85,20 +84,23 @@ export function FormatCopyChat({
 
         {session.messages.map((m, i) => (
           <div key={i} className={`flex flex-col gap-1.5 ${m.role === "user" ? "items-start" : "items-end"}`}>
-            <div
-              className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-small leading-relaxed text-text-primary-default ${
-                m.role === "user" ? "bg-bg-surface-primary-default rounded-ss-sm" : "bg-bg-surface rounded-se-sm"
-              }`}
-            >
-              {m.content}
-            </div>
+            {/* A revision just lands in the card — no sentence about what changed
+                (Hani, 2026-10-29: "סתם מבלבל"). A reply without one (a question) shows. */}
+            {!(m.role === "assistant" && m.revised) && (
+              <div
+                className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-small leading-relaxed text-text-primary-default ${
+                  m.role === "user" ? "bg-bg-surface-primary-default rounded-ss-sm" : "bg-bg-surface rounded-se-sm"
+                }`}
+              >
+                {m.content}
+              </div>
+            )}
             {m.role === "assistant" && m.revised && (
               <>
-                <CopyChangeBadge change={m.change} />
                 {m.status === "pending" ? (
                   <CopyProposalActions onKeep={() => ctrl.keep(fid, i)} onCancel={() => ctrl.cancel(fid, i)} />
                 ) : (
-                  <CopyAppliedNote canceled={m.status === "canceled"} />
+                  <CopyAppliedNote canceled={m.status === "canceled"} remembered={m.remembered} />
                 )}
               </>
             )}

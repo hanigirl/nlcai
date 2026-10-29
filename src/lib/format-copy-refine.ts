@@ -53,28 +53,6 @@ export function countSlides(text: string): number {
   return (text.match(SLIDE_HEADER) ?? []).length
 }
 
-function countWords(text: string): number {
-  return text.replace(SLIDE_HEADER, " ").split(/\s+/).filter(Boolean).length
-}
-
-/**
- * The one-line "what changed" the user sees next to keep/undo — the measure
- * that format is judged by. Slides for the carousel, length for everything
- * else. Null when nothing measurable moved (a tone change), in which case
- * the AI's own sentence carries it.
- */
-export function describeCopyChange(fid: CopyFormat, before: string, after: string): string | null {
-  if (fid === "carousel") {
-    const a = countSlides(before)
-    const b = countSlides(after)
-    if (a && b && a !== b) return `${a} שקופיות ← ${b} שקופיות`
-  }
-  const a = countWords(before)
-  const b = countWords(after)
-  if (!a || !b || a === b) return null
-  return `${a} מילים ← ${b} מילים`
-}
-
 export const COPY_REFINE_ERROR_COPY: Record<string, string> = {
   anthropic_not_connected: "כדי לערוך עם AI צריך לחבר את חשבון Claude בהגדרות.",
   credits_exhausted: "נגמרו הקרדיטים ב-Claude. בדקו את החשבון ונסו שוב.",

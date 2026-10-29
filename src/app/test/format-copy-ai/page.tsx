@@ -24,8 +24,8 @@ const STATES: { id: PreviewState; title: string; description: string }[] = [
   { id: "closed", title: "סגור", description: "שני הכפתורים אחד ליד השני מתחת לטקסט של הכרטיס." },
   { id: "open", title: "פאנל פתוח", description: "הפאנל של פוסט הליבה, לפורמט אחד, עם הצעות מהירות לפורמט." },
   { id: "generating", title: "בזמן יצירה", description: "הטקסט בכרטיס מהבהב, הפאנל מראה שהוא עובד." },
-  { id: "proposal", title: "הצעה לשינוי", description: "השינוי כבר בכרטיס. שמירה או ביטול בפאנל." },
-  { id: "applied", title: "נשמר", description: "אחרי שמירה: אישור ירוק, ואפשר לבקש עוד שינוי." },
+  { id: "proposal", title: "הצעה לשינוי", description: "השינוי כבר בכרטיס. שמירה או ביטול בפאנל. ביטול לא מלמד כלום." },
+  { id: "applied", title: "נשמר גם לפעמים הבאות", description: "אחרי „שמירת השינוי”: שורה ירוקה. רק השמירה מלמדת את סגנון הכתיבה." },
   { id: "error", title: "שגיאה", description: "השרת עמוס. ניסיון חוזר שולח שוב את אותה בקשה." },
 ]
 
@@ -101,7 +101,8 @@ function StatePreview({ state }: { state: PreviewState }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state])
 
-  // "applied": keep the proposal as soon as it lands.
+  // "applied": keep the proposal as soon as it lands (no learning callback
+  // here, so nothing is written).
   const pending = ctrl.pendingIndex("carousel")
   useEffect(() => {
     if (state === "applied" && pending >= 0) ctrl.keep("carousel", pending)

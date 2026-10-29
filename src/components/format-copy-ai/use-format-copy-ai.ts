@@ -1,9 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { toast } from "sonner"
 import {
-  describeCopyChange,
   requestFormatCopyRefine,
   type CopyFormat,
   type CopyRefineResult,
@@ -28,8 +26,8 @@ export interface CopyAiMessage {
   /** Assistant turns: the text to restore on "ביטול". */
   revertTo?: string
   status?: "pending" | "applied" | "canceled"
-  /** "6 שקופיות ← 4 שקופיות" — see describeCopyChange. */
-  change?: string | null
+  /** Kept with "שמירת השינוי" — and so learned for next time. */
+  remembered?: boolean
 }
 
 export interface CopyAiSession {
@@ -70,8 +68,9 @@ interface Options {
   setText: (fid: CopyFormat, text: string) => void
   hook?: string
   /**
-   * Keep / undo on an AI revision — the writing-style memory signal (Hani,
-   * 2026-10-29: "עריכה של פורמט תתווסף לזיכרון של סגנון הכתיבה").
+   * The writing-style memory signal. Called ONLY when she clicks "שמירת
+   * השינוי" on a revision (Hani, 2026-10-29: "שמור שינויים ישמור אוטומטית
+   * לפעמים הבאות"). Undo, or moving on without saving, teaches nothing.
    */
   onVerdict?: (fid: CopyFormat, msg: CopyAiMessage, instruction: string, outcome: "accepted" | "rejected") => void
   /** Test page only: answer locally instead of calling the route. */
@@ -93,8 +92,7 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder }
   useEffect(() => {
     onVerdictRef.current = onVerdict
   })
-  // Messages whose verdict was already reported, so a second click can't
-  // log the same revision twice. Keyed `${fid}:${index}`.
+  // Revisions already learned, so a second tap can't log the same one twice. Keyed `${fid}:${index}`.
   const reportedRef = useRef<Set<string>>(new Set())
 
   /** The user request that produced the assistant turn at `index`. */
@@ -143,7 +141,6 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder }
               revised: revisedText || undefined,
               revertTo: revisedText ? before : undefined,
               status: revisedText ? "pending" : undefined,
-              change: revisedText ? describeCopyChange(fid, before, revisedText) : null,
             },
           ],
         }))
@@ -164,16 +161,13 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder }
       const current = sessionsRef.current[fid] ?? EMPTY_SESSION
       if (!text || current.loading) return
       // Asking for the next change keeps the previous proposal — its text is
-      // already the baseline the next revision builds on (and counts as kept).
-      current.messages.forEach((m, i) => {
-        if (m.status === "pending") report(fid, i, "accepted")
-      })
+      // already the baseline the next revision builds on.
       const kept = current.messages.map((m) => (m.status === "pending" ? { ...m, status: "applied" as const } : m))
       const next: CopyAiMessage[] = [...kept, { role: "user", content: text }]
       patch(fid, (s) => ({ ...s, messages: next }))
       void run(fid, text, next)
     },
-    [patch, report, run],
+    [patch, run],
   )
 
   const retry = useCallback(
@@ -187,19 +181,18 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder }
 
   const keep = useCallback(
     (fid: CopyFormat, index: number) => {
+      // Saving the change also learns it — the panel says so in green.
       report(fid, index, "accepted")
       patch(fid, (s) => ({
         ...s,
-        messages: s.messages.map((m, i) => (i === index ? { ...m, status: "applied" } : m)),
+        messages: s.messages.map((m, i) => (i === index ? { ...m, status: "applied", remembered: true } : m)),
       }))
-      toast.success("השינוי נשמר בטקסט")
     },
     [patch, report],
   )
 
   const cancel = useCallback(
     (fid: CopyFormat, index: number) => {
-      report(fid, index, "rejected")
       const msg = sessionsRef.current[fid]?.messages[index]
       if (msg?.revertTo !== undefined) setText(fid, msg.revertTo)
       patch(fid, (s) => ({
@@ -207,7 +200,7 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder }
         messages: s.messages.map((m, i) => (i === index ? { ...m, status: "canceled" } : m)),
       }))
     },
-    [patch, report, setText],
+    [patch, setText],
   )
 
   const isBusy = useCallback(

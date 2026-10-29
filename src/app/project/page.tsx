@@ -43,6 +43,7 @@ import { ScheduleInCalendarBar } from "@/components/schedule-in-calendar-bar"
 import { CorePostChat } from "@/components/core-post-chat"
 import { AiRefineButton } from "@/components/ai-refine-button"
 import { StoryPlayer, storyFrameSrc } from "@/components/story-player"
+import { ColorSwatchPicker } from "@/components/color-swatch-picker"
 import { CoverColorSwatches } from "@/components/cover-color-swatches"
 import { useCoverBrandColors } from "@/lib/use-cover-brand-colors"
 import { defaultCoverColor } from "@/lib/cover-brand-color"
@@ -70,7 +71,7 @@ import {
   approvalHeaderFill,
 } from "@/components/format-approval/approval-visuals"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
-import { useSchedulingAccess } from "@/lib/use-scheduling-access"
+import { usePreviewAccess, useSchedulingAccess } from "@/lib/use-scheduling-access"
 // "עריכה עם AI" on every format's copy (Hani, 2026-10-29).
 import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
 import { FormatCopyActionRow } from "@/components/format-copy-ai/format-copy-entry"
@@ -229,6 +230,13 @@ function ProjectPageInner() {
   // Media approval before scheduling — part of the scheduling release, live
   // for the accounts in lib/scheduling-access only. Off = page unchanged.
   const approveVariant: "a" | null = useSchedulingAccess() ? "a" : null
+  // Today's batch (2026-10-29) — Hani only while she tries it. null (still
+  // reading the session) counts as off, so everyone else sees the page as before.
+  const previewOn = usePreviewAccess() === true
+  const previewRef = useRef(previewOn)
+  useEffect(() => {
+    previewRef.current = previewOn
+  })
 
   const flow: Flow = postId ? "saved" : hookParam ? "hook" : "idea"
 
@@ -313,12 +321,12 @@ function ProjectPageInner() {
   // A new cover opens in her primary brand colour (black when she has none).
   // Only an untouched pill adopts it: a pick, or the colour restored from the
   // saved post, wins.
-  const coverBrand = useCoverBrandColors()
+  const coverBrand = useCoverBrandColors(previewOn)
   const pillTouchedRef = useRef(false)
   useEffect(() => {
-    if (!coverBrand.ready || pillTouchedRef.current) return
+    if (!previewOn || !coverBrand.ready || pillTouchedRef.current) return
     setPillColor(defaultCoverColor(coverBrand.colors))
-  }, [coverBrand.ready, coverBrand.colors])
+  }, [previewOn, coverBrand.ready, coverBrand.colors])
   // Confirmation modal — opened from the trash icon on the video card. The
   // actual delete only fires after the user clicks "כן, למחוק". The cover has
   // no standalone delete action; it lives and dies with the video.
@@ -329,7 +337,7 @@ function ProjectPageInner() {
   // "לא אהבתי" on a card opens the AI edit with her feedback (lib/ai-edit-intent).
   const [aiChatOpening, setAiChatOpening] = useState<AiEditOpening | null>(null)
   useAiEditRequests((req) => {
-    if (req.postId !== savedPostId) return
+    if (!previewRef.current || req.postId !== savedPostId) return
     setAiChatFormat(req.format)
     setAiChatOpening(req.opening)
   })
@@ -872,7 +880,7 @@ function ProjectPageInner() {
           if (typeof data.post.coverPillColor === "string") {
             pillTouchedRef.current = true
             setPillColor(data.post.coverPillColor as string)
-          } else if (data.post.coverUrl) {
+          } else if (previewRef.current && data.post.coverUrl) {
             // Older cover saved before the colour was stored: it was baked
             // black, so the picker must not claim the brand colour.
             pillTouchedRef.current = true
@@ -1930,7 +1938,6 @@ function ProjectPageInner() {
     formatPosts,
     setFormatPosts,
     hook: activeHook,
-    generatingPlaceholder: FORMAT_GENERATING,
   })
 
   useEffect(() => {
@@ -2019,7 +2026,7 @@ function ProjectPageInner() {
         onMediaBusyChange={onPanelBusyChange}
       />
 
-      {copyEdit.overlay}
+      {previewOn && copyEdit.overlay}
 
       {/* "Keep chatting about the post" floating panel — sibling to the
           canvas (fixed positioning) so the pan/zoom transform doesn't drag
@@ -2660,7 +2667,8 @@ function ProjectPageInner() {
                           }}
                           livePillColor={livePillColor}
                           onLivePillPreview={setLivePillColor}
-                          coverBrandColors={coverBrand.colors}
+                          coverBrandColors={previewOn ? coverBrand.colors : undefined}
+                          coverSwatches={previewOn}
                           thVideoFrameDataUrl={thVideoFrameDataUrl}
                           userId={userId}
                           carouselImages={carouselImages}
@@ -2701,7 +2709,7 @@ function ProjectPageInner() {
                           onAiEdit={setAiChatFormat}
                           onDeleteMedia={setPendingMediaDelete}
                           onBRollUrlChange={setBRollUrl}
-                          copyAi={copyEdit.copyAi}
+                          copyAi={previewOn ? copyEdit.copyAi : undefined}
                           approval={
                             approveVariant
                               ? {
@@ -2988,6 +2996,7 @@ function FormatTree({
   livePillColor,
   onLivePillPreview,
   coverBrandColors = [],
+  coverSwatches = false,
   thVideoFrameDataUrl,
   userId,
   carouselImages,
@@ -3041,6 +3050,8 @@ function FormatTree({
   onLivePillPreview: (color: string | null) => void
   /** Her brand colours, offered as one-click swatches on the cover. */
   coverBrandColors?: string[]
+  /** Preview batch: brand swatches row instead of the single picker. */
+  coverSwatches?: boolean
   thVideoFrameDataUrl: string | null
   userId: string | null
   savedPostId: string | null
@@ -3200,7 +3211,11 @@ function FormatTree({
                       onFocus={() => onActiveChange(`format-${fid}`)}
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
-                      className={`min-h-[200px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text ${copyAi?.isBusy(fid) ? "ai-text-shimmer pointer-events-none" : ""}`}
+                      className={
+                        copyAi
+                          ? `min-h-[200px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text ${copyAi.isBusy(fid) ? "ai-text-shimmer pointer-events-none" : ""}`
+                          : "min-h-[200px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text"
+                      }
                     />
                     <CopyButton text={formatPosts[fid] ?? ""} />
                   </div>
@@ -3232,7 +3247,7 @@ function FormatTree({
                     className="w-full rounded-[10px] border-border-neutral-default text-text-primary-default text-small gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Icon className="size-4" />
-                    הוספת מדיה
+                    {copyAi ? "הוספת מדיה" : <>הוספת מדיה ל{format.label}</>}
                   </Button>
                   </FormatCopyActionRow>
                   {approval?.variant === "a" && approvalStatus === "no-media" && (
@@ -3462,14 +3477,24 @@ function FormatTree({
                           child), download button on the left. Matches the
                           shared layout pattern from the Figma. */}
                       <div className="flex items-center justify-between gap-3" dir="rtl">
-                        <CoverColorSwatches
-                          value={pillColor}
-                          brandColors={coverBrandColors}
-                          onChange={onPillColorChange}
-                          onLivePreview={onLivePillPreview}
-                          userId={userId}
-                          disabled={thCoverLoading}
-                        />
+                        {coverSwatches ? (
+                          <CoverColorSwatches
+                            value={pillColor}
+                            brandColors={coverBrandColors}
+                            onChange={onPillColorChange}
+                            onLivePreview={onLivePillPreview}
+                            userId={userId}
+                            disabled={thCoverLoading}
+                          />
+                        ) : (
+                          <ColorSwatchPicker
+                            value={pillColor}
+                            onChange={onPillColorChange}
+                            onLivePreview={onLivePillPreview}
+                            userId={userId}
+                            label="רקע הכותרת"
+                          />
+                        )}
                         <TooltipLabel label="הורד קאבר">
                           <Button
                             asChild

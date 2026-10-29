@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { Check, Loader2, RotateCcw, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Chip } from "@/components/ui/chip"
 
 /**
  * "לשמור לשפה הוויזואלית שלי" — the chip above the AI-edit input (Notion:
@@ -15,15 +16,12 @@ import { Button } from "@/components/ui/button"
  * sees what was kept with an undo. When style memory already kept it on its
  * own, the same "saved" line shows instead of the chip.
  *
- * Looks: the existing chip (outline, our grey hover) and a green success line.
+ * Looks: the shared Chip (components/ui/chip) and a green success line.
  * No yellow (Hani: "די עם הצהוב הזה").
  */
 
 export type ChipState = "ready" | "saving" | "saved" | "auto" | "error"
 
-/** The existing chip treatment (style-feedback-strip's reason chips). */
-const CHIP =
-  "inline-flex items-center gap-1.5 rounded-full border border-border-neutral-default bg-white px-2.5 py-1 text-xs text-text-primary-default transition-colors cursor-pointer hover:bg-gray-95 dark:bg-transparent dark:hover:bg-gray-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 disabled:cursor-default disabled:opacity-70"
 
 /** Presentational — every state, for the panel and for /test/save-to-visual-language. */
 export function SaveToVisualLanguageChipView({
@@ -82,14 +80,14 @@ export function SaveToVisualLanguageChipView({
   const busy = state === "saving"
   return (
     <div className="mb-2 flex flex-wrap gap-1.5">
-      <button type="button" disabled={busy} aria-busy={busy} onClick={onSave} className={CHIP}>
+      <Chip disabled={busy} aria-busy={busy} onClick={onSave}>
         {busy ? (
           <Loader2 className="size-3.5 animate-spin text-text-neutral-default" aria-hidden />
         ) : (
           <Sparkles className="size-3.5 text-text-neutral-default" aria-hidden />
         )}
         {busy ? "שומרים לשפה הוויזואלית..." : "לשמור לשפה הוויזואלית שלי"}
-      </button>
+      </Chip>
     </div>
   )
 }

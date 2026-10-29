@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef } from "react"
 import { toast } from "sonner"
 import { NOTICE_TOAST_CLASSES } from "@/lib/gemini-quota-toasts"
 import { carouselMetaForServer } from "@/lib/carousel-caption"
+import { previewAccessNow } from "@/lib/use-scheduling-access"
 
 /**
  * Long waits (carousel ~2 min, b-roll, story, image, AI edit) — one shared
@@ -33,6 +34,11 @@ export const LEAVE_SCREEN_NOTE = "אפשר לעבור למסך אחר ואנחנ
  * that turns into "ready".
  */
 export function startLongWait(id: string, title: string): void {
+  // Not in the preview batch: the loading toast exactly as before.
+  if (!previewAccessNow()) {
+    toast.loading(title, { id, duration: Infinity })
+    return
+  }
   toast.loading(title, {
     id,
     duration: Infinity,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
+import { canUsePreview } from "@/lib/scheduling-access"
 import { getUserApiKey } from "@/lib/api-keys"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { forgetStyleRule, saveInstructionAsRule } from "@/lib/style-memory"
@@ -26,6 +27,7 @@ export async function POST(request: NextRequest) {
   const supabase = await createClient()
   const user = await getAuthUser(supabase)
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!canUsePreview(user.email)) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
   const body = (await request.json().catch(() => ({}))) as { instruction?: string; format?: string }
   const instruction = body.instruction?.trim()
@@ -61,6 +63,7 @@ export async function DELETE(request: NextRequest) {
   const supabase = await createClient()
   const user = await getAuthUser(supabase)
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  if (!canUsePreview(user.email)) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
 
   const body = (await request.json().catch(() => ({}))) as { summary?: string }
   if (!body.summary?.trim()) return NextResponse.json({ error: "missing_summary" }, { status: 400 })

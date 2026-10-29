@@ -90,6 +90,7 @@ import {
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { carouselErrorInfo } from "@/lib/carousel-errors"
 import { saveCarouselIfLeft, startLongWait } from "@/lib/long-wait"
+import { usePreviewAccess } from "@/lib/use-scheduling-access"
 
 // Every format the panel can open MUST have an entry here: the header block
 // (title + close button) is gated on `meta`, so a missing key renders a panel
@@ -1493,6 +1494,8 @@ function CarouselFlow({
   onDriveLinksChange: (links: string[] | null) => void
   onBusyChange?: (format: string, busy: boolean) => void
 }) {
+  // Today's batch (2026-10-29), Hani only: the leave-screen note + save-if-left.
+  const previewOn = usePreviewAccess() === true
   const drivePick = useDrivePickVariant()
   // No separate "current carousel" tile (Hani 2026-07-09): the template
   // that made the saved carousel shows its real cover, starts SELECTED,
@@ -1694,13 +1697,16 @@ function CarouselFlow({
     // panel and still lands its slides on the canvas, so the skeleton must
     // too — it comes down in `finally`, whoever is mounted by then.
     onBusyChange?.("carousel", true)
-    const genToast = `carousel-gen-${Date.now()}`
-    startLongWait(
-      genToast,
-      isAiTemplate
-        ? `מציירים קרוסלת AI (${templateName})... זה לוקח כמה דקות`
-        : `יוצרים קרוסלה (${templateName})...`,
-    )
+    const genTitle = isAiTemplate
+      ? `מציירים קרוסלת AI (${templateName})... זה לוקח כמה דקות`
+      : `יוצרים קרוסלה (${templateName})...`
+    let genToast: string | number
+    if (previewOn) {
+      genToast = `carousel-gen-${Date.now()}`
+      startLongWait(genToast, genTitle)
+    } else {
+      genToast = toast.loading(genTitle, { duration: Infinity })
+    }
 
     try {
       onSlidesChange(parsedSlides)
@@ -1766,7 +1772,7 @@ function CarouselFlow({
         }
         setSavedTemplateId(genId === DRIVE_IMPORT_KEY ? undefined : genId)
         // She left /project mid-generation: the page that saves is gone.
-        void saveCarouselIfLeft(postId, data.images)
+        if (previewOn) void saveCarouselIfLeft(postId, data.images)
         setDialogFor(genId)
         setPreviewIndex(0)
         toast.success(`הקרוסלה (${templateName}) מוכנה`, {

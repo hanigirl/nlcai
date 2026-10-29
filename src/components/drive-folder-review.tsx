@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { cn } from "@/lib/utils"
+import { previewAccessNow, usePreviewAccess, usePreviewAccessShared } from "@/lib/use-scheduling-access"
 import { parseTextToSlides } from "@/lib/carousel-slides"
 
 /* ================================================================ types */
@@ -211,6 +212,10 @@ function DriveThumb({
 }: { item: Pick<MediaItem, "thumb" | "fallbacks"> } & Omit<React.ImgHTMLAttributes<HTMLImageElement>, "src">) {
   // Remember which URLs failed, not a position, so a new item starts fresh.
   const [failed, setFailed] = useState<string[]>([])
+  // Not in Hani's preview batch: the plain thumbnail, as before.
+  const preview = usePreviewAccessShared()
+  // eslint-disable-next-line @next/next/no-img-element
+  if (!preview) return <img {...img} src={item.thumb} className={className} />
   const src = [item.thumb, ...(item.fallbacks ?? [])].find((u) => !failed.includes(u))
   if (!src) {
     return (
@@ -301,10 +306,22 @@ export function loadDriveFolders(force = false): Promise<void> {
  * can't overwrite the one being saved.
  */
 export async function refreshDriveFolder(k: FolderKey): Promise<void> {
+  if (!previewOnly && !previewAccessNow()) return refreshDriveFolderOld(k)
   if (previewOnly || store.folders[k].status === "checking") return
   try {
     const d = (await fetch(`/api/drive-folders?key=${k}`).then((r) => r.json())) as { folder?: ApiFolder | null }
     if (d.folder !== undefined && (store.folders[k].status as Folder["status"]) !== "checking") setFolder(k, fromApi(d.folder))
+  } catch {
+    // Keep what we had; the gallery still works from the last listing.
+  }
+}
+
+/** The 2ecd45b re-list, for everyone outside the preview batch. */
+async function refreshDriveFolderOld(k: FolderKey): Promise<void> {
+  if (store.folders[k].status !== "connected") return
+  try {
+    const d = (await fetch(`/api/drive-folders?key=${k}`).then((r) => r.json())) as { folder?: ApiFolder | null }
+    if (d.folder !== undefined) setFolder(k, fromApi(d.folder))
   } catch {
     // Keep what we had; the gallery still works from the last listing.
   }
@@ -641,6 +658,8 @@ export function DriveFolderEntry({
 }) {
   const s = useDrivePickStore()
   const k = FORMAT_FOLDER[format] ?? "images"
+  // Hani's preview batch (2026-10-29): pull status/error here, re-read on focus.
+  const preview = usePreviewAccess() === true
   useEffect(() => {
     void loadDriveFolders()
   }, [])
@@ -655,7 +674,7 @@ export function DriveFolderEntry({
   }, [format])
   // Back from Drive / Settings in another tab: re-read, so a folder she just
   // connected or re-shared is there without a reload.
-  useRefreshOnFocus(k)
+  useRefreshOnFocus(k, preview)
   const f = s.folders[k]
   const picked = s.picked[format]
   const multi = format === "carousel" || format === "story"
@@ -693,6 +712,22 @@ export function DriveFolderEntry({
           </div>
         </div>
       )}
+      {!preview ? (
+        <>
+          <Button variant="outline" onClick={() => openDrivePicker(format)} className="w-full gap-2">
+            <DriveMark />
+            מדיה משלכם מ Google Drive
+          </Button>
+          <p className="text-xs-body text-text-neutral-default">
+            {f.status === "connected"
+              ? `מתיקיית „${f.name}” · ${filesLabel(f.items.length)}`
+              : f.status === "error"
+                ? "אין גישה לתיקייה שחוברה — אפשר לתקן בהגדרות"
+                : "עוד לא חוברה תיקייה ל" + FOLDER_META[k].label}
+          </p>
+        </>
+      ) : (
+      <>
       <Button variant="outline" onClick={() => openDrivePicker(format)} disabled={!!pulling} className="w-full gap-2">
         <DriveMark />
         מדיה משלכם מ Google Drive
@@ -716,12 +751,15 @@ export function DriveFolderEntry({
               : "עוד לא חוברה תיקייה ל" + FOLDER_META[k].label}
         </p>
       )}
+      </>
+      )}
     </div>
   )
 }
 
-function useRefreshOnFocus(k: FolderKey) {
+function useRefreshOnFocus(k: FolderKey, enabled: boolean) {
   useEffect(() => {
+    if (!enabled) return
     const onFocus = () => {
       if (document.visibilityState === "visible") void refreshDriveFolder(k)
     }
@@ -731,7 +769,7 @@ function useRefreshOnFocus(k: FolderKey) {
       window.removeEventListener("focus", onFocus)
       document.removeEventListener("visibilitychange", onFocus)
     }
-  }, [k])
+  }, [k, enabled])
 }
 
 /* ================================================================ the picker */
@@ -852,8 +890,10 @@ export function DriveFolderPicker({
   const k = FORMAT_FOLDER[format] ?? "images"
   const f = s.folders[k]
   const meta = FOLDER_META[k]
+  // Hani's preview batch (2026-10-29): re-read on focus, a real refresh.
+  const preview = usePreviewAccess() === true
 
-  useRefreshOnFocus(k)
+  useRefreshOnFocus(k, preview)
   // Opening re-lists the folder, so a file she just dropped into Drive is there.
   const [opening, setOpening] = useState(true)
   useEffect(() => {
@@ -892,9 +932,13 @@ export function DriveFolderPicker({
             <button
               type="button"
               onClick={() => {
-                // A real re-read (it used to only flash the skeleton).
                 setOpening(true)
-                void refreshDriveFolder(k).finally(() => setOpening(false))
+                if (preview) {
+                  // A real re-read (it used to only flash the skeleton).
+                  void refreshDriveFolder(k).finally(() => setOpening(false))
+                } else {
+                  setTimeout(() => setOpening(false), 650)
+                }
               }}
               aria-label="רענון התיקייה"
               title="רענון — לקבצים שהוספתם עכשיו לדרייב"
@@ -949,9 +993,13 @@ export function DriveFolderPicker({
 
 function NoFolder({ folderKey }: { folderKey: FolderKey }) {
   const meta = FOLDER_META[folderKey]
+  const preview = usePreviewAccess() === true
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-border-neutral-default p-4">
-      <p className="text-small-bold text-text-primary-default">עוד לא חוברה תיקייה ל{meta.label}</p>
+      <p className="text-small-bold text-text-primary-default">
+        {preview ? "עוד לא חוברה תיקייה ל" : "חברו תיקייה ל"}
+        {meta.label}
+      </p>
       <p className="text-xs-body text-text-neutral-default">
         הדביקו כאן קישור לתיקייה בדרייב. היא תישמר גם בהגדרות, ובפעם הבאה תיפתח ישר.
       </p>

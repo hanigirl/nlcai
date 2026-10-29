@@ -22,3 +22,16 @@ export const SCHEDULE_ALL_A_EMAILS = ["hanigirl@gmail.com"]
 export function canUseScheduleAllA(email: string | null | undefined): boolean {
   return !!email && SCHEDULE_ALL_A_EMAILS.includes(email.toLowerCase())
 }
+
+/**
+ * Today's batch (format copy AI edit, Drive media fixes, brand-colour cover,
+ * save-to-visual-language chip, dislike opens AI edit, the long-wait note,
+ * AI edit panels above the bar, calendar auto-arranged card opens its edit).
+ * Live for Hani only while she tries it (2026-10-29); everyone else gets the
+ * app as before.
+ */
+export const PREVIEW_EMAILS = ["hanigirl@gmail.com"]
+
+export function canUsePreview(email: string | null | undefined): boolean {
+  return !!email && PREVIEW_EMAILS.includes(email.toLowerCase())
+}

@@ -4,6 +4,7 @@ import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import type { BrandStyle } from "@/lib/supabase/types"
 import { getAuthUser } from "@/lib/auth-user"
+import { canUsePreview } from "@/lib/scheduling-access"
 import { cleanBrandColors, defaultCoverColor, isCoverHex } from "@/lib/cover-brand-color"
 
 const COVER_WIDTH = 1080
@@ -359,7 +360,7 @@ export async function POST(req: NextRequest) {
     // black when she has none. Every caller sends one today, so this only
     // matters for a caller that leaves the choice to the server.
     let pillHex = isCoverHex(pill_color) ? pill_color : undefined
-    if (!pillHex && pill_color === undefined) {
+    if (!pillHex && pill_color === undefined && canUsePreview(user.email)) {
       const { data: row } = await supabase.from("users").select("brand_colors").eq("id", user.id).single()
       pillHex = defaultCoverColor(cleanBrandColors((row as { brand_colors?: unknown } | null)?.brand_colors))
     }

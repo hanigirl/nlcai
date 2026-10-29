@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
+import { canUsePreview } from "@/lib/scheduling-access"
 import { getUserApiKey } from "@/lib/api-keys"
 import { editImage, type ImageShape } from "@/lib/openai-image"
 import { loadImageForModels } from "@/lib/visual-language/image-input"
@@ -191,7 +192,7 @@ export async function POST(req: NextRequest) {
     }
 
     const learning =
-      learn === false
+      learn === false && canUsePreview(user.email)
         ? Promise.resolve(null)
         : learnFromInstruction(supabase, user.id, anthropicKey, text, NOUN[format])
 
