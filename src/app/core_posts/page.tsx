@@ -138,6 +138,154 @@ interface SavedPost {
   updated_at: string
 }
 
+/* ------------------------------------------------------------------ */
+/*  FormatProgressRing — donut chart showing per-format status         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Maps a format readiness state to one of four visual buckets:
+ *   published  → סגול כהה (dark purple)
+ *   scheduled  → כחול (blue)
+ *   approved   → ירוק (green)
+ *   otherwise  → אפור (gray / missing)
+ *
+ * The ring renders four arcs (one per CARD_CHIP_FORMAT) in canonical order,
+ * so the visual is stable across cards (same format always occupies the same
+ * angular segment). Each arc is 25 % of the circle's circumference (90°).
+ * A small gap (2 px stroke-dashoffset nudge) separates segments so they read
+ * as four distinct slices.
+ */
+const RING_COLORS: Record<string, string> = {
+  published: "#7c3aed",  // purple-700 — פורסם
+  scheduled: "#2563eb",  // blue-600   — תוזמן
+  approved:  "#16a34a",  // green-600  — מאושר
+  missing:   "#d1d5db",  // gray-300   — חסר / בכתיבה
+}
+
+const RING_STATE_LABELS: Record<string, string> = {
+  published: "פורסם",
+  scheduled: "תוזמן",
+  approved:  "מאושר",
+  missing:   "חסר / בכתיבה",
+}
+
+function getSegmentBucket(
+  postId: string,
+  format: FormatId,
+  readinessInput: ReadinessPostInput,
+): "published" | "scheduled" | "approved" | "missing" {
+  const state = getFormatReadiness(readinessInput, format)
+  if (state === "published") return "published"
+  if (state === "scheduled") return "scheduled"
+  if (state === "ready" && isFormatApproved(postId, format)) return "approved"
+  return "missing"
+}
+
+/**
+ * FormatProgressRing — a 40 px donut ring split into 4 arcs (one per
+ * canonical format). The ring is positioned absolutely in the card; the
+ * parent card must be `relative`.
+ *
+ * Tooltip lists per-bucket counts so a user can read exact numbers on hover.
+ * Clicking the ring triggers `onOpen` (opens the Sheet for this post).
+ */
+function FormatProgressRing({
+  corePostId,
+  formats,
+  formatsWithMedia,
+  hasBody,
+  onOpen,
+}: {
+  corePostId: string
+  formats: string[]
+  formatsWithMedia?: string[]
+  hasBody: boolean
+  onOpen: () => void
+}) {
+  const readinessInput: ReadinessPostInput = {
+    id: corePostId,
+    formats,
+    formatsWithMedia,
+    hasBody,
+  }
+
+  const segments = CARD_CHIP_FORMATS.map((format) => ({
+    format,
+    bucket: getSegmentBucket(corePostId, format, readinessInput),
+  }))
+
+  // SVG donut parameters
+  const size = 40
+  const strokeWidth = 5
+  const radius = (size - strokeWidth) / 2
+  const circumference = 2 * Math.PI * radius
+  // 4 equal segments; small gap between them (2 px in circumference units)
+  const gap = 2
+  const segLen = circumference / 4 - gap
+
+  // Tooltip copy — count per bucket
+  const counts: Record<string, number> = { published: 0, scheduled: 0, approved: 0, missing: 0 }
+  segments.forEach(({ bucket }) => counts[bucket]++)
+  const tooltipLines = Object.entries(counts)
+    .filter(([, n]) => n > 0)
+    .map(([bucket, n]) => `${RING_STATE_LABELS[bucket]}: ${n}`)
+    .join(" · ")
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onOpen()
+          }}
+          aria-label={`התקדמות פורמטים — ${tooltipLines}`}
+          className="absolute top-2 start-2 z-10 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+        >
+          <svg
+            width={size}
+            height={size}
+            viewBox={`0 0 ${size} ${size}`}
+            className="rotate-[-90deg]"
+            aria-hidden
+          >
+            {/* Background track */}
+            <circle
+              cx={size / 2}
+              cy={size / 2}
+              r={radius}
+              fill="none"
+              stroke="#f3f4f6"
+              strokeWidth={strokeWidth}
+            />
+            {segments.map(({ format, bucket }, i) => {
+              const offset = i * (circumference / 4)
+              return (
+                <circle
+                  key={format}
+                  cx={size / 2}
+                  cy={size / 2}
+                  r={radius}
+                  fill="none"
+                  stroke={RING_COLORS[bucket]}
+                  strokeWidth={strokeWidth}
+                  strokeDasharray={`${segLen} ${circumference - segLen}`}
+                  strokeDashoffset={-offset + gap / 2}
+                  strokeLinecap="round"
+                />
+              )
+            })}
+          </svg>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent dir="rtl" side="bottom">
+        <span className="text-xs">{tooltipLines || "אין פורמטים עדיין"}</span>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 export default function CorePostsPage() {
   const [posts, setPosts] = useState<SavedPost[]>([])
   const [loading, setLoading] = useState(true)
@@ -554,6 +702,7 @@ export default function CorePostsPage() {
                           toast.error("השכפול נכשל, נסו שוב")
                         }
                       }}
+                      onOpenSheet={() => handleOpen(post)}
                     />
                   ))}
                 </div>
@@ -649,11 +798,13 @@ function CorePostCard({
   onClick,
   onDelete,
   onDuplicate,
+  onOpenSheet,
 }: {
   post: SavedPost
   onClick: () => void
   onDelete: () => void
   onDuplicate: () => void
+  onOpenSheet: () => void
 }) {
   const lines = post.body.split("\n").filter(Boolean)
   // The body returned by the AI starts with the hook line, but we also render
@@ -727,6 +878,18 @@ function CorePostCard({
       }}
       className="group relative gap-3 rounded-[12px] border-border-neutral-default bg-white dark:bg-gray-10 p-4 text-right transition-all hover:bg-bg-surface-hover hover:border-gray-80 hover:ring-2 hover:ring-gray-80/30 shadow-none cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
     >
+      {/* PROGRESS RING — donut chart showing per-format status, top-start
+          corner (right in RTL). Positioned absolutely over the card; the
+          Card already has `relative` via the className above. Clicking the
+          ring opens the Sheet for this post. */}
+      <FormatProgressRing
+        corePostId={post.id}
+        formats={post.formats}
+        formatsWithMedia={post.formats_with_media}
+        hasBody={!!post.body?.trim()}
+        onOpen={onOpenSheet}
+      />
+
       {/* MEDIA — first asset the user attached to any of this post's formats
           (video first-frame or image), scaled to fill a PORTRAIT slot
           (aspect 4:5) so reels / stories / portrait images display naturally
