@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
 import { recordLikedHookInsight } from "@/lib/learning-insights"
+import { stripDashes } from "@/lib/strip-dashes"
 
 interface CorePostRow {
   id: string
@@ -211,7 +212,7 @@ export async function POST(req: NextRequest) {
         })
         const textBlock = msg.content.find((b) => b.type === "text")
         if (textBlock?.text) {
-          title = textBlock.text.trim()
+          title = stripDashes(textBlock.text.trim())
         }
       } catch {
         // Use fallback title

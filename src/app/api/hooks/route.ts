@@ -12,6 +12,7 @@ import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-
 import { GeminiError, generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
 import { detectAddressGender, detectAddressGenderFromText } from "@/lib/detect-addressing"
 import { getAuthUser } from "@/lib/auth-user"
+import { stripDashes } from "@/lib/strip-dashes"
 
 // Two engines live here, picked by whether the user has a Gemini key:
 //   has one — one Gemini call, no judge
@@ -423,6 +424,10 @@ export async function POST(req: NextRequest) {
       // applies the reasoning to the other branch (Hani, 2026-08-26).
       hookTexts = judged.map(({ text }) => text)
     }
+
+    // No long dashes in a hook, whichever model wrote it (Gemini, Claude, or
+    // the judge's rewrite). The hook becomes the post's first line.
+    hookTexts = hookTexts.map(stripDashes)
 
     // Persist every generated hook to the user's inventory so the unselected
     // ones show up on /hooks too — picking a hook for a post then marks just

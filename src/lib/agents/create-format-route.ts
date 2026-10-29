@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import type { FormatAgentInput } from "./types"
+import { stripDashes } from "@/lib/strip-dashes"
 
 export interface FormatRouteConfig {
   buildPrompt: (input: FormatAgentInput) => string
@@ -26,7 +27,7 @@ export function createFormatRoute(config: FormatRouteConfig) {
   return async function POST(req: NextRequest) {
     try {
       if (useDummy) {
-        return NextResponse.json({ text: dummyText })
+        return NextResponse.json({ text: stripDashes(dummyText) })
       }
 
       const supabase = await createClient()
@@ -69,7 +70,8 @@ export function createFormatRoute(config: FormatRouteConfig) {
       })
 
       const textBlock = message.content.find((b) => b.type === "text")
-      const text = parseResponse(textBlock?.text ?? "")
+      // Every format (carousel, story, image post) passes here: no long dashes.
+      const text = stripDashes(parseResponse(textBlock?.text ?? ""))
 
       return NextResponse.json({ text })
     } catch (error) {

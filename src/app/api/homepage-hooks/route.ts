@@ -30,6 +30,7 @@ import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-
 import { withRetry } from "@/lib/supabase/retry"
 import { raiseNotice, resolveNotice } from "@/lib/system-notices"
 import { getAuthUser } from "@/lib/auth-user"
+import { stripDashes } from "@/lib/strip-dashes"
 
 // Streaming SSE pipeline (Claude plans the topics → Gemini writes one hook per
 // plan). Vercel's 10s default cuts the stream mid-batch. 300s is the Pro plan
@@ -878,6 +879,8 @@ ${formatTemplatesForPrompt()}
               // and occasionally undid something the judge got right.
             }
 
+            // No long dashes in a hook, whichever model wrote or rewrote it.
+            hookText = stripDashes(hookText)
             if (hookText.length <= 10) { skipped++; return }
 
             // Pre-generate the id so retries are idempotent: if attempt 1
