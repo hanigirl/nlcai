@@ -224,7 +224,9 @@ const chipStateClasses: Record<ChipState, string> = {
   // fill (#FFF3CC) + yellow-30 text/icon (#997500), transparent border
   // (no stroke).
   "ready": "bg-yellow-90 text-yellow-30 border-transparent",
-  "set": "bg-green-success-97 text-green-success-50 border-solid border-green-success-50",
+  // "set" = scheduled. Our primary (yellow-10, the primary-button colour)
+  // on the duplicated yellow fill — Hani 2026-10-29: not the teal green.
+  "set": "bg-yellow-90 text-yellow-10 border-solid border-yellow-10",
 }
 
 /**
@@ -235,7 +237,7 @@ const chipStateClasses: Record<ChipState, string> = {
 const chipStateHover: Record<ChipState, string> = {
   "not-started": "hover:bg-gray-95",
   "ready": "hover:bg-yellow-80",
-  "set": "hover:bg-green-success-97/80",
+  "set": "hover:bg-yellow-80",
 }
 
 /**
@@ -381,7 +383,7 @@ export function FormatStatusChip({
   // `hideCornerBadge` keeps the chip's green palette but suppresses the
   // ✓ — used to mark "scheduled at ANOTHER slot for this post" on the
   // calendar (✓ stays reserved for "scheduled HERE"). `cornerBadgeMuted`
-  // is the softer counterpart — shows ✓ in green-success-70 instead of
+  // is the softer counterpart — shows ✓ in yellow-40 instead of
   // emerald, signaling "on the calendar elsewhere" without competing
   // with the bold green anchor that sits next to it.
   const showCornerCheckBadge = isSet && !hideCornerBadge
@@ -396,7 +398,7 @@ export function FormatStatusChip({
   const isWeakerSet =
     chipState === "set" && (hideCornerBadge || cornerBadgeMuted)
   const stateClass = isWeakerSet
-    ? "bg-green-success-97 text-green-success-50 border-dashed border-green-success-50"
+    ? "bg-yellow-90 text-yellow-10 border-dashed border-yellow-10"
     : chipStateClasses[chipState]
 
   // "Not duplicated at all" (`empty`) is the only gray state now —
@@ -444,13 +446,13 @@ export function FormatStatusChip({
         // /core_posts and /calendar surfaces have the badge at the
         // visual top-right (same as the design source).
         //
-        // `cornerBadgeMuted` swaps emerald → green-success-70
+        // `cornerBadgeMuted` swaps yellow-10 → yellow-40
         // (#A4BBB6, a desaturated teal in the same family as the
         // chip body) for the weaker "scheduled elsewhere" variant.
         <span
           aria-hidden
           className={`absolute -top-[5px] -right-[5px] inline-flex items-center justify-center size-3 rounded-full ring-2 ring-white ${
-            cornerBadgeMuted ? "bg-green-success-70" : "bg-emerald-500"
+            cornerBadgeMuted ? "bg-yellow-40" : "bg-yellow-10"
           }`}
         >
           <Check className="size-1.5 text-white" strokeWidth={3} />
