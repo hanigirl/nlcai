@@ -59,6 +59,8 @@ import type { FormatId } from "@/lib/timing-storage"
 export type PublishStatus =
   /** Opened from the "ready to schedule" rail — not on the board yet. */
   | { kind: "unscheduled" }
+  /** A draft "סידור אוטומטי בלוח" laid on the board — not scheduled yet. */
+  | { kind: "draft" }
   | { kind: "not_connected" }
   | { kind: "pending" }
   | { kind: "scheduled" }
@@ -165,6 +167,10 @@ export function PublishStatusSlot({
       icon = <CalendarPlus className="size-4 text-text-neutral-default" aria-hidden />
       title = "עוד לא על הלוח"
       body = "בחרו תאריך ושעה ולחצו ״תזמון פוסט״."
+      break
+    case "draft":
+      icon = <CalendarPlus className="size-4 text-text-neutral-default" aria-hidden />
+      title = "טיוטה, עוד לא תוזמן"
       break
     case "not_connected":
       icon = <Unplug className="size-4 text-text-neutral-default" aria-hidden />

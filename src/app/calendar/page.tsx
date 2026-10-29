@@ -1090,8 +1090,23 @@ export default function CalendarPage() {
         setPreviewDetail({ key, caption: "", slides: [] })
       })
   }
+  // A draft laid on the board by "סידור אוטומטי בלוח" opens with its own
+  // date and time; saving moves the draft, it never schedules (Hani, 2026-10-29).
+  const previewDraft = previewKey
+    ? (planned ?? []).find((p) => `${p.corePostId}:${p.format}` === previewKey) ?? null
+    : null
   const previewRow: ScheduledPost | null = previewKey
     ? scheduled.find((p) => `${p.corePostId}:${p.format}` === previewKey) ??
+      (previewDraft
+        ? {
+            corePostId: previewDraft.corePostId,
+            format: previewDraft.format,
+            scheduledDate: previewDraft.scheduledDate,
+            scheduledTime: previewDraft.scheduledTime,
+            publishedAt: null,
+            hook: previewDraft.hook,
+          }
+        : null) ??
       (() => {
         const [corePostId, format] = previewKey.split(":")
         return {
@@ -1105,6 +1120,9 @@ export default function CalendarPage() {
     : null
   const previewPast = previewRow?.scheduledDate ? isSlotPast(previewRow, new Date()) : false
   const previewPublish = (row: ScheduledPost): PreviewPublishStatus => {
+    if (previewDraft && !scheduled.some((p) => p.corePostId === row.corePostId && p.format === row.format)) {
+      return { kind: "draft" }
+    }
     if (!row.scheduledDate) return { kind: "unscheduled" }
     const st = row.publish
     if (row.publishedAt || st?.status === "published") {
@@ -1158,6 +1176,19 @@ export default function CalendarPage() {
     ? {
         onReschedule: (date: string, time: string) => {
           if (blockedAsTooSoon(date, time)) return
+          if (previewData?.publish.kind === "draft") {
+            setPlanned((list) =>
+              list
+                ? list.map((x) =>
+                    x.corePostId === previewRow.corePostId && x.format === previewRow.format
+                      ? { ...x, scheduledDate: date, scheduledTime: time }
+                      : x,
+                  )
+                : list,
+            )
+            toast.success("הטיוטה עודכנה")
+            return
+          }
           schedulePost(previewRow.corePostId, previewRow.format, date, time, {
             hook: previewData?.hook,
           })
@@ -1184,6 +1215,15 @@ export default function CalendarPage() {
             })
         },
         onUnschedule: () => {
+          if (previewData?.publish.kind === "draft") {
+            setPlanned((list) =>
+              list
+                ? list.filter((x) => !(x.corePostId === previewRow.corePostId && x.format === previewRow.format))
+                : list,
+            )
+            setPreviewKey(null)
+            return
+          }
           unschedulePost(previewRow.corePostId, previewRow.format)
           unmarkPublished(previewRow.corePostId, previewRow.format)
           reloadBoard()

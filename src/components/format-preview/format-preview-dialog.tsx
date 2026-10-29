@@ -258,7 +258,7 @@ function DialogBody({
           </Button>
           {!isPublished && (
             <Button size="sm" disabled={!(slotDirty || captionDirty) || loading} onClick={commit}>
-              תזמון פוסט
+              {data.publish.kind === "draft" ? "שמירה" : "תזמון פוסט"}
             </Button>
           )}
         </div>
