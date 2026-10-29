@@ -726,6 +726,10 @@ function TalkingHeadFlow({
     setVideoPhase("generating")
     setVideoProgress("מעלה את ההקלטה...")
     setVideoError(null)
+    // The commit point: only now does the current video (and its cover) on
+    // the card make way for the new one. Opening the panel or pressing
+    // "התחלה מחדש" / "החלף מדיה" leaves the card alone (Hani, 2026-10-29).
+    if (liftedVideoUrl) onCoverImageChange(null)
     onVideoUrlChange(null)
 
     try {
@@ -799,15 +803,19 @@ function TalkingHeadFlow({
     a.click()
   }
 
+  // Resets the PANEL's workflow so she can pick a new source. The video and
+  // cover on the card stay exactly as they are until a new one is actually
+  // committed (a Drive video attached, or "צור וידאו") — closing the panel
+  // after this leaves the card untouched (Hani, 2026-10-29: "קודם לוחצים,
+  // הפאנל נפתח, ורק אז מחליטים"). `videoPhase` going idle is what moves the
+  // panel off the "done" view.
   const handleStartOver = () => {
     onAvatarChange(null)
     onAudioBlobChange(null)
     onTranscriptChange("")
     setAudioUrl(null)
     setVideoPhase("idle")
-    onVideoUrlChange(null)
     setVideoError(null)
-    onCoverImageChange(null)
     setCoverLoading(false)
     // Release the PARENT's cover spinner too. Only the local flag was cleared
     // here, so hitting "התחלה מחדש" / "החלף מדיה" while a cover was generating
@@ -821,6 +829,17 @@ function TalkingHeadFlow({
     setDriveLink("")
     setDriveError(null)
     lastDriveRef.current = ""
+  }
+
+  // A new video from Drive is being attached: what belonged to the previous
+  // one goes now — its recording, its transcript and its cover. This used to
+  // happen the moment she clicked the video on the card; now it waits for the
+  // actual commit, so opening and closing the panel changes nothing.
+  const replaceWithNewVideo = () => {
+    onAudioBlobChange(null)
+    onTranscriptChange("")
+    setAudioUrl(null)
+    if (liftedVideoUrl) onCoverImageChange(null)
   }
 
   // NOTE (2026-07-27): the canvas frame-grab helper that used to live here
@@ -893,6 +912,7 @@ function TalkingHeadFlow({
           )
           return
         }
+        replaceWithNewVideo()
         onVideoUrlChange(data.url)
         setVideoPhase("done")
         attached = true
@@ -901,6 +921,7 @@ function TalkingHeadFlow({
       }
 
       // Video → keep the link itself as the media.
+      replaceWithNewVideo()
       onVideoUrlChange(link)
       setVideoPhase("done")
       attached = true
@@ -1087,7 +1108,11 @@ function TalkingHeadFlow({
   }
 
   // --- Avatar picker ---
-  if (!avatar && sourceMode === "avatar") {
+  // Not while the current video is on show: "טען אווטארים" no longer clears
+  // the card's video, so a fresh open after it must land on that video, not
+  // on the picker. (`videoPhase` is "done" on mount when a video exists, and
+  // goes idle once she starts over inside the panel.)
+  if (!avatar && sourceMode === "avatar" && !(videoPhase === "done" && liftedVideoUrl)) {
     return (
       <div className="flex flex-col gap-3">
         <p className="text-sm text-text-neutral-default">בחר אווטאר:</p>

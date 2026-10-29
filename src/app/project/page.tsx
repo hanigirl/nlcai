@@ -5,7 +5,7 @@ import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Plus, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
-import { MediaAiChat, isEditableBRollUrl, type AiEditFormat } from "@/components/media-ai-chat"
+import { MediaAiChat, isEditableBRollUrl, mediaChatKey, type AiEditFormat } from "@/components/media-ai-chat"
 import { useAiEditRequests, type AiEditOpening } from "@/lib/ai-edit-intent"
 import { clearBRollUrl } from "@/lib/broll-generation-store"
 import { CaptionControls } from "@/components/image-caption-block"
@@ -2641,11 +2641,13 @@ function ProjectPageInner() {
                           thVideoLoading={thVideoLoading}
                           mediaBusy={mediaBusy}
                           thVideoCardRef={thVideoCardRef}
-                          onThReRecord={() => {
-                            setThAudioBlob(null)
-                            setThTranscript("")
-                            setSelectedFormatCard("talking_head")
-                          }}
+                          // Clicking the video ONLY opens the panel (Hani,
+                          // 2026-10-29: "קודם לוחצים, הפאנל נפתח, ורק אז
+                          // מחליטים"). It used to clear the recording and the
+                          // transcript here, like the old "עריכת סרטון"
+                          // button; that now happens in the panel, at the
+                          // moment a new video is actually attached.
+                          onThReRecord={() => setSelectedFormatCard("talking_head")}
                           onThDelete={() => setPendingVideoDelete(true)}
                           thCoverImage={thCoverImage}
                           thCoverLoading={thCoverLoading}
@@ -2704,7 +2706,9 @@ function ProjectPageInner() {
                           bRollUrl={bRollUrl}
                           bRollCardRef={bRollCardRef}
                           onBRollEdit={() => setSelectedFormatCard("b_roll")}
-                          onAiEdit={setAiChatFormat}
+                          // The sparkle opens a format's own conversation — a 👎 question
+                          // from another format must not follow it.
+                          onAiEdit={(f) => { setAiChatFormat(f); setAiChatOpening(null) }}
                           onDeleteMedia={setPendingMediaDelete}
                           onBRollUrlChange={setBRollUrl}
                           copyAi={previewOn ? copyEdit.copyAi : undefined}
@@ -2789,6 +2793,9 @@ function ProjectPageInner() {
         const own = isOwnMediaFormat(aiChatFormat, mediaOf[aiChatFormat], carouselDriveLinks)
         return (
           <MediaAiChat
+            // One panel per post + format (+ own media): switching formats
+            // remounts it on that format's conversation.
+            key={mediaChatKey(savedPostId, aiChatFormat, own)}
             postId={savedPostId}
             format={aiChatFormat}
             own={own}
