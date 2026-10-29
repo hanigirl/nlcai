@@ -68,6 +68,11 @@ import {
 } from "@/components/format-approval/approval-visuals"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
 import { useSchedulingAccess } from "@/lib/use-scheduling-access"
+// Design review ?copyedit=a|b — "עריכה עם AI" on every format's copy.
+import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
+import { FormatCopyEntry } from "@/components/format-copy-ai/format-copy-entry"
+import { isCopyFormat } from "@/lib/format-copy-refine"
+import type { FormatCopyAiController } from "@/components/format-copy-ai/use-format-copy-ai"
 
 type Flow = "idea" | "hook" | "saved"
 
@@ -1896,6 +1901,16 @@ function ProjectPageInner() {
   // the "chat about the post" affordance and force the panel shut.
   const formatsLocked = duplicatedFormats.length > 0
 
+  // Design review ?copyedit=a|b — seeds sample copy, no model call, no DB.
+  // Absent param = nothing here runs and the page is unchanged.
+  const copyEdit = useFormatCopyAiOnPage({
+    formatPosts,
+    setFormatPosts,
+    setCorePost,
+    setDuplicatedFormats,
+    focusOn: useCallback((el: HTMLElement) => canvasRef.current?.focusOn(el), []),
+  })
+
   useEffect(() => {
     if (formatsLocked && chatOpen) setChatOpen(false)
   }, [formatsLocked, chatOpen])
@@ -1982,6 +1997,8 @@ function ProjectPageInner() {
         onMediaBusyChange={onPanelBusyChange}
       />
 
+      {copyEdit.overlay}
+
       {/* "Keep chatting about the post" floating panel — sibling to the
           canvas (fixed positioning) so the pan/zoom transform doesn't drag
           it. Force-closed once the post is duplicated to formats. */}
@@ -2045,7 +2062,7 @@ function ProjectPageInner() {
                 they explicitly remove it" — collapsing back to a single-hook
                 view broke that. The hook-flow card stack below is mutex'd
                 against this so they never render simultaneously. */}
-          {((flow === "idea") || hooks.length > 0) && (
+          {!copyEdit.review && ((flow === "idea") || hooks.length > 0) && (
             <>
               {/* Idea card — editable */}
               <div
@@ -2660,6 +2677,7 @@ function ProjectPageInner() {
                           onAiEdit={setAiChatFormat}
                           onDeleteMedia={setPendingMediaDelete}
                           onBRollUrlChange={setBRollUrl}
+                          copyAi={copyEdit.copyAi}
                           approval={
                             approveVariant
                               ? {
@@ -2964,6 +2982,7 @@ function FormatTree({
   onDeleteMedia,
   onBRollUrlChange,
   approval,
+  copyAi,
 }: {
   formats: string[]
   formatPosts: Record<string, string>
@@ -3020,6 +3039,8 @@ function FormatTree({
   onDeleteMedia: (format: AiEditFormat) => void
   /** Media approval (design review ?approve=a|b). Absent = feature off. */
   approval?: FormatTreeApproval
+  /** "עריכה עם AI" on the format copy (review ?copyedit=a|b). Absent = off. */
+  copyAi?: FormatCopyAiController
 }) {
   const count = formats.length
   const totalWidth = count * CARD_WIDTH + (count - 1) * CARD_GAP
@@ -3086,6 +3107,7 @@ function FormatTree({
           return (
             <div key={fid} className="flex flex-col items-center" style={{ width: CARD_WIDTH }}>
               <div
+                data-copy-card={copyAi ? fid : undefined}
                 className={`flex flex-col gap-3 rounded-[20px] border bg-white dark:bg-gray-10 pb-6 transition-all w-full ${
                   isSelected
                     ? "border-yellow-50 ring-2 ring-yellow-50"
@@ -3151,10 +3173,23 @@ function FormatTree({
                       onFocus={() => onActiveChange(`format-${fid}`)}
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
-                      className="min-h-[200px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text"
+                      className={`min-h-[200px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text ${copyAi && isCopyFormat(fid) && copyAi.session(fid).loading ? "ai-text-shimmer pointer-events-none" : ""}`}
                     />
                     <CopyButton text={formatPosts[fid] ?? ""} />
                   </div>
+                  {copyAi && isCopyFormat(fid) && (
+                    <FormatCopyEntry
+                      ctrl={copyAi}
+                      fid={fid}
+                      hasMedia={
+                        fid === "carousel" ? !!carouselImages?.length
+                        : fid === "story" ? !!storyImages?.length || !!storyVideoUrl
+                        : fid === "image_post" ? !!imagePostUrl
+                        : fid === "talking_head" ? !!thVideoUrl
+                        : !!bRollUrl
+                      }
+                    />
+                  )}
                   <Button
                     variant="outline"
                     // For talking_head, we disable the button once a video
