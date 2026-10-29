@@ -11,3 +11,14 @@ export const SCHEDULING_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.co
 export function canUseScheduling(email: string | null | undefined): boolean {
   return !!email && SCHEDULING_EMAILS.includes(email.toLowerCase())
 }
+
+/**
+ * "סידור אוטומטי ← תזמון כל הפוסטים" as one row in the panel header, no
+ * schedule settings on the board (task 4084d905, direction A). Hani only,
+ * while she tries it (2026-10-29).
+ */
+export const SCHEDULE_ALL_A_EMAILS = ["hanigirl@gmail.com"]
+
+export function canUseScheduleAllA(email: string | null | undefined): boolean {
+  return !!email && SCHEDULE_ALL_A_EMAILS.includes(email.toLowerCase())
+}

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
+  CalendarCheck,
+  CalendarClock,
   ChevronRight,
   ChevronLeft,
   MoreVertical,
@@ -20,7 +22,7 @@ import {
 
   unfilledSlots,
 } from "@/components/calendar-routine"
-import { slotsForDate } from "@/lib/posting-schedule"
+import { defaultPostingSchedule, slotsForDate } from "@/lib/posting-schedule"
 import { AppShell } from "@/components/app-shell"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -49,7 +51,7 @@ import {
   type PreviewSlide,
   type PublishStatus as PreviewPublishStatus,
 } from "@/components/format-preview/shared"
-import { useSchedulingAccess } from "@/lib/use-scheduling-access"
+import { useScheduleAllA, useSchedulingAccess } from "@/lib/use-scheduling-access"
 import {
   hasAnySlot,
   planScheduleAll,
@@ -195,8 +197,46 @@ function formatWeekRange(weekStart: Date, weekEnd: Date): string {
  * A post "סידור אוטומטי בלוח" laid on the board, not scheduled yet: dashed,
  * no menu. Can be dragged to another day before "תזמון כל הפוסטים".
  */
-function PlannedCard({ slot }: { slot: PlannedSlot }) {
+function PlannedCard({ slot, likeScheduled = false }: { slot: PlannedSlot; likeScheduled?: boolean }) {
   const formatLabel = getFormatChipLabel(slot.format)
+  // Direction A (Hani, 2026-10-29): a draft is the scheduled card exactly —
+  // image, time badge, hook, chip — and only the dashed border tells it apart.
+  if (likeScheduled) {
+    return (
+      <div
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData(
+            "application/x-schedule-ghost",
+            JSON.stringify({ corePostId: slot.corePostId, format: slot.format }),
+          )
+          e.dataTransfer.effectAllowed = "move"
+        }}
+        aria-label={`${formatLabel} טיוטה, עוד לא תוזמן: ${slot.hook}`}
+        className="relative w-full min-w-0 flex flex-col gap-1.5 rounded-lg border border-dashed border-gray-70 bg-white dark:bg-gray-10 p-1.5 cursor-grab active:cursor-grabbing transition-all hover:bg-bg-surface-hover hover:border-gray-80"
+      >
+        <div className="relative aspect-[4/5] w-full overflow-hidden rounded-md bg-gray-95">
+          <FormatThumbnail
+            url={slot.mediaUrl}
+            format={slot.format}
+            className="size-full"
+            iconClassName="size-5"
+            fallbackClassName="bg-gray-95"
+            fit={slot.format === "carousel" ? "contain" : "cover"}
+          />
+          <Badge className="absolute top-1 start-1 z-10 bg-button-primary-default text-white dark:text-gray-10 tabular-nums">
+            {slot.scheduledTime}
+          </Badge>
+        </div>
+        <div className="flex min-w-0 flex-col gap-1">
+          <p className="line-clamp-2 text-xs-body leading-tight text-text-primary-default">{slot.hook}</p>
+          <div className="flex">
+            <FormatStatusChip format={slot.format} state="ready" size="xs" />
+          </div>
+        </div>
+      </div>
+    )
+  }
   return (
     <div
       draggable
@@ -490,6 +530,10 @@ export default function CalendarPage() {
   // board it was before. Includes the weekly routine on the board (ghost
   // slots + in-place edit), the approved-only rail and the format preview.
   const schedulingOn = useSchedulingAccess() === true
+  // Direction A of "schedule all" (task 4084d905): one row in the panel
+  // header, drafts drawn like scheduled cards, no schedule settings on the
+  // board. Hani only for now (lib/scheduling-access).
+  const scheduleAllA = useScheduleAllA() === true && schedulingOn
   const rulesVariant: "a" | null = schedulingOn ? "a" : null
   const routine = usePostingSchedule()
   const [routineEditing, setRoutineEditing] = useState(false)
@@ -678,6 +722,26 @@ export default function CalendarPage() {
   const [plannedUnmatched, setPlannedUnmatched] = useState<PlanInputCard[]>([])
   const [noSettingsOpen, setNoSettingsOpen] = useState(false)
   const onArrange = () => {
+    if (scheduleAllA) {
+      // No settings on the board: her saved routine, or the default one.
+      const plan = planScheduleAll(
+        railCards,
+        hasAnySlot(routine.saved) ? routine.saved : defaultPostingSchedule(),
+        scheduled,
+      )
+      if (plan.placed.length === 0) {
+        toast("לפורמטים שנשארו אין משבצת פנויה בלו״ז")
+        return
+      }
+      setPlanned(plan.placed)
+      setPlannedUnmatched(plan.unmatched)
+      const first = [...plan.placed].sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate))[0]
+      if (first) {
+        const [y, m, d] = first.scheduledDate.split("-").map((n) => parseInt(n, 10))
+        setWeekStart(startOfWeek(new Date(y, m - 1, d)))
+      }
+      return
+    }
     if (!hasAnySlot(routine.saved)) {
       setNoSettingsOpen(true)
       return
@@ -1267,7 +1331,7 @@ export default function CalendarPage() {
                 </Button>
               </div>
               <div className="flex items-center gap-2">
-                {rulesVariant === "a" && (
+                {rulesVariant === "a" && !scheduleAllA && (
                   <RoutineButton schedule={routine.saved} onEdit={startRoutineEdit} />
                 )}
                 <Button variant="outline" size="sm" onClick={goThisWeek} disabled={isCurrentWeek}>
@@ -1278,7 +1342,7 @@ export default function CalendarPage() {
             )}
           </div>
 
-          {planned && (
+          {planned && !scheduleAllA && (
             <div className="max-w-[1200px] w-full mx-auto">
               <PreviewBar
                 plan={planned}
@@ -1385,11 +1449,12 @@ export default function CalendarPage() {
                     <div className="flex flex-col gap-1.5 p-2 min-h-full">
                       {dayPosts.map(renderCard)}
                       {(plannedByDay.get(dayKey) ?? []).map((slot) => (
-                        <PlannedCard key={`planned:${slot.corePostId}:${slot.format}`} slot={slot} />
+                        <PlannedCard key={`planned:${slot.corePostId}:${slot.format}`} slot={slot} likeScheduled={scheduleAllA} />
                       ))}
                       {/* Variant A: the routine's still-open slots for this
                           day, as dashed ghosts. Upcoming days only. */}
                       {rulesVariant === "a" &&
+                        !scheduleAllA &&
                         routine.hasCustom &&
                         !past &&
                         unfilledSlots(
@@ -1420,7 +1485,31 @@ export default function CalendarPage() {
           onReadyCardsChange={schedulingOn ? setRailCards : undefined}
           previewPlacedIds={plannedIds}
           headerAction={
-            schedulingOn ? (
+            scheduleAllA ? (
+              planned ? (
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setPlanned(null)
+                      setPlannedUnmatched([])
+                    }}
+                  >
+                    ביטול
+                  </Button>
+                  <Button size="sm" onClick={onConfirmPlanned}>
+                    <CalendarCheck className="size-4" aria-hidden />
+                    תזמון כל הפוסטים
+                  </Button>
+                </div>
+              ) : (
+                <Button size="sm" variant="outline" onClick={onArrange} disabled={railCards.length === 0}>
+                  <CalendarClock className="size-4" aria-hidden />
+                  סידור אוטומטי בלוח
+                </Button>
+              )
+            ) : schedulingOn ? (
               <ScheduleAllButton
                 label="סידור אוטומטי בלוח"
                 count={railCards.length}
