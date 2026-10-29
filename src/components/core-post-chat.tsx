@@ -11,7 +11,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { useDismissOnOutsideClick } from "@/lib/use-dismiss-on-outside-click"
 import { usePreviewAccess } from "@/lib/use-scheduling-access"
 import { logLearningEdit, type LearningOutcome } from "@/lib/learning-capture"
-import { getChat, clearChat, moveChat, updateChat, useAiChat, type AiChatSession } from "@/lib/ai-chat-session-store"
+import { getChat, clearChat, moveChat, updateChat, useAiChat, useWatchChat, type AiChatSession } from "@/lib/ai-chat-session-store"
+import { revealChatReply } from "@/lib/ai-chat-reveal"
 import { AiChatNewButton } from "@/components/ai-chat-new-button"
 
 interface ChatMessage {
@@ -109,6 +110,8 @@ export function CorePostChat({
   const { messages, input, busy: loading } = session
   const { error } = session.extra
   const patch = (fn: (s: CoreChat) => CoreChat) => updateChat(storeKey, freshChat, fn)
+  // While open, a reply lands here — nothing to reopen (lib/ai-chat-reveal).
+  useWatchChat(open ? storeKey : null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -236,6 +239,8 @@ export function CorePostChat({
       fail("שגיאת רשת. נסו שוב.")
     } finally {
       patchKey((s) => ({ ...s, busy: false }))
+      // Closed meanwhile: this post's page reopens the chat on the reply.
+      revealChatReply(key, "העריכה של פוסט הליבה מוכנה")
     }
   }
 

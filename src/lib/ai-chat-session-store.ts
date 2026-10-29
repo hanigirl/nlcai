@@ -174,16 +174,26 @@ export function useAiChatVersion(): number {
 
 /** How many open panels show each conversation. */
 const watching = new Map<string, number>()
+/** Told when a panel starts showing a conversation (lib/ai-chat-reveal). */
+const watchListeners = new Set<(key: string) => void>()
+export function onChatWatched(fn: (key: string) => void): () => void {
+  watchListeners.add(fn)
+  return () => {
+    watchListeners.delete(fn)
+  }
+}
 
 /** Is a panel showing this conversation right now? (For the leave-screen toast.) */
 export function isChatWatched(key: string): boolean {
   return (watching.get(key) ?? 0) > 0
 }
 
-/** Call from a mounted panel: it shows `key` while mounted. */
-export function useWatchChat(key: string) {
+/** Call from a mounted panel: it shows `key` while mounted (null = shows nothing). */
+export function useWatchChat(key: string | null) {
   useEffect(() => {
+    if (!key) return
     watching.set(key, (watching.get(key) ?? 0) + 1)
+    watchListeners.forEach((l) => l(key))
     return () => {
       const n = (watching.get(key) ?? 1) - 1
       if (n > 0) watching.set(key, n)

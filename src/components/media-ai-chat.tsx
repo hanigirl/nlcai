@@ -27,6 +27,7 @@ import {
   type AiChatSession,
 } from "@/lib/ai-chat-session-store"
 import { AiChatNewButton } from "@/components/ai-chat-new-button"
+import { canRevealChat, revealChatReply } from "@/lib/ai-chat-reveal"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
@@ -310,7 +311,9 @@ export function MediaAiChat({
     // switches format before it lands.
     const key = chatKey
     const init = fresh
-    const isWatching = () => isChatWatched(key)
+    // A panel shows it, or this post's page will reopen the panel with the
+    // reply (lib/ai-chat-reveal) — either way no leave-screen toast.
+    const isWatching = () => isChatWatched(key) || canRevealChat(key)
     const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, init, fn)
     const cur = getChat<ChatMessage, MediaChatExtra>(key) ?? init()
     if (cur.busy) return
@@ -359,6 +362,7 @@ export function MediaAiChat({
           : { role: "assistant", content: result.message || "העריכה לא הצליחה. נסו שוב.", error: true },
       ],
     }))
+    revealChatReply(key, result.ok ? AWAY_COPY[format].done : AWAY_COPY[format].failed)
   }
 
   /** Her own media: plan → existing caption / slide paths → save the set. */
@@ -397,6 +401,7 @@ export function MediaAiChat({
           ? { role: "assistant", content: r.message }
           : { role: "assistant", content: r.message || copy.done, done: true, remembered: null, noStyle: !r.styleChange }
     patchKey((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" }, messages: [...s.messages, reply] }))
+    revealChatReply(mediaChatKey(postId, format, own), reply.error ? AWAY_COPY[format].failed : AWAY_COPY[format].done)
   }
 
   async function editImages(

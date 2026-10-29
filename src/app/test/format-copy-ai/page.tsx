@@ -10,7 +10,8 @@
  *
  * `reopen`: the panel keeps its conversation (lib/ai-chat-session-store).
  * Ask something (it takes ~5 s), close the panel with X or the sparkle while
- * it works, reopen: still working, then the change lands. Reload: the
+ * it works, reopen: still working, then the change lands (or leave it closed:
+ * it opens by itself when the change lands). Reload: the
  * conversation and the half-typed text come back. The scripted states start
  * clean on every load.
  */
@@ -25,6 +26,7 @@ import { FormatCopyActionRow, FormatCopyAiHoverButton } from "@/components/forma
 import { AI_HOVER_ZONE } from "@/components/ai-hover-edit"
 import { useFormatCopyAi, type CopyRefineResponder } from "@/components/format-copy-ai/use-format-copy-ai"
 import { clearChat } from "@/lib/ai-chat-session-store"
+import { useChatRevealer } from "@/lib/ai-chat-reveal"
 
 type PreviewState = "closed" | "open" | "generating" | "proposal" | "applied" | "error" | "reopen"
 
@@ -110,6 +112,13 @@ function StatePreview({ state }: { state: PreviewState }) {
     hook: HOOK,
     responder,
     scope,
+  })
+
+  // As on /project: a reply that lands while the panel is closed reopens it.
+  useChatRevealer({
+    owns: (key) => key === `copy:${scope}:carousel`,
+    state: () => (ctrl.activeFid ? "busy" : "open"),
+    open: () => ctrl.open("carousel"),
   })
 
   const started = useRef(false)

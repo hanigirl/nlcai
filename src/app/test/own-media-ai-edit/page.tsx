@@ -16,7 +16,8 @@
  * `reopen` — the panel keeps its conversation (lib/ai-chat-session-store):
  * nothing is sent for you; ask something (a chip or your own words), the
  * edit takes ~6 s; close the panel (X / outside click) while it works,
- * reopen it with the sparkle and it is still working, then the reply lands.
+ * reopen it with the sparkle and it is still working, then the reply lands —
+ * or leave it closed: when the reply lands the panel opens by itself on it.
  * Close and reopen again, or reload: the conversation and the half-typed text
  * come back. "שיחה חדשה" in the header starts over. The other states start
  * clean on every load.
@@ -34,6 +35,7 @@ import { useSearchParams } from "next/navigation"
 import { Film, Image as ImageIcon, Layers, Play, Smartphone } from "lucide-react"
 import { MediaAiChat, mediaChatKey, type AiEditFormat } from "@/components/media-ai-chat"
 import { clearChat } from "@/lib/ai-chat-session-store"
+import { useChatRevealer } from "@/lib/ai-chat-reveal"
 import { AI_HOVER_ZONE, AiHoverEditButton } from "@/components/ai-hover-edit"
 import type { OwnEditPlan, OwnFrameInfo } from "@/lib/own-media"
 
@@ -299,6 +301,12 @@ function Stage({ state, sample }: { state: State; sample: Sample }) {
     return true
   })
   const [index, setIndex] = useState(0)
+  // As on /project: a reply that lands while the panel is closed reopens it.
+  useChatRevealer({
+    owns: (key) => key === mediaChatKey(postId, sample.format, true),
+    state: () => (open ? "busy" : "open"),
+    open: () => setOpen(true),
+  })
 
   const current = urls[Math.min(index, urls.length - 1)] ?? urls[0]
   const shown = readCaption(current)

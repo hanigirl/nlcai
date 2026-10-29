@@ -77,6 +77,8 @@ import { ApprovalCardFooter } from "@/components/format-approval/approval-card-f
 import { usePreviewAccess, useSchedulingAccess } from "@/lib/use-scheduling-access"
 // "עריכה עם AI" on every format's copy (Hani, 2026-10-29).
 import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
+import { useChatRevealer } from "@/lib/ai-chat-reveal"
+import { isCopyFormat } from "@/lib/format-copy-refine"
 import { FormatCopyActionRow, FormatCopyAiHoverButton } from "@/components/format-copy-ai/format-copy-entry"
 import type { FormatCopyAiController } from "@/components/format-copy-ai/use-format-copy-ai"
 
@@ -1944,6 +1946,29 @@ function ProjectPageInner() {
   useEffect(() => {
     if (formatsLocked && chatOpen) setChatOpen(false)
   }, [formatsLocked, chatOpen])
+
+  // An AI reply that landed while its panel was closed reopens the panel on
+  // it (Hani, 2026-10-29) — only on this post, never over another open AI
+  // panel (then a toast offers "פתיחה"). Opening sends nothing.
+  useChatRevealer({
+    owns: (key) =>
+      !!savedPostId &&
+      (key.startsWith(`media:${savedPostId}:`) ||
+        (key === `core:${savedPostId}` && !formatsLocked) ||
+        (previewOn && key.startsWith(`copy:${savedPostId}:`))),
+    state: () =>
+      savedPostLoading ? "wait" : aiChatFormat || chatOpen || copyEdit.copyAi.activeFid ? "busy" : "open",
+    open: (key) => {
+      const [kind, , part] = key.split(":")
+      setAiChatFormat(null)
+      setAiChatOpening(null)
+      setChatOpen(false)
+      copyEdit.copyAi.close()
+      if (kind === "media") setAiChatFormat(part as AiEditFormat)
+      else if (kind === "core") setChatOpen(true)
+      else if (kind === "copy" && isCopyFormat(part)) copyEdit.copyAi.open(part)
+    },
+  })
 
   return (
     <AppShell idea={shortenTitle(idea || hookParam || (postId ? "עריכת פוסט" : ""))}>

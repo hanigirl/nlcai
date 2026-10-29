@@ -3,11 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
   requestFormatCopyRefine,
+  COPY_NOUN,
   type CopyFormat,
   type CopyRefineResult,
   type CopyRefineTurn,
 } from "@/lib/format-copy-refine"
 import { clearChat, getChat, updateChat, useAiChatVersion, type AiChatSession } from "@/lib/ai-chat-session-store"
+import { revealChatReply } from "@/lib/ai-chat-reveal"
 
 /**
  * State for "עריכה עם AI" on the format copy cards — one session per format.
@@ -69,6 +71,8 @@ export interface FormatCopyAiController {
   setInput: (fid: CopyFormat, value: string) => void
   /** "שיחה חדשה": forget this format's conversation. */
   reset: (fid: CopyFormat) => void
+  /** This format's conversation in lib/ai-chat-session-store. */
+  chatKey: (fid: CopyFormat) => string
 }
 
 interface Options {
@@ -175,12 +179,15 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder, 
             },
           ],
         }))
+        // Closed meanwhile: this post's page reopens the panel on the reply.
+        revealChatReply(key, `עריכת ${COPY_NOUN[fid]} מוכנה`)
       } catch (err) {
         patchKey(key, (s) => ({
           ...s,
           busy: false,
           extra: { ...s.extra, error: err instanceof Error ? err.message : "משהו השתבש. נסו שוב." },
         }))
+        revealChatReply(key, `עריכת ${COPY_NOUN[fid]} לא הצליחה`)
       }
     },
      
@@ -271,5 +278,5 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder, 
   )
   const reset = useCallback((fid: CopyFormat) => clearChat(keyOf(fid)), [keyOf])
 
-  return { activeFid, session, open, close, send, retry, keep, cancel, pendingIndex, isBusy, input, setInput, reset }
+  return { activeFid, session, open, close, send, retry, keep, cancel, pendingIndex, isBusy, input, setInput, reset, chatKey: keyOf }
 }

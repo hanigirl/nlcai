@@ -6,6 +6,7 @@ import { AiSparkle } from "@/components/ai-refine-button"
 import { useDismissOnOutsideClick } from "@/lib/use-dismiss-on-outside-click"
 import { COPY_NOUN } from "@/lib/format-copy-refine"
 import { AiChatNewButton } from "@/components/ai-chat-new-button"
+import { useWatchChat } from "@/lib/ai-chat-session-store"
 import type { FormatCopyAiController } from "./use-format-copy-ai"
 import {
   CopyAppliedNote,
@@ -38,6 +39,8 @@ export function FormatCopyChat({
   // Only the floating panel closes on an outside click; the /test page renders it in flow.
   useDismissOnOutsideClick(panelRef, floating && !!fid, ctrl.close)
   const session = fid ? ctrl.session(fid) : null
+  // While shown, a reply lands here — nothing to reopen (lib/ai-chat-reveal).
+  useWatchChat(fid ? ctrl.chatKey(fid) : null)
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
