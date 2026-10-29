@@ -15,6 +15,10 @@
  *   approved  → approved, and the media is still the one that was approved
  *   edited    → was approved, then the media changed → approval withdrawn
  *
+ * A format already on the calendar is the exception (Hani, 2026-10-29, her
+ * account only for now): editing it keeps it approved for the new media and
+ * takes it off the calendar, so it reads "מאושר" again and she schedules it anew.
+ *
  * `persist` writes approvals to timing-storage (the same store the calendar
  * reads for scheduled / published). The design-review harness runs with
  * `persist: false` so the preview never writes anything.
@@ -29,6 +33,8 @@ import {
   unschedulePost,
   type FormatId,
 } from "@/lib/timing-storage"
+import { toast } from "sonner"
+import { usePreviewAccess } from "@/lib/use-scheduling-access"
 
 /** "scheduled" = approved AND already on the calendar. */
 export type ApprovalStatus = "no-media" | "pending" | "approved" | "scheduled" | "edited"
@@ -68,6 +74,7 @@ export function useFormatApprovals({
   const [entries, setEntries] = useState<Record<string, Entry>>({})
   const [edited, setEdited] = useState<Record<string, boolean>>({})
   const [scheduled, setScheduled] = useState<Record<string, boolean>>({})
+  const previewOn = usePreviewAccess() === true
 
   const formatsKey = formats.join(",")
   const sigKey = formats.map((f) => `${f}=${mediaSigs[f] ?? ""}`).join("\n")
@@ -98,18 +105,43 @@ export function useFormatApprovals({
       return now !== "" && now !== e.sig
     })
     if (stale.length === 0) return
+    // Edited while on the calendar: stays approved for the new media and comes
+    // off the board, back to "מאושר" (her account only for now).
+    const rescheduled = previewOn ? stale.filter(([f]) => scheduled[f]).map(([f]) => f) : []
+    if (rescheduled.length > 0) {
+      const now = new Date().toISOString()
+      setEntries((prev) => {
+        const next = { ...prev }
+        for (const f of rescheduled) next[f] = { approvedAt: now, sig: mediaSigs[f] ?? "" }
+        return next
+      })
+      setScheduled((prev) => {
+        const next = { ...prev }
+        for (const f of rescheduled) next[f] = false
+        return next
+      })
+      if (persist && postId) {
+        for (const f of rescheduled) {
+          approveFormat(postId, f as FormatId, mediaSigs[f] ?? "")
+          unschedulePost(postId, f as FormatId)
+        }
+        toast.success("השינוי נשמר. הפוסט ירד מהלוח ומאושר לתזמון מחדש.")
+      }
+    }
+    const withdrawn = stale.filter(([f]) => !rescheduled.includes(f))
+    if (withdrawn.length === 0) return
     setEntries((prev) => {
       const next = { ...prev }
-      for (const [f] of stale) delete next[f]
+      for (const [f] of withdrawn) delete next[f]
       return next
     })
     setEdited((prev) => {
       const next = { ...prev }
-      for (const [f] of stale) next[f] = true
+      for (const [f] of withdrawn) next[f] = true
       return next
     })
     if (persist && postId) {
-      for (const [f] of stale) revokeFormatApproval(postId, f)
+      for (const [f] of withdrawn) revokeFormatApproval(postId, f)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sigKey, entries])
