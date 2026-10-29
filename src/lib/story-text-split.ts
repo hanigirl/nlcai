@@ -21,8 +21,50 @@
  *     rather than dropping the tail.
  */
 
-/** Never more than this many frames when WE choose the count. */
+/** Never more than this many frames when WE choose the count from length. */
 export const MAX_STORY_FRAMES = 3
+
+/** The script's own division wins, up to this many frames (3 render at a time inside the route's 300 s, so 6 = two rounds). */
+const MAX_SCRIPT_FRAMES = 6
+
+/**
+ * A line that names a frame — "פריים 1", "[מסך 2]", "סטורי 3:", "Frame 4".
+ * It's an instruction for us, never text for the image (Hani, 2026-10-29:
+ * "פריים 1" was drawn onto the frame). Optional text after a colon on the
+ * same line belongs to that frame.
+ */
+const FRAME_MARKER = /^\s*[\[(]?\s*(?:פריים|מסך|סטורי|שקופית|frame|screen|slide)\s*\d+\s*[\])]?\s*[:.\-–—]?\s*/i
+
+/** The script divided by its own frame markers, or null when it has fewer than two. */
+function markedFrames(body: string): string[] | null {
+  const frames: string[] = []
+  let current: string[] | null = null
+  for (const line of body.split("\n")) {
+    const m = line.match(FRAME_MARKER)
+    if (m && m[0].trim()) {
+      if (current) frames.push(current.join("\n").trim())
+      current = []
+      const rest = line.slice(m[0].length).trim()
+      if (rest) current.push(rest)
+    } else if (current) {
+      current.push(line)
+    } else if (line.trim()) {
+      // Text before the first marker opens frame 1.
+      current = [line]
+    }
+  }
+  if (current) frames.push(current.join("\n").trim())
+  const kept = frames.filter(Boolean)
+  return kept.length >= 2 ? kept.slice(0, MAX_SCRIPT_FRAMES) : null
+}
+
+/**
+ * The script's units, in order: its marked frames when it has them, else its
+ * blank-line blocks. Marker lines never survive into the text.
+ */
+function scriptUnits(body: string): string[] {
+  return markedFrames(body) ?? scriptBlocks(body)
+}
 
 // Legibility thresholds, in Hebrew characters, tuned for a designed 9:16
 // poster where the type must stay large. Below the first threshold the whole
@@ -37,7 +79,14 @@ const TWO_FRAME_MAX_CHARS = 460
 export function scriptBlocks(body: string): string[] {
   return body
     .split(/\n\s*\n+/)
-    .map((b) => b.replace(/^\s*\[[^\]]*\]\s*/g, "").trim())
+    .map((b) =>
+      b
+        .split("\n")
+        .map((line) => line.replace(FRAME_MARKER, (m) => (m.trim() ? "" : m)))
+        .join("\n")
+        .replace(/^\s*\[[^\]]*\]\s*/g, "")
+        .trim(),
+    )
     .filter(Boolean)
 }
 
@@ -47,8 +96,15 @@ export function scriptBlocks(body: string): string[] {
  * this because the user's link rows ARE the count.
  */
 export function desiredFrameCount(body: string): number {
+  // The script already says how it divides (Hani, 2026-10-29: the AI split a
+  // story differently from its script): marked frames, or the author's own
+  // blank-line paragraphs, one frame each.
+  const marked = markedFrames(body)
+  if (marked) return marked.length
   const blocks = scriptBlocks(body)
   if (blocks.length === 0) return 0
+  if (blocks.length >= 2) return Math.min(MAX_SCRIPT_FRAMES, blocks.length)
+  // One undivided block: choose by length so the type stays legible.
   const totalChars = blocks.reduce((n, b) => n + b.length, 0)
   return Math.min(
     MAX_STORY_FRAMES,
@@ -73,7 +129,7 @@ export function splitScriptIntoFrames(
   body: string,
   frameCount: number,
 ): string[] {
-  const blocks0 = scriptBlocks(body)
+  const blocks0 = scriptUnits(body)
   if (blocks0.length === 0) return []
   if (frameCount <= 1) return [blocks0.join("\n\n")]
 
