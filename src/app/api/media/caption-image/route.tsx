@@ -15,6 +15,8 @@ import {
 import { getAuthUser } from "@/lib/auth-user"
 import { getUserApiKey } from "@/lib/api-keys"
 import { imageHasBakedText } from "@/lib/baked-text"
+import { cleanCaptionSpec, type CaptionSpec } from "@/lib/own-media"
+import { writeCaptionRecord } from "@/lib/caption-record"
 
 // One satori render + one Resvg rasterize. No model call, no ffmpeg — this
 // is seconds, not minutes, but a 50MB source still has to be pulled first.
@@ -109,6 +111,21 @@ export async function POST(req: NextRequest) {
        * card), so the "already has text" check below is skipped.
        */
       force?: boolean
+      /**
+       * "עריכת מדיה עם AI" on her own picture (Hani, 2026-10-29): the exact
+       * words, placement and look to draw, instead of the format's text.
+       * Paired with `sourceUrl` = the picture as she brought it.
+       */
+      caption?: unknown
+      /**
+       * Carousel only: store the render and return its URL (with its caption
+       * record) instead of handing the bytes back.
+       */
+      store?: boolean
+    }
+    const override: CaptionSpec | null = body.caption ? cleanCaptionSpec(body.caption) : null
+    if (override && !override.headline && !override.body) {
+      return NextResponse.json({ error: "caption_empty", message: "אין טקסט לכיתוב." }, { status: 400 })
     }
 
     const format: CaptionFormat =
@@ -120,7 +137,9 @@ export async function POST(req: NextRequest) {
             ? "carousel"
             : "image_post"
     const canvas = CANVAS_FOR[format]
-    const position: CaptionPosition = isPosition(body.position)
+    const position: CaptionPosition = override?.position
+      ? override.position
+      : isPosition(body.position)
       ? body.position
       : format === "image_post"
         ? "bottom"
@@ -204,7 +223,10 @@ export async function POST(req: NextRequest) {
     let overlayHook: string | undefined
     let overlayBody: string | undefined
 
-    if (format === "carousel") {
+    if (override) {
+      overlayHook = override.headline
+      overlayBody = override.body
+    } else if (format === "carousel") {
       // A slide carries its own title and body — the same split the panel
       // shows, so the words burned into the picture are the words the user
       // read next to it.
@@ -276,7 +298,7 @@ export async function POST(req: NextRequest) {
       // it. Only on arrival — once she flips the switch herself, she gets
       // what she asked for. The carousel decides once per set, from its
       // cover, before it calls here.
-      if (!body.force) {
+      if (!body.force && !override) {
         let anthropicKey: string | null = null
         try {
           anthropicKey = await getUserApiKey(supabase, "anthropic_api_key")
@@ -295,6 +317,7 @@ export async function POST(req: NextRequest) {
       overlayBody,
       canvas,
       position,
+      override?.style,
     )
 
     // A carousel slide goes back as bytes: the panel holds the whole set and
@@ -302,7 +325,7 @@ export async function POST(req: NextRequest) {
     // Uploading each slide here would leave orphans behind every re-import,
     // and deleting the format's image asset — what the single-image path does
     // below — would wipe the other slides.
-    if (format === "carousel") {
+    if (format === "carousel" && !(body.store && sourceUrl)) {
       return NextResponse.json({ image: png.toString("base64") })
     }
 
@@ -320,7 +343,9 @@ export async function POST(req: NextRequest) {
       .from("user-media")
       .getPublicUrl(storagePath).data.publicUrl
 
-    if (persist) {
+    // Carousel renders are never written to the format's single image slot —
+    // the caller saves them as part of the set.
+    if (persist && format !== "carousel") {
       await supabase
         .from("media_assets")
         .delete()
@@ -332,6 +357,15 @@ export async function POST(req: NextRequest) {
         url: publicUrl,
         status: "completed",
       } as never)
+    }
+
+    if (sourceUrl) {
+      await writeCaptionRecord(supabase, publicUrl, sourceUrl, {
+        headline: overlayHook,
+        body: overlayBody,
+        position,
+        style: override?.style,
+      })
     }
 
     // The ORIGINAL comes back too: both variants let the user fall back to

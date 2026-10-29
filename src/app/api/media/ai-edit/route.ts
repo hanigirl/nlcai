@@ -22,6 +22,7 @@ import {
   uploadIllustration,
 } from "@/lib/carousel-composition"
 import { generateImage } from "@/lib/openai-image"
+import { isOwnMediaUrl } from "@/lib/own-media"
 
 // Planning + up to 10 parallel image edits (30–120s each).
 export const maxDuration = 300
@@ -167,6 +168,15 @@ export async function POST(req: NextRequest) {
     if (urls.length === 0) {
       return NextResponse.json(
         { error: "no_media", message: "אין כאן תמונות שמורות לערוך. צרו או העלו מדיה ואז ערכו אותה." },
+        { status: 400 },
+      )
+    }
+
+    // Her own photos / videos are never repainted (Hani, 2026-10-29) — the
+    // panel sends those to /api/media/own-edit, which only adds or removes.
+    if (format !== "carousel" && urls.some(isOwnMediaUrl)) {
+      return NextResponse.json(
+        { error: "own_media", message: "זו מדיה שלכם, ואת מה שצילמתם אני לא משנה. אפשר לשנות את הכיתוב או להוסיף שקופית." },
         { status: 400 },
       )
     }

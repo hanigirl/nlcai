@@ -1,0 +1,343 @@
+"use client"
+
+/**
+ * State preview for "עריכת מדיה עם AI" on media she brought herself
+ * (Hani, 2026-10-29): the AI adds on top or takes away — caption, extra AI
+ * slides, order — and never changes what she filmed.
+ *
+ * Route: /test/own-media-ai-edit?media=video-story|image-story|carousel|image-post|b-roll
+ *                               &state=idle|working|caption|slide|refused|error
+ *
+ * The real panel (MediaAiChat with `own`) and the real executor
+ * (lib/own-media-edit) run against a stubbed `fetch`: the plan, the caption
+ * renders, the new slide and the save all answer from here. Nothing reaches
+ * the network — no AI credits, no DB writes. A "caption" on the sample media
+ * is drawn by this page from the stub's URL, standing in for the real burn.
+ */
+
+import { Suspense, useState } from "react"
+import Link from "next/link"
+import { useSearchParams } from "next/navigation"
+import { Film, Image as ImageIcon, Layers, Play, Smartphone } from "lucide-react"
+import { MediaAiChat, type AiEditFormat } from "@/components/media-ai-chat"
+import { AI_HOVER_ZONE, AiHoverEditButton } from "@/components/ai-hover-edit"
+import type { OwnEditPlan, OwnFrameInfo } from "@/lib/own-media"
+
+const POST_ID = "preview-own-media-post"
+const PHOTO = "/images/onboarding-hero.png"
+const PHOTO_2 = "/images/paper-plane-celebrate.png"
+const PHOTO_3 = "/images/paper-plane-empty.png"
+const AI_SLIDE = "/images/carousel-templates/ai-dark.png"
+
+type MediaId = "video-story" | "image-story" | "carousel" | "image-post" | "b-roll"
+type Sample = {
+  id: MediaId
+  label: string
+  format: AiEditFormat
+  frames: { src: string; kind: "image" | "video"; caption?: string }[]
+  title: string
+  icon: typeof Film
+  aspect: string
+}
+
+const MEDIA: Sample[] = [
+  {
+    id: "video-story",
+    label: "סטורי וידאו מהדרייב",
+    format: "story",
+    title: "הסטורי שלכם",
+    icon: Smartphone,
+    aspect: "aspect-[9/16] w-[200px]",
+    frames: [{ src: PHOTO, kind: "video", caption: "תיק העבודות שלי מעודכן. ל-2024." }],
+  },
+  {
+    id: "image-story",
+    label: "סטורי תמונות מהדרייב",
+    format: "story",
+    title: "הסטורי שלכם",
+    icon: Smartphone,
+    aspect: "aspect-[9/16] w-[200px]",
+    frames: [
+      { src: PHOTO, kind: "image", caption: "תיק העבודות שלי מעודכן. ל-2024." },
+      { src: PHOTO_2, kind: "image", caption: "הוא מראה מה עשיתי. לא איך אני חושבת." },
+    ],
+  },
+  {
+    id: "carousel",
+    label: "קרוסלה מהדרייב",
+    format: "carousel",
+    title: "הקרוסלה שלכם",
+    icon: Layers,
+    aspect: "aspect-[4/5] w-[240px]",
+    frames: [
+      { src: PHOTO, kind: "image", caption: "תיק העבודות שלי מעודכן" },
+      { src: PHOTO_2, kind: "image", caption: "מה הוא מראה" },
+      { src: PHOTO_3, kind: "image", caption: "ומה הוא צריך להראות" },
+    ],
+  },
+  {
+    id: "image-post",
+    label: "פוסט תמונה שלי",
+    format: "image_post",
+    title: "התמונה שלכם",
+    icon: ImageIcon,
+    aspect: "aspect-[4/5] w-[200px]",
+    frames: [{ src: PHOTO, kind: "image", caption: "תיק העבודות שלי מעודכן. ל-2024." }],
+  },
+  {
+    id: "b-roll",
+    label: "בי-רול מהדרייב",
+    format: "b_roll",
+    title: "הבי-רול שלכם",
+    icon: Film,
+    aspect: "aspect-[9/16] w-[200px]",
+    frames: [{ src: PHOTO, kind: "video", caption: "תיק העבודות שלי מעודכן. ל-2024." }],
+  },
+]
+
+const STATES = [
+  { id: "idle", label: "פתיחה" },
+  { id: "working", label: "בזמן עריכה" },
+  { id: "caption", label: "הכיתוב השתנה" },
+  { id: "slide", label: "נוספה שקופית" },
+  { id: "refused", label: "״את מה שצילמתם לא משנים״" },
+  { id: "error", label: "שגיאה" },
+] as const
+type State = (typeof STATES)[number]["id"]
+
+/** What the preview auto-sends for each non-idle state. */
+const ASK: Record<Exclude<State, "idle">, string> = {
+  working: "לשנות את הכיתוב ל: התיק שלכם מספר את הסיפור הלא נכון",
+  caption: "לשנות את הכיתוב ל: התיק שלכם מספר את הסיפור הלא נכון, ולהזיז אותו למעלה",
+  slide: "להוסיף פריים סיום עם קריאה לפעולה",
+  refused: "תבהירי לי את הסרטון ותורידי את הרקע",
+  error: "להוריד את הכיתוב",
+}
+
+/** A stubbed render URL carries the caption it stands for, so the card can draw it. */
+function captioned(src: string, text: string | undefined, pos = "bottom") {
+  const u = new URL(src, "http://preview.local")
+  u.searchParams.delete("cap")
+  u.searchParams.delete("pos")
+  if (text) {
+    u.searchParams.set("cap", text)
+    u.searchParams.set("pos", pos)
+  }
+  return u.pathname + (u.search || "")
+}
+
+function readCaption(url: string): { src: string; cap?: string; pos: string } {
+  const u = new URL(url, "http://preview.local")
+  return { src: u.pathname, cap: u.searchParams.get("cap") ?? undefined, pos: u.searchParams.get("pos") ?? "bottom" }
+}
+
+function frameUrl(f: Sample["frames"][number], i: number) {
+  // Video frames get a path the executor reads as video.
+  const base = f.kind === "video" ? `${f.src}?v=${i}.mp4` : `${f.src}?i=${i}`
+  return f.caption ? `${base}&cap=${encodeURIComponent(f.caption)}&pos=bottom` : base
+}
+
+function cannedPlan(state: State, instruction: string, frames: OwnFrameInfo[], format: AiEditFormat): OwnEditPlan | "error" | "hang" {
+  const n = frames.length
+  const all = frames.map((_, i) => i + 1)
+  const isSet = format === "story" || format === "carousel"
+  const kind = state === "idle"
+    ? /סיום|שקופית|פריים/.test(instruction) && isSet ? "slide"
+      : /להוריד/.test(instruction) ? "remove"
+      : /להזיז/.test(instruction) ? "move"
+      : /הרקע|להבהיר|תבהירי|פילטר/.test(instruction) ? "refused"
+      : "caption"
+    : state
+  if (kind === "error") return "error"
+  if (kind === "working") return "hang"
+  if (kind === "refused") {
+    return {
+      reply: "את מה שצילמתם אני לא משנה, כולל האור והרקע. אפשר לשנות, להזיז או להוריד את הכיתוב עליו.",
+      ops: [],
+      refused: true,
+    }
+  }
+  if (kind === "slide") {
+    return {
+      reply: "הוספתי פריים סיום עם קריאה לפעולה, בשפה הוויזואלית שלכם.",
+      ops: [{ op: "add_slide", after: n, headline: "רוצים תיק שמספר איך אתם חושבים?", body: "כתבו לי ״תיק״ בתגובות", role: "closing" }],
+    }
+  }
+  if (kind === "remove") return { reply: "הורדתי את הכיתוב.", ops: [{ op: "remove_caption", frames: all }] }
+  if (kind === "move") return { reply: "הזזתי את הכיתוב למעלה.", ops: [{ op: "set_caption", frames: all, position: "top" }] }
+  const text = instruction.split(":").slice(1).join(":").split(",")[0].trim() || "התיק שלכם מספר את הסיפור הלא נכון"
+  return {
+    reply: state === "caption" ? "החלפתי את הכיתוב בפריים 1 והזזתי אותו למעלה." : "החלפתי את הכיתוב.",
+    ops: [{ op: "set_caption", frames: [1], headline: text, body: undefined, position: state === "caption" ? "top" : undefined }],
+  }
+}
+
+function stubFetch(state: State, sample: Sample) {
+  const ok = (body: unknown, status = 200, delay = 700) =>
+    new Promise<Response>((resolve) =>
+      setTimeout(
+        () => resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })),
+        delay,
+      ),
+    )
+  window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input)
+    const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {}
+    if (url.includes("/api/media/own-edit")) {
+      if (body.action === "slide") return ok({ url: `${AI_SLIDE}?slide=${Date.now()}` }, 200, 1200)
+      if (body.action === "save") return ok({ urls: body.urls }, 200, 300)
+      const frames: OwnFrameInfo[] = sample.frames.map((f, i) => {
+        const u = frameUrl(f, i)
+        return {
+          url: u,
+          kind: f.kind,
+          aiMade: false,
+          caption: "ours",
+          record: { v: 1, sourceUrl: f.kind === "video" ? `${f.src}?v=${i}.mp4` : `${f.src}?i=${i}`, caption: { headline: f.caption, position: "bottom" } },
+        }
+      })
+      const plan = cannedPlan(state, String(body.instruction ?? ""), frames, sample.format)
+      if (plan === "hang") return new Promise<Response>(() => {})
+      if (plan === "error") return ok({ message: "העריכה לא הצליחה הפעם. נסו שוב." }, 500)
+      return ok({ plan, frames, driveLinks: sample.format === "carousel" ? sample.frames.map((_, i) => `https://drive.google.com/file/d/preview${i}/view`) : null })
+    }
+    if (url.includes("/api/story/generate-video-media") || url.includes("/api/media/caption-image")) {
+      const cap = body.caption as { headline?: string; body?: string; position?: string } | undefined
+      return ok({ url: captioned(String(body.sourceUrl), [cap?.headline, cap?.body].filter(Boolean).join("\n"), cap?.position ?? "bottom") }, 200, 900)
+    }
+    if (url.includes("/api/media/from-drive")) return ok({ url: String(body.url) })
+    return Promise.reject(new Error("preview: network disabled"))
+  }) as typeof fetch
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={null}>
+      <Preview />
+    </Suspense>
+  )
+}
+
+function Preview() {
+  const params = useSearchParams()
+  const state = (STATES.find((s) => s.id === params.get("state"))?.id ?? "idle") as State
+  const sample = MEDIA.find((m) => m.id === params.get("media")) ?? MEDIA[0]
+  // A fresh stage per media × state, so each starts from its own sample.
+  return <Stage key={`${sample.id}:${state}`} state={state} sample={sample} />
+}
+
+function Stage({ state, sample }: { state: State; sample: Sample }) {
+  const [urls, setUrls] = useState<string[]>(() => sample.frames.map(frameUrl))
+  const [open, setOpen] = useState(state !== "idle")
+  // Stub the network before anything on the stage can call it.
+  const [ready] = useState(() => {
+    if (typeof window !== "undefined") stubFetch(state, sample)
+    return true
+  })
+  const [index, setIndex] = useState(0)
+
+  const shown = readCaption(urls[Math.min(index, urls.length - 1)] ?? urls[0])
+  const isVideo = /\.mp4/.test(urls[Math.min(index, urls.length - 1)] ?? "")
+  const Icon = sample.icon
+
+  return (
+    <div dir="rtl" className="min-h-screen bg-bg-surface p-6">
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+        {MEDIA.map((m) => (
+          <Link
+            key={m.id}
+            href={`/test/own-media-ai-edit?media=${m.id}&state=${state}`}
+            className={`rounded-full border px-2.5 py-1 hover:bg-gray-95 dark:hover:bg-gray-20 ${
+              m.id === sample.id ? "border-text-primary-default text-text-primary-default" : "border-border-neutral-default text-text-neutral-default"
+            }`}
+          >
+            {m.label}
+          </Link>
+        ))}
+      </div>
+      <div className="mb-6 flex flex-wrap items-center gap-2 text-xs">
+        {STATES.map((s) => (
+          <Link
+            key={s.id}
+            href={`/test/own-media-ai-edit?media=${sample.id}&state=${s.id}`}
+            className={`rounded-full border px-2.5 py-1 hover:bg-gray-95 dark:hover:bg-gray-20 ${
+              s.id === state ? "border-text-primary-default text-text-primary-default" : "border-border-neutral-default text-text-neutral-default"
+            }`}
+          >
+            {s.label}
+          </Link>
+        ))}
+      </div>
+
+      <div className="mx-auto flex w-[340px] flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6">
+        <div className="flex items-center gap-2 rounded-t-[20px] px-6 py-3">
+          <span className="text-p-bold text-text-primary-default">{sample.title}</span>
+          <Icon className="size-4 text-text-neutral-default" />
+        </div>
+        <div className="flex flex-col items-center gap-3 px-6">
+          <div className={AI_HOVER_ZONE}>
+            <div className={`relative overflow-hidden rounded-xl border border-border-neutral-default bg-gray-95 ${sample.aspect}`}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={shown.src} alt="" className="h-full w-full object-contain" />
+              {isVideo && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="flex size-12 items-center justify-center rounded-full bg-black/40">
+                    <Play className="ms-0.5 size-5 text-white" />
+                  </div>
+                </div>
+              )}
+              {/* Stands in for the burned caption (the real one is ffmpeg / satori). */}
+              {shown.cap && (
+                <div
+                  className={`absolute inset-x-3 flex justify-center ${
+                    shown.pos === "top" ? "top-[14%]" : shown.pos === "center" ? "top-1/2 -translate-y-1/2" : "bottom-[24%]"
+                  }`}
+                >
+                  <span className="whitespace-pre-line rounded-lg bg-black px-2.5 py-1.5 text-center text-xs-body font-bold text-white">
+                    {shown.cap}
+                  </span>
+                </div>
+              )}
+            </div>
+            {ready && <AiHoverEditButton target="media" visible={open} onClick={() => setOpen(true)} />}
+          </div>
+          {urls.length > 1 && (
+            <div className="flex items-center gap-1.5" role="group" aria-label="פריימים">
+              {urls.map((u, i) => (
+                <button
+                  key={`${u}-${i}`}
+                  type="button"
+                  onClick={() => setIndex(i)}
+                  aria-label={`פריים ${i + 1}`}
+                  className={`h-1.5 w-6 rounded-full transition-colors ${i === index ? "bg-text-primary-default" : "bg-gray-80 hover:bg-gray-70"}`}
+                />
+              ))}
+            </div>
+          )}
+          <p className="text-xs-body text-text-neutral-default">
+            {urls.length > 1 ? `${index + 1} / ${urls.length}` : sample.frames[0].kind === "video" ? "וידאו שלכם" : "תמונה שלכם"}
+          </p>
+        </div>
+      </div>
+
+      <div>
+        {ready && open && (
+          <MediaAiChat
+            postId={POST_ID}
+            format={sample.format}
+            own
+            autoSend={state === "idle" ? undefined : ASK[state]}
+            currentUrls={urls}
+            open
+            onOpenChange={(o) => setOpen(o)}
+            onUpdated={(_, next) => {
+              // A new slide is shown as it lands; a caption change stays put.
+              if (next.length > urls.length) setIndex(next.length - 1)
+              setUrls(next)
+            }}
+          />
+        )}
+      </div>
+    </div>
+  )
+}

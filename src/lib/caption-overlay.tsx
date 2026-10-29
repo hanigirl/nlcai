@@ -14,6 +14,7 @@
 import satori from "satori"
 import { Resvg } from "@resvg/resvg-js"
 import { RtlText } from "@/lib/carousel-templates/shared"
+import type { CaptionStyle } from "@/lib/own-media"
 import { BROLL_VIDEO_CTA } from "@/lib/broll-copy"
 
 export const CAPTION_CANVAS_WIDTH = 1080
@@ -179,11 +180,17 @@ async function renderCaption(
   backgroundBase64?: string,
   canvas: CaptionCanvas = CANVAS_9_16,
   position: CaptionPosition = "bottom",
+  style?: CaptionStyle,
 ): Promise<Buffer> {
   const { extraBold, bold } = await loadRubik()
   const W = canvas.width
   const H = canvas.height
-  const hookSize = hook ? fontSizeForHook(hook) : 0
+  // "עריכת מדיה עם AI" can restyle the caption on her own media; without a
+  // style everything below renders exactly as it always has.
+  const scale = style?.scale ?? 1
+  const textColor = style?.text ?? "#ffffff"
+  const noBox = style?.pill === "none"
+  const hookSize = hook ? Math.round(fontSizeForHook(hook) * scale) : 0
   const bodyText = body ? trimBodyForOverlay(body) : ""
   // With no headline above it, the body IS the frame's type and gets sized on
   // its own ladder — stepping down from a hook that isn't there would leave
@@ -192,11 +199,11 @@ async function renderCaption(
     ? 0
     : hook
       ? fontSizeForBody(hookSize, bodyText)
-      : fontSizeForBodyOnly(bodyText)
+      : Math.round(fontSizeForBodyOnly(bodyText) * scale)
 
   const pill = {
     display: "flex" as const,
-    backgroundColor: "#000000",
+    backgroundColor: noBox ? "transparent" : (style?.pill ?? "#000000"),
     borderRadius: 24,
     maxWidth: W - canvas.padX * 2,
   }
@@ -264,10 +271,12 @@ async function renderCaption(
               text={hook}
               align="center"
               style={{
-                color: "#ffffff",
+                color: textColor,
                 fontFamily: "Rubik",
                 fontWeight: 800,
                 fontSize: hookSize,
+                // No box behind the words: a soft shadow keeps them legible.
+                ...(noBox ? { textShadow: "0 2px 12px rgba(0,0,0,0.55)" } : {}),
                 lineHeight: 1.25,
               }}
             />
@@ -280,7 +289,8 @@ async function renderCaption(
               text={bodyText}
               align="center"
               style={{
-                color: "#ffffff",
+                color: textColor,
+                ...(noBox ? { textShadow: "0 2px 12px rgba(0,0,0,0.55)" } : {}),
                 fontFamily: "Rubik",
                 // Bold under a headline (the weight drop reinforces the size
                 // drop); ExtraBold when the body stands alone.
@@ -316,8 +326,10 @@ async function renderCaption(
 export function renderCaptionOverlayPng(
   hook: string | undefined,
   body?: string,
+  position: CaptionPosition = "bottom",
+  style?: CaptionStyle,
 ): Promise<Buffer> {
-  return renderCaption(hook, body)
+  return renderCaption(hook, body, undefined, CANVAS_9_16, position, style)
 }
 
 /**
@@ -333,8 +345,9 @@ export function renderCaptionOverImagePng(
   body?: string,
   canvas: CaptionCanvas = CANVAS_9_16,
   position: CaptionPosition = "bottom",
+  style?: CaptionStyle,
 ): Promise<Buffer> {
-  return renderCaption(hook, body, backgroundBase64, canvas, position)
+  return renderCaption(hook, body, backgroundBase64, canvas, position, style)
 }
 
 /**

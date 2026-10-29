@@ -42,6 +42,7 @@ import { CorePostCelebration } from "@/components/core-post-celebration"
 import { ScheduleInCalendarBar } from "@/components/schedule-in-calendar-bar"
 import { CorePostChat } from "@/components/core-post-chat"
 import { AI_HOVER_ZONE, AiHoverEditButton } from "@/components/ai-hover-edit"
+import { isOwnMediaUrl } from "@/lib/own-media"
 import { IconActionButton } from "@/components/icon-action-button"
 import { MediaPreviewZone } from "@/components/media-preview-zone"
 import { StoryPlayer, storyFrameSrc } from "@/components/story-player"
@@ -2770,20 +2771,45 @@ function ProjectPageInner() {
         }}
       />
 
-      {savedPostId && aiChatFormat && (
-        <MediaAiChat
-          postId={savedPostId}
-          format={aiChatFormat}
-          open
-          opening={aiChatOpening}
-          onOpenChange={(open) => { if (!open) { setAiChatFormat(null); setAiChatOpening(null) } }}
-          onUpdated={(format, urls) => {
-            if (format === "image_post") setImagePostUrl(urls[0] ?? null)
-            if (format === "carousel") setCarouselImages(urls)
-            if (format === "story") setStoryImages(urls)
-          }}
-        />
-      )}
+      {savedPostId && aiChatFormat && (() => {
+        // Her own media (Drive / upload) only gets "add on top / take away"
+        // edits; the AI's own media keeps the full edit (Hani, 2026-10-29).
+        const storyFrames = [
+          ...(storyImages ?? []),
+          ...(storyVideoUrl && !(storyImages ?? []).includes(storyVideoUrl) ? [storyVideoUrl] : []),
+        ]
+        const mediaOf: Record<AiEditFormat, string[]> = {
+          story: storyFrames,
+          carousel: carouselImages ?? [],
+          image_post: imagePostUrl ? [imagePostUrl] : [],
+          b_roll: bRollUrl ? [bRollUrl] : [],
+        }
+        const own = isOwnMediaFormat(aiChatFormat, mediaOf[aiChatFormat], carouselDriveLinks)
+        return (
+          <MediaAiChat
+            postId={savedPostId}
+            format={aiChatFormat}
+            own={own}
+            currentUrls={mediaOf[aiChatFormat]}
+            open
+            opening={aiChatOpening}
+            onOpenChange={(open) => { if (!open) { setAiChatFormat(null); setAiChatOpening(null) } }}
+            onUpdated={(format, urls, extra) => {
+              if (format === "image_post") setImagePostUrl(urls[0] ?? null)
+              if (format === "carousel") {
+                setCarouselImages(urls)
+                if (extra?.driveLinks) setCarouselDriveLinks(extra.driveLinks)
+              }
+              if (format === "story") {
+                setStoryImages(urls)
+                // An own-media save moves a clip from the video slot into the set.
+                if (own) setStoryVideoUrl(null)
+              }
+              if (format === "b_roll" && urls[0]) setBRollUrl(urls[0])
+            }}
+          />
+        )
+      })()}
 
       <ConfirmModal
         open={!!pendingMediaDelete}
@@ -2925,6 +2951,21 @@ const MEDIA_NOUN: Record<AiEditFormat, string> = {
   carousel: "קרוסלה",
   story: "סטורי",
   image_post: "תמונה",
+}
+
+/**
+ * Whether the format's media is hers (Drive / upload) rather than the AI's —
+ * then "עריכת מדיה עם AI" only adds on top or takes away (lib/own-media).
+ * A carousel counts as hers when it has one Drive link per slide ("" for a
+ * slide the AI added later); stray links on an AI carousel don't line up.
+ */
+function isOwnMediaFormat(format: AiEditFormat, urls: string[], carouselLinks: string[] | null): boolean {
+  if (urls.length === 0) return false
+  if (format === "carousel") {
+    return !!carouselLinks && carouselLinks.length === urls.length && carouselLinks.some(Boolean)
+  }
+  if (format === "b_roll") return !isEditableBRollUrl(urls[0])
+  return urls.some(isOwnMediaUrl)
 }
 
 /** Our own stored images (not a Drive link, not an unsaved base64) — AI can edit them. */
@@ -3569,15 +3610,17 @@ function FormatTree({
                     </div>
                     <CardStyleFeedback postId={savedPostId} format="b_roll" mediaUrl={bRollUrl} />
                     <div className="px-6 flex flex-col gap-4">
-                      {/* Click the b-roll → media panel; hover → ✨ AI edit,
-                          only on a clip the Opus engine made (a clip it didn't
-                          make has no composition to revise). The clip's own
-                          controls still play it (Hani, 2026-10-29). */}
+                      {/* Click the b-roll → media panel; hover → ✨ AI edit.
+                          The clip's own controls still play it (Hani,
+                          2026-10-29). */}
                       <div className="flex justify-center">
                         <MediaPreviewZone
                           onOpen={onBRollEdit}
                           openLabel="החלפת הבי-רול"
-                          onAiEdit={isEditableBRollUrl(bRollUrl) ? () => onAiEdit("b_roll") : undefined}
+                          // Any b-roll: one the Opus engine made gets its
+                          // composition revised; her own clip or still gets
+                          // the caption / add-on edits (Hani, 2026-10-29).
+                          onAiEdit={() => onAiEdit("b_roll")}
                           // Above the clip's native control bar.
                           aiClassName={isStillUrl(bRollUrl) ? undefined : "bottom-12"}
                         >
@@ -3662,7 +3705,7 @@ function FormatTree({
                         <MediaPreviewZone
                           onOpen={onImagePostEdit}
                           openLabel="החלפת התמונה"
-                          onAiEdit={isStoredImageUrl(imagePostUrl) ? () => onAiEdit("image_post") : undefined}
+                          onAiEdit={isStoredImageUrl(imagePostUrl) || isOwnMediaUrl(imagePostUrl) ? () => onAiEdit("image_post") : undefined}
                         >
                           <div className="relative w-[200px] aspect-[4/5] rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -3870,14 +3913,13 @@ function CarouselResultCard({
           {/* Slide preview — no fixed aspect: templates are square (1080²)
               or IG-portrait (1080×1350); the img sets its natural ratio. */}
           {/* Click the slide → media panel; hover → ✨ AI edit (Hani,
-              2026-10-29). The card holds the slides as base64 (for the
-              caption tools), so "saved" is judged by the source: anything
-              not pulled from Drive links is a stored set the AI route can
-              read back. */}
+              2026-10-29). Slides pulled from Drive are hers and get the
+              caption / slide edits only (isOwnMediaFormat); the AI's own
+              carousel gets the full edit. Both read the saved set back. */}
           <MediaPreviewZone
             onOpen={onEdit}
             openLabel="החלפת הקרוסלה"
-            onAiEdit={postId && images.length > 0 && !(driveLinks?.length) ? onAiEdit : undefined}
+            onAiEdit={postId && images.length > 0 ? onAiEdit : undefined}
             className="w-full"
           >
           <div className="relative w-full rounded-xl overflow-hidden bg-gray-95">
@@ -4047,7 +4089,7 @@ function StoryResultCard({
           <MediaPreviewZone
             onOpen={onEdit}
             openLabel="החלפת הסטורי"
-            onAiEdit={frames.every(isStoredImageUrl) ? onAiEdit : undefined}
+            onAiEdit={frames.every(isStoredImageUrl) || frames.some(isOwnMediaUrl) ? onAiEdit : undefined}
           >
             <StoryPlayer
               frames={frames}

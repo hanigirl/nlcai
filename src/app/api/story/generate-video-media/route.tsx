@@ -14,6 +14,8 @@ import {
 } from "@/lib/caption-overlay"
 import { hasDescriptionCta } from "@/lib/broll-copy"
 import { getAuthUser } from "@/lib/auth-user"
+import { cleanCaptionSpec, type CaptionSpec } from "@/lib/own-media"
+import { writeCaptionRecord } from "@/lib/caption-record"
 
 // Downloading + re-encoding a user video is heavier than an image render;
 // libx264 on a short clip still runs in seconds, but leave generous headroom.
@@ -137,6 +139,7 @@ export async function POST(req: NextRequest) {
       persist: rawPersist,
       frameIndex: rawFrameIndex,
       frameCount: rawFrameCount,
+      caption: rawCaption,
     } = (await req.json().catch(() => ({}))) as {
       postId?: string
       format?: string
@@ -162,6 +165,16 @@ export async function POST(req: NextRequest) {
        */
       frameIndex?: number
       frameCount?: number
+      /**
+       * "עריכת מדיה עם AI" on her own video (Hani, 2026-10-29): the exact
+       * words, placement and look to burn, instead of the post's script.
+       * Always paired with `sourceUrl` = the clip as she brought it.
+       */
+      caption?: unknown
+    }
+    const override: CaptionSpec | null = rawCaption ? cleanCaptionSpec(rawCaption) : null
+    if (override && !override.headline && !override.body) {
+      return NextResponse.json({ error: "caption_empty", message: "אין טקסט לכיתוב." }, { status: 400 })
     }
     const sourceUrl = rawSourceUrl?.trim() || undefined
     const persist = rawPersist !== false
@@ -253,7 +266,7 @@ export async function POST(req: NextRequest) {
       post.title?.trim() ||
       variant.body?.split(/\n+/)[0]?.trim() ||
       ""
-    if (!hook) {
+    if (!hook && !override) {
       return NextResponse.json(
         {
           error: "no_hook",
@@ -271,8 +284,11 @@ export async function POST(req: NextRequest) {
     const caption = variant.body?.trim()
       ? frameCaption(variant.body, frameIndex, frameCount)
       : { headline: hook, body: undefined }
-    const overlayHook = caption.headline ?? (frameIndex === 0 ? hook : undefined)
-    const overlayBody = caption.body
+    const overlayHook = override
+      ? override.headline
+      : caption.headline ?? (frameIndex === 0 ? hook : undefined)
+    const overlayBody = override ? override.body : caption.body
+    const position = override?.position ?? "bottom"
     if (!overlayHook && !overlayBody) {
       // Nothing to say on this frame — hand the source back untouched rather
       // than burning an empty pill onto it.
@@ -301,7 +317,7 @@ export async function POST(req: NextRequest) {
       isDriveUrl(videoUrl)
         ? fetchDriveFile(extractDriveFileId(videoUrl)!)
         : fetch(videoUrl),
-      renderCaptionOverlayPng(overlayHook, overlayBody),
+      renderCaptionOverlayPng(overlayHook, overlayBody, position, override?.style),
     ])
     const srcContentType = (videoRes.headers.get("content-type") || "")
       .split(";")[0]
@@ -382,6 +398,15 @@ export async function POST(req: NextRequest) {
         status: "completed",
       } as never)
     }
+
+    // Remember what this render was drawn over, and what it says — so the
+    // caption can later be rewritten or taken off without stacking.
+    await writeCaptionRecord(supabase, publicUrl, videoUrl, {
+      headline: overlayHook,
+      body: overlayBody,
+      position,
+      style: override?.style,
+    })
 
     return NextResponse.json({ url: publicUrl })
   } catch (error) {

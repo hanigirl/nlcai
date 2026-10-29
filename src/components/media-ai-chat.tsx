@@ -15,13 +15,15 @@ import { dislikeInstruction, type AiEditOpening } from "@/lib/ai-edit-intent"
 import { DislikeReasonChips } from "@/components/dislike-reason-chips"
 import { DISLIKE_REASONS, type DislikeReason } from "@/lib/visual-language/types"
 import { usePreviewAccess } from "@/lib/use-scheduling-access"
+import { Chip } from "@/components/ui/chip"
+import { runOwnMediaEdit } from "@/lib/own-media-edit"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
   return !!url && /\/b_roll\/[0-9a-f-]{36}\.mp4(?:[?#].*)?$/i.test(url)
 }
 
-interface ChatMessage {
+export interface ChatMessage {
   role: "user" | "assistant"
   content: string
   /** Assistant turn that landed a new clip. */
@@ -29,7 +31,12 @@ interface ChatMessage {
   error?: boolean
   /** A lasting preference distilled from her instruction (Hebrew) — shown by the save chip. */
   remembered?: string | null
+  /** Own media: the edit changed only content (words, slides), nothing to save as a style. */
+  noStyle?: boolean
 }
+
+/** Distinct ids for the leave-screen toast of each own-media edit. */
+let ownEditSeq = 0
 
 /** The first turn when 👎 opened the panel (lib/ai-edit-intent). */
 const DISLIKE_ASK = "מה לא אהבתם? ספרו לנו, ואעדכן את זה עכשיו. מה שתכתבו נשמר גם לשפה הוויזואלית שלכם, לפעמים הבאות."
@@ -90,6 +97,58 @@ const COPY: Record<AiEditFormat, { title: string; intro: string; done: string; b
 }
 
 /**
+ * Media she brought herself (Hani, 2026-10-29): the AI adds on top or takes
+ * away — the caption, extra AI slides, the order — and never touches what she
+ * filmed. The opening line and the suggestions say exactly that.
+ */
+const OWN_COPY: Record<AiEditFormat, { title: string; intro: string; busy: string; suggestions: { label: string; text: string; send: boolean }[] }> = {
+  story: {
+    title: "עריכת סטורי עם AI",
+    intro:
+      "זה הסטורי שלכם, אז מה שצילמתם נשאר בדיוק כמו שהוא. אפשר לשנות, להזיז או להוריד את הכיתוב, להוסיף פריים חדש שה-AI מעצב בשפה הוויזואלית שלכם, או למחוק ולסדר מחדש פריימים.",
+    busy: "מעדכנים את הסטורי... זה יכול לקחת עד שתי דקות",
+    suggestions: [
+      { label: "לשנות את הכיתוב", text: "לשנות את הכיתוב ל: ", send: false },
+      { label: "להוסיף פריים סיום", text: "להוסיף פריים סיום עם קריאה לפעולה", send: true },
+      { label: "להוריד את הכיתוב", text: "להוריד את הכיתוב", send: true },
+    ],
+  },
+  carousel: {
+    title: "עריכת קרוסלה עם AI",
+    intro:
+      "אלה השקופיות שלכם, אז התמונות עצמן נשארות כמו שהן. אפשר לשנות, להזיז או להוריד את הכיתוב, להוסיף שקופית שה-AI מעצב בשפה הוויזואלית שלכם, או למחוק ולסדר מחדש שקופיות.",
+    busy: "מעדכנים את השקופיות... זה יכול לקחת עד שתי דקות",
+    suggestions: [
+      { label: "לשנות את הכיתוב", text: "לשנות את הכיתוב בשקופית הזאת ל: ", send: false },
+      { label: "להוסיף שקופית סיום", text: "להוסיף שקופית סיום עם קריאה לפעולה", send: true },
+      { label: "להוריד את הכיתוב", text: "להוריד את הכיתוב מכל השקופיות", send: true },
+    ],
+  },
+  image_post: {
+    title: "עריכת תמונה עם AI",
+    intro:
+      "זו התמונה שלכם, אז היא עצמה נשארת כמו שהיא. אפשר לשנות את הכיתוב עליה, להזיז אותו, לשנות את הצבע והגודל שלו, או להוריד אותו.",
+    busy: "מעדכנים את התמונה...",
+    suggestions: [
+      { label: "לשנות את הכיתוב", text: "לשנות את הכיתוב ל: ", send: false },
+      { label: "להזיז את הכיתוב למעלה", text: "להזיז את הכיתוב למעלה", send: true },
+      { label: "להוריד את הכיתוב", text: "להוריד את הכיתוב", send: true },
+    ],
+  },
+  b_roll: {
+    title: "עריכת בי-רול עם AI",
+    intro:
+      "זה הבי-רול שלכם, אז מה שצילמתם נשאר בדיוק כמו שהוא. אפשר לשנות את הכיתוב עליו, להזיז אותו, לשנות את הצבע והגודל שלו, או להוריד אותו.",
+    busy: "מעדכנים את הבי-רול... בסרטון זה יכול לקחת עד שתי דקות",
+    suggestions: [
+      { label: "לשנות את הכיתוב", text: "לשנות את הכיתוב ל: ", send: false },
+      { label: "להזיז את הכיתוב למעלה", text: "להזיז את הכיתוב למעלה", send: true },
+      { label: "להוריד את הכיתוב", text: "להוריד את הכיתוב", send: true },
+    ],
+  },
+}
+
+/**
  * "עריכת [פורמט] עם AI" (Hani, 2026-10-22) — the same floating side panel as
  * the core post's "עריכת פוסט ליבה" (CorePostChat): her instruction in, Opus
  * revises the animation, the new clip replaces the one on the result card.
@@ -109,17 +168,38 @@ export function MediaAiChat({
   onOpenChange,
   onUpdated,
   opening,
+  own = false,
+  currentUrls = [],
+  currentFrame,
+  initialMessages,
+  autoSend,
 }: {
   postId: string
   format: AiEditFormat
+  /**
+   * The media is hers (Drive / upload), not the AI's: only add on top or take
+   * away — lib/own-media-edit. The panel says so and offers those moves.
+   */
+  own?: boolean
+  /** Own media: the set as the card shows it. */
+  currentUrls?: string[]
+  /** Own media: the frame / slide on screen (1-based). */
+  currentFrame?: number
+  /** State previews (/test/*) only: start the conversation here. */
+  initialMessages?: ChatMessage[]
+  /** State previews (/test/*) only: send this request once, on open. */
+  autoSend?: string
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** Image formats: the saved set, in order, after an edit. */
-  onUpdated?: (format: AiEditFormat, urls: string[]) => void
+  /**
+   * The saved set, in order, after an edit (image formats; own media of any
+   * format). `driveLinks`: an own carousel's per-slide links, re-ordered with it.
+   */
+  onUpdated?: (format: AiEditFormat, urls: string[], extra?: { driveLinks?: string[] | null }) => void
   /** Opened by 👎 on the card: ask what she didn't like, with the reasons. */
   opening?: AiEditOpening | null
 }) {
-  const copy = COPY[format]
+  const copy = own ? { ...COPY[format], ...OWN_COPY[format] } : COPY[format]
   // Today's batch (2026-10-29), Hani only: z-50 + outside-click close, the
   // leave-screen note, the save chip, 👎 opening. Off (or loading) = as before.
   const preview = usePreviewAccess() === true
@@ -127,31 +207,46 @@ export function MediaAiChat({
     role: "assistant",
     content: o ? DISLIKE_ASK : copy.intro,
   })
-  const [messages, setMessages] = useState<ChatMessage[]>([firstTurn(opening)])
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages ?? [firstTurn(opening)])
   // A different format's chat, or a fresh 👎, starts its own conversation.
-  const [chatFormat, setChatFormat] = useState(`${format}:${opening?.id ?? ""}`)
+  const chatKey = `${format}:${own ? "own" : "ai"}:${opening?.id ?? ""}`
+  const [chatFormat, setChatFormat] = useState(chatKey)
   // Until her first answer: the reason chips, and that answer teaches the style.
   const [asking, setAsking] = useState<AiEditOpening | null>(opening ?? null)
   const [reasons, setReasons] = useState<DislikeReason[]>([])
-  if (chatFormat !== `${format}:${opening?.id ?? ""}`) {
-    setChatFormat(`${format}:${opening?.id ?? ""}`)
+  if (chatFormat !== chatKey) {
+    setChatFormat(chatKey)
     setMessages([firstTurn(opening)])
     setAsking(opening ?? null)
     setReasons([])
   }
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
+  const [progress, setProgress] = useState("")
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const isWatching = useIsWatching()
   const scrollRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   useDismissOnOutsideClick(panelRef, open && preview, () => onOpenChange(false))
 
+  const autoSent = useRef(false)
+  useEffect(() => {
+    if (!autoSend || autoSent.current) return
+    const t = setTimeout(() => {
+      autoSent.current = true
+      void send(autoSend)
+    }, 300)
+    return () => clearTimeout(t)
+    // Once, on open — a preview's scripted first request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSend])
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
   }, [messages, loading])
 
-  const send = async () => {
-    let text = input.trim()
+  const send = async (preset?: string) => {
+    let text = (preset ?? input).trim()
     // Her 👎 answer: the style-feedback route learns from it, so the edit
     // doesn't learn it a second time (learn: false).
     const fromFeedback = !!asking
@@ -168,6 +263,10 @@ export function MediaAiChat({
     setLoading(true)
     // An edit that came from 👎 is learned by the feedback route, not here.
     const learn = !fromFeedback
+    if (own) {
+      await sendOwn(text)
+      return
+    }
     // If she leaves before it lands, the result arrives as a toast (the
     // server has saved it either way) — see lib/long-wait.
     const run =
@@ -186,6 +285,42 @@ export function MediaAiChat({
       result.ok
         ? { role: "assistant", content: copy.done, done: true, remembered: result.remembered }
         : { role: "assistant", content: result.message || "העריכה לא הצליחה. נסו שוב.", error: true },
+    ])
+  }
+
+  /** Her own media: plan → existing caption / slide paths → save the set. */
+  async function sendOwn(text: string) {
+    const history = messages
+      .filter((m, i) => i > 0 && !m.error)
+      .map((m) => ({ role: m.role, content: m.content }))
+    let full: Awaited<ReturnType<typeof runOwnMediaEdit>> | null = null
+    const run = runOwnMediaEdit({
+      postId,
+      format,
+      instruction: text,
+      currentUrls,
+      currentFrame,
+      history,
+      onProgress: setProgress,
+    }).then((r) => {
+      full = r
+      if (r.ok && r.changed) onUpdated?.(format, r.urls, { driveLinks: r.driveLinks })
+      return r.ok ? { ok: true as const, remembered: null } : { ok: false as const, message: r.message }
+    })
+    // If she leaves before it lands, the result arrives as a toast.
+    const result = preview
+      ? await trackAwayResult(`ai-edit-${postId}-${format}-own-${++ownEditSeq}`, run, isWatching, AWAY_COPY[format], postId)
+      : await run
+    setLoading(false)
+    setProgress("")
+    const r = full as Awaited<ReturnType<typeof runOwnMediaEdit>> | null
+    setMessages((prev) => [
+      ...prev,
+      !result.ok || !r || !r.ok
+        ? { role: "assistant", content: (r && r.message) || "העריכה לא הצליחה. נסו שוב.", error: true }
+        : !r.changed
+          ? { role: "assistant", content: r.message }
+          : { role: "assistant", content: r.message || copy.done, done: true, remembered: null, noStyle: !r.styleChange },
     ])
   }
 
@@ -258,6 +393,31 @@ export function MediaAiChat({
             {asking && i === 0 && (
               <DislikeReasonChips value={reasons} onChange={setReasons} className="max-w-[85%] justify-end" />
             )}
+            {/* Own media: what it can do, one tap away — until her first ask. */}
+            {own && !asking && i === 0 && messages.length === 1 && !loading && (
+              <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5" role="group" aria-label="הצעות לעריכה">
+                {OWN_COPY[format].suggestions.map((sg) => (
+                  <Chip
+                    key={sg.label}
+                    onClick={() => {
+                      if (sg.send) {
+                        void send(sg.text)
+                        return
+                      }
+                      setInput(sg.text)
+                      requestAnimationFrame(() => {
+                        const el = inputRef.current
+                        if (!el) return
+                        el.focus()
+                        el.setSelectionRange(el.value.length, el.value.length)
+                      })
+                    }}
+                  >
+                    {sg.label}
+                  </Chip>
+                ))}
+              </div>
+            )}
             {/* The save-to-visual-language chip is open to everyone (Hani, 2026-10-29). */}
             {m.done && (
               <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
@@ -269,19 +429,19 @@ export function MediaAiChat({
         ))}
 
         {loading && preview && (
-          <LongWaitBusyRow text={copy.busy} />
+          <LongWaitBusyRow text={progress || copy.busy} />
         )}
         {loading && !preview && (
           <div className="flex items-center gap-2 text-small text-text-neutral-default">
             <Loader2 className="size-4 animate-spin text-yellow-50" />
-            <span>{copy.busy}</span>
+            <span>{progress || copy.busy}</span>
           </div>
         )}
       </div>
 
       {/* Composer */}
       <div className="border-t border-border-neutral-default p-3">
-        {lastEdit && !loading && (
+        {lastEdit && !loading && !messages[lastEdit.index].noStyle && (
           <SaveToVisualLanguageChip
             key={`${chatFormat}:${lastEdit.index}`}
             instruction={lastEdit.instruction}
@@ -300,6 +460,7 @@ export function MediaAiChat({
               }
             }}
             placeholder={asking ? "מה לא אהבתם? ספרו לנו" : "מה תרצו לשנות?"}
+            ref={inputRef}
             rows={1}
             autoFocus
             className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent p-1 text-small shadow-none focus-visible:ring-0"
