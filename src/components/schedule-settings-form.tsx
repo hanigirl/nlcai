@@ -22,7 +22,6 @@ import { Chip } from "@/components/ui/chip"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Select } from "@/components/ui/select"
 import { getFormatChipIcon, getFormatChipLabel } from "@/components/format-status-chip"
-import { StoryGapField } from "@/components/posting-schedule-parts"
 import {
   GAP_OPTIONS,
   MAX_POSTS_PER_DAY,
@@ -31,7 +30,6 @@ import {
   WEEKDAY_NAMES,
   activeDayCount,
   countSlots,
-  usesStories,
   withDayActive,
   withDayPost,
   withGlobal,
@@ -261,18 +259,6 @@ export function WeekSummary({ draft }: { draft: PostingSchedule }) {
   )
 }
 
-function StoryGap({ draft, onChange }: Edit) {
-  if (!usesStories(draft)) return null
-  return (
-    <StoryGapField
-      id="schedule-story-gap"
-      value={draft.storyGapMinutes}
-      enabled
-      onChange={(m) => onChange(withGlobal(draft, { storyGapMinutes: m }))}
-    />
-  )
-}
-
 /* ------------------------------------------------------------------ */
 /*  The form                                                           */
 /* ------------------------------------------------------------------ */
@@ -379,12 +365,6 @@ export function ScheduleSettingsForm({ draft, onChange }: Edit) {
           </ul>
         )}
       </RuleRow>
-
-      {usesStories(draft) && (
-        <RuleRow label="סטורי">
-          <StoryGap draft={draft} onChange={onChange} />
-        </RuleRow>
-      )}
 
       <div className="pt-4">
         <WeekSummary draft={draft} />

@@ -1380,7 +1380,6 @@ export default function CalendarPage() {
                 saving={routine.saving}
                 saveError={routine.saveError}
                 dirty={routine.dirty}
-                onStoryGap={(m) => routine.setDraft({ ...routine.draft, storyGapMinutes: m })}
                 onCancel={() => {
                   routine.discard()
                   endRoutineEdit()

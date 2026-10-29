@@ -21,13 +21,11 @@ import {
   SaveErrorAlert,
   SlotEditor,
   SlotLabel,
-  StoryGapField,
 } from "@/components/posting-schedule-parts"
 import {
   activeDayCount,
   clashingSlotIds,
   countSlots,
-  usesStories,
   withSlotAdded,
   withSlotRemoved,
   withSlotUpdated,
@@ -75,7 +73,6 @@ export function RoutineEditBar({
   saving,
   saveError,
   dirty,
-  onStoryGap,
   onCancel,
   onSave,
 }: {
@@ -83,7 +80,6 @@ export function RoutineEditBar({
   saving: boolean
   saveError: boolean
   dirty: boolean
-  onStoryGap: (m: number) => void
   onCancel: () => void
   onSave: () => void
 }) {
@@ -96,7 +92,6 @@ export function RoutineEditBar({
           <span className="text-small-bold text-text-primary-default">עריכת הלו״ז הקבוע</span>
           <span className="text-xs-body text-text-neutral-default">חל על כל שבוע · {weeklySummary(draft)}</span>
         </div>
-        <StoryGapField id="story-gap-a" value={draft.storyGapMinutes} enabled={usesStories(draft)} onChange={onStoryGap} />
         <div className="ms-auto flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>
             ביטול
