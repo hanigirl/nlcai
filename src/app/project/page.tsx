@@ -68,6 +68,10 @@ import {
 } from "@/components/format-approval/approval-visuals"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
 import { useSchedulingAccess } from "@/lib/use-scheduling-access"
+// "עריכה עם AI" on every format's copy (Hani, 2026-10-29).
+import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
+import { FormatCopyActionRow } from "@/components/format-copy-ai/format-copy-entry"
+import type { FormatCopyAiController } from "@/components/format-copy-ai/use-format-copy-ai"
 
 type Flow = "idea" | "hook" | "saved"
 
@@ -1896,6 +1900,14 @@ function ProjectPageInner() {
   // the "chat about the post" affordance and force the panel shut.
   const formatsLocked = duplicatedFormats.length > 0
 
+  // "עריכה עם AI" on each format's copy + its writing-style learning.
+  const copyEdit = useFormatCopyAiOnPage({
+    formatPosts,
+    setFormatPosts,
+    hook: activeHook,
+    generatingPlaceholder: FORMAT_GENERATING,
+  })
+
   useEffect(() => {
     if (formatsLocked && chatOpen) setChatOpen(false)
   }, [formatsLocked, chatOpen])
@@ -1981,6 +1993,8 @@ function ProjectPageInner() {
         onStoryVideoUrlChange={setStoryVideoUrl}
         onMediaBusyChange={onPanelBusyChange}
       />
+
+      {copyEdit.overlay}
 
       {/* "Keep chatting about the post" floating panel — sibling to the
           canvas (fixed positioning) so the pan/zoom transform doesn't drag
@@ -2660,6 +2674,7 @@ function ProjectPageInner() {
                           onAiEdit={setAiChatFormat}
                           onDeleteMedia={setPendingMediaDelete}
                           onBRollUrlChange={setBRollUrl}
+                          copyAi={copyEdit.copyAi}
                           approval={
                             approveVariant
                               ? {
@@ -2964,6 +2979,7 @@ function FormatTree({
   onDeleteMedia,
   onBRollUrlChange,
   approval,
+  copyAi,
 }: {
   formats: string[]
   formatPosts: Record<string, string>
@@ -3020,6 +3036,8 @@ function FormatTree({
   onDeleteMedia: (format: AiEditFormat) => void
   /** Media approval (design review ?approve=a|b). Absent = feature off. */
   approval?: FormatTreeApproval
+  /** "עריכה עם AI" on the format copy — the ✨ beside "הוספת מדיה". */
+  copyAi?: FormatCopyAiController
 }) {
   const count = formats.length
   const totalWidth = count * CARD_WIDTH + (count - 1) * CARD_GAP
@@ -3151,10 +3169,22 @@ function FormatTree({
                       onFocus={() => onActiveChange(`format-${fid}`)}
                       onMouseDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
-                      className="min-h-[200px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text"
+                      className={`min-h-[200px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text ${copyAi?.isBusy(fid) ? "ai-text-shimmer pointer-events-none" : ""}`}
                     />
                     <CopyButton text={formatPosts[fid] ?? ""} />
                   </div>
+                  {/* ✨ "עריכה עם AI" sits beside this button (Hani, 2026-10-29). */}
+                  <FormatCopyActionRow
+                    ctrl={copyAi}
+                    fid={fid}
+                    hasMedia={
+                      fid === "carousel" ? !!carouselImages?.length
+                      : fid === "story" ? !!storyImages?.length || !!storyVideoUrl
+                      : fid === "image_post" ? !!imagePostUrl
+                      : fid === "talking_head" ? !!thVideoUrl
+                      : !!bRollUrl
+                    }
+                  >
                   <Button
                     variant="outline"
                     // For talking_head, we disable the button once a video
@@ -3171,8 +3201,9 @@ function FormatTree({
                     className="w-full rounded-[10px] border-border-neutral-default text-text-primary-default text-small gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Icon className="size-4" />
-                    הוספת מדיה ל{format.label}
+                    הוספת מדיה
                   </Button>
+                  </FormatCopyActionRow>
                   {approval?.variant === "a" && approvalStatus === "no-media" && (
                     <p className="text-xs leading-relaxed text-text-neutral-default text-center">
                       אחרי שתוסיפו מדיה, תוכלו לאשר אותה לתזמון.
