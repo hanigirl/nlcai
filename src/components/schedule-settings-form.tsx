@@ -279,13 +279,14 @@ function StoryGap({ draft, onChange }: Edit) {
 
 function RuleRow({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
-    // Question on the right, answer on the left (Hani, 2026-10-29); stacked on a phone.
-    <div className="flex flex-col gap-2.5 py-4 first:pt-0 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
-      <div className="flex shrink-0 flex-col gap-0.5">
+    // A narrow question column on the right, the answer right beside it
+    // (Hani, 2026-10-29); stacked on a phone.
+    <div className="flex flex-col gap-2.5 py-4 first:pt-0 sm:grid sm:grid-cols-[13rem_minmax(0,1fr)] sm:items-start sm:gap-6">
+      <div className="flex flex-col gap-0.5 sm:pt-1.5">
         <span className="text-small text-text-primary-default">{label}</span>
         {hint && <span className="text-xs-body text-text-neutral-default">{hint}</span>}
       </div>
-      <div className="flex min-w-0 sm:justify-end">{children}</div>
+      <div className="min-w-0">{children}</div>
     </div>
   )
 }
