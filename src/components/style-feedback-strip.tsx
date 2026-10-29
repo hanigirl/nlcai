@@ -9,8 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { getAiStyle, recordAiStyleVote } from "@/lib/ai-style-provenance"
 import { getFormatMeta } from "@/lib/timing-storage"
 import { BRAND_TEMPLATE_ID } from "@/lib/carousel-templates"
-import { DISLIKE_REASONS, type DislikeReason } from "@/lib/visual-language/types"
-import { usePreviewAccess } from "@/lib/use-scheduling-access"
+import type { DislikeReason } from "@/lib/visual-language/types"
 import { isEditableBRollUrl } from "@/components/media-ai-chat"
 import { DislikeReasonChips } from "@/components/dislike-reason-chips"
 import { openingId, requestAiEdit } from "@/lib/ai-edit-intent"
@@ -84,8 +83,8 @@ function StyleFeedbackRow({
   // 👎 opens the AI-edit panel wherever the panel can edit (Hani,
   // 2026-10-29); a b-roll the new engine didn't make keeps the inline field.
   // Today's batch, Hani only; everyone else (and while loading) keeps the field.
-  const preview = usePreviewAccess() === true
-  const opensAiEdit = preview && (format !== "b_roll" || isEditableBRollUrl(mediaUrl))
+  // 👎 opens the AI edit for everyone (Hani, 2026-10-29).
+  const opensAiEdit = format !== "b_roll" || isEditableBRollUrl(mediaUrl)
   const [vote, setVote] = useState<"like" | "dislike" | null>(initialVote ?? null)
   const [askingWhy, setAskingWhy] = useState(false)
   const [reasons, setReasons] = useState<DislikeReason[]>([])
@@ -202,35 +201,12 @@ function StyleFeedbackRow({
       {askingWhy && (
         <div className="flex flex-col gap-2 px-5">
           <p className="text-xs text-text-primary-default">מה לא עבד?</p>
-          {preview ? (
-            <DislikeReasonChips value={reasons} onChange={setReasons} />
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {(Object.keys(DISLIKE_REASONS) as DislikeReason[]).map((r) => {
-                const on = reasons.includes(r)
-                return (
-                  <button
-                    key={r}
-                    type="button"
-                    aria-pressed={on}
-                    onClick={() => setReasons((prev) => (on ? prev.filter((x) => x !== r) : [...prev, r]))}
-                    className={`rounded-full border px-2.5 py-1 text-xs transition-colors cursor-pointer ${
-                      on
-                        ? "border-yellow-50 bg-bg-surface-primary-default text-text-primary-default"
-                        : "border-border-neutral-default text-text-neutral-default hover:bg-gray-95 dark:hover:bg-gray-20"
-                    }`}
-                  >
-                    {DISLIKE_REASONS[r]}
-                  </button>
-                )
-              })}
-            </div>
-          )}
+          <DislikeReasonChips value={reasons} onChange={setReasons} />
           <Textarea
             rows={2}
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder={preview ? "מה לא אהבתם? ספרו לנו" : "משהו נוסף? (לא חובה)"}
+            placeholder="מה לא אהבתם? ספרו לנו"
             aria-label="פירוט נוסף על מה לא עבד"
             className="text-xs min-h-0"
           />

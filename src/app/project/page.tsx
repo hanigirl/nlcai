@@ -233,10 +233,6 @@ function ProjectPageInner() {
   // Today's batch (2026-10-29) — Hani only while she tries it. null (still
   // reading the session) counts as off, so everyone else sees the page as before.
   const previewOn = usePreviewAccess() === true
-  const previewRef = useRef(previewOn)
-  useEffect(() => {
-    previewRef.current = previewOn
-  })
 
   const flow: Flow = postId ? "saved" : hookParam ? "hook" : "idea"
 
@@ -338,7 +334,7 @@ function ProjectPageInner() {
   // "לא אהבתי" on a card opens the AI edit with her feedback (lib/ai-edit-intent).
   const [aiChatOpening, setAiChatOpening] = useState<AiEditOpening | null>(null)
   useAiEditRequests((req) => {
-    if (!previewRef.current || req.postId !== savedPostId) return
+    if (req.postId !== savedPostId) return
     setAiChatFormat(req.format)
     setAiChatOpening(req.opening)
   })
