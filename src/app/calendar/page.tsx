@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import {
   CalendarCheck,
   CalendarClock,
-  Settings2,
+  Settings,
   ChevronRight,
   ChevronLeft,
   MoreVertical,
@@ -1616,7 +1616,7 @@ export default function CalendarPage() {
                         onClick={() => setScheduleSettingsOpen(true)}
                         aria-label="הגדרות תזמון"
                       >
-                        <Settings2 className="size-4" />
+                        <Settings className="size-4" />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>הגדרות תזמון</TooltipContent>
