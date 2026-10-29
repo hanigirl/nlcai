@@ -6,6 +6,7 @@ import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
 import { MediaAiChat, isEditableBRollUrl, type AiEditFormat } from "@/components/media-ai-chat"
+import { CapstyleReview } from "@/components/capstyle-review"
 import { clearBRollUrl } from "@/lib/broll-generation-store"
 import { CaptionControls } from "@/components/image-caption-block"
 import {
@@ -2724,6 +2725,14 @@ function ProjectPageInner() {
           if (fid) await generateFormatVariants([fid])
         }}
       />
+
+      {/* Review harness: ?capstyle=a|b — the "save to my visual language" chip. */}
+      {(searchParams.get("capstyle") === "a" || searchParams.get("capstyle") === "b") && (
+        <CapstyleReview
+          variant={searchParams.get("capstyle") as "a" | "b"}
+          state={searchParams.get("state")}
+        />
+      )}
 
       {savedPostId && aiChatFormat && (
         <MediaAiChat
