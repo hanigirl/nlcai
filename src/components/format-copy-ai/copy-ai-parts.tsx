@@ -152,7 +152,7 @@ export function CopyComposer({
         placeholder={placeholder}
         aria-label={placeholder}
         rows={1}
-        className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent p-1 text-small shadow-none focus-visible:ring-0"
+        className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent px-1 py-2 text-small shadow-none focus-visible:ring-0"
       />
       <Button
         size="icon-sm"

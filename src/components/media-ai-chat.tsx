@@ -334,7 +334,7 @@ export function MediaAiChat({
             placeholder={asking ? "מה לא אהבתם? ספרו לנו" : "מה תרצו לשנות?"}
             rows={1}
             autoFocus
-            className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent p-1 text-small shadow-none focus-visible:ring-0"
+            className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent px-1 py-2 text-small shadow-none focus-visible:ring-0"
           />
           <Button
             size="icon-sm"
