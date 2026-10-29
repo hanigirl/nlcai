@@ -138,6 +138,85 @@ interface SavedPost {
   updated_at: string
 }
 
+/**
+ * Maps a format readiness state to one of the 5 colored chip palette classes.
+ *
+ * Palette:
+ *  empty / not-started → gray  (אפור)
+ *  incomplete / in-writing    → yellow (צהוב)
+ *  ready / pending approval   → yellow (צהוב)
+ *  approved                   → green  (ירוק)
+ *  scheduled                  → blue   (כחול)
+ *  published                  → purple (סגול)
+ */
+function getFormatChipColorClass(
+  state: ReturnType<typeof getFormatReadiness>,
+  approved: boolean,
+): string {
+  if (state === "published") {
+    // סגול — פורסם
+    return "bg-purple-95 text-purple-40 border-purple-80 dark:bg-purple-20 dark:text-purple-70 dark:border-purple-40"
+  }
+  if (state === "scheduled") {
+    // כחול — תוזמן
+    return "bg-blue-95 text-blue-40 border-blue-80 dark:bg-blue-20 dark:text-blue-70 dark:border-blue-40"
+  }
+  if (state === "approved" || (state === "ready" && approved)) {
+    // ירוק — מאושר
+    return "bg-green-95 text-green-40 border-green-80 dark:bg-green-20 dark:text-green-70 dark:border-green-40"
+  }
+  if (state === "ready" || state === "incomplete") {
+    // צהוב — בכתיבה / ממתין לאישור
+    return "bg-yellow-90 text-yellow-30 border-yellow-70 dark:bg-yellow-20 dark:text-yellow-60 dark:border-yellow-40"
+  }
+  // אפור — empty / not-started
+  return "bg-gray-95 text-gray-50 border-gray-85 dark:bg-gray-15 dark:text-gray-50 dark:border-gray-30"
+}
+
+/**
+ * Mini progress bar — 4 segments, one per CARD_CHIP_FORMATS format.
+ * A segment is "filled" (colored) when the format has reached approved or
+ * beyond (approved / scheduled / published). Otherwise it stays gray.
+ * Gives a glanceable sense-of-progress without needing to read each chip.
+ */
+function FormatProgressBar({
+  postId,
+  readinessInput,
+}: {
+  postId: string
+  readinessInput: ReadinessPostInput
+}) {
+  return (
+    <div className="flex gap-[3px] mt-1.5" aria-hidden>
+      {CARD_CHIP_FORMATS.map((format) => {
+        const state = getFormatReadiness(readinessInput, format)
+        const approved = isFormatApproved(postId, format)
+        const filled =
+          state === "published" ||
+          state === "scheduled" ||
+          state === "approved" ||
+          (state === "ready" && approved)
+        let segColor: string
+        if (state === "published") {
+          segColor = "bg-purple-40 dark:bg-purple-60"
+        } else if (state === "scheduled") {
+          segColor = "bg-blue-40 dark:bg-blue-60"
+        } else if (filled) {
+          segColor = "bg-green-40 dark:bg-green-60"
+        } else {
+          segColor = "bg-gray-85 dark:bg-gray-30"
+        }
+        return (
+          <div
+            key={format}
+            className={`h-[3px] flex-1 rounded-full transition-colors ${segColor}`}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
 export default function CorePostsPage() {
   const [posts, setPosts] = useState<SavedPost[]>([])
   const [loading, setLoading] = useState(true)
@@ -797,44 +876,53 @@ function CorePostCard({
             keep chips aligned. Each chip is its own button
             (FormatStatusChipLink): SR announces 4 distinct actions, and it
             stops click propagation so it doesn't double-fire with the card's
-            onClick. Neutral chips echo the card's yellow hover; "set" chips
-            keep their green identity. */}
-        <div className="mt-auto flex flex-wrap gap-1 pt-1">
-          {CARD_CHIP_FORMATS.map((format) => {
-            const state = getFormatReadiness(readinessInput, format)
-            // Date source matches the Sheet's logic — same helpers, same
-            // precedence (published > scheduled).
-            const dateValue =
-              state === "published"
-                ? getPublishedMark(post.id, format)?.publishedAt
-                : state === "scheduled"
-                  ? getScheduledByPostAndFormat(post.id, format)?.scheduledDate
-                  : undefined
-            // Approved formats wear the green chip, so they keep it on hover
-            // too — same treatment as the retained "set" palette.
-            const isSetState =
-              state === "scheduled" ||
-              state === "published" ||
-              state === "approved"
-            const hoverTintClass = isSetState
-              ? undefined
-              : state === "ready"
-                ? "group-hover:bg-gray-95 group-hover:text-text-primary-default group-hover:border-gray-80"
-                : "group-hover:bg-gray-95 group-hover:text-text-primary-default"
-            return (
-              <FormatStatusChipLink
-                key={format}
-                format={format}
-                state={state}
-                date={dateValue ?? undefined}
-                size="sm"
-                showScheduledBadge
-                onClick={onClick}
-                aria-label={`פתחו פוסט — ${format} — ${state}`}
-                chipClassName={hoverTintClass}
-              />
-            )
-          })}
+            onClick.
+            
+            Variant A: chips now carry a 5-state color palette:
+              empty        → gray  (אפור)
+              incomplete   → yellow (צהוב)
+              ready/pending→ yellow (צהוב)
+              approved     → green  (ירוק)
+              scheduled    → blue   (כחול)
+              published    → purple (סגול)
+            
+            A mini progress bar (4 segments) below the chips fills per format
+            that has reached approved or beyond, giving a glanceable sense of
+            progress. */}
+        <div className="mt-auto pt-1">
+          <div className="flex flex-wrap gap-1">
+            {CARD_CHIP_FORMATS.map((format) => {
+              const state = getFormatReadiness(readinessInput, format)
+              // Date source matches the Sheet's logic — same helpers, same
+              // precedence (published > scheduled).
+              const dateValue =
+                state === "published"
+                  ? getPublishedMark(post.id, format)?.publishedAt
+                  : state === "scheduled"
+                    ? getScheduledByPostAndFormat(post.id, format)?.scheduledDate
+                    : undefined
+              const approved = isFormatApproved(post.id, format)
+              // Colored chip classes per the 5-state palette.
+              const colorClass = getFormatChipColorClass(state, approved)
+              return (
+                <FormatStatusChipLink
+                  key={format}
+                  format={format}
+                  state={state}
+                  date={dateValue ?? undefined}
+                  size="sm"
+                  showScheduledBadge
+                  onClick={onClick}
+                  aria-label={`פתחו פוסט — ${format} — ${state}`}
+                  chipClassName={colorClass}
+                />
+              )
+            })}
+          </div>
+          {/* Mini progress bar — 4 segments, one per format in CARD_CHIP_FORMATS.
+              Filled (colored) when the format has reached approved / scheduled /
+              published. Gives a glanceable sense of progress at a glance. */}
+          <FormatProgressBar postId={post.id} readinessInput={readinessInput} />
         </div>
       </CardContent>
 

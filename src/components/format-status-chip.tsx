@@ -46,6 +46,7 @@
 
 import {
   Check,
+  Clock,
   Film,
   Image as ImageIcon,
   Images,
@@ -155,6 +156,100 @@ export function toChipState(state: FormatReadiness): ChipState {
     case "approved":
       return "set"
   }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Colored state model — 5-state internal → 5-state colored visual    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 5-state colored chip state, one-to-one with FormatReadiness.
+ * Used exclusively by `FormatStatusChipColored` — does NOT replace
+ * the existing binary `ChipState` / `toChipState` used everywhere else.
+ *
+ *   empty      → "colored-empty"      gray
+ *   incomplete → "colored-incomplete" yellow  (בכתיבה / ממתין לאישור)
+ *   ready      → "colored-ready"      yellow  (מוכן — same yellow as incomplete)
+ *   approved   → "colored-approved"   green   (מאושר)
+ *   scheduled  → "colored-scheduled"  blue    (תוזמן)
+ *   published  → "colored-published"  purple  (פורסם)
+ */
+export type ColoredChipState =
+  | "colored-empty"
+  | "colored-incomplete"
+  | "colored-ready"
+  | "colored-approved"
+  | "colored-scheduled"
+  | "colored-published"
+
+/**
+ * Project the 5-state FormatReadiness onto the 5-state colored visual.
+ * Each readiness maps to a unique color, giving the "wow effect" Hani and
+ * Natalia described: you can see at a glance what was published vs. what's
+ * still pending for each core post.
+ */
+export function toColoredChipState(state: FormatReadiness): ColoredChipState {
+  switch (state) {
+    case "empty":
+      return "colored-empty"
+    case "incomplete":
+      return "colored-incomplete"
+    case "ready":
+      return "colored-ready"
+    case "approved":
+      return "colored-approved"
+    case "scheduled":
+      return "colored-scheduled"
+    case "published":
+      return "colored-published"
+  }
+}
+
+/**
+ * Per colored-state class strings. Uses design-system tokens + Tailwind's
+ * blue/purple palettes (which are appropriate here since this is a NEW
+ * colored component, not the legacy neutral one).
+ *
+ *   colored-empty      → gray (same as the binary chip's not-started)
+ *   colored-incomplete → yellow (same yellow as the binary chip's ready)
+ *   colored-ready      → yellow (same — "written, pending approval")
+ *   colored-approved   → green-success (same green as the binary chip's set)
+ *   colored-scheduled  → blue-600 bg / blue-100 text
+ *   colored-published  → purple-700 bg / purple-100 text
+ */
+const coloredChipStateClasses: Record<ColoredChipState, string> = {
+  "colored-empty":
+    "bg-gray-98 text-gray-50 border-transparent opacity-50",
+  "colored-incomplete":
+    "bg-yellow-90 text-yellow-30 border-transparent",
+  "colored-ready":
+    "bg-yellow-90 text-yellow-30 border-transparent",
+  "colored-approved":
+    "bg-green-success-97 text-green-success-50 border-solid border-green-success-50",
+  "colored-scheduled":
+    "bg-blue-100 text-blue-700 border-transparent",
+  "colored-published":
+    "bg-purple-100 text-purple-700 border-transparent",
+}
+
+/**
+ * Icon to render for each colored state — the state icon REPLACES (or
+ * overlays) nothing: we keep the format icon and add a small status
+ * indicator via the trailing icon slot. The trailing icon is optional —
+ * `null` means "no trailing icon" (just the format icon + label).
+ *
+ * scheduled → Clock (שעון)
+ * published → Check (וי)
+ * approved  → Check (וי, green)
+ * others    → null
+ */
+const coloredChipTrailingIcon: Record<ColoredChipState, LucideIcon | null> = {
+  "colored-empty": null,
+  "colored-incomplete": null,
+  "colored-ready": null,
+  "colored-approved": Check,
+  "colored-scheduled": Clock,
+  "colored-published": Check,
 }
 
 /* ------------------------------------------------------------------ */
@@ -457,6 +552,171 @@ export function FormatStatusChip({
         </span>
       )}
     </span>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Colored chip — 5-state visual (variant A: שורת סטטוס צבעונית)      */
+/* ------------------------------------------------------------------ */
+
+export type FormatStatusChipColoredProps = {
+  /** Format id — drives label + icon. Unknown ids fall back to a generic text icon. */
+  format: FormatId
+  /** Derived readiness state — caller is responsible for projection. */
+  state: FormatReadiness
+  /**
+   * `sm` for in-card pills (/core_posts, queue-panel). `md` for canvas
+   * cards and larger surfaces. Defaults to `sm`.
+   */
+  size?: Size
+  /**
+   * Chip type — `full` (icon + label) or `icon` (compact circle).
+   * Default `full`.
+   */
+  type?: FormatChipType
+  /**
+   * Pure positioning override — layout concerns only.
+   */
+  className?: string
+}
+
+/**
+ * Colored variant of `FormatStatusChip`. Maps all 5 FormatReadiness states
+ * to distinct colors so users can see at a glance what was published vs.
+ * what's still pending for each core post ("wow effect" per Hani + Natalia,
+ * meeting 22.10.2026).
+ *
+ *   empty      → gray (חסר לחלוטין)
+ *   incomplete → yellow (בכתיבה / ממתין לאישור)
+ *   ready      → yellow (מוכן — same yellow, pre-approval)
+ *   approved   → green (מאושר) + ✓ trailing icon
+ *   scheduled  → blue (תוזמן) + clock trailing icon
+ *   published  → purple (פורסם) + ✓ trailing icon
+ *
+ * Purely presentational — no onClick, no href. Wrap in
+ * `FormatStatusChipLink` for the interactive /core_posts cards context.
+ */
+export function FormatStatusChipColored({
+  format,
+  state,
+  size = "sm",
+  type = "full",
+  className,
+}: FormatStatusChipColoredProps) {
+  const FormatIcon = getFormatIcon(format)
+  const coloredState = toColoredChipState(state)
+  const ariaLabel = buildAriaLabel(format, state)
+  const isFull = type === "full"
+  const iconSize = iconSizeFor(size)
+
+  const stateClass = coloredChipStateClasses[coloredState]
+  const TrailingIcon = coloredChipTrailingIcon[coloredState]
+
+  return (
+    <span
+      className={[
+        baseChipClass,
+        "relative",
+        isFull ? sizeClassFull[size] : sizeClassIcon[size],
+        stateClass,
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      aria-label={ariaLabel}
+      data-colored-state={coloredState}
+      data-readiness={state}
+      data-format={format}
+    >
+      <FormatIcon className={`${iconSize} shrink-0`} aria-hidden />
+      {isFull && <span className="leading-none">{getFormatLabel(format)}</span>}
+      {isFull && TrailingIcon && (
+        <TrailingIcon className={`${iconSize} shrink-0`} aria-hidden />
+      )}
+    </span>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Progress bar — mini 4-segment bar for core_posts cards + canvas    */
+/* ------------------------------------------------------------------ */
+
+export type FormatProgressBarProps = {
+  /**
+   * Array of readiness states for all formats on this post. The bar fills
+   * one segment per format that has reached `approved`, `scheduled`, or
+   * `published` — giving a "תחושת התקדמות" (sense of progress) at a glance.
+   */
+  states: FormatReadiness[]
+  /**
+   * Total number of segments to render. Defaults to `states.length`.
+   * Pass an explicit number to always show a fixed-width bar (e.g. 4
+   * segments even if this post only has 3 formats configured so far).
+   */
+  total?: number
+  /** Optional class for the outer wrapper (layout / margin overrides). */
+  className?: string
+}
+
+/**
+ * מיני פס התקדמות — מסומן לפי כמות פורמטים שהגיעו ל-approved ומעלה.
+ *
+ * כל סגמנט מייצג פורמט אחד. סגמנט ממולא = הפורמט אושר, תוזמן, או פורסם.
+ * סגמנט ריק = הפורמט עדיין בכתיבה, ממתין לאישור, או חסר לחלוטין.
+ *
+ * Usage:
+ *   <FormatProgressBar states={["published", "scheduled", "empty", "incomplete"]} />
+ *   → renders 4 segments, 2 filled (published + scheduled ≥ approved)
+ */
+export function FormatProgressBar({
+  states,
+  total,
+  className,
+}: FormatProgressBarProps) {
+  const segmentCount = total ?? states.length
+  if (segmentCount === 0) return null
+
+  const filledCount = states.filter(
+    (s) => s === "approved" || s === "scheduled" || s === "published",
+  ).length
+
+  return (
+    <div
+      className={["flex gap-0.5", className].filter(Boolean).join(" ")}
+      role="progressbar"
+      aria-valuenow={filledCount}
+      aria-valuemin={0}
+      aria-valuemax={segmentCount}
+      aria-label={`${filledCount} מתוך ${segmentCount} פורמטים מוכנים`}
+    >
+      {Array.from({ length: segmentCount }, (_, i) => {
+        const readiness = states[i]
+        // Determine segment color: filled segments reflect the actual state
+        // color for the richest visual feedback — published=purple,
+        // scheduled=blue, approved=green. Empty segments are gray.
+        let segmentClass: string
+        if (i >= states.length || readiness === "empty" || readiness === "incomplete" || readiness === "ready") {
+          segmentClass = "bg-gray-200"
+        } else if (readiness === "approved") {
+          segmentClass = "bg-green-success-50"
+        } else if (readiness === "scheduled") {
+          segmentClass = "bg-blue-500"
+        } else {
+          // published
+          segmentClass = "bg-purple-600"
+        }
+
+        return (
+          <span
+            key={i}
+            className={[
+              "h-1 flex-1 rounded-full transition-colors",
+              segmentClass,
+            ].join(" ")}
+          />
+        )
+      })}
+    </div>
   )
 }
 
