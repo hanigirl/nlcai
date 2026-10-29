@@ -88,6 +88,7 @@ import {
 } from "@/lib/timing-storage"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { carouselErrorInfo } from "@/lib/carousel-errors"
+import { endLongWait, saveCarouselIfLeft, startLongWait } from "@/lib/long-wait"
 
 // Every format the panel can open MUST have an entry here: the header block
 // (title + close button) is gated on `meta`, so a missing key renders a panel
@@ -1692,11 +1693,12 @@ function CarouselFlow({
     // panel and still lands its slides on the canvas, so the skeleton must
     // too — it comes down in `finally`, whoever is mounted by then.
     onBusyChange?.("carousel", true)
-    const genToast = toast.loading(
+    const genToast = `carousel-gen-${Date.now()}`
+    const waitVariant = startLongWait(
+      { id: genToast, verb: "מייצרים", what: "הקרוסלה" },
       isAiTemplate
         ? `מציירים קרוסלת AI (${templateName})... זה לוקח כמה דקות`
         : `יוצרים קרוסלה (${templateName})...`,
-      { duration: Infinity },
     )
 
     try {
@@ -1762,6 +1764,8 @@ function CarouselFlow({
           setFormatMeta(postId, "carousel", { templateId: genId })
         }
         setSavedTemplateId(genId === DRIVE_IMPORT_KEY ? undefined : genId)
+        // She left /project mid-generation: the page that saves is gone.
+        void saveCarouselIfLeft(waitVariant, postId, data.images)
         setDialogFor(genId)
         setPreviewIndex(0)
         toast.success(`הקרוסלה (${templateName}) מוכנה`, {
@@ -1776,6 +1780,7 @@ function CarouselFlow({
       setError(info.message)
       toast.error(info.message, { id: genToast, duration: 12000 })
     } finally {
+      endLongWait(genToast)
       setGenerating(false)
       onBusyChange?.("carousel", false)
     }

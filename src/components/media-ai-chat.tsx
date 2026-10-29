@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { startBRollEdit } from "@/lib/broll-generation-store"
 import { getAiStyle, recordAiStyleVote, rememberAiStyle } from "@/lib/ai-style-provenance"
+import { LongWaitBusyRow } from "@/components/long-wait-busy-row"
+import { trackAwayResult, useIsWatching, waitNoteReviewState } from "@/lib/long-wait"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
@@ -67,6 +69,26 @@ const COPY: Record<AiEditFormat, { title: string; intro: string; done: string; b
   },
 }
 
+/** Away-notification copy (see lib/long-wait) — only when she left mid-edit. */
+const AWAY_WHAT: Record<AiEditFormat, string> = {
+  b_roll: "הבי-רול",
+  carousel: "הקרוסלה",
+  story: "הסטורי",
+  image_post: "התמונה",
+}
+const AWAY_DONE: Record<AiEditFormat, string> = {
+  b_roll: "עריכת הבי-רול הסתיימה. הסרטון החדש מופיע בפוסט.",
+  carousel: "עריכת הקרוסלה הסתיימה. השקופיות החדשות מופיעות בפוסט.",
+  story: "עריכת הסטורי הסתיימה. הפריימים החדשים מופיעים בפוסט.",
+  image_post: "עריכת התמונה הסתיימה. היא מופיעה בפוסט.",
+}
+const AWAY_FAILED: Record<AiEditFormat, string> = {
+  b_roll: "עריכת הבי-רול לא הצליחה. נסו שוב מהפוסט.",
+  carousel: "עריכת הקרוסלה לא הצליחה. נסו שוב מהפוסט.",
+  story: "עריכת הסטורי לא הצליחה. נסו שוב מהפוסט.",
+  image_post: "עריכת התמונה לא הצליחה. נסו שוב מהפוסט.",
+}
+
 /**
  * "עריכת [פורמט] עם AI" (Hani, 2026-10-22) — the same floating side panel as
  * the core post's "עריכת פוסט ליבה" (CorePostChat): her instruction in, Opus
@@ -103,7 +125,9 @@ export function MediaAiChat({
     setMessages([{ role: "assistant", content: copy.intro }])
   }
   const [input, setInput] = useState("")
-  const [loading, setLoading] = useState(false)
+  // Review only (?waitnote=…&state=ai-edit): land on the busy state.
+  const [loading, setLoading] = useState(() => waitNoteReviewState() === "ai-edit")
+  const isWatching = useIsWatching()
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -116,13 +140,19 @@ export function MediaAiChat({
     setInput("")
     setMessages((prev) => [...prev, { role: "user", content: text }])
     setLoading(true)
-    const result =
+    // If she leaves before it lands, the result arrives as a toast (the
+    // server has saved it either way). No-op without ?waitnote.
+    const result = await trackAwayResult(
+      { id: `ai-edit-${postId}-${format}-${Date.now()}`, verb: "מעדכנים", what: AWAY_WHAT[format] },
       format === "b_roll"
-        ? await startBRollEdit(postId, text, { quiet: true }).then((r) => {
+        ? startBRollEdit(postId, text, { quiet: true }).then((r) => {
             if (r.ok) markAiMade(postId, "b_roll", r.url)
             return r
           })
-        : await editImages(text)
+        : editImages(text),
+      isWatching,
+      { done: AWAY_DONE[format], failed: AWAY_FAILED[format] },
+    )
     setLoading(false)
     setMessages((prev) => [
       ...prev,
@@ -209,10 +239,7 @@ export function MediaAiChat({
         ))}
 
         {loading && (
-          <div className="flex items-center gap-2 text-small text-text-neutral-default">
-            <Loader2 className="size-4 animate-spin text-yellow-50" />
-            <span>{copy.busy}</span>
-          </div>
+          <LongWaitBusyRow text={copy.busy} />
         )}
       </div>
 

@@ -68,6 +68,7 @@ import {
 } from "@/components/format-approval/approval-visuals"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
 import { useSchedulingAccess } from "@/lib/use-scheduling-access"
+import { LongWaitReview } from "@/components/long-wait-review"
 
 type Flow = "idea" | "hook" | "saved"
 
@@ -208,6 +209,8 @@ export default function ProjectPage() {
   return (
     <Suspense fallback={null}>
       <ProjectPageInner />
+      {/* Review only (?waitnote=a|b) — renders nothing without it. */}
+      <LongWaitReview />
     </Suspense>
   )
 }

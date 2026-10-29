@@ -1,5 +1,6 @@
 import { rememberAiStyle } from "@/lib/ai-style-provenance"
 import { toast } from "sonner"
+import { endLongWait, startLongWait } from "@/lib/long-wait"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import { flushPendingSaves } from "@/lib/pending-saves"
 import { createClient } from "@/lib/supabase/client"
@@ -164,10 +165,10 @@ export function startImageGeneration(postId: string, style?: MediaStyle): void {
   // Steers this attempt toward a design distinct from the previous ones.
   const variationIndex = nextVariationIndex(postId)
   const toastId = `img-gen-${++toastSeq}`
-  toast.loading("מייצרים תמונה עם AI... זה יכול לקחת עד דקה", {
-    id: toastId,
-    duration: Infinity,
-  })
+  startLongWait(
+    { id: toastId, verb: "מייצרים", what: "התמונה" },
+    "מייצרים תמונה עם AI... זה יכול לקחת עד דקה",
+  )
 
   void (async () => {
     try {
@@ -229,6 +230,7 @@ export function startImageGeneration(postId: string, style?: MediaStyle): void {
         { id: toastId, duration: 10000 },
       )
     } finally {
+      endLongWait(toastId)
       update(postId, (s) => ({ ...s, inFlight: Math.max(0, s.inFlight - 1) }))
     }
   })()

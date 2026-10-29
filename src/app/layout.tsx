@@ -4,6 +4,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "sonner";
 import { HookGenerationProvider } from "@/components/hook-generation-provider";
 import { SystemNoticeToasts } from "@/components/system-notice-toasts";
+import { BackgroundJobsTray } from "@/components/long-wait-note";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
@@ -52,6 +53,7 @@ export default function RootLayout({
               {children}
             </HookGenerationProvider>
             <SystemNoticeToasts />
+            <BackgroundJobsTray />
           </TooltipProvider>
           <Toaster
             position="bottom-center"

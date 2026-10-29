@@ -1,6 +1,7 @@
 import { rememberAiStyle } from "@/lib/ai-style-provenance"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import { toast } from "sonner"
+import { endLongWait, startLongWait } from "@/lib/long-wait"
 import { flushPendingSaves } from "@/lib/pending-saves"
 
 /**
@@ -132,10 +133,10 @@ export function startBRollGeneration(
   if (!postId) return
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   const toastId = `broll-gen-${++toastSeq}`
-  toast.loading("מייצרים בי-רול... זה יכול לקחת כשתי דקות", {
-    id: toastId,
-    duration: Infinity,
-  })
+  startLongWait(
+    { id: toastId, verb: "מייצרים", what: "הבי-רול" },
+    "מייצרים בי-רול... זה יכול לקחת כשתי דקות",
+  )
 
   void (async () => {
     try {
@@ -168,6 +169,7 @@ export function startBRollGeneration(
         { id: toastId, duration: 10000 },
       )
     } finally {
+      endLongWait(toastId)
       update(postId, (s) => ({ ...s, inFlight: Math.max(0, s.inFlight - 1) }))
     }
   })()
@@ -194,10 +196,10 @@ export function startBRollEdit(
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   const toastId = `broll-edit-${++toastSeq}`
   if (!opts.quiet) {
-    toast.loading("מעדכנים את הבי-רול לפי ההוראות... זה יכול לקחת כדקה", {
-      id: toastId,
-      duration: Infinity,
-    })
+    startLongWait(
+      { id: toastId, verb: "מעדכנים", what: "הבי-רול" },
+      "מעדכנים את הבי-רול לפי ההוראות... זה יכול לקחת כדקה",
+    )
   }
   return (async () => {
     try {
@@ -225,6 +227,7 @@ export function startBRollEdit(
       if (!opts.quiet) toast.error(message, { id: toastId, duration: 10000 })
       return { ok: false as const, message }
     } finally {
+      endLongWait(toastId)
       update(postId, (s) => ({ ...s, inFlight: Math.max(0, s.inFlight - 1) }))
     }
   })()
