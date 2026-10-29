@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from "react"
+import { useCoverDefaultColor } from "@/lib/use-cover-brand-colors"
 import Image from "next/image"
 import { X, Smartphone, Video, Layers, Image as ImageIcon, Film, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, ChevronLeft, ChevronRight, Link2, Trash2, Type, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
@@ -503,9 +504,9 @@ function TalkingHeadFlow({
 
   // --- cover generation state ---
   const [coverLoading, setCoverLoading] = useState(false)
-  // Pill colour for the cover's text background. Always black inside the
-  // media panel — colour customisation lives on the main project canvas.
-  const pillColor = "#000000"
+  // Pill colour for the cover's text background: her primary brand colour
+  // (black when she has none). Changing it lives on the main project canvas.
+  const pillColor = useCoverDefaultColor()
 
   // Load mic devices
   useEffect(() => {

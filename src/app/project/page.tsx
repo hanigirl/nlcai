@@ -42,7 +42,9 @@ import { ScheduleInCalendarBar } from "@/components/schedule-in-calendar-bar"
 import { CorePostChat } from "@/components/core-post-chat"
 import { AiRefineButton } from "@/components/ai-refine-button"
 import { StoryPlayer, storyFrameSrc } from "@/components/story-player"
-import { ColorSwatchPicker } from "@/components/color-swatch-picker"
+import { CoverColorSwatches } from "@/components/cover-color-swatches"
+import { useCoverBrandColors } from "@/lib/use-cover-brand-colors"
+import { defaultCoverColor } from "@/lib/cover-brand-color"
 import type { Avatar } from "@/components/avatar-picker"
 import type { SlideData } from "@/lib/carousel-templates"
 import { createClient } from "@/lib/supabase/client"
@@ -303,6 +305,15 @@ function ProjectPageInner() {
   // we show a CSS pill overlay so colour changes feel instant; the PNG
   // is only regenerated once on commit.
   const [livePillColor, setLivePillColor] = useState<string | null>(null)
+  // A new cover opens in her primary brand colour (black when she has none).
+  // Only an untouched pill adopts it: a pick, or the colour restored from the
+  // saved post, wins.
+  const coverBrand = useCoverBrandColors()
+  const pillTouchedRef = useRef(false)
+  useEffect(() => {
+    if (!coverBrand.ready || pillTouchedRef.current) return
+    setPillColor(defaultCoverColor(coverBrand.colors))
+  }, [coverBrand.ready, coverBrand.colors])
   // Confirmation modal — opened from the trash icon on the video card. The
   // actual delete only fires after the user clicks "כן, למחוק". The cover has
   // no standalone delete action; it lives and dies with the video.
@@ -847,7 +858,13 @@ function ProjectPageInner() {
           // the localStorage hydrator below if the server didn't store one
           // (older covers, pre-metadata).
           if (typeof data.post.coverPillColor === "string") {
+            pillTouchedRef.current = true
             setPillColor(data.post.coverPillColor as string)
+          } else if (data.post.coverUrl) {
+            // Older cover saved before the colour was stored: it was baked
+            // black, so the picker must not claim the brand colour.
+            pillTouchedRef.current = true
+            setPillColor("#000000")
           }
 
           // Restore saved cover if exists. Flip thCoverLoading on while we
@@ -2610,6 +2627,7 @@ function ProjectPageInner() {
                           onCoverRegenerate={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
                           pillColor={pillColor}
                           onPillColorChange={(next) => {
+                            pillTouchedRef.current = true
                             setPillColor(next)
                             // The picker leaves `livePillColor` armed when it
                             // commits; we drop the CSS overlay only after the
@@ -2620,6 +2638,7 @@ function ProjectPageInner() {
                           }}
                           livePillColor={livePillColor}
                           onLivePillPreview={setLivePillColor}
+                          coverBrandColors={coverBrand.colors}
                           thVideoFrameDataUrl={thVideoFrameDataUrl}
                           userId={userId}
                           carouselImages={carouselImages}
@@ -2944,6 +2963,7 @@ function FormatTree({
   onPillColorChange,
   livePillColor,
   onLivePillPreview,
+  coverBrandColors = [],
   thVideoFrameDataUrl,
   userId,
   carouselImages,
@@ -2994,6 +3014,8 @@ function FormatTree({
   onPillColorChange: (color: string) => void
   livePillColor: string | null
   onLivePillPreview: (color: string | null) => void
+  /** Her brand colours, offered as one-click swatches on the cover. */
+  coverBrandColors?: string[]
   thVideoFrameDataUrl: string | null
   userId: string | null
   savedPostId: string | null
@@ -3400,12 +3422,13 @@ function FormatTree({
                           child), download button on the left. Matches the
                           shared layout pattern from the Figma. */}
                       <div className="flex items-center justify-between gap-3" dir="rtl">
-                        <ColorSwatchPicker
+                        <CoverColorSwatches
                           value={pillColor}
+                          brandColors={coverBrandColors}
                           onChange={onPillColorChange}
                           onLivePreview={onLivePillPreview}
                           userId={userId}
-                          label="רקע הכותרת"
+                          disabled={thCoverLoading}
                         />
                         <TooltipLabel label="הורד קאבר">
                           <Button
