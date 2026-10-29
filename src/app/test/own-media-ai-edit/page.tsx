@@ -11,7 +11,14 @@
  *   Here the render is stubbed: the "clip" is a CSS stand-in drawn by this
  *   page. On a carousel / single image the planner's answer offers the story
  *   instead (never "can't animate").
- *                               &state=idle|working|caption|slide|refused|error
+ *                               &state=idle|working|caption|slide|refused|error|reopen
+ *
+ * `reopen` — the panel keeps its conversation (lib/ai-chat-session-store):
+ * the edit takes ~6 s; close the panel (X / outside click) while it works,
+ * reopen it with the sparkle and it is still working, then the reply lands.
+ * Close and reopen again, or reload: the conversation and the half-typed text
+ * come back. "שיחה חדשה" in the header starts over. The other states start
+ * clean on every load.
  *
  * The real panel (MediaAiChat with `own`) and the real executor
  * (lib/own-media-edit) run against a stubbed `fetch`: the plan, the caption
@@ -24,7 +31,8 @@ import { Suspense, useState } from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { Film, Image as ImageIcon, Layers, Play, Smartphone } from "lucide-react"
-import { MediaAiChat, type AiEditFormat } from "@/components/media-ai-chat"
+import { MediaAiChat, mediaChatKey, type AiEditFormat } from "@/components/media-ai-chat"
+import { clearChat } from "@/lib/ai-chat-session-store"
 import { AI_HOVER_ZONE, AiHoverEditButton } from "@/components/ai-hover-edit"
 import type { OwnEditPlan, OwnFrameInfo } from "@/lib/own-media"
 
@@ -111,6 +119,7 @@ const STATES = [
   { id: "anim-rendering", label: "מונפש: מרנדרים" },
   { id: "anim-added", label: "מונפש: נוסף" },
   { id: "anim-error", label: "מונפש: שגיאה" },
+  { id: "reopen", label: "סגירה ופתיחה מחדש" },
 ] as const
 type State = (typeof STATES)[number]["id"]
 
@@ -130,6 +139,7 @@ const ASK: Record<Exclude<State, "idle">, string> = {
   "anim-rendering": ANIM_ASK,
   "anim-added": ANIM_ASK,
   "anim-error": ANIM_ASK,
+  reopen: "לשנות את הכיתוב ל: התיק שלכם מספר את הסיפור הלא נכון",
 }
 
 /** A stubbed render URL carries the caption it stands for, so the card can draw it. */
@@ -159,7 +169,7 @@ function cannedPlan(state: State, instruction: string, frames: OwnFrameInfo[], f
   const n = frames.length
   const all = frames.map((_, i) => i + 1)
   const isSet = format === "story" || format === "carousel"
-  const kind = state === "idle"
+  const kind = state === "idle" || state === "reopen"
     ? /מונפש|אנימציה|תנועה/.test(instruction) ? "anim"
       : /סיום|שקופית|פריים/.test(instruction) && isSet ? "slide"
       : /להוריד/.test(instruction) ? "remove"
@@ -240,7 +250,12 @@ function stubFetch(state: State, sample: Sample) {
       const plan = cannedPlan(state, String(body.instruction ?? ""), frames, sample.format)
       if (plan === "hang") return new Promise<Response>(() => {})
       if (plan === "error") return ok({ message: "העריכה לא הצליחה הפעם. נסו שוב." }, 500)
-      return ok({ plan, frames, driveLinks: sample.format === "carousel" ? sample.frames.map((_, i) => `https://drive.google.com/file/d/preview${i}/view`) : null })
+      // reopen: a long edit, so there is time to close and reopen the panel.
+      return ok(
+        { plan, frames, driveLinks: sample.format === "carousel" ? sample.frames.map((_, i) => `https://drive.google.com/file/d/preview${i}/view`) : null },
+        200,
+        state === "reopen" ? 6000 : 700,
+      )
     }
     if (url.includes("/api/story/generate-video-media") || url.includes("/api/media/caption-image")) {
       const cap = body.caption as { headline?: string; body?: string; position?: string } | undefined
@@ -268,11 +283,17 @@ function Preview() {
 }
 
 function Stage({ state, sample }: { state: State; sample: Sample }) {
+  // Its own conversation per media × state (the panel keeps conversations).
+  const postId = `${POST_ID}-${sample.id}-${state}`
   const [urls, setUrls] = useState<string[]>(() => sample.frames.map(frameUrl))
   const [open, setOpen] = useState(state !== "idle")
-  // Stub the network before anything on the stage can call it.
+  // Stub the network before anything on the stage can call it. The scripted
+  // states start clean; `reopen` keeps its conversation across reloads.
   const [ready] = useState(() => {
-    if (typeof window !== "undefined") stubFetch(state, sample)
+    if (typeof window !== "undefined") {
+      stubFetch(state, sample)
+      if (state !== "reopen") clearChat(mediaChatKey(postId, sample.format, true))
+    }
     return true
   })
   const [index, setIndex] = useState(0)
@@ -371,7 +392,7 @@ function Stage({ state, sample }: { state: State; sample: Sample }) {
       <div>
         {ready && open && (
           <MediaAiChat
-            postId={POST_ID}
+            postId={postId}
             format={sample.format}
             own
             autoSend={state === "idle" ? undefined : ASK[state]}

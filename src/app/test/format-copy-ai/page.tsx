@@ -3,10 +3,16 @@
 /**
  * State preview for "עריכה עם AI" on a format's copy.
  *
- * Route: /test/format-copy-ai[?state=closed|open|generating|proposal|applied|error]
+ * Route: /test/format-copy-ai[?state=closed|open|generating|proposal|applied|error|reopen]
  * No param = every state side by side. Each state is the real FormatCopyChat
  * + FormatCopyActionRow driven by the real controller, answered by a local
  * responder: no fetch, no model call, no DB write (no learning callback).
+ *
+ * `reopen`: the panel keeps its conversation (lib/ai-chat-session-store).
+ * Ask something (it takes ~5 s), close the panel with X or the sparkle while
+ * it works, reopen: still working, then the change lands. Reload: the
+ * conversation and the half-typed text come back. The scripted states start
+ * clean on every load.
  */
 
 import { Suspense, useEffect, useRef, useState } from "react"
@@ -18,8 +24,9 @@ import { FormatCopyChat } from "@/components/format-copy-ai/format-copy-chat"
 import { FormatCopyActionRow, FormatCopyAiHoverButton } from "@/components/format-copy-ai/format-copy-entry"
 import { AI_HOVER_ZONE } from "@/components/ai-hover-edit"
 import { useFormatCopyAi, type CopyRefineResponder } from "@/components/format-copy-ai/use-format-copy-ai"
+import { clearChat } from "@/lib/ai-chat-session-store"
 
-type PreviewState = "closed" | "open" | "generating" | "proposal" | "applied" | "error"
+type PreviewState = "closed" | "open" | "generating" | "proposal" | "applied" | "error" | "reopen"
 
 const STATES: { id: PreviewState; title: string; description: string }[] = [
   { id: "closed", title: "סגור", description: "הספרקל מופיע בפינת הטקסט במעבר עכבר; מתחת רק „הוספת מדיה”." },
@@ -28,6 +35,11 @@ const STATES: { id: PreviewState; title: string; description: string }[] = [
   { id: "proposal", title: "הצעה לשינוי", description: "השינוי כבר בכרטיס. שמירה או ביטול בפאנל. ביטול לא מלמד כלום." },
   { id: "applied", title: "נשמר גם לפעמים הבאות", description: "אחרי „שמירת השינוי”: שורה ירוקה. רק השמירה מלמדת את סגנון הכתיבה." },
   { id: "error", title: "שגיאה", description: "השרת עמוס. ניסיון חוזר שולח שוב את אותה בקשה." },
+  {
+    id: "reopen",
+    title: "סגירה ופתיחה מחדש",
+    description: "בקשה לוקחת כ-5 שניות. סגרו את הפאנל באמצע ופתחו שוב: הוא עדיין עובד, והשינוי נוחת. גם אחרי רענון השיחה חוזרת.",
+  },
 ]
 
 const HOOK = "שלוש שאלות ששאלתי את עצמי לפני שהעליתי מחיר"
@@ -72,10 +84,16 @@ function StatePreview({ state }: { state: PreviewState }) {
     textRef.current = text
   })
   const failedRef = useRef(false)
+  // Its own conversation per state; the scripted ones start clean on every load.
+  const scope = `preview-format-copy-${state}`
+  const [cleared] = useState(() => {
+    if (state !== "reopen") clearChat(`copy:${scope}:carousel`)
+    return true
+  })
 
   const responder: CopyRefineResponder = async () => {
     if (state === "generating") return new Promise<never>(() => {})
-    await new Promise((r) => setTimeout(r, 200))
+    await new Promise((r) => setTimeout(r, state === "reopen" ? 5000 : 200))
     if (state === "error" && !failedRef.current) {
       failedRef.current = true
       throw new Error(COPY_REFINE_ERROR_COPY.anthropic_overloaded)
@@ -91,11 +109,12 @@ function StatePreview({ state }: { state: PreviewState }) {
     setText: (_fid, t) => setText(t),
     hook: HOOK,
     responder,
+    scope,
   })
 
   const started = useRef(false)
   useEffect(() => {
-    if (started.current || state === "closed") return
+    if (started.current || !cleared || state === "closed" || state === "reopen") return
     started.current = true
     ctrl.open("carousel")
     if (state !== "open") ctrl.send("carousel", INSTRUCTION)

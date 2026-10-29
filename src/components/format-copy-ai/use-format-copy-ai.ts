@@ -7,6 +7,7 @@ import {
   type CopyRefineResult,
   type CopyRefineTurn,
 } from "@/lib/format-copy-refine"
+import { clearChat, getChat, updateChat, useAiChatVersion, type AiChatSession } from "@/lib/ai-chat-session-store"
 
 /**
  * State for "עריכה עם AI" on the format copy cards — one session per format.
@@ -28,6 +29,8 @@ export interface CopyAiMessage {
   status?: "pending" | "applied" | "canceled"
   /** Kept with "שמירת השינוי" — and so learned for next time. */
   remembered?: boolean
+  /** Its verdict already went to the writing-style memory. */
+  reported?: boolean
 }
 
 export interface CopyAiSession {
@@ -61,6 +64,11 @@ export interface FormatCopyAiController {
   pendingIndex: (fid: CopyFormat) => number
   /** The AI is writing a revision for this format (any id; false for non-copy ids). */
   isBusy: (fid: string) => boolean
+  /** What she typed in this format's panel and didn't send yet. */
+  input: (fid: CopyFormat) => string
+  setInput: (fid: CopyFormat, value: string) => void
+  /** "שיחה חדשה": forget this format's conversation. */
+  reset: (fid: CopyFormat) => void
 }
 
 interface Options {
@@ -75,15 +83,31 @@ interface Options {
   onVerdict?: (fid: CopyFormat, msg: CopyAiMessage, instruction: string, outcome: "accepted" | "rejected") => void
   /** Test page only: answer locally instead of calling the route. */
   responder?: CopyRefineResponder
+  /** Which post the conversations belong to (one per post + format). */
+  scope?: string
 }
 
-export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder }: Options): FormatCopyAiController {
+/** What the session store keeps besides the thread (lib/ai-chat-session-store). */
+interface CopyChatExtra {
+  error: string
+  lastInstruction: string
+}
+type CopyChat = AiChatSession<CopyAiMessage, CopyChatExtra>
+
+const freshChat = (): CopyChat => ({ messages: [], input: "", busy: false, extra: { error: "", lastInstruction: "" } })
+const patchKey = (key: string, fn: (s: CopyChat) => CopyChat) => updateChat(key, freshChat, fn)
+
+export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder, scope = "draft" }: Options): FormatCopyAiController {
   const [activeFid, setActiveFid] = useState<CopyFormat | null>(null)
-  const [sessions, setSessions] = useState<Partial<Record<CopyFormat, CopyAiSession>>>({})
-  const sessionsRef = useRef(sessions)
-  useEffect(() => {
-    sessionsRef.current = sessions
-  })
+  // The conversations live outside the page (lib/ai-chat-session-store): one
+  // per post + format, kept through closing the panel, leaving the screen and
+  // a reload; a request keeps running and writes its reply there.
+  const version = useAiChatVersion()
+  const keyOf = useCallback((fid: CopyFormat) => `copy:${scope}:${fid}`, [scope])
+  const chatOf = useCallback(
+    (fid: CopyFormat) => getChat<CopyAiMessage, CopyChatExtra>(keyOf(fid)),
+    [keyOf],
+  )
   const getTextRef = useRef(getText)
   useEffect(() => {
     getTextRef.current = getText
@@ -92,35 +116,42 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder }
   useEffect(() => {
     onVerdictRef.current = onVerdict
   })
-  // Revisions already learned, so a second tap can't log the same one twice. Keyed `${fid}:${index}`.
-  const reportedRef = useRef<Set<string>>(new Set())
 
-  /** The user request that produced the assistant turn at `index`. */
-  const report = useCallback((fid: CopyFormat, index: number, outcome: "accepted" | "rejected") => {
-    const key = `${fid}:${index}`
-    const msgs = sessionsRef.current[fid]?.messages ?? []
-    const msg = msgs[index]
-    if (!msg?.revised || msg.revertTo === undefined || reportedRef.current.has(key)) return
-    reportedRef.current.add(key)
-    const ask = [...msgs.slice(0, index)].reverse().find((m) => m.role === "user")
-    onVerdictRef.current?.(fid, msg, ask?.content ?? "", outcome)
-  }, [])
+  /** The user request that produced the assistant turn at `index`. Learned once (`reported`). */
+  const report = useCallback(
+    (fid: CopyFormat, index: number, outcome: "accepted" | "rejected") => {
+      const msgs = chatOf(fid)?.messages ?? []
+      const msg = msgs[index]
+      if (!msg?.revised || msg.revertTo === undefined || msg.reported) return
+      const ask = [...msgs.slice(0, index)].reverse().find((m) => m.role === "user")
+      onVerdictRef.current?.(fid, msg, ask?.content ?? "", outcome)
+    },
+    [chatOf],
+  )
 
-  const patch = useCallback((fid: CopyFormat, fn: (s: CopyAiSession) => CopyAiSession) => {
-    setSessions((prev) => ({ ...prev, [fid]: fn(prev[fid] ?? EMPTY_SESSION) }))
-  }, [])
-
-  const session = useCallback((fid: CopyFormat) => sessions[fid] ?? EMPTY_SESSION, [sessions])
+  const session = useCallback(
+    (fid: CopyFormat): CopyAiSession => {
+      const c = chatOf(fid)
+      if (!c) return EMPTY_SESSION
+      return { messages: c.messages, loading: c.busy, error: c.extra.error, lastInstruction: c.extra.lastInstruction }
+    },
+    // `version`: a conversation changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [chatOf, version],
+  )
 
   const pendingIndex = useCallback(
-    (fid: CopyFormat) => (sessions[fid]?.messages ?? []).findIndex((m) => m.status === "pending"),
-    [sessions],
+    (fid: CopyFormat) => (chatOf(fid)?.messages ?? []).findIndex((m) => m.status === "pending"),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [chatOf, version],
   )
 
   const run = useCallback(
     async (fid: CopyFormat, instruction: string, history: CopyAiMessage[]) => {
+      // The reply belongs to this post's conversation even if the panel closes first.
+      const key = keyOf(fid)
       const before = getTextRef.current(fid)
-      patch(fid, (s) => ({ ...s, loading: true, error: "", lastInstruction: instruction }))
+      patchKey(key, (s) => ({ ...s, busy: true, extra: { ...s.extra, error: "", lastInstruction: instruction } }))
       try {
         const ask = responder ?? requestFormatCopyRefine
         const { reply, revisedText } = await ask({
@@ -130,9 +161,9 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder }
           messages: history.map((m) => ({ role: m.role, content: m.content })),
         })
         if (revisedText) setText(fid, revisedText)
-        patch(fid, (s) => ({
+        patchKey(key, (s) => ({
           ...s,
-          loading: false,
+          busy: false,
           messages: [
             ...s.messages,
             {
@@ -145,71 +176,100 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder }
           ],
         }))
       } catch (err) {
-        patch(fid, (s) => ({
+        patchKey(key, (s) => ({
           ...s,
-          loading: false,
-          error: err instanceof Error ? err.message : "משהו השתבש. נסו שוב.",
+          busy: false,
+          extra: { ...s.extra, error: err instanceof Error ? err.message : "משהו השתבש. נסו שוב." },
         }))
       }
     },
-    [hook, patch, responder, setText],
+     
+    [hook, keyOf, responder, setText],
   )
 
   const send = useCallback(
     (fid: CopyFormat, instruction: string) => {
       const text = instruction.trim()
-      const current = sessionsRef.current[fid] ?? EMPTY_SESSION
-      if (!text || current.loading) return
+      const current = chatOf(fid) ?? freshChat()
+      if (!text || current.busy) return
       // Asking for the next change keeps the previous proposal — its text is
       // already the baseline the next revision builds on.
       const kept = current.messages.map((m) => (m.status === "pending" ? { ...m, status: "applied" as const } : m))
       const next: CopyAiMessage[] = [...kept, { role: "user", content: text }]
-      patch(fid, (s) => ({ ...s, messages: next }))
+      patchKey(keyOf(fid), (s) => ({ ...s, messages: next, input: "" }))
       void run(fid, text, next)
     },
-    [patch, run],
+     
+    [chatOf, keyOf, run],
   )
 
   const retry = useCallback(
     (fid: CopyFormat) => {
-      const s = sessionsRef.current[fid]
-      if (!s?.lastInstruction || s.loading) return
-      void run(fid, s.lastInstruction, s.messages)
+      const s = chatOf(fid)
+      if (!s?.extra.lastInstruction || s.busy) return
+      void run(fid, s.extra.lastInstruction, s.messages)
     },
-    [run],
+    [chatOf, run],
   )
 
   const keep = useCallback(
     (fid: CopyFormat, index: number) => {
       // Saving the change also learns it — the panel says so in green.
       report(fid, index, "accepted")
-      patch(fid, (s) => ({
+      patchKey(keyOf(fid), (s) => ({
         ...s,
-        messages: s.messages.map((m, i) => (i === index ? { ...m, status: "applied", remembered: true } : m)),
+        messages: s.messages.map((m, i) =>
+          i === index ? { ...m, status: "applied", remembered: true, reported: true } : m,
+        ),
       }))
     },
-    [patch, report],
+     
+    [keyOf, report],
   )
 
   const cancel = useCallback(
     (fid: CopyFormat, index: number) => {
-      const msg = sessionsRef.current[fid]?.messages[index]
+      const msg = chatOf(fid)?.messages[index]
       if (msg?.revertTo !== undefined) setText(fid, msg.revertTo)
-      patch(fid, (s) => ({
+      patchKey(keyOf(fid), (s) => ({
         ...s,
         messages: s.messages.map((m, i) => (i === index ? { ...m, status: "canceled" } : m)),
       }))
     },
-    [patch, setText],
+     
+    [chatOf, keyOf, setText],
   )
 
   const isBusy = useCallback(
-    (fid: string) => !!sessions[fid as CopyFormat]?.loading,
-    [sessions],
+    (fid: string) => !!chatOf(fid as CopyFormat)?.busy,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [chatOf, version],
   )
 
-  const open = useCallback((fid: CopyFormat) => setActiveFid(fid), [])
+  const open = useCallback(
+    (fid: CopyFormat) => {
+      setActiveFid(fid)
+      // A revision that landed while the page was gone never reached the card — show it there now.
+      const c = chatOf(fid)
+      const pending = c && !c.busy ? c.messages.find((m) => m.status === "pending") : undefined
+      const shown = getTextRef.current(fid)
+      if (pending?.revised && pending.revertTo === shown && pending.revised !== shown) setText(fid, pending.revised)
+    },
+    [chatOf, setText],
+  )
   const close = useCallback(() => setActiveFid(null), [])
 
-  return { activeFid, session, open, close, send, retry, keep, cancel, pendingIndex, isBusy }
+  const input = useCallback(
+    (fid: CopyFormat) => chatOf(fid)?.input ?? "",
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [chatOf, version],
+  )
+  const setInput = useCallback(
+    (fid: CopyFormat, value: string) => patchKey(keyOf(fid), (s) => ({ ...s, input: value })),
+     
+    [keyOf],
+  )
+  const reset = useCallback((fid: CopyFormat) => clearChat(keyOf(fid)), [keyOf])
+
+  return { activeFid, session, open, close, send, retry, keep, cancel, pendingIndex, isBusy, input, setInput, reset }
 }

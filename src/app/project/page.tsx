@@ -1938,6 +1938,7 @@ function ProjectPageInner() {
     formatPosts,
     setFormatPosts,
     hook: activeHook,
+    scope: savedPostId ?? `draft:${sessionKey}`,
   })
 
   useEffect(() => {
@@ -2048,6 +2049,7 @@ function ProjectPageInner() {
           setActiveCard("post")
         }}
         onBusyChange={setChatBusy}
+        storeKey={savedPostId ? `core:${savedPostId}` : `core:draft:${sessionKey}`}
       />
 
       {/* Overlay layer — OUTSIDE InfiniteCanvas on purpose. The canvas applies

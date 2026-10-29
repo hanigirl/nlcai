@@ -16,7 +16,8 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { GalleryHorizontalEnd } from "lucide-react"
 import { CardStyleFeedback } from "@/components/style-feedback-strip"
-import { MediaAiChat, type AiEditFormat } from "@/components/media-ai-chat"
+import { MediaAiChat, mediaChatKey, type AiEditFormat } from "@/components/media-ai-chat"
+import { clearChat } from "@/lib/ai-chat-session-store"
 import { AiRefineButton } from "@/components/ai-refine-button"
 import { openingId, useAiEditRequests, type AiEditOpening } from "@/lib/ai-edit-intent"
 import { recordAiStyleVote } from "@/lib/ai-style-provenance"
@@ -87,6 +88,8 @@ function Preview() {
   // Stub the network, reset the sample vote, then land on the state.
   useEffect(() => {
     stubFetch(state)
+    // Each state starts from a clean conversation (the panel keeps them).
+    clearChat(mediaChatKey(POST_ID, "carousel"))
     recordAiStyleVote(POST_ID, "carousel", state === "idle" ? null : "dislike")
     setReady(true)
     if (state === "idle") return

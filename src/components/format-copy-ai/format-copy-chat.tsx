@@ -1,10 +1,11 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef } from "react"
 import { X } from "lucide-react"
 import { AiSparkle } from "@/components/ai-refine-button"
 import { useDismissOnOutsideClick } from "@/lib/use-dismiss-on-outside-click"
 import { COPY_NOUN } from "@/lib/format-copy-refine"
+import { AiChatNewButton } from "@/components/ai-chat-new-button"
 import type { FormatCopyAiController } from "./use-format-copy-ai"
 import {
   CopyAppliedNote,
@@ -32,7 +33,6 @@ export function FormatCopyChat({
   floating?: boolean
 }) {
   const fid = ctrl.activeFid
-  const [input, setInput] = useState("")
   const scrollRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   // Only the floating panel closes on an outside click; the /test page renders it in flow.
@@ -45,10 +45,9 @@ export function FormatCopyChat({
 
   if (!fid || !session) return null
 
-  const send = (text: string) => {
-    ctrl.send(fid, text)
-    setInput("")
-  }
+  // The half-typed text is kept with the conversation (ctrl.input).
+  const input = ctrl.input(fid)
+  const send = (text: string) => ctrl.send(fid, text)
   const fresh = session.messages.length === 0
 
   return (
@@ -63,14 +62,17 @@ export function FormatCopyChat({
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">
         <AiSparkle />
         <span className="text-small-bold text-text-primary-default">עריכת {COPY_NOUN[fid]}</span>
-        <button
-          type="button"
-          onClick={ctrl.close}
-          aria-label="סגירה"
-          className="ms-auto inline-flex size-7 items-center justify-center rounded-md text-text-neutral-default hover:bg-gray-95 dark:hover:bg-gray-20 hover:text-text-primary-default transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-        >
-          <X className="size-4" />
-        </button>
+        <div className="ms-auto flex items-center gap-1">
+          {!fresh && <AiChatNewButton disabled={session.loading} onClick={() => ctrl.reset(fid)} />}
+          <button
+            type="button"
+            onClick={ctrl.close}
+            aria-label="סגירה"
+            className="inline-flex size-7 items-center justify-center rounded-md text-text-neutral-default hover:bg-gray-95 dark:hover:bg-gray-20 hover:text-text-primary-default transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
       </div>
 
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
@@ -115,7 +117,7 @@ export function FormatCopyChat({
       </div>
 
       <div className="border-t border-border-neutral-default p-3">
-        <CopyComposer value={input} onChange={setInput} onSend={() => send(input)} busy={session.loading} autoFocus />
+        <CopyComposer value={input} onChange={(v) => ctrl.setInput(fid, v)} onSend={() => send(input)} busy={session.loading} autoFocus />
       </div>
     </div>
   )

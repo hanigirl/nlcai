@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react"
 import { ArrowUp, Check, Loader2, X } from "lucide-react"
 import { AiSparkle } from "@/components/ai-refine-button"
 import { Button } from "@/components/ui/button"
@@ -9,7 +9,7 @@ import { useDismissOnOutsideClick } from "@/lib/use-dismiss-on-outside-click"
 import { startBRollEdit } from "@/lib/broll-generation-store"
 import { getAiStyle, recordAiStyleVote, rememberAiStyle } from "@/lib/ai-style-provenance"
 import { LongWaitBusyRow } from "@/components/long-wait-busy-row"
-import { AWAY_COPY, trackAwayResult, useIsWatching } from "@/lib/long-wait"
+import { AWAY_COPY, trackAwayResult } from "@/lib/long-wait"
 import { SaveToVisualLanguageChip } from "@/components/save-to-visual-language-chip"
 import { dislikeInstruction, type AiEditOpening } from "@/lib/ai-edit-intent"
 import { DislikeReasonChips } from "@/components/dislike-reason-chips"
@@ -17,6 +17,16 @@ import { DISLIKE_REASONS, type DislikeReason } from "@/lib/visual-language/types
 import { usePreviewAccess } from "@/lib/use-scheduling-access"
 import { Chip } from "@/components/ui/chip"
 import { runOwnMediaEdit } from "@/lib/own-media-edit"
+import {
+  clearChat,
+  getChat,
+  isChatWatched,
+  updateChat,
+  useAiChat,
+  useWatchChat,
+  type AiChatSession,
+} from "@/lib/ai-chat-session-store"
+import { AiChatNewButton } from "@/components/ai-chat-new-button"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
@@ -34,6 +44,29 @@ export interface ChatMessage {
   /** Own media: the edit changed only content (words, slides), nothing to save as a style. */
   noStyle?: boolean
 }
+
+/** Panel state kept with the conversation (lib/ai-chat-session-store). */
+interface MediaChatExtra {
+  /** 👎 asked at this turn; the reason chips show under it until she answers. */
+  asking: { id: string; index: number } | null
+  reasons: DislikeReason[]
+  /** Own media: the step it is on, under the busy row. */
+  progress: string
+  /** The last 👎 this conversation took in — reopening doesn't ask again. */
+  openingId: string | null
+}
+type MediaChat = AiChatSession<ChatMessage, MediaChatExtra>
+
+/**
+ * Her 👎 answer goes to the style-feedback route through the card's callback.
+ * Functions don't go to storage, so this lives in memory: after a reload the
+ * question stays in the thread and she answers it as a normal edit.
+ */
+const feedbackById = new Map<string, AiEditOpening["onFeedback"]>()
+
+/** The conversation of one post + format (+ own media) in lib/ai-chat-session-store. */
+export const mediaChatKey = (postId: string, format: AiEditFormat, own = false) =>
+  `media:${postId}:${format}:${own ? "own" : "ai"}`
 
 /** Distinct ids for the leave-screen toast of each own-media edit. */
 let ownEditSeq = 0
@@ -204,28 +237,50 @@ export function MediaAiChat({
   // Today's batch (2026-10-29), Hani only: z-50 + outside-click close, the
   // leave-screen note, the save chip, 👎 opening. Off (or loading) = as before.
   const preview = usePreviewAccess() === true
-  const firstTurn = (o?: AiEditOpening | null): ChatMessage => ({
-    role: "assistant",
-    content: o ? DISLIKE_ASK : copy.intro,
-  })
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages ?? [firstTurn(opening)])
-  // A different format's chat, or a fresh 👎, starts its own conversation.
-  const chatKey = `${format}:${own ? "own" : "ai"}:${opening?.id ?? ""}`
-  const [chatFormat, setChatFormat] = useState(chatKey)
-  // Until her first answer: the reason chips, and that answer teaches the style.
-  const [asking, setAsking] = useState<AiEditOpening | null>(opening ?? null)
-  const [reasons, setReasons] = useState<DislikeReason[]>([])
-  if (chatFormat !== chatKey) {
-    setChatFormat(chatKey)
-    setMessages([firstTurn(opening)])
-    setAsking(opening ?? null)
-    setReasons([])
-  }
-  const [input, setInput] = useState("")
-  const [loading, setLoading] = useState(false)
-  const [progress, setProgress] = useState("")
+  // One conversation per post + format (+ own media), kept outside the panel
+  // (lib/ai-chat-session-store): closing it or leaving the screen keeps the
+  // thread, the half-typed text and a request still running.
+  const chatKey = mediaChatKey(postId, format, own)
+  const fresh = useMemo(
+    () => (): MediaChat => ({
+      messages: initialMessages ?? [{ role: "assistant", content: copy.intro }],
+      input: "",
+      busy: false,
+      extra: { asking: null, reasons: [], progress: "", openingId: null },
+    }),
+    [initialMessages, copy.intro],
+  )
+  const empty = useMemo(() => fresh(), [fresh])
+  const session = useAiChat<ChatMessage, MediaChatExtra>(chatKey) ?? empty
+  const { messages, input, busy: loading } = session
+  const { reasons, progress } = session.extra
+  const patch = (fn: (s: MediaChat) => MediaChat) => updateChat(chatKey, fresh, fn)
+  // Until her first answer to 👎: the reason chips, and that answer teaches the style.
+  const asking =
+    session.extra.asking && feedbackById.has(session.extra.asking.id) ? session.extra.asking : null
+
+  // A fresh 👎 asks what she didn't like — as a new turn of the same
+  // conversation, or as its first turn if nothing was said yet.
+  useLayoutEffect(() => {
+    if (!opening) return
+    feedbackById.set(opening.id, opening.onFeedback)
+    if (getChat<ChatMessage, MediaChatExtra>(chatKey)?.extra.openingId === opening.id) return
+    updateChat(chatKey, fresh, (s) => {
+      const ask: ChatMessage = { role: "assistant", content: DISLIKE_ASK }
+      const next = s.messages.some((m) => m.role === "user") ? [...s.messages, ask] : [ask]
+      return {
+        ...s,
+        messages: next,
+        extra: { ...s.extra, openingId: opening.id, asking: { id: opening.id, index: next.length - 1 }, reasons: [] },
+      }
+    })
+  }, [chatKey, opening, fresh])
+
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  const isWatching = useIsWatching()
+  // "Watching" = a panel shows this conversation when the reply lands — the
+  // one she reopened counts too, so the leave-screen toast only comes when
+  // she's really away.
+  useWatchChat(chatKey)
   const scrollRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   useDismissOnOutsideClick(panelRef, open && preview, () => onOpenChange(false))
@@ -235,6 +290,8 @@ export function MediaAiChat({
     if (!autoSend || autoSent.current) return
     const t = setTimeout(() => {
       autoSent.current = true
+      // A conversation already under way (reopened, reloaded) isn't re-scripted.
+      if (getChat<ChatMessage, MediaChatExtra>(chatKey)?.messages.some((m) => m.role === "user")) return
       void send(autoSend)
     }, 300)
     return () => clearTimeout(t)
@@ -246,26 +303,38 @@ export function MediaAiChat({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
   }, [messages, loading])
 
+  const setInput = (value: string) => patch((s) => ({ ...s, input: value }))
+
   const send = async (preset?: string) => {
-    let text = (preset ?? input).trim()
+    // The reply belongs to this conversation even if the panel closes or
+    // switches format before it lands.
+    const key = chatKey
+    const init = fresh
+    const isWatching = () => isChatWatched(key)
+    const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, init, fn)
+    const cur = getChat<ChatMessage, MediaChatExtra>(key) ?? init()
+    if (cur.busy) return
+    let text = (preset ?? cur.input).trim()
     // Her 👎 answer: the style-feedback route learns from it, so the edit
     // doesn't learn it a second time (learn: false).
     const fromFeedback = !!asking
     if (asking) {
-      if ((!text && !reasons.length) || loading) return
-      asking.onFeedback(reasons, text)
+      if (!text && !reasons.length) return
+      feedbackById.get(asking.id)?.(reasons, text)
       text = dislikeInstruction(reasons.map((r) => DISLIKE_REASONS[r]), text)
-      setAsking(null)
-      setReasons([])
     }
-    if (!text || loading) return
-    setInput("")
-    setMessages((prev) => [...prev, { role: "user", content: text }])
-    setLoading(true)
+    if (!text) return
+    patchKey((s) => ({
+      ...s,
+      input: "",
+      busy: true,
+      messages: [...s.messages, { role: "user", content: text }],
+      extra: { ...s.extra, asking: null, reasons: [] },
+    }))
     // An edit that came from 👎 is learned by the feedback route, not here.
     const learn = !fromFeedback
     if (own) {
-      await sendOwn(text)
+      await sendOwn(text, cur.messages, patchKey, isWatching)
       return
     }
     // If she leaves before it lands, the result arrives as a toast (the
@@ -280,18 +349,26 @@ export function MediaAiChat({
     const result = preview
       ? await trackAwayResult(`ai-edit-${postId}-${format}-${Date.now()}`, run, isWatching, AWAY_COPY[format], postId)
       : await run
-    setLoading(false)
-    setMessages((prev) => [
-      ...prev,
-      result.ok
-        ? { role: "assistant", content: copy.done, done: true, remembered: result.remembered }
-        : { role: "assistant", content: result.message || "העריכה לא הצליחה. נסו שוב.", error: true },
-    ])
+    patchKey((s) => ({
+      ...s,
+      busy: false,
+      messages: [
+        ...s.messages,
+        result.ok
+          ? { role: "assistant", content: copy.done, done: true, remembered: result.remembered }
+          : { role: "assistant", content: result.message || "העריכה לא הצליחה. נסו שוב.", error: true },
+      ],
+    }))
   }
 
   /** Her own media: plan → existing caption / slide paths → save the set. */
-  async function sendOwn(text: string) {
-    const history = messages
+  async function sendOwn(
+    text: string,
+    before: ChatMessage[],
+    patchKey: (fn: (s: MediaChat) => MediaChat) => void,
+    isWatching: () => boolean,
+  ) {
+    const history = before
       .filter((m, i) => i > 0 && !m.error)
       .map((m) => ({ role: m.role, content: m.content }))
     let full: Awaited<ReturnType<typeof runOwnMediaEdit>> | null = null
@@ -302,7 +379,7 @@ export function MediaAiChat({
       currentUrls,
       currentFrame,
       history,
-      onProgress: setProgress,
+      onProgress: (p) => patchKey((s) => ({ ...s, extra: { ...s.extra, progress: p } })),
     }).then((r) => {
       full = r
       if (r.ok && r.changed) onUpdated?.(format, r.urls, { driveLinks: r.driveLinks })
@@ -312,17 +389,14 @@ export function MediaAiChat({
     const result = preview
       ? await trackAwayResult(`ai-edit-${postId}-${format}-own-${++ownEditSeq}`, run, isWatching, AWAY_COPY[format], postId)
       : await run
-    setLoading(false)
-    setProgress("")
     const r = full as Awaited<ReturnType<typeof runOwnMediaEdit>> | null
-    setMessages((prev) => [
-      ...prev,
+    const reply: ChatMessage =
       !result.ok || !r || !r.ok
         ? { role: "assistant", content: (r && r.message) || "העריכה לא הצליחה. נסו שוב.", error: true }
         : !r.changed
           ? { role: "assistant", content: r.message }
-          : { role: "assistant", content: r.message || copy.done, done: true, remembered: null, noStyle: !r.styleChange },
-    ])
+          : { role: "assistant", content: r.message || copy.done, done: true, remembered: null, noStyle: !r.styleChange }
+    patchKey((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" }, messages: [...s.messages, reply] }))
   }
 
   async function editImages(
@@ -366,14 +440,19 @@ export function MediaAiChat({
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">
         <AiSparkle />
         <span className="text-small-bold text-text-primary-default">{copy.title}</span>
-        <button
-          type="button"
-          onClick={() => onOpenChange(false)}
-          aria-label="סגירה"
-          className="ms-auto inline-flex size-7 items-center justify-center rounded-md text-text-neutral-default hover:bg-bg-surface-hover hover:text-text-primary-default transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-        >
-          <X className="size-4" />
-        </button>
+        <div className="ms-auto flex items-center gap-1">
+          {messages.some((m) => m.role === "user") && (
+            <AiChatNewButton disabled={loading} onClick={() => clearChat(chatKey)} />
+          )}
+          <button
+            type="button"
+            onClick={() => onOpenChange(false)}
+            aria-label="סגירה"
+            className="inline-flex size-7 items-center justify-center rounded-md text-text-neutral-default hover:bg-bg-surface-hover hover:text-text-primary-default transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
@@ -391,8 +470,12 @@ export function MediaAiChat({
             >
               {m.content}
             </div>
-            {asking && i === 0 && (
-              <DislikeReasonChips value={reasons} onChange={setReasons} className="max-w-[85%] justify-end" />
+            {asking && i === asking.index && (
+              <DislikeReasonChips
+                value={reasons}
+                onChange={(next) => patch((s) => ({ ...s, extra: { ...s.extra, reasons: next } }))}
+                className="max-w-[85%] justify-end"
+              />
             )}
             {/* Own media: what it can do, one tap away — until her first ask. */}
             {own && !asking && i === 0 && messages.length === 1 && !loading && (
@@ -444,7 +527,7 @@ export function MediaAiChat({
       <div className="border-t border-border-neutral-default p-3">
         {lastEdit && !loading && !messages[lastEdit.index].noStyle && (
           <SaveToVisualLanguageChip
-            key={`${chatFormat}:${lastEdit.index}`}
+            key={`${chatKey}:${lastEdit.index}`}
             instruction={lastEdit.instruction}
             format={format}
             remembered={lastEdit.remembered}

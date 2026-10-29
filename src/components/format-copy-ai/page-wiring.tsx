@@ -15,10 +15,13 @@ export function useFormatCopyAiOnPage({
   formatPosts,
   setFormatPosts,
   hook,
+  scope,
 }: {
   formatPosts: Record<string, string>
   setFormatPosts: (fn: (prev: Record<string, string>) => Record<string, string>) => void
   hook?: string
+  /** The post the conversations belong to — one per post + format. */
+  scope: string
 }): { copyAi: FormatCopyAiController; overlay: ReactNode } {
   const postsRef = useRef(formatPosts)
   useEffect(() => {
@@ -33,11 +36,12 @@ export function useFormatCopyAiOnPage({
     },
     hook,
     onVerdict: learning.logVerdict,
+    scope,
   })
 
   return {
     copyAi,
-    // Keyed by format: switching cards starts a clean composer.
+    // Keyed by format; each format's conversation and half-typed text come back on reopen.
     overlay: <FormatCopyChat key={copyAi.activeFid ?? "closed"} ctrl={copyAi} />,
   }
 }
