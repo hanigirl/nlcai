@@ -89,7 +89,7 @@ import {
 } from "@/lib/timing-storage"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { carouselErrorInfo } from "@/lib/carousel-errors"
-import { saveCarouselIfLeft, startLongWait } from "@/lib/long-wait"
+import { longWaitDone, saveCarouselIfLeft, startLongWait } from "@/lib/long-wait"
 import { usePreviewAccess } from "@/lib/use-scheduling-access"
 
 // Every format the panel can open MUST have an entry here: the header block
@@ -1775,10 +1775,7 @@ function CarouselFlow({
         if (previewOn) void saveCarouselIfLeft(postId, data.images)
         setDialogFor(genId)
         setPreviewIndex(0)
-        toast.success(`הקרוסלה (${templateName}) מוכנה`, {
-          id: genToast,
-          duration: 5000,
-        })
+        longWaitDone(genToast, `הקרוסלה (${templateName}) מוכנה`, { postId, duration: 5000 })
       }
     } catch (err) {
       // Network drop, or the platform cut a long AI run off mid-response.

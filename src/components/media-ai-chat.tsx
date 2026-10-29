@@ -178,7 +178,7 @@ export function MediaAiChat({
           })
         : editImages(text, learn)
     const result = preview
-      ? await trackAwayResult(`ai-edit-${postId}-${format}-${Date.now()}`, run, isWatching, AWAY_COPY[format])
+      ? await trackAwayResult(`ai-edit-${postId}-${format}-${Date.now()}`, run, isWatching, AWAY_COPY[format], postId)
       : await run
     setLoading(false)
     setMessages((prev) => [

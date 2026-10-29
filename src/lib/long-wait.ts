@@ -47,6 +47,46 @@ export function startLongWait(id: string, title: string): void {
   })
 }
 
+/** Set by <LongWaitNavigator /> in the root layout: client-side navigation. */
+let navigate: ((href: string) => void) | null = null
+export function registerLongWaitNavigator(fn: (href: string) => void): () => void {
+  navigate = fn
+  return () => {
+    if (navigate === fn) navigate = null
+  }
+}
+
+/** Is she looking at this post's canvas right now? */
+function onPost(postId: string): boolean {
+  if (typeof window === "undefined" || window.location.pathname !== "/project") return false
+  return new URLSearchParams(window.location.search).get("post_id") === postId
+}
+
+/**
+ * A long job finished: the same toast turns into "ready". Away from the post,
+ * it carries a link to the post's canvas so she can see the format (Hani,
+ * 2026-10-29). Not in the preview batch: the plain toast, as before.
+ */
+export function longWaitDone(
+  id: string | number,
+  title: string,
+  { postId, duration = 4000 }: { postId?: string | null; duration?: number } = {},
+): void {
+  if (!previewAccessNow() || !postId || onPost(postId)) {
+    toast.success(title, { id, duration })
+    return
+  }
+  const href = `/project?post_id=${postId}`
+  toast.success(title, {
+    id,
+    duration: Math.max(duration, 8000),
+    action: {
+      label: "לצפייה בפוסט",
+      onClick: () => (navigate ? navigate(href) : window.location.assign(href)),
+    },
+  })
+}
+
 /**
  * For waits a panel reports itself (the AI-edit chat): nothing changes while
  * she watches the panel; if she left before it finished, the result arrives
@@ -57,10 +97,11 @@ export async function trackAwayResult<T extends { ok: boolean }>(
   run: Promise<T>,
   isWatching: () => boolean,
   copy: { done: string; failed: string },
+  postId?: string | null,
 ): Promise<T> {
   const result = await run
   if (!isWatching()) {
-    if (result.ok) toast.success(copy.done, { id, duration: 8000 })
+    if (result.ok) longWaitDone(id, copy.done, { postId, duration: 8000 })
     else toast.error(copy.failed, { id, duration: 12000 })
   }
   return result

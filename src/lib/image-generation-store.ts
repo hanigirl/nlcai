@@ -1,6 +1,6 @@
 import { rememberAiStyle } from "@/lib/ai-style-provenance"
 import { toast } from "sonner"
-import { startLongWait } from "@/lib/long-wait"
+import { longWaitDone, startLongWait } from "@/lib/long-wait"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import { flushPendingSaves } from "@/lib/pending-saves"
 import { createClient } from "@/lib/supabase/client"
@@ -217,10 +217,7 @@ export function startImageGeneration(postId: string, style?: MediaStyle): void {
         update(postId, (s) => ({ ...s, saved: entry }))
         if (style) rememberAiStyle(postId, "image_post", style, entry)
       }
-      toast.success("התמונה מוכנה ונשמרה", {
-        id: toastId,
-        duration: 4000,
-      })
+      longWaitDone(toastId, "התמונה מוכנה ונשמרה", { postId })
     } catch (err) {
       toast.error(
         `יצירת התמונה נכשלה: ${err instanceof Error ? err.message : String(err)}`,

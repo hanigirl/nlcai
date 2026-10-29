@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Rubik } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "sonner";
+import { LongWaitNavigator } from "@/components/long-wait-navigator";
 import { HookGenerationProvider } from "@/components/hook-generation-provider";
 import { SystemNoticeToasts } from "@/components/system-notice-toasts";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -52,6 +53,7 @@ export default function RootLayout({
               {children}
             </HookGenerationProvider>
             <SystemNoticeToasts />
+            <LongWaitNavigator />
           </TooltipProvider>
           <Toaster
             position="bottom-center"

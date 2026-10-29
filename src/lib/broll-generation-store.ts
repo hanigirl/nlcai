@@ -1,7 +1,7 @@
 import { rememberAiStyle } from "@/lib/ai-style-provenance"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import { toast } from "sonner"
-import { startLongWait } from "@/lib/long-wait"
+import { longWaitDone, startLongWait } from "@/lib/long-wait"
 import { flushPendingSaves } from "@/lib/pending-saves"
 
 /**
@@ -159,7 +159,7 @@ export function startBRollGeneration(
       }
       update(postId, (s) => ({ ...s, url: data.url as string }))
       if (style) rememberAiStyle(postId, "b_roll", style, data.url)
-      toast.success("הבי-רול נוצר", { id: toastId, duration: 4000 })
+      longWaitDone(toastId, "הבי-רול נוצר", { postId })
     } catch (err) {
       toast.error(
         `יצירת הבי-רול נכשלה: ${err instanceof Error ? err.message : String(err)}`,
@@ -214,7 +214,7 @@ export function startBRollEdit(
         return { ok: false as const, message }
       }
       update(postId, (s) => ({ ...s, url: data.url as string }))
-      if (!opts.quiet) toast.success("הבי-רול עודכן", { id: toastId, duration: 4000 })
+      if (!opts.quiet) longWaitDone(toastId, "הבי-רול עודכן", { postId })
       return { ok: true as const, url: data.url, remembered: data.remembered ?? null }
     } catch (err) {
       const message = `עריכת הבי-רול נכשלה: ${err instanceof Error ? err.message : String(err)}`
