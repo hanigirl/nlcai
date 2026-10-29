@@ -225,8 +225,8 @@ const chipStateClasses: Record<ChipState, string> = {
   // (no stroke).
   "ready": "bg-yellow-90 text-yellow-30 border-transparent",
   // "set" = scheduled. Our primary (yellow-10, the primary-button colour)
-  // on the duplicated yellow fill — Hani 2026-10-29: not the teal green.
-  "set": "bg-yellow-90 text-yellow-10 border-solid border-yellow-10",
+  // as a solid fill, white label, no icon or ✓ — Hani 2026-10-29.
+  "set": "bg-yellow-10 text-white border-transparent",
 }
 
 /**
@@ -237,7 +237,7 @@ const chipStateClasses: Record<ChipState, string> = {
 const chipStateHover: Record<ChipState, string> = {
   "not-started": "hover:bg-gray-95",
   "ready": "hover:bg-yellow-80",
-  "set": "hover:bg-yellow-80",
+  "set": "hover:bg-yellow-20",
 }
 
 /**
@@ -386,7 +386,7 @@ export function FormatStatusChip({
   // is the softer counterpart — shows ✓ in yellow-40 instead of
   // emerald, signaling "on the calendar elsewhere" without competing
   // with the bold green anchor that sits next to it.
-  const showCornerCheckBadge = isSet && !hideCornerBadge
+  const showCornerCheckBadge = isSet && cornerBadgeMuted && !hideCornerBadge
 
   // "Weaker set" — same green palette as `set`, but with a DASHED
   // border replacing the solid one. Used by the calendar SlotCard to
@@ -429,7 +429,11 @@ export function FormatStatusChip({
       data-readiness={state}
       data-format={format}
     >
-      <FormatIcon className={`${iconSize} shrink-0`} aria-hidden />
+      {/* A scheduled full chip is label-only (Hani 2026-10-29); the
+          icon-only variant keeps its glyph or it would be empty. */}
+      {!(isFull && isSet && !isWeakerSet) && (
+        <FormatIcon className={`${iconSize} shrink-0`} aria-hidden />
+      )}
       {isFull && <span className="leading-none">{getFormatLabel(format)}</span>}
       {showCornerCheckBadge && (
         // Corner ✓ badge. 12×12 disc with a 6px white check inside,

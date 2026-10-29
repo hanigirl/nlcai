@@ -1216,10 +1216,9 @@ export function CorePostSheet({
               {!hideScheduleButton &&
                 (nextScheduledShort ? (
                   <span
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 h-9 rounded-md bg-bg-surface text-yellow-10 text-small leading-none"
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 h-9 rounded-md bg-yellow-10 text-white text-small leading-none"
                     aria-label={`מתוזמן ל-${nextScheduledShort}`}
                   >
-                    <Check className="size-3.5 shrink-0" aria-hidden />
                     מתוזמן ל-{nextScheduledShort}
                   </span>
                 ) : (
