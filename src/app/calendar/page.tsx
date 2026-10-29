@@ -197,8 +197,31 @@ function formatWeekRange(weekStart: Date, weekEnd: Date): string {
  * A post "סידור אוטומטי בלוח" laid on the board, not scheduled yet: dashed,
  * no menu. Can be dragged to another day before "תזמון כל הפוסטים".
  */
-function PlannedCard({ slot, likeScheduled = false }: { slot: PlannedSlot; likeScheduled?: boolean }) {
+function PlannedCard({
+  slot,
+  likeScheduled = false,
+  onOpen,
+}: {
+  slot: PlannedSlot
+  likeScheduled?: boolean
+  /** Opens the post's edit modal, as a click on a scheduled card does (Hani, 2026-10-29). */
+  onOpen?: () => void
+}) {
   const formatLabel = getFormatChipLabel(slot.format)
+  // A click opens the post; a drag still moves it (the browser fires no click after a drag).
+  const open = onOpen
+    ? {
+        role: "button" as const,
+        tabIndex: 0,
+        onClick: onOpen,
+        onKeyDown: (e: React.KeyboardEvent) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault()
+            onOpen()
+          }
+        },
+      }
+    : {}
   // Direction A (Hani, 2026-10-29): a draft is the scheduled card exactly —
   // image, time badge, hook, chip — and only the dashed border tells it apart.
   if (likeScheduled) {
@@ -212,6 +235,7 @@ function PlannedCard({ slot, likeScheduled = false }: { slot: PlannedSlot; likeS
           )
           e.dataTransfer.effectAllowed = "move"
         }}
+        {...open}
         aria-label={`${formatLabel} טיוטה, עוד לא תוזמן: ${slot.hook}`}
         className="relative w-full min-w-0 flex flex-col gap-1.5 rounded-lg border border-dashed border-gray-70 bg-white dark:bg-gray-10 p-1.5 cursor-grab active:cursor-grabbing transition-all hover:bg-bg-surface-hover hover:border-gray-80"
       >
@@ -247,6 +271,7 @@ function PlannedCard({ slot, likeScheduled = false }: { slot: PlannedSlot; likeS
         )
         e.dataTransfer.effectAllowed = "move"
       }}
+      {...open}
       aria-label={`${formatLabel} מוצע לתזמון, עוד לא תוזמן: ${slot.hook}`}
       className="relative w-full min-w-0 flex flex-col gap-1.5 rounded-lg border border-dashed border-gray-70 bg-bg-surface dark:bg-gray-20 p-1.5 cursor-grab active:cursor-grabbing transition-all hover:bg-gray-95 hover:border-gray-80"
     >
@@ -1449,7 +1474,16 @@ export default function CalendarPage() {
                     <div className="flex flex-col gap-1.5 p-2 min-h-full">
                       {dayPosts.map(renderCard)}
                       {(plannedByDay.get(dayKey) ?? []).map((slot) => (
-                        <PlannedCard key={`planned:${slot.corePostId}:${slot.format}`} slot={slot} likeScheduled={scheduleAllA} />
+                        <PlannedCard
+                          key={`planned:${slot.corePostId}:${slot.format}`}
+                          slot={slot}
+                          likeScheduled={scheduleAllA}
+                          onOpen={() =>
+                            schedulingOn
+                              ? openPreview(slot.corePostId, slot.format)
+                              : openSheetForCorePost(slot.corePostId, slot.format, "preview")
+                          }
+                        />
                       ))}
                       {/* Variant A: the routine's still-open slots for this
                           day, as dashed ghosts. Upcoming days only. */}
