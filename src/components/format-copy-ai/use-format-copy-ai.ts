@@ -21,6 +21,8 @@ import {
 export interface CopyAiMessage {
   role: "user" | "assistant"
   content: string
+  /** User turns: reference images she attached (shown in her bubble). */
+  images?: string[]
   /** Assistant turns: the full revised text that was previewed in the card. */
   revised?: string
   /** Assistant turns: the text to restore on "ביטול". */
@@ -36,6 +38,8 @@ export interface CopyAiSession {
   error: string
   /** The last instruction sent — what "ניסיון חוזר" re-sends after an error. */
   lastInstruction: string
+  /** …and the references that went with it. */
+  lastReferences?: string[]
 }
 
 const EMPTY_SESSION: CopyAiSession = { messages: [], loading: false, error: "", lastInstruction: "" }
@@ -45,6 +49,7 @@ export type CopyRefineResponder = (input: {
   currentText: string
   hook?: string
   messages: CopyRefineTurn[]
+  references?: string[]
 }) => Promise<CopyRefineResult>
 
 export interface FormatCopyAiController {
@@ -53,7 +58,8 @@ export interface FormatCopyAiController {
   session: (fid: CopyFormat) => CopyAiSession
   open: (fid: CopyFormat) => void
   close: () => void
-  send: (fid: CopyFormat, instruction: string) => void
+  /** `references`: screenshots attached to this message (sent with it only). */
+  send: (fid: CopyFormat, instruction: string, references?: string[]) => void
   retry: (fid: CopyFormat) => void
   keep: (fid: CopyFormat, index: number) => void
   cancel: (fid: CopyFormat, index: number) => void
@@ -118,9 +124,9 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder }
   )
 
   const run = useCallback(
-    async (fid: CopyFormat, instruction: string, history: CopyAiMessage[]) => {
+    async (fid: CopyFormat, instruction: string, history: CopyAiMessage[], references: string[] = []) => {
       const before = getTextRef.current(fid)
-      patch(fid, (s) => ({ ...s, loading: true, error: "", lastInstruction: instruction }))
+      patch(fid, (s) => ({ ...s, loading: true, error: "", lastInstruction: instruction, lastReferences: references }))
       try {
         const ask = responder ?? requestFormatCopyRefine
         const { reply, revisedText } = await ask({
@@ -128,6 +134,7 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder }
           currentText: before,
           hook,
           messages: history.map((m) => ({ role: m.role, content: m.content })),
+          ...(references.length ? { references } : {}),
         })
         if (revisedText) setText(fid, revisedText)
         patch(fid, (s) => ({
@@ -156,16 +163,19 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder }
   )
 
   const send = useCallback(
-    (fid: CopyFormat, instruction: string) => {
+    (fid: CopyFormat, instruction: string, references: string[] = []) => {
       const text = instruction.trim()
       const current = sessionsRef.current[fid] ?? EMPTY_SESSION
       if (!text || current.loading) return
       // Asking for the next change keeps the previous proposal — its text is
       // already the baseline the next revision builds on.
       const kept = current.messages.map((m) => (m.status === "pending" ? { ...m, status: "applied" as const } : m))
-      const next: CopyAiMessage[] = [...kept, { role: "user", content: text }]
+      const next: CopyAiMessage[] = [
+        ...kept,
+        { role: "user", content: text, ...(references.length ? { images: references } : {}) },
+      ]
       patch(fid, (s) => ({ ...s, messages: next }))
-      void run(fid, text, next)
+      void run(fid, text, next, references)
     },
     [patch, run],
   )
@@ -174,7 +184,7 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder }
     (fid: CopyFormat) => {
       const s = sessionsRef.current[fid]
       if (!s?.lastInstruction || s.loading) return
-      void run(fid, s.lastInstruction, s.messages)
+      void run(fid, s.lastInstruction, s.messages, s.lastReferences)
     },
     [run],
   )

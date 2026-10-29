@@ -1,5 +1,6 @@
 import { createHash } from "crypto"
 import Anthropic from "@anthropic-ai/sdk"
+import { referenceBlocks } from "@/lib/ai-edit-references"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { SlideData } from "@/lib/carousel-templates"
 import { fontHead, fontRoleLines, type BrandFont } from "@/lib/broll-animation/compose"
@@ -151,10 +152,11 @@ function parse(text: string, count: number): { html: string; illustrations: stri
   return { html: html[1].trim(), illustrations: Array.from({ length: count }, (_, i) => illustrations[i] ?? "") }
 }
 
-async function ask(apiKey: string, user: string, count: number, examples: string[] = []) {
+async function ask(apiKey: string, user: string, count: number, examples: string[] = [], refs: string[] = []) {
   const client = new Anthropic({ apiKey })
   const content: Anthropic.ContentBlockParam[] = [
     ...examples.map((url): Anthropic.ContentBlockParam => ({ type: "image", source: { type: "url", url } })),
+    ...referenceBlocks(refs),
     { type: "text", text: user },
   ]
   const message = await client.messages
@@ -172,7 +174,7 @@ export function composeCarousel(apiKey: string, brief: CarouselBrief) {
  * slides whose ILLUSTRATION she asked to change, a new prompt (empty string =
  * keep the current illustration).
  */
-export function reviseCarousel(apiKey: string, stored: StoredCarousel, instruction: string) {
+export function reviseCarousel(apiKey: string, stored: StoredCarousel, instruction: string, refs: string[] = []) {
   return ask(
     apiKey,
     [
@@ -192,6 +194,7 @@ export function reviseCarousel(apiKey: string, stored: StoredCarousel, instructi
     ].join("\n"),
     stored.brief.slides.length,
     stored.brief.examples,
+    refs,
   )
 }
 
