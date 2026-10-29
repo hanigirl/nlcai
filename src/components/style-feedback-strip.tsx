@@ -10,6 +10,10 @@ import { getAiStyle, recordAiStyleVote } from "@/lib/ai-style-provenance"
 import { getFormatMeta } from "@/lib/timing-storage"
 import { BRAND_TEMPLATE_ID } from "@/lib/carousel-templates"
 import { DISLIKE_REASONS, type DislikeReason } from "@/lib/visual-language/types"
+import { AiSparkle } from "@/components/ai-refine-button"
+import { isEditableBRollUrl } from "@/components/media-ai-chat"
+import { dislikeInstruction, openingId, requestAiEdit } from "@/lib/ai-edit-intent"
+import { getDislikeReview } from "@/lib/dislike-review"
 
 type FeedbackStyle = "brand" | "ai-dark" | "ai-light"
 
@@ -50,6 +54,10 @@ export function CardStyleFeedback({
       vote = rec.vote
     }
   }
+  // REVIEW-ONLY (?dislike=a|b): show the row on any card, unvoted.
+  const review = getDislikeReview()
+  if (review && !style) style = "brand"
+  if (review) vote = review.state === "idle" ? undefined : "dislike"
   if (!style) return null
 
   return (
@@ -77,8 +85,12 @@ function StyleFeedbackRow({
   mediaUrl?: string | null
   initialVote?: "like" | "dislike"
 }) {
+  const review = getDislikeReview()
+  // The 👎 feedback can run the AI edit only where the panel can edit.
+  const editable = format !== "b_roll" || isEditableBRollUrl(mediaUrl) || !!review
+  const variant = editable ? review?.variant ?? null : null
   const [vote, setVote] = useState<"like" | "dislike" | null>(initialVote ?? null)
-  const [askingWhy, setAskingWhy] = useState(false)
+  const [askingWhy, setAskingWhy] = useState(variant === "a" && review?.state === "asking")
   const [reasons, setReasons] = useState<DislikeReason[]>([])
   const [note, setNote] = useState("")
 
@@ -94,7 +106,10 @@ function StyleFeedbackRow({
   const post = async (
     verdict: "like" | "dislike" | "clear",
     withReasons = false,
+    explicit?: { reasons: string[]; note: string },
   ): Promise<{ ok: boolean; message?: string }> => {
+    // REVIEW-ONLY: nothing reaches the server under ?dislike.
+    if (review) return { ok: true, message: withReasons ? "שמרנו את זה לשפה הוויזואלית שלכם." : undefined }
     try {
       const res = await fetch("/api/visual-language/style-feedback", {
         method: "POST",
@@ -105,7 +120,7 @@ function StyleFeedbackRow({
           verdict,
           postId,
           mediaUrl: httpUrl,
-          ...(withReasons ? { reasons, note } : {}),
+          ...(withReasons ? explicit ?? { reasons, note } : {}),
         }),
       })
       const data = (await res.json().catch(() => ({}))) as { message?: string }
@@ -125,7 +140,20 @@ function StyleFeedbackRow({
     const prev = vote
     const next = vote === thumb ? null : thumb
     setVoteEverywhere(next)
-    setAskingWhy(next === "dislike")
+    // Option B: 👎 opens the AI-edit panel on the question instead of the
+    // inline field; her answer there teaches the style and runs the edit.
+    setAskingWhy(next === "dislike" && variant !== "b")
+    if (next === "dislike" && variant === "b") {
+      requestAiEdit({
+        postId,
+        format: format as "carousel" | "story" | "image_post" | "b_roll",
+        opening: {
+          id: openingId(),
+          kind: "dislike",
+          onFeedback: (r, n) => void learnQuietly(r as DislikeReason[], n),
+        },
+      })
+    }
     const res = await post(next ?? "clear")
     if (!res.ok) {
       setVoteEverywhere(prev)
@@ -134,6 +162,29 @@ function StyleFeedbackRow({
     } else if (next === "like" && res.message) {
       toast.success(res.message, { duration: 5000 })
     }
+  }
+
+  // Options A/B: the feedback still teaches the style, but quietly: the
+  // AI-edit panel is now where she watches things change.
+  const learnQuietly = async (r: DislikeReason[], n: string) => {
+    if (!r.length && !n.trim()) return
+    const res = await post("dislike", true, { reasons: r, note: n })
+    if (!res.ok) toast.error(res.message ?? "לא הצלחנו לשמור את הפידבק לשפה. העריכה ממשיכה.")
+  }
+
+  // Option A: the card's feedback is the first instruction of the AI edit.
+  const sendToAiEdit = () => {
+    const text = dislikeInstruction(reasons.map((r) => DISLIKE_REASONS[r]), note)
+    if (!text) return
+    setAskingWhy(false)
+    void learnQuietly(reasons, note)
+    requestAiEdit({
+      postId,
+      format: format as "carousel" | "story" | "image_post" | "b_roll",
+      opening: { id: openingId(), kind: "autorun", text, source: "dislike" },
+    })
+    setReasons([])
+    setNote("")
   }
 
   // Submitting the reasons is what rewrites the language (one Claude call).
@@ -195,18 +246,35 @@ function StyleFeedbackRow({
             rows={2}
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="משהו נוסף? (לא חובה)"
+            placeholder={variant === "a" ? "מה לא אהבתם? ספרו לנו" : "משהו נוסף? (לא חובה)"}
             aria-label="פירוט נוסף על מה לא עבד"
             className="text-xs min-h-0"
           />
-          <Button
-            size="sm"
-            onClick={sendReasons}
-            disabled={!reasons.length && !note.trim()}
-            className="w-fit gap-1.5"
-          >
-            עדכון השפה
-          </Button>
+          {variant === "a" ? (
+            <div className="flex flex-col gap-1.5">
+              <Button
+                size="sm"
+                onClick={sendToAiEdit}
+                disabled={!reasons.length && !note.trim()}
+                className="w-fit gap-1.5"
+              >
+                <AiSparkle />
+                תיקון עם AI
+              </Button>
+              <p className="text-xs-body text-text-neutral-default">
+                נתקן את זה עכשיו בעריכה עם AI, וגם נזכור את זה לשפה שלכם.
+              </p>
+            </div>
+          ) : (
+            <Button
+              size="sm"
+              onClick={sendReasons}
+              disabled={!reasons.length && !note.trim()}
+              className="w-fit gap-1.5"
+            >
+              עדכון השפה
+            </Button>
+          )}
         </div>
       )}
 

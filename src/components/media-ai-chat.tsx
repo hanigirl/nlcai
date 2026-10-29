@@ -7,6 +7,9 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { startBRollEdit } from "@/lib/broll-generation-store"
 import { getAiStyle, recordAiStyleVote, rememberAiStyle } from "@/lib/ai-style-provenance"
+import { dislikeInstruction, type AiEditOpening } from "@/lib/ai-edit-intent"
+import { getDislikeReview, simulateAiEdit } from "@/lib/dislike-review"
+import { DISLIKE_REASONS, type DislikeReason } from "@/lib/visual-language/types"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
@@ -21,7 +24,12 @@ interface ChatMessage {
   error?: boolean
   /** A lasting preference distilled from her instruction (Hebrew). */
   remembered?: string | null
+  /** User turn that came from her 👎 feedback, not typed here. */
+  fromFeedback?: boolean
 }
+
+/** Option B's first turn: the panel asks what she didn't like. */
+const DISLIKE_ASK = "מה לא אהבתם? ספרו לנו, ואעדכן את זה עכשיו. מה שתכתבו נשמר גם לשפה הוויזואלית שלכם, לפעמים הבאות."
 
 /**
  * After an edit the card shows new media — move this format's AI provenance
@@ -86,6 +94,7 @@ export function MediaAiChat({
   open,
   onOpenChange,
   onUpdated,
+  opening,
 }: {
   postId: string
   format: AiEditFormat
@@ -93,31 +102,68 @@ export function MediaAiChat({
   onOpenChange: (open: boolean) => void
   /** Image formats: the saved set, in order, after an edit. */
   onUpdated?: (format: AiEditFormat, urls: string[]) => void
+  /**
+   * How the panel opens when the 👎 row opened it (lib/ai-edit-intent):
+   * "autorun" sends her card feedback as the first turn; "dislike" opens on
+   * the question with her reason chips. Omitted = the regular AI edit.
+   */
+  opening?: AiEditOpening | null
 }) {
   const copy = COPY[format]
-  const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: copy.intro }])
-  // A different format's chat starts its own conversation.
-  const [chatFormat, setChatFormat] = useState(format)
-  if (chatFormat !== format) {
-    setChatFormat(format)
-    setMessages([{ role: "assistant", content: copy.intro }])
+  const firstTurn = (o?: AiEditOpening | null): ChatMessage =>
+    o?.kind === "dislike" ? { role: "assistant", content: DISLIKE_ASK } : { role: "assistant", content: copy.intro }
+  const [messages, setMessages] = useState<ChatMessage[]>([firstTurn(opening)])
+  // A different format's chat — or a fresh 👎 — starts its own conversation.
+  const [chatKey, setChatKey] = useState(`${format}:${opening?.id ?? ""}`)
+  const nextKey = `${format}:${opening?.id ?? ""}`
+  // Option B: the reason chips + the hand-off of her first answer to learning.
+  const [asking, setAsking] = useState<Extract<AiEditOpening, { kind: "dislike" }> | null>(
+    opening?.kind === "dislike" ? opening : null,
+  )
+  const [reasons, setReasons] = useState<DislikeReason[]>([])
+  if (chatKey !== nextKey) {
+    setChatKey(nextKey)
+    setMessages([firstTurn(opening)])
+    setAsking(opening?.kind === "dislike" ? opening : null)
+    setReasons([])
   }
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const ranOpening = useRef<string | null>(null)
+
+  // Option A: her card feedback is the first instruction — run it on open.
+  useEffect(() => {
+    if (opening?.kind !== "autorun" || ranOpening.current === opening.id) return
+    ranOpening.current = opening.id
+    void send(opening.text, opening.source === "dislike")
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opening])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
   }, [messages, loading])
 
-  const send = async () => {
-    const text = input.trim()
+  const send = async (preset?: string, fromFeedback = false) => {
+    let text = (preset ?? input).trim()
+    if (asking && preset === undefined) {
+      if ((!text && !reasons.length) || loading) return
+      // Option B's first answer: it teaches the style (as the card's 👎 did)
+      // and is the edit instruction, in one send.
+      const labels = reasons.map((r) => DISLIKE_REASONS[r])
+      asking.onFeedback(reasons, text)
+      text = dislikeInstruction(labels, text)
+      setAsking(null)
+      setReasons([])
+    }
     if (!text || loading) return
-    setInput("")
-    setMessages((prev) => [...prev, { role: "user", content: text }])
+    if (preset === undefined) setInput("")
+    setMessages((prev) => [...prev, { role: "user", content: text, fromFeedback }])
     setLoading(true)
-    const result =
-      format === "b_roll"
+    const review = getDislikeReview()
+    const result = review
+      ? await simulateAiEdit(review.state)
+      : format === "b_roll"
         ? await startBRollEdit(postId, text, { quiet: true }).then((r) => {
             if (r.ok) markAiMade(postId, "b_roll", r.url)
             return r
@@ -183,6 +229,9 @@ export function MediaAiChat({
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
         {messages.map((m, i) => (
           <div key={i} className={`flex flex-col gap-1.5 ${m.role === "user" ? "items-start" : "items-end"}`}>
+            {m.fromFeedback && (
+              <span className="text-xs-body text-text-neutral-default">מהפידבק שלכם על הכרטיס</span>
+            )}
             <div
               className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-small leading-relaxed ${
                 m.role === "user"
@@ -194,6 +243,28 @@ export function MediaAiChat({
             >
               {m.content}
             </div>
+            {asking && i === 0 && (
+              <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5" role="group" aria-label="מה לא עבד">
+                {(Object.keys(DISLIKE_REASONS) as DislikeReason[]).map((r) => {
+                  const on = reasons.includes(r)
+                  return (
+                    <button
+                      key={r}
+                      type="button"
+                      aria-pressed={on}
+                      onClick={() => setReasons((prev) => (on ? prev.filter((x) => x !== r) : [...prev, r]))}
+                      className={`rounded-full border px-2.5 py-1 text-xs transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+                        on
+                          ? "border-yellow-50 bg-bg-surface-primary-default text-text-primary-default"
+                          : "border-border-neutral-default text-text-neutral-default hover:bg-gray-95 dark:hover:bg-gray-20"
+                      }`}
+                    >
+                      {DISLIKE_REASONS[r]}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
             {m.done && (
               <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
                 <Check className="size-3.5 text-yellow-30" />
@@ -228,7 +299,7 @@ export function MediaAiChat({
                 void send()
               }
             }}
-            placeholder="מה תרצו לשנות?"
+            placeholder={asking ? "מה לא אהבתם? ספרו לנו" : "מה תרצו לשנות?"}
             rows={1}
             autoFocus
             className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent p-1 text-small shadow-none focus-visible:ring-0"
@@ -236,7 +307,7 @@ export function MediaAiChat({
           <Button
             size="icon-sm"
             onClick={() => void send()}
-            disabled={!input.trim() || loading}
+            disabled={(!input.trim() && !(asking && reasons.length)) || loading}
             aria-label="שליחה"
             className="shrink-0 rounded-full"
           >
