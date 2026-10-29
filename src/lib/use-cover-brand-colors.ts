@@ -4,7 +4,6 @@ import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { COVER_FALLBACK_COLOR, cleanBrandColors, defaultCoverColor } from "@/lib/cover-brand-color"
-import { usePreviewAccess } from "@/lib/use-scheduling-access"
 
 /**
  * Her brand colours for the talking-head cover, read once per page load
@@ -51,12 +50,8 @@ export function useCoverBrandColors(enabled = true): { colors: string[]; ready: 
   return { colors, ready }
 }
 
-/**
- * The cover's default pill colour: her primary brand colour, else black.
- * Outside the preview batch (and while the gate loads): black, as before.
- */
+/** The cover's default pill colour: her primary brand colour, else black. */
 export function useCoverDefaultColor(): string {
-  const preview = usePreviewAccess() === true
-  const { colors } = useCoverBrandColors(preview)
-  return preview && colors.length ? defaultCoverColor(colors) : COVER_FALLBACK_COLOR
+  const { colors } = useCoverBrandColors()
+  return colors.length ? defaultCoverColor(colors) : COVER_FALLBACK_COLOR
 }

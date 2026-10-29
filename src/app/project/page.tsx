@@ -321,12 +321,13 @@ function ProjectPageInner() {
   // A new cover opens in her primary brand colour (black when she has none).
   // Only an untouched pill adopts it: a pick, or the colour restored from the
   // saved post, wins.
-  const coverBrand = useCoverBrandColors(previewOn)
+  // Open to everyone (Hani, 2026-10-29).
+  const coverBrand = useCoverBrandColors()
   const pillTouchedRef = useRef(false)
   useEffect(() => {
-    if (!previewOn || !coverBrand.ready || pillTouchedRef.current) return
+    if (!coverBrand.ready || pillTouchedRef.current) return
     setPillColor(defaultCoverColor(coverBrand.colors))
-  }, [previewOn, coverBrand.ready, coverBrand.colors])
+  }, [coverBrand.ready, coverBrand.colors])
   // Confirmation modal — opened from the trash icon on the video card. The
   // actual delete only fires after the user clicks "כן, למחוק". The cover has
   // no standalone delete action; it lives and dies with the video.
@@ -880,7 +881,7 @@ function ProjectPageInner() {
           if (typeof data.post.coverPillColor === "string") {
             pillTouchedRef.current = true
             setPillColor(data.post.coverPillColor as string)
-          } else if (previewRef.current && data.post.coverUrl) {
+          } else if (data.post.coverUrl) {
             // Older cover saved before the colour was stored: it was baked
             // black, so the picker must not claim the brand colour.
             pillTouchedRef.current = true
@@ -2667,8 +2668,8 @@ function ProjectPageInner() {
                           }}
                           livePillColor={livePillColor}
                           onLivePillPreview={setLivePillColor}
-                          coverBrandColors={previewOn ? coverBrand.colors : undefined}
-                          coverSwatches={previewOn}
+                          coverBrandColors={coverBrand.colors}
+                          coverSwatches
                           thVideoFrameDataUrl={thVideoFrameDataUrl}
                           userId={userId}
                           carouselImages={carouselImages}
