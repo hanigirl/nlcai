@@ -182,21 +182,36 @@ export function SaveButton({ saving, disabled, onClick }: { saving: boolean; dis
  * The weekly routine as saved on this device (lib/posting-schedule). Until
  * she saves one, the suggested default shows and `hasCustom` is false.
  */
-export function usePostingSchedule() {
+export type RoutineReviewState = "first" | "empty" | "error"
+
+export function usePostingSchedule(
+  opts: {
+    /** Review links only (`&state=`): land straight on a state. */
+    review?: RoutineReviewState | null
+    /** False → saves stay in memory (state preview page). */
+    persist?: boolean
+  } = {},
+) {
+  const { review = null, persist = true } = opts
   const [saved, setSaved] = useState<PostingSchedule>(() => defaultPostingSchedule())
-  const [draft, setDraft] = useState<PostingSchedule>(() => cloneSchedule(saved))
+  const [draft, setDraft] = useState<PostingSchedule>(() => {
+    const d = cloneSchedule(saved)
+    if (review === "empty") d.activeDays = d.activeDays.map(() => false)
+    return d
+  })
   const [hasCustom, setHasCustom] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState(false)
+  const [saveError, setSaveError] = useState(review === "error")
 
   /** Re-read the stored routine — e.g. after the settings modal saved it. */
   const reload = useCallback(() => {
+    if (review || !persist) return
     const stored = getPostingSchedule()
     if (!stored) return
     setSaved(stored)
     setDraft(cloneSchedule(stored))
     setHasCustom(true)
-  }, [])
+  }, [review, persist])
   useEffect(() => {
     reload()
   }, [reload])
@@ -205,7 +220,8 @@ export function usePostingSchedule() {
     setSaving(true)
     setSaveError(false)
     try {
-      savePostingSchedule(draft)
+      if (review === "error") throw new Error("review: simulated save failure")
+      if (persist) savePostingSchedule(draft)
       setSaved(cloneSchedule(draft))
       setHasCustom(true)
       onDone?.()
@@ -215,7 +231,7 @@ export function usePostingSchedule() {
     } finally {
       setSaving(false)
     }
-  }, [draft])
+  }, [draft, review, persist])
 
   const discard = useCallback(() => {
     setDraft(cloneSchedule(saved))

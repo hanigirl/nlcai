@@ -753,6 +753,12 @@ export default function CalendarPage() {
   const [plannedUnmatched, setPlannedUnmatched] = useState<PlanInputCard[]>([])
   const [noSettingsOpen, setNoSettingsOpen] = useState(false)
   const [scheduleSettingsOpen, setScheduleSettingsOpen] = useState(false)
+  // Review links (`/calendar?variant=a|b[&state=…]`) land on the settings
+  // modal straight away — no need to find the ⚙.
+  useEffect(() => {
+    if (!scheduleAllA) return
+    if (new URLSearchParams(window.location.search).has("variant")) setScheduleSettingsOpen(true)
+  }, [scheduleAllA])
   // When the drafts were laid out — a confirm right after is a double click.
   const arrangedAtRef = useRef(0)
   const onArrange = () => {
