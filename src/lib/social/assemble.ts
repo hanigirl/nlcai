@@ -104,7 +104,10 @@ export async function assembleScheduledPost(
     .filter((a) => a.asset_type === "image" || a.asset_type === "video")
     .map((a) => ({
       url: a.url as string,
-      type: a.asset_type === "video" ? "video" : "image",
+      // A story set is saved as one ordered list of rows, so a clip in it
+      // (her own, or an AI frame with animated text) can sit in an "image"
+      // row — the file's extension is what tells.
+      type: a.asset_type === "video" || VIDEO_FILE.test(a.url as string) ? "video" : "image",
     }))
 
   // Reels only. A feed post's first slide is already its cover, and a story has
@@ -156,6 +159,8 @@ export async function assembleScheduledPost(
 }
 
 /** A URL the provider can download a real image/video file from. */
+const VIDEO_FILE = /\.(mp4|mov|m4v|webm)(\?|#|$)/i
+
 function isDirectMediaUrl(url: string): boolean {
   let parsed: URL
   try {

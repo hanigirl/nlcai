@@ -13,6 +13,8 @@ import type { CaptionSpec, OwnEditFormat, OwnEditOp, OwnEditPlan, OwnFrameInfo }
  *   - caption on a video   → /api/story/generate-video-media (the ffmpeg burn)
  *   - caption on a still   → /api/media/caption-image (the satori render)
  *   - a new AI slide       → /api/media/own-edit {action:"slide"}
+ *   - a new animated frame → /api/media/own-edit {action:"animated_slide"}
+ *                            (story; the b-roll engine, ~3 min)
  *   - remove / reorder / duplicate → just the order of the set
  * and saves the finished set once, at the end.
  *
@@ -26,6 +28,9 @@ export type OwnEditResult =
   | { ok: false; message: string }
 
 const FAIL = "העריכה לא הצליחה הפעם. נסו שוב."
+
+/** The busy row while the animated frame renders (it's the long one). */
+export const ANIMATING = "מנפישים פריים חדש עם הטקסט שלכם... זה לוקח כשלוש דקות"
 
 async function postJson<T>(url: string, body: unknown): Promise<{ ok: boolean; data: T }> {
   const res = await fetch(url, {
@@ -138,10 +143,15 @@ async function execute(
       const it = original[op.frame - 1]
       const at = set.indexOf(it)
       if (at >= 0) set.splice(at + 1, 0, { ...it })
-    } else if (op.op === "add_slide") {
-      onProgress?.("מעצבים שקופית חדשה בשפה הוויזואלית שלכם... זה לוקח כדקה")
+    } else if (op.op === "add_slide" || op.op === "add_animated_slide") {
+      const animated = op.op === "add_animated_slide"
+      onProgress?.(
+        animated
+          ? ANIMATING
+          : "מעצבים שקופית חדשה בשפה הוויזואלית שלכם... זה לוקח כדקה",
+      )
       const made = await postJson<{ url?: string; message?: string }>("/api/media/own-edit", {
-        action: "slide",
+        action: animated ? "animated_slide" : "slide",
         postId,
         format,
         headline: op.headline,
@@ -149,12 +159,12 @@ async function execute(
         role: op.role ?? "closing",
       })
       if (!made.ok || !made.data.url) {
-        problems.push(made.data.message ?? "השקופית החדשה לא נוצרה.")
+        problems.push(made.data.message ?? (animated ? "הפריים המונפש לא נוצר." : "השקופית החדשה לא נוצרה."))
         continue
       }
       const anchor = op.after === 0 ? null : original[op.after - 1]
       const at = anchor ? set.indexOf(anchor) + 1 : 0
-      const fresh: Item = { url: made.data.url, kind: "image", aiMade: true, caption: "baked" }
+      const fresh: Item = { url: made.data.url, kind: animated ? "video" : "image", aiMade: true, caption: "baked" }
       set.splice(at < 0 ? set.length : at, 0, fresh)
     }
   }

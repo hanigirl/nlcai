@@ -6,6 +6,11 @@
  * slides, order — and never changes what she filmed.
  *
  * Route: /test/own-media-ai-edit?media=video-story|image-story|carousel|image-post|b-roll
+ *   …&state=anim-planning|anim-rendering|anim-added|anim-error — she asks for
+ *   a new story frame with ANIMATED text (the b-roll engine, ~3 min for real).
+ *   Here the render is stubbed: the "clip" is a CSS stand-in drawn by this
+ *   page. On a carousel / single image the planner's answer offers the story
+ *   instead (never "can't animate").
  *                               &state=idle|working|caption|slide|refused|error
  *
  * The real panel (MediaAiChat with `own`) and the real executor
@@ -102,8 +107,17 @@ const STATES = [
   { id: "slide", label: "נוספה שקופית" },
   { id: "refused", label: "״את מה שצילמתם לא משנים״" },
   { id: "error", label: "שגיאה" },
+  { id: "anim-planning", label: "מונפש: מתכננים" },
+  { id: "anim-rendering", label: "מונפש: מרנדרים" },
+  { id: "anim-added", label: "מונפש: נוסף" },
+  { id: "anim-error", label: "מונפש: שגיאה" },
 ] as const
 type State = (typeof STATES)[number]["id"]
+
+const ANIM_ASK = "להוסיף בסוף פריים עם טקסט מונפש: רוצים תיק שמספר איך אתם חושבים?"
+const ANIM_TEXT = "רוצים תיק שמספר איך אתם חושבים?"
+/** Stands in for the rendered clip: the page draws the animated text itself. */
+const ANIM_CLIP = "/preview/ai-anim.mp4"
 
 /** What the preview auto-sends for each non-idle state. */
 const ASK: Record<Exclude<State, "idle">, string> = {
@@ -112,6 +126,10 @@ const ASK: Record<Exclude<State, "idle">, string> = {
   slide: "להוסיף פריים סיום עם קריאה לפעולה",
   refused: "תבהירי לי את הסרטון ותורידי את הרקע",
   error: "להוריד את הכיתוב",
+  "anim-planning": ANIM_ASK,
+  "anim-rendering": ANIM_ASK,
+  "anim-added": ANIM_ASK,
+  "anim-error": ANIM_ASK,
 }
 
 /** A stubbed render URL carries the caption it stands for, so the card can draw it. */
@@ -142,12 +160,29 @@ function cannedPlan(state: State, instruction: string, frames: OwnFrameInfo[], f
   const all = frames.map((_, i) => i + 1)
   const isSet = format === "story" || format === "carousel"
   const kind = state === "idle"
-    ? /סיום|שקופית|פריים/.test(instruction) && isSet ? "slide"
+    ? /מונפש|אנימציה|תנועה/.test(instruction) ? "anim"
+      : /סיום|שקופית|פריים/.test(instruction) && isSet ? "slide"
       : /להוריד/.test(instruction) ? "remove"
       : /להזיז/.test(instruction) ? "move"
       : /הרקע|להבהיר|תבהירי|פילטר/.test(instruction) ? "refused"
       : "caption"
     : state
+  const animKind = state === "anim-planning" ? "working" : state.startsWith("anim-") ? "anim" : kind
+  if (animKind === "working") return "hang"
+  if (animKind === "anim") {
+    if (format !== "story") {
+      return {
+        reply: isSet
+          ? "פריים עם טקסט מונפש אפשר להוסיף לסטורי. כאן בקרוסלה אוכל להוסיף שקופית סטטית באותו נוסח, רוצים?"
+          : "פריים עם טקסט מונפש אפשר להוסיף לסטורי. כאן אפשר לשנות את הכיתוב על התמונה.",
+        ops: [],
+      }
+    }
+    return {
+      reply: "הוספתי בסוף פריים עם הטקסט מונפש, בשפה הוויזואלית שלכם.",
+      ops: [{ op: "add_animated_slide", after: n, headline: ANIM_TEXT, role: "closing" }],
+    }
+  }
   if (kind === "error") return "error"
   if (kind === "working") return "hang"
   if (kind === "refused") {
@@ -185,6 +220,12 @@ function stubFetch(state: State, sample: Sample) {
     const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {}
     if (url.includes("/api/media/own-edit")) {
       if (body.action === "slide") return ok({ url: `${AI_SLIDE}?slide=${Date.now()}` }, 200, 1200)
+      if (body.action === "animated_slide") {
+        if (state === "anim-rendering") return new Promise<Response>(() => {})
+        if (state === "anim-error") return ok({ message: "האנימציה לא יצאה תקינה הפעם. נסו שוב." }, 500, 1500)
+        const text = encodeURIComponent(String(body.headline ?? ANIM_TEXT))
+        return ok({ url: `${ANIM_CLIP}?t=${Date.now()}&anim=${text}` }, 200, 2500)
+      }
       if (body.action === "save") return ok({ urls: body.urls }, 200, 300)
       const frames: OwnFrameInfo[] = sample.frames.map((f, i) => {
         const u = frameUrl(f, i)
@@ -236,8 +277,10 @@ function Stage({ state, sample }: { state: State; sample: Sample }) {
   })
   const [index, setIndex] = useState(0)
 
-  const shown = readCaption(urls[Math.min(index, urls.length - 1)] ?? urls[0])
-  const isVideo = /\.mp4/.test(urls[Math.min(index, urls.length - 1)] ?? "")
+  const current = urls[Math.min(index, urls.length - 1)] ?? urls[0]
+  const shown = readCaption(current)
+  const anim = current.startsWith(ANIM_CLIP) ? new URL(current, "http://preview.local").searchParams.get("anim") : null
+  const isVideo = /\.mp4/.test(current) && anim === null
   const Icon = sample.icon
 
   return (
@@ -277,8 +320,12 @@ function Stage({ state, sample }: { state: State; sample: Sample }) {
         <div className="flex flex-col items-center gap-3 px-6">
           <div className={AI_HOVER_ZONE}>
             <div className={`relative overflow-hidden rounded-xl border border-border-neutral-default bg-gray-95 ${sample.aspect}`}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={shown.src} alt="" className="h-full w-full object-contain" />
+              {anim !== null ? (
+                <AnimatedStandIn text={anim} />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={shown.src} alt="" className="h-full w-full object-contain" />
+              )}
               {isVideo && (
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="flex size-12 items-center justify-center rounded-full bg-black/40">
@@ -287,7 +334,7 @@ function Stage({ state, sample }: { state: State; sample: Sample }) {
                 </div>
               )}
               {/* Stands in for the burned caption (the real one is ffmpeg / satori). */}
-              {shown.cap && (
+              {shown.cap && anim === null && (
                 <div
                   className={`absolute inset-x-3 flex justify-center ${
                     shown.pos === "top" ? "top-[14%]" : shown.pos === "center" ? "top-1/2 -translate-y-1/2" : "bottom-[24%]"
@@ -316,6 +363,7 @@ function Stage({ state, sample }: { state: State; sample: Sample }) {
           )}
           <p className="text-xs-body text-text-neutral-default">
             {urls.length > 1 ? `${index + 1} / ${urls.length}` : sample.frames[0].kind === "video" ? "וידאו שלכם" : "תמונה שלכם"}
+            {anim !== null && " · פריים מונפש (AI)"}
           </p>
         </div>
       </div>
@@ -338,6 +386,27 @@ function Stage({ state, sample }: { state: State; sample: Sample }) {
           />
         )}
       </div>
+    </div>
+  )
+}
+
+/** The rendered clip, faked: per-word entrance on a dark background, looping. */
+function AnimatedStandIn({ text }: { text: string }) {
+  const words = text.split(/\s+/).filter(Boolean)
+  return (
+    <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-b from-gray-10 to-gray-20 px-5">
+      <style>{`@keyframes own-anim-word{0%{opacity:0;transform:translateY(14px)}12%,85%{opacity:1;transform:none}100%{opacity:0}}`}</style>
+      <p dir="rtl" className="text-center text-p-bold leading-snug text-white">
+        {words.map((w, i) => (
+          <span
+            key={i}
+            className="inline-block"
+            style={{ animation: `own-anim-word 4s ${i * 0.18}s ease-out infinite both`, marginInlineEnd: "0.25em" }}
+          >
+            {w}
+          </span>
+        ))}
+      </p>
     </div>
   )
 }

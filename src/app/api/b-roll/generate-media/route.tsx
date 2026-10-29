@@ -1,20 +1,16 @@
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
-import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
-import { CAPTION_CANVAS_HEIGHT, CAPTION_CANVAS_WIDTH } from "@/lib/caption-overlay"
 import { getAuthUser } from "@/lib/auth-user"
+import { BACKGROUND_FRAMINGS, buildBackgroundPrompt, cropToCanvas } from "@/lib/broll-animation/background"
 import { buildCompositionBrief } from "@/lib/broll-animation/brief"
 import { composeBRoll, finalizeHtml } from "@/lib/broll-animation/compose"
 import { renderComposition } from "@/lib/broll-animation/render"
 import { saveBRoll, uploadBackground } from "@/lib/broll-animation/store"
 import { generateImage } from "@/lib/openai-image"
 import { isMediaStyle } from "@/lib/visual-language/types"
-import {
-  resolveDesignDirection,
-  type DesignDirection,
-} from "@/lib/visual-language/direction"
+import { resolveDesignDirection } from "@/lib/visual-language/direction"
 
 // gpt-image-2 takes 30-120s for one image.
 export const maxDuration = 300
@@ -32,62 +28,6 @@ export const maxDuration = 300
  * (lib/broll-animation/render). The HTML is stored next to the clip so
  * "עריכה עם AI" can revise it (api/b-roll/edit).
  */
-
-// Variety per press. The visual language stays fixed, so a second attempt
-// changes the framing rather than the palette.
-const FRAMINGS = [
-  "Framing: one subject, close-up, filling the upper half.",
-  "Framing: a wider scene with the subject small and atmospheric.",
-  "Framing: an overhead / flat-lay arrangement of the subject's objects.",
-  "Framing: an abstract, textural interpretation of the subject.",
-]
-
-/**
- * Background-only prompt. The "no text" instruction is repeated in three
- * different shapes on purpose — image models leak lettering into
- * backgrounds constantly, and one polite sentence does not hold. Anything
- * that slips through would sit UNDER our caption and read as a smudge.
- */
-function buildBackgroundPrompt(
-  direction: DesignDirection,
-  framing: string,
-  context: string,
-): string {
-  return [
-    "Design a premium vertical 9:16 background image for a social video (full-bleed).",
-    "",
-    "ABSOLUTELY NO TEXT. No words, no letters, no numbers, no Hebrew or Latin characters, no captions, no watermarks, no logos, no signage, no UI chrome, no borders. If any surface in the scene would naturally carry writing, leave it blank.",
-    "",
-    ...direction.lines,
-    "",
-    framing,
-    "- One clear subject drawn from the post's topic, rendered in the visual language above — never generic stock decoration.",
-    "",
-    // The caption lands in the lower-middle band, so that area has to stay
-    // calm or the type sits on top of the busiest part of the picture.
-    // The caption is WHITE, so even a light/pastel language needs a deeper
-    // band there — in its own colours, not a generic black scrim.
-    "- COMPOSITION: animated Hebrew headline type will be laid over the middle of the frame afterwards — leave a calm, uncluttered area there and put the visual interest around it.",
-    "- The mood should relate to this post content (written in Hebrew): " +
-      `"""${context}"""`,
-  ]
-    .filter(Boolean)
-    .join("\n")
-}
-
-/**
- * Normalise the model's image to exactly 1080×1920. The model now paints the
- * exact ratio (lib/openai-image), so `xMidYMid slice` (CSS object-fit:cover)
- * only scales; it trims anything only if OpenAI refused the custom size and
- * we fell back to 1024×1536.
- */
-function cropToCanvas(imageBase64: string): string {
-  const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${CAPTION_CANVAS_WIDTH}" height="${CAPTION_CANVAS_HEIGHT}" viewBox="0 0 ${CAPTION_CANVAS_WIDTH} ${CAPTION_CANVAS_HEIGHT}">` +
-    `<image href="data:image/png;base64,${imageBase64}" x="0" y="0" width="${CAPTION_CANVAS_WIDTH}" height="${CAPTION_CANVAS_HEIGHT}" preserveAspectRatio="xMidYMid slice"/>` +
-    `</svg>`
-  return Buffer.from(new Resvg(svg).render().asPng()).toString("base64")
-}
 
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
@@ -213,7 +153,7 @@ export async function POST(req: NextRequest) {
         openaiKey,
         buildBackgroundPrompt(
           direction,
-          FRAMINGS[Math.abs(variationIndex ?? 0) % FRAMINGS.length],
+          BACKGROUND_FRAMINGS[Math.abs(variationIndex ?? 0) % BACKGROUND_FRAMINGS.length],
           context,
         ),
         { shape: "9:16", references: direction.references },

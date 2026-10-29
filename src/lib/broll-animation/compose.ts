@@ -61,6 +61,11 @@ export interface CompositionBrief {
   fonts: BrandFont[]
   /** The visual-language brief the background was generated from. */
   styleSpec: string
+  /**
+   * What this clip is for, when it isn't a b-roll — e.g. a frame added to
+   * her story (lib/own-media-animated): its safe zone, reserved brand areas.
+   */
+  notes?: string[]
 }
 
 /** The <head> fragment that loads her fonts. Injected by us, not written by Opus. */
@@ -122,6 +127,7 @@ function briefText(b: CompositionBrief): string {
     "",
     "VISUAL LANGUAGE (the background was generated from this — match its character):",
     b.styleSpec.slice(0, 2500),
+    ...(b.notes?.length ? ["", "THIS CLIP:", ...b.notes] : []),
     "",
     `Put the marker ${FONT_MARKER} inside <head>; we replace it with the font loading.`,
   ].join("\n")

@@ -13,7 +13,9 @@ import { resolveDesignDirection } from "@/lib/visual-language/direction"
 import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
 import { fetchDriveFile } from "@/lib/drive-fetch"
 import { planOwnMediaEdit, slidePrompt } from "@/lib/own-media-plan"
+import { makeAnimatedStoryFrame } from "@/lib/own-media-animated"
 import {
+  canAddAnimatedFrame,
   isCaptionedRenderUrl,
   isOwnMediaUrl,
   isVideoMediaUrl,
@@ -22,7 +24,9 @@ import {
   type OwnFrameInfo,
 } from "@/lib/own-media"
 
-// One plan (Opus) + per-frame text checks; a new slide is one gpt-image-2 call.
+// One plan (Opus) + per-frame text checks; a new slide is one gpt-image-2 call;
+// an animated frame is the b-roll engine (image ∥ Opus, then a 7s render) —
+// the same budget the b-roll route runs in.
 export const maxDuration = 300
 
 /**
@@ -34,6 +38,9 @@ export const maxDuration = 300
  *                    for a closed-set plan (lib/own-media-plan). No writes.
  *   action "slide" — one NEW slide/frame in her visual language (gpt-image-2),
  *                    stored, URL returned. Her own frames are never sent to it.
+ *   action "animated_slide" — story only: one NEW frame with animated text,
+ *                    a 7s clip from the b-roll engine (lib/own-media-animated).
+ *                    Stored, URL returned; the set is saved by "save".
  *   action "save"  — the finished set, in order, becomes the format's media.
  *
  * The caption itself is drawn by the existing routes (story/generate-video-
@@ -42,7 +49,7 @@ export const maxDuration = 300
  */
 
 type Body = {
-  action?: "plan" | "slide" | "save"
+  action?: "plan" | "slide" | "animated_slide" | "save"
   postId?: string
   format?: unknown
   instruction?: string
@@ -125,6 +132,48 @@ export async function POST(req: NextRequest) {
         status: "completed",
       } as never)
       return json({ urls: [url] })
+    }
+
+    /* --------------------------- animated slide --------------------------- */
+    if (input.action === "animated_slide") {
+      if (!canAddAnimatedFrame(format)) return json({ error: "not_a_story", message: "פריים עם טקסט מונפש אפשר להוסיף לסטורי." }, 400)
+      let openaiKey: string
+      let anthropicKey: string
+      try {
+        openaiKey = await getUserApiKey(supabase, "openai_api_key")
+      } catch {
+        return json(
+          { error: "openai_not_connected", message: "כדי להוסיף פריים מונפש צריך לחבר מפתח OpenAI בהגדרות." },
+          400,
+        )
+      }
+      try {
+        anthropicKey = await getUserApiKey(supabase, "anthropic_api_key")
+      } catch {
+        return json(
+          { error: "anthropic_not_connected", message: "כדי להוסיף פריים מונפש צריך לחבר מפתח Claude בהגדרות." },
+          400,
+        )
+      }
+      const role: ImageRole = input.role === "cover" || input.role === "content" ? input.role : "closing"
+      try {
+        const url = await makeAnimatedStoryFrame(supabase, user.id, {
+          anthropicKey,
+          openaiKey,
+          headline: input.headline,
+          body: input.body,
+          role,
+          post: { title: post.title, hook: post.hook_text, body: post.body },
+        })
+        return json({ url })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        if (msg === "composition_invalid" || msg === "composition_not_seekable") {
+          return json({ error: msg, message: "האנימציה לא יצאה תקינה הפעם. נסו שוב." }, 500)
+        }
+        if (msg === "no_text") return json({ error: msg, message: "כתבו מה יהיה כתוב בפריים ואנפיש אותו." }, 400)
+        throw err
+      }
     }
 
     /* -------------------------------- slide ------------------------------- */
@@ -216,7 +265,7 @@ export async function POST(req: NextRequest) {
       urls.map(async (url, i): Promise<OwnFrameInfo> => {
         const kind = isVideoMediaUrl(url) ? "video" : "image"
         const aiMade =
-          /\/ai-slide-[0-9a-f-]+\.png/.test(url) ||
+          /\/ai-(slide|anim)-[0-9a-f-]+\.(png|mp4)/.test(url) ||
           (format === "carousel"
             ? carouselMeta.source === "ai" && !linksAligned
             : !isOwnMediaUrl(url))

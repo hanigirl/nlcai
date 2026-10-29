@@ -102,14 +102,17 @@ export function cleanCaptionSpec(spec: unknown): CaptionSpec | null {
 
 /**
  * What the AI may do to her own media. Every op is carried out by code that
- * already exists (the caption burn, the still caption render, the set save);
- * only `add_slide` makes new pixels, and those are a NEW frame, never hers.
+ * already exists (the caption burn, the still caption render, the set save,
+ * the b-roll animation engine); only `add_slide` / `add_animated_slide` make
+ * new pixels, and those are a NEW frame, never hers.
  * Frame numbers are 1-based, as she says them.
  */
 export type OwnEditOp =
   | { op: "set_caption"; frames: number[]; headline?: string; body?: string; position?: OwnCaptionPosition; style?: CaptionStyle }
   | { op: "remove_caption"; frames: number[] }
   | { op: "add_slide"; after: number; headline?: string; body?: string; role?: "closing" | "content" | "cover" }
+  /** Story only: a NEW frame whose text is animated (the b-roll engine), a 7s clip. */
+  | { op: "add_animated_slide"; after: number; headline?: string; body?: string; role?: "closing" | "content" | "cover" }
   | { op: "remove_slide"; frames: number[] }
   | { op: "duplicate_slide"; frame: number }
   | { op: "reorder"; order: number[] }
@@ -144,4 +147,14 @@ export type OwnEditFormat = "story" | "carousel" | "image_post" | "b_roll"
 /** Formats that are a SET (frames can be added, removed, reordered). */
 export function isSetFormat(format: OwnEditFormat): boolean {
   return format === "story" || format === "carousel"
+}
+
+/**
+ * Formats that can take an ANIMATED new frame. Story only: the animation
+ * engine renders 9:16 clips, and an Instagram carousel item may be at most
+ * 4:5 tall (lib/social/highlevel) — and the carousel card and its caption
+ * tools are still-image only.
+ */
+export function canAddAnimatedFrame(format: OwnEditFormat): boolean {
+  return format === "story"
 }

@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk"
 import {
+  canAddAnimatedFrame,
   cleanCaptionStyle,
   isSetFormat,
   type OwnEditFormat,
@@ -14,9 +15,11 @@ import { reservedZoneLines, type ImageRole } from "@/lib/visual-language/fixed-e
 /**
  * The planner behind "עריכת מדיה עם AI" on media she brought herself
  * (Hani, 2026-10-29). Opus reads her request against the frames and answers
- * with a short list of operations from a closed set — caption, slides,
- * order. It never gets an operation that repaints her pixels, so a request
- * for one can only come back as a kind refusal.
+ * with a short list of operations from a closed set — caption, slides
+ * (still, or with animated text on a story), order. It never gets an
+ * operation that repaints her pixels, so a request for one can only come back
+ * as a kind refusal — one that offers what it can do instead, never "can't
+ * animate".
  */
 
 const NOUN: Record<OwnEditFormat, { item: string; set: string }> = {
@@ -27,7 +30,11 @@ const NOUN: Record<OwnEditFormat, { item: string; set: string }> = {
 }
 
 function describeFrame(f: OwnFrameInfo, i: number): string {
-  const who = f.aiMade ? "AI-made slide (added earlier)" : `HER OWN ${f.kind === "video" ? "video" : "photo/image"}`
+  const who = f.aiMade
+    ? f.kind === "video"
+      ? "AI-made frame with animated text (added earlier, a video clip)"
+      : "AI-made slide (added earlier)"
+    : `HER OWN ${f.kind === "video" ? "video" : "photo/image"}`
   const cap =
     f.caption === "ours"
       ? `has our caption: ${JSON.stringify({
@@ -61,13 +68,19 @@ export async function planOwnMediaEdit(
   const { format, frames } = input
   const n = frames.length
   const isSet = isSetFormat(format)
+  const animated = canAddAnimatedFrame(format)
   const client = new Anthropic({ apiKey })
   const ops = [
     `{"op":"set_caption","frames":[1..${n}],"headline"?:string,"body"?:string,"position"?:"top"|"center"|"bottom","style"?:{"pill"?:"#hex"|"none","text"?:"#hex","scale"?:0.6-1.5}} — add, rewrite, restyle or move the caption. Omitted fields keep the frame's current caption values; to change only the position or look, send only those. Text must be natural spoken Hebrew, short.`,
     `{"op":"remove_caption","frames":[...]} — take our caption off (back to her file as she brought it).`,
     ...(isSet
       ? [
-          `{"op":"add_slide","after":0..${n},"headline"?:string,"body"?:string,"role"?:"closing"|"content"|"cover"} — a NEW ${NOUN[format].item} designed by AI in her visual language, inserted after that position (0 = first). Write its Hebrew text from the post when she doesn't dictate it (a closing frame = a short CTA from the post).`,
+          `{"op":"add_slide","after":0..${n},"headline"?:string,"body"?:string,"role"?:"closing"|"content"|"cover"} — a NEW STILL ${NOUN[format].item} (one image) designed by AI in her visual language, inserted after that position (0 = first). Write its Hebrew text from the post when she doesn't dictate it (a closing frame = a short CTA from the post).`,
+          ...(animated
+            ? [
+                `{"op":"add_animated_slide","after":0..${n},"headline":string,"body"?:string,"role"?:"closing"|"content"|"cover"} — a NEW ${NOUN[format].item} with ANIMATED text: a 7-second vertical video clip, the same motion-design engine as our b-roll (her fonts, brand colours and visual language, kinetic Hebrew type over an AI background). Use it whenever she asks for animation / motion / moving or animated text / "מונפש" / "אנימציה" / "שזז" / "וידאו" for a new frame. headline = the main line (short, natural spoken Hebrew; from the post when she doesn't dictate it), body = an optional short second line. Takes ~3 minutes.`,
+              ]
+            : []),
           `{"op":"remove_slide","frames":[...]}`,
           `{"op":"duplicate_slide","frame":k}`,
           `{"op":"reorder","order":[the full new order, a permutation of 1..${n}]}`,
@@ -76,7 +89,16 @@ export async function planOwnMediaEdit(
   ]
   const system = [
     "You plan edits on social media that a Hebrew-speaking creator FILMED OR PHOTOGRAPHED HERSELF. The rule: you may add on top of her media or take away from it — the caption over it, extra AI-made slides, the order — but you NEVER change, regenerate, repaint, retouch, recolour, crop, filter or 'fix' her own photo or video pixels.",
-    "If she asks for something that would change her own pixels (brighter, remove an object, change the background, make her look different, improve the photo…), do NOT plan it: return no ops, refused:true, and a kind one-line Hebrew reply saying you can't change what she filmed/photographed, plus what you CAN do instead.",
+    `If she asks for something that would change her own pixels (brighter, remove an object, change the background, make her look different, improve the photo…), do NOT plan it: return no ops, refused:true, and a kind one-line Hebrew reply saying you can't change what she filmed/photographed, plus what you CAN do instead (the caption over it${isSet ? `, or a NEW frame${animated ? " — still or with animated text" : ""}` : ""}).`,
+    ...(isSet
+      ? [`Adding NEW frames is always allowed${animated ? " — still or animated —" : ""} because they are new pixels, not hers.`]
+      : []),
+    "NEVER say animation is impossible or that you can't make animated text: it exists (as a new animated story frame).",
+    animated
+      ? "A request for animation / motion / animated text on a NEW frame → add_animated_slide. A request for a plain new frame (no motion asked) → add_slide. If she asks to animate or move HER OWN frame, don't plan that, but offer in the reply to add a new animated frame next to it."
+      : isSet
+        ? "Animated frames exist only in a story here (a carousel item can't be a vertical video). If she asks for animation in this carousel, return no ops and a reply that offers a still slide instead and says an animated frame can be added in the story."
+        : "This format is one piece of media, so no frames can be added here. If she asks for animation, return no ops and a reply that says an animated frame can be added in the story.",
     "If her request is unclear, return no ops and a short Hebrew question in reply.",
     "Reply with JSON only: {\"reply\": \"one short Hebrew line, plural addressing (אתם), saying what you did / why not\", \"ops\": [...], \"refused\"?: true}.",
     "Never stack a second caption over words that are already there: a frame marked as already having its own words gets no caption unless she explicitly asks to put text on it.",
@@ -118,7 +140,7 @@ export async function planOwnMediaEdit(
   }
   return {
     reply: typeof json.reply === "string" && json.reply.trim() ? json.reply.trim() : "",
-    ops: sanitiseOps(json.ops, n, isSet),
+    ops: sanitiseOps(json.ops, n, isSet, animated),
     refused: json.refused === true || undefined,
   }
 }
@@ -131,7 +153,7 @@ function frameList(v: unknown, n: number): number[] {
 }
 
 /** Drop anything outside the closed set or pointing at frames that don't exist. */
-export function sanitiseOps(raw: unknown, n: number, isSet: boolean): OwnEditOp[] {
+export function sanitiseOps(raw: unknown, n: number, isSet: boolean, animated = false): OwnEditOp[] {
   if (!Array.isArray(raw)) return []
   const out: OwnEditOp[] = []
   for (const r of raw) {
@@ -152,11 +174,14 @@ export function sanitiseOps(raw: unknown, n: number, isSet: boolean): OwnEditOp[
         if (frames.length) out.push({ op: "remove_caption", frames })
         break
       }
-      case "add_slide": {
+      case "add_slide":
+      case "add_animated_slide": {
         if (!isSet) break
         const after = typeof o.after === "number" ? Math.min(n, Math.max(0, Math.round(o.after))) : n
         const role = o.role === "closing" || o.role === "content" || o.role === "cover" ? o.role : undefined
-        out.push({ op: "add_slide", after, headline: str(o.headline), body: str(o.body), role })
+        // Never quietly swap an animated ask for a still one where it can't be.
+        if (o.op === "add_animated_slide" && !animated) break
+        out.push({ op: o.op, after, headline: str(o.headline), body: str(o.body), role })
         break
       }
       case "remove_slide": {

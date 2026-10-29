@@ -225,6 +225,36 @@ export async function applyFixedElements(
 }
 
 /**
+ * Only the fixed elements, on a transparent canvas the size of `backgroundBase64`
+ * — for media whose background moves (the animated story frame,
+ * lib/own-media-animated): the layer sits on top, still, while the motion
+ * plays under it. The tone of each element is still chosen against that
+ * background. Null when no element belongs on this role.
+ */
+export async function fixedElementsLayer(
+  backgroundBase64: string,
+  fixed: FixedElement[],
+  role: ImageRole,
+): Promise<Buffer | null> {
+  const active = fixed.filter((el) => appliesToRole(el.placement.slides, role))
+  if (!active.length) return null
+  const bg = Buffer.from(backgroundBase64, "base64")
+  const { width: W = 0, height: H = 0 } = await sharp(bg).metadata()
+  const layers = await Promise.all(
+    active.map(async (el) => {
+      const box = elementBox(el, W, H)
+      const art = await pickVariant(el, bg, box)
+      const input = await sharp(art).resize({ width: box.width, height: box.height, fit: "fill" }).png().toBuffer()
+      return { input, left: box.left, top: box.top }
+    }),
+  )
+  return sharp({ create: { width: W, height: H, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite(layers)
+    .png()
+    .toBuffer()
+}
+
+/**
  * The version of an element that stays visible on this slide: the original
  * when it contrasts with the background under it; otherwise her uploaded
  * opposite-tone version, else an automatic one (flat artwork only).
