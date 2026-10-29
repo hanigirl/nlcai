@@ -29,6 +29,14 @@ import {
 } from "@/lib/ai-chat-session-store"
 import { AiChatNewButton } from "@/components/ai-chat-new-button"
 import { canRevealChat, revealChatReply } from "@/lib/ai-chat-reveal"
+import { REFERENCE_ONLY_INSTRUCTION } from "@/lib/ai-edit-references"
+import {
+  ReferenceButton,
+  ReferenceDropHint,
+  ReferenceThumbs,
+  ReferenceTray,
+  useReferenceImages,
+} from "@/components/ai-edit-reference"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
@@ -38,6 +46,8 @@ export function isEditableBRollUrl(url: string | null | undefined): boolean {
 export interface ChatMessage {
   role: "user" | "assistant"
   content: string
+  /** User turns: reference images she attached (shown in her bubble). */
+  images?: string[]
   /** Assistant turn that landed a new clip. */
   done?: boolean
   error?: boolean
@@ -283,6 +293,12 @@ export function MediaAiChat({
   // one she reopened counts too, so the leave-screen toast only comes when
   // she's really away.
   useWatchChat(chatKey)
+  // Screenshots waiting to go with the next message; another conversation starts clean.
+  const refs = useReferenceImages()
+  const { clear: clearRefs } = refs
+  useEffect(() => {
+    clearRefs()
+  }, [chatKey, clearRefs])
   const scrollRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   useDismissOnOutsideClick(panelRef, open && preview, () => onOpenChange(false))
@@ -327,12 +343,15 @@ export function MediaAiChat({
       feedbackById.get(asking.id)?.(reasons, text)
       text = dislikeInstruction(reasons.map((r) => DISLIKE_REASONS[r]), text)
     }
+    const attached = refs.refs
+    if (!text && attached.length) text = REFERENCE_ONLY_INSTRUCTION
     if (!text) return
+    refs.clear()
     patchKey((s) => ({
       ...s,
       input: "",
       busy: true,
-      messages: [...s.messages, { role: "user", content: text }],
+      messages: [...s.messages, { role: "user", content: text, ...(attached.length ? { images: attached } : {}) }],
       extra: { ...s.extra, asking: null, reasons: [] },
     }))
     // An edit that came from 👎 is learned by the feedback route, not here.
@@ -345,11 +364,11 @@ export function MediaAiChat({
     // server has saved it either way) — see lib/long-wait.
     const run =
       format === "b_roll"
-        ? startBRollEdit(postId, text, { quiet: true, learn }).then((r) => {
+        ? startBRollEdit(postId, text, { quiet: true, learn, references: attached }).then((r) => {
             if (r.ok) markAiMade(postId, "b_roll", r.url)
             return r
           })
-        : editImages(text, learn)
+        : editImages(text, learn, attached)
     const result = preview
       ? await trackAwayResult(`ai-edit-${postId}-${format}-${Date.now()}`, run, isWatching, AWAY_COPY[format], postId)
       : await run
@@ -408,12 +427,19 @@ export function MediaAiChat({
   async function editImages(
     text: string,
     learn = true,
+    references: string[] = [],
   ): Promise<{ ok: true; remembered?: string | null } | { ok: false; message: string }> {
     try {
       const res = await fetch("/api/media/ai-edit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, format, instruction: text, ...(learn ? {} : { learn: false }) }),
+        body: JSON.stringify({
+          postId,
+          format,
+          instruction: text,
+          ...(learn ? {} : { learn: false }),
+          ...(references.length ? { references } : {}),
+        }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         urls?: string[]
@@ -440,8 +466,10 @@ export function MediaAiChat({
       dir="rtl"
       role="dialog"
       aria-label={copy.title}
+      {...refs.dropProps}
       className={`fixed bottom-6 right-6 ${preview ? "z-50" : "z-40"} flex max-h-[72vh] w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl`}
     >
+      <ReferenceDropHint show={refs.dragging} />
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">
         <AiSparkle />
@@ -475,6 +503,7 @@ export function MediaAiChat({
               }`}
             >
               {m.content}
+              <ReferenceThumbs images={m.images} className="mt-1.5" />
             </div>
             {asking && i === asking.index && (
               <DislikeReasonChips
@@ -539,10 +568,12 @@ export function MediaAiChat({
             remembered={lastEdit.remembered}
           />
         )}
+        <ReferenceTray r={refs} />
         <div className="flex items-end gap-2 rounded-[12px] border border-border-neutral-default bg-white dark:bg-gray-10 p-2 focus-within:border-yellow-50 transition-colors">
           <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onPaste={refs.onPaste}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault()
@@ -553,12 +584,13 @@ export function MediaAiChat({
             ref={inputRef}
             rows={1}
             autoFocus
-            className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent p-1 text-small shadow-none focus-visible:ring-0"
+            className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent px-1 py-2 text-small shadow-none focus-visible:ring-0"
           />
+          <ReferenceButton r={refs} disabled={loading} />
           <Button
             size="icon-sm"
             onClick={() => void send()}
-            disabled={(!input.trim() && !(asking && reasons.length)) || loading}
+            disabled={(!input.trim() && !(asking && reasons.length) && !refs.refs.length) || loading}
             aria-label="שליחה"
             className="shrink-0 rounded-full"
           >

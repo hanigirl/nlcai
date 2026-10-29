@@ -23,6 +23,7 @@ import {
 } from "@/lib/carousel-composition"
 import { generateImage } from "@/lib/openai-image"
 import { isOwnMediaUrl } from "@/lib/own-media"
+import { parseReferences, referenceBlocks } from "@/lib/ai-edit-references"
 
 // Planning + up to 10 parallel image edits (30–120s each).
 export const maxDuration = 300
@@ -78,6 +79,7 @@ async function plan(
   format: EditableFormat,
   count: number,
   instruction: string,
+  refs: string[] = [],
 ): Promise<{ targets: number[]; edit: string }> {
   const client = new Anthropic({ apiKey })
   const msg = await client.messages.create({
@@ -89,13 +91,17 @@ async function plan(
       {
         role: "user",
         content: [
+          ...referenceBlocks(refs),
+          { type: "text", text: [
           `Format: ${NOUN[format]}${count > 1 ? `, a set of ${count} (numbered 1..${count} in order)` : ""}.`,
           `Her request (Hebrew): ${JSON.stringify(instruction)}`,
           "",
           'Return {"targets": [numbers] , "edit": "..."}.',
           `- targets: which items the request is about. If she names items (e.g. "שקופית 2", "הפריים האחרון", "הראשונה") use those; if it's about the look in general or doesn't say, all of 1..${count}.`,
-          "- edit: one precise English instruction for an image-editing model describing ONLY the change she asked for (colours, sizes, positions, elements, mood…). If she asks to change wording, quote the new Hebrew text exactly. Do not invent changes she didn't ask for.",
-        ].join("\n"),
+          "- edit: one precise English instruction for an image-editing model describing ONLY the change she asked for (colours, sizes, positions, elements, mood…). If she asks to change wording, quote the new Hebrew text exactly. Do not invent changes she didn't ask for." +
+            (refs.length ? " The image editor will NOT see her reference images, so spell out in words exactly what to take from them." : ""),
+        ].join("\n") },
+        ],
       },
     ],
   })
@@ -124,14 +130,17 @@ function editPrompt(edit: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { postId, format, instruction, learn } = (await req.json().catch(() => ({}))) as {
+    const { postId, format, instruction, learn, references } = (await req.json().catch(() => ({}))) as {
       postId?: string
       format?: unknown
       instruction?: string
+      /** Screenshots she attached (lib/ai-edit-references). */
+      references?: unknown
       /** false: already learned via the 👎 feedback (style-feedback route). */
       learn?: boolean
     }
     const text = instruction?.trim()
+    const refs = parseReferences(references)
     if (!postId || !text || !isEditableFormat(format)) {
       return NextResponse.json({ error: "postId, format and instruction are required" }, { status: 400 })
     }
@@ -203,7 +212,7 @@ export async function POST(req: NextRequest) {
     const learning =
       learn === false
         ? Promise.resolve(null)
-        : learnFromInstruction(supabase, user.id, anthropicKey, text, NOUN[format])
+        : learnFromInstruction(supabase, user.id, anthropicKey, text, NOUN[format], refs)
 
     // A carousel laid out in code is edited in its layout — exact and
     // obedient — and only the illustrations she asks about are redrawn. Only
@@ -211,7 +220,7 @@ export async function POST(req: NextRequest) {
     // changed any of them, the real images are edited instead.
     const stored = format === "carousel" ? await loadCarousel(supabase, user.id, postId) : null
     if (stored && (await carouselStillMatches(stored, urls))) {
-      const revised = await reviseCarousel(anthropicKey, stored, text)
+      const revised = await reviseCarousel(anthropicKey, stored, text, refs)
       const illustrations = [...stored.illustrations]
       const redraw = revised.illustrations
         .map((idea, i) => ({ idea: idea.trim(), i }))
@@ -257,7 +266,7 @@ export async function POST(req: NextRequest) {
         remembered: await learning,
       })
     }
-    const { targets, edit } = await plan(anthropicKey, format, urls.length, text)
+    const { targets, edit } = await plan(anthropicKey, format, urls.length, text, refs)
     const prompt = editPrompt(edit)
 
     const next = [...urls]

@@ -7,6 +7,14 @@ import { useDismissOnOutsideClick } from "@/lib/use-dismiss-on-outside-click"
 import { COPY_NOUN } from "@/lib/format-copy-refine"
 import { AiChatNewButton } from "@/components/ai-chat-new-button"
 import { useWatchChat } from "@/lib/ai-chat-session-store"
+import { REFERENCE_ONLY_INSTRUCTION } from "@/lib/ai-edit-references"
+import {
+  ReferenceButton,
+  ReferenceDropHint,
+  ReferenceThumbs,
+  ReferenceTray,
+  useReferenceImages,
+} from "@/components/ai-edit-reference"
 import type { FormatCopyAiController } from "./use-format-copy-ai"
 import {
   CopyAppliedNote,
@@ -41,6 +49,12 @@ export function FormatCopyChat({
   const session = fid ? ctrl.session(fid) : null
   // While shown, a reply lands here — nothing to reopen (lib/ai-chat-reveal).
   useWatchChat(fid ? ctrl.chatKey(fid) : null)
+  // Screenshots waiting to go with the next message; a different format starts clean.
+  const refs = useReferenceImages()
+  const { clear: clearRefs } = refs
+  useEffect(() => {
+    clearRefs()
+  }, [fid, clearRefs])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
@@ -48,9 +62,14 @@ export function FormatCopyChat({
 
   if (!fid || !session) return null
 
-  // The half-typed text is kept with the conversation (ctrl.input).
+  // The half-typed text is kept with the conversation (ctrl.input); ctrl.send clears it.
   const input = ctrl.input(fid)
-  const send = (text: string) => ctrl.send(fid, text)
+  const send = (text: string) => {
+    const attached = refs.refs
+    if (!text.trim() && !attached.length) return
+    ctrl.send(fid, text.trim() || REFERENCE_ONLY_INSTRUCTION, attached)
+    refs.clear()
+  }
   const fresh = session.messages.length === 0
 
   return (
@@ -60,8 +79,10 @@ export function FormatCopyChat({
       dir="rtl"
       role="dialog"
       aria-label={`עריכת ${COPY_NOUN[fid]} עם AI`}
+      {...refs.dropProps}
       className={`${floating ? "fixed bottom-6 right-6 z-50 max-h-[72vh]" : "relative max-h-[560px]"} flex w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl`}
     >
+      <ReferenceDropHint show={refs.dragging} />
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">
         <AiSparkle />
         <span className="text-small-bold text-text-primary-default">עריכת {COPY_NOUN[fid]}</span>
@@ -99,6 +120,7 @@ export function FormatCopyChat({
                 }`}
               >
                 {m.content}
+                <ReferenceThumbs images={m.images} className="mt-1.5" />
               </div>
             )}
             {m.role === "assistant" && m.revised && (
@@ -120,7 +142,17 @@ export function FormatCopyChat({
       </div>
 
       <div className="border-t border-border-neutral-default p-3">
-        <CopyComposer value={input} onChange={(v) => ctrl.setInput(fid, v)} onSend={() => send(input)} busy={session.loading} autoFocus />
+        <ReferenceTray r={refs} />
+        <CopyComposer
+          value={input}
+          onChange={(v) => ctrl.setInput(fid, v)}
+          onSend={() => send(input)}
+          busy={session.loading}
+          autoFocus
+          canSendEmpty={refs.refs.length > 0}
+          onPaste={refs.onPaste}
+          beforeSend={<ReferenceButton r={refs} disabled={session.loading} />}
+        />
       </div>
     </div>
   )

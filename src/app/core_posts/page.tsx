@@ -790,7 +790,7 @@ function CorePostCard({
             (FormatStatusChipLink): SR announces 4 distinct actions, and it
             stops click propagation so it doesn't double-fire with the card's
             onClick. Neutral chips echo the card's yellow hover; "set" chips
-            keep their green identity. */}
+            keep their primary identity. */}
         <div className="mt-auto flex flex-wrap gap-1 pt-1">
           {CARD_CHIP_FORMATS.map((format) => {
             const state = getFormatReadiness(readinessInput, format)

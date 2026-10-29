@@ -461,7 +461,7 @@ function FormatCard({
           {hook}
         </p>
         <div className="flex">
-          <FormatStatusChip format={post.format} state="ready" size="xs" />
+          <FormatStatusChip format={post.format} state="scheduled" size="xs" />
         </div>
         {/* Where this slot stands with Instagram — "תוזמן" only when the
             provider holds it, otherwise what's wrong and one way to fix it. */}

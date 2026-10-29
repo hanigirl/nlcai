@@ -7,6 +7,7 @@ import { finalizeHtml, reviseBRoll } from "@/lib/broll-animation/compose"
 import { renderComposition } from "@/lib/broll-animation/render"
 import { loadComposition, saveBRoll } from "@/lib/broll-animation/store"
 import { learnFromInstruction } from "@/lib/style-memory"
+import { parseReferences } from "@/lib/ai-edit-references"
 
 // Opus revision + frame-by-frame render.
 export const maxDuration = 300
@@ -23,13 +24,16 @@ export const maxDuration = 300
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
   try {
-    const { postId, instruction, learn } = (await req.json().catch(() => ({}))) as {
+    const { postId, instruction, learn, references } = (await req.json().catch(() => ({}))) as {
+      /** Screenshots she attached (lib/ai-edit-references). */
+      references?: unknown
       postId?: string
       instruction?: string
       /** false: already learned via the 👎 feedback (style-feedback route). */
       learn?: boolean
     }
     const text = instruction?.trim()
+    const refs = parseReferences(references)
     if (!postId || !text) {
       return NextResponse.json({ error: "postId and instruction are required" }, { status: 400 })
     }
@@ -92,8 +96,8 @@ export async function POST(req: NextRequest) {
     // Learning runs alongside the edit: a lasting preference in her words
     // ("the brush thin and yellow") applies to every format from now on.
     const [template, remembered] = await Promise.all([
-      reviseBRoll(anthropicKey, composition.brief, composition.template, text),
-      learn === false ? Promise.resolve(null) : learnFromInstruction(supabase, user.id, anthropicKey, text, "b-roll"),
+      reviseBRoll(anthropicKey, composition.brief, composition.template, text, refs),
+      learn === false ? Promise.resolve(null) : learnFromInstruction(supabase, user.id, anthropicKey, text, "b-roll", refs),
     ])
 
     const stamp = crypto.randomUUID()

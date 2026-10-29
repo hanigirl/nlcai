@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk"
+import { referenceBlocks } from "@/lib/ai-edit-references"
 
 /**
  * B-roll text animation, written by Claude Opus (Hani, 2026-10-22).
@@ -167,7 +168,7 @@ function assertSeekable(html: string): void {
   }
 }
 
-async function ask(apiKey: string, user: string): Promise<string> {
+async function ask(apiKey: string, user: string, refs: string[] = []): Promise<string> {
   const client = new Anthropic({ apiKey })
   // Streamed: an Opus composition can run long, and the SDK refuses long
   // non-streaming requests.
@@ -176,7 +177,7 @@ async function ask(apiKey: string, user: string): Promise<string> {
       model: BROLL_MODEL,
       max_tokens: 16000,
       system: SYSTEM,
-      messages: [{ role: "user", content: user }],
+      messages: [{ role: "user", content: refs.length ? [...referenceBlocks(refs), { type: "text", text: user }] : user }],
     })
     .finalMessage()
   const text = message.content
@@ -211,6 +212,8 @@ export async function reviseBRoll(
   brief: CompositionBrief,
   current: string,
   instruction: string,
+  /** Screenshots she attached to show what she means (lib/ai-edit-references). */
+  refs: string[] = [],
 ): Promise<string> {
   return ask(
     apiKey,
@@ -227,6 +230,7 @@ export async function reviseBRoll(
       "",
       "Return the full revised HTML document.",
     ].join("\n"),
+    refs,
   )
 }
 

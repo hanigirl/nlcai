@@ -25,6 +25,8 @@ import { revealChatReply } from "@/lib/ai-chat-reveal"
 export interface CopyAiMessage {
   role: "user" | "assistant"
   content: string
+  /** User turns: reference images she attached (shown in her bubble). */
+  images?: string[]
   /** Assistant turns: the full revised text that was previewed in the card. */
   revised?: string
   /** Assistant turns: the text to restore on "ביטול". */
@@ -42,6 +44,8 @@ export interface CopyAiSession {
   error: string
   /** The last instruction sent — what "ניסיון חוזר" re-sends after an error. */
   lastInstruction: string
+  /** …and the references that went with it. */
+  lastReferences?: string[]
 }
 
 const EMPTY_SESSION: CopyAiSession = { messages: [], loading: false, error: "", lastInstruction: "" }
@@ -51,6 +55,7 @@ export type CopyRefineResponder = (input: {
   currentText: string
   hook?: string
   messages: CopyRefineTurn[]
+  references?: string[]
 }) => Promise<CopyRefineResult>
 
 export interface FormatCopyAiController {
@@ -59,7 +64,8 @@ export interface FormatCopyAiController {
   session: (fid: CopyFormat) => CopyAiSession
   open: (fid: CopyFormat) => void
   close: () => void
-  send: (fid: CopyFormat, instruction: string) => void
+  /** `references`: screenshots attached to this message (sent with it only). */
+  send: (fid: CopyFormat, instruction: string, references?: string[]) => void
   retry: (fid: CopyFormat) => void
   keep: (fid: CopyFormat, index: number) => void
   cancel: (fid: CopyFormat, index: number) => void
@@ -96,6 +102,8 @@ interface Options {
 interface CopyChatExtra {
   error: string
   lastInstruction: string
+  /** The screenshots that went with lastInstruction — re-sent by "ניסיון חוזר". */
+  lastReferences?: string[]
 }
 type CopyChat = AiChatSession<CopyAiMessage, CopyChatExtra>
 
@@ -138,7 +146,13 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder, 
     (fid: CopyFormat): CopyAiSession => {
       const c = chatOf(fid)
       if (!c) return EMPTY_SESSION
-      return { messages: c.messages, loading: c.busy, error: c.extra.error, lastInstruction: c.extra.lastInstruction }
+      return {
+        messages: c.messages,
+        loading: c.busy,
+        error: c.extra.error,
+        lastInstruction: c.extra.lastInstruction,
+        lastReferences: c.extra.lastReferences,
+      }
     },
     // `version`: a conversation changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -152,11 +166,15 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder, 
   )
 
   const run = useCallback(
-    async (fid: CopyFormat, instruction: string, history: CopyAiMessage[]) => {
+    async (fid: CopyFormat, instruction: string, history: CopyAiMessage[], references: string[] = []) => {
       // The reply belongs to this post's conversation even if the panel closes first.
       const key = keyOf(fid)
       const before = getTextRef.current(fid)
-      patchKey(key, (s) => ({ ...s, busy: true, extra: { ...s.extra, error: "", lastInstruction: instruction } }))
+      patchKey(key, (s) => ({
+        ...s,
+        busy: true,
+        extra: { ...s.extra, error: "", lastInstruction: instruction, lastReferences: references },
+      }))
       try {
         const ask = responder ?? requestFormatCopyRefine
         const { reply, revisedText } = await ask({
@@ -164,6 +182,7 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder, 
           currentText: before,
           hook,
           messages: history.map((m) => ({ role: m.role, content: m.content })),
+          ...(references.length ? { references } : {}),
         })
         if (revisedText) setText(fid, revisedText)
         patchKey(key, (s) => ({
@@ -196,16 +215,19 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder, 
   )
 
   const send = useCallback(
-    (fid: CopyFormat, instruction: string) => {
+    (fid: CopyFormat, instruction: string, references: string[] = []) => {
       const text = instruction.trim()
       const current = chatOf(fid) ?? freshChat()
       if (!text || current.busy) return
       // Asking for the next change keeps the previous proposal — its text is
       // already the baseline the next revision builds on.
       const kept = current.messages.map((m) => (m.status === "pending" ? { ...m, status: "applied" as const } : m))
-      const next: CopyAiMessage[] = [...kept, { role: "user", content: text }]
+      const next: CopyAiMessage[] = [
+        ...kept,
+        { role: "user", content: text, ...(references.length ? { images: references } : {}) },
+      ]
       patchKey(keyOf(fid), (s) => ({ ...s, messages: next, input: "" }))
-      void run(fid, text, next)
+      void run(fid, text, next, references)
     },
      
     [chatOf, keyOf, run],
@@ -215,7 +237,7 @@ export function useFormatCopyAi({ getText, setText, hook, onVerdict, responder, 
     (fid: CopyFormat) => {
       const s = chatOf(fid)
       if (!s?.extra.lastInstruction || s.busy) return
-      void run(fid, s.extra.lastInstruction, s.messages)
+      void run(fid, s.extra.lastInstruction, s.messages, s.extra.lastReferences)
     },
     [chatOf, run],
   )

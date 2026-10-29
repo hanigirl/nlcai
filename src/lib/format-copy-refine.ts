@@ -78,6 +78,8 @@ export async function requestFormatCopyRefine(input: {
   currentText: string
   hook?: string
   messages: CopyRefineTurn[]
+  /** Screenshots attached to the last turn (lib/ai-edit-references). */
+  references?: string[]
 }): Promise<CopyRefineResult> {
   let res: Response
   try {

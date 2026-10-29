@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk"
+import { referenceBlocks } from "@/lib/ai-edit-references"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { stripDashes } from "@/lib/strip-dashes"
 
@@ -77,6 +78,8 @@ export async function learnFromInstruction(
   anthropicKey: string,
   instruction: string,
   source: string,
+  /** Screenshots she attached — the rule can name what they show. */
+  refs: string[] = [],
 ): Promise<string | null> {
   try {
     const existing = await loadStyleRules(supabase, userId)
@@ -90,6 +93,8 @@ export async function learnFromInstruction(
         {
           role: "user",
           content: [
+            ...referenceBlocks(refs),
+            { type: "text", text: [
             `She just asked for this change while editing a ${source} (Hebrew): ${JSON.stringify(instruction)}`,
             "",
             "Current standing preferences:",
@@ -98,7 +103,9 @@ export async function learnFromInstruction(
             "Does her request express a LASTING preference about how her designs should look — a specific element (brush strokes, icons, shapes, frames, arrows, highlights…), typography, colour use, layout habits, mood — that should apply to future designs in every format? One-off content edits (change this word, fix this slide's text, move this one thing on this image only) are NOT lasting.",
             "",
             'Return {"remember": false} or {"remember": true, "rule": "<one precise English rule a designer can follow>", "summary_he": "<short Hebrew summary for her>", "replaces": <number of an existing preference this updates, or null>}.',
-          ].join("\n"),
+            ...(refs.length ? ["If a reference image shows the look she wants as a habit, describe that look concretely in the rule (the rule is kept as text; the image is not)."] : []),
+          ].join("\n") },
+          ],
         },
       ],
     })

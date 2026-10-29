@@ -8,6 +8,7 @@ import { fetchLearningInsights } from "@/lib/learning-insights"
 import { stripDashes } from "@/lib/strip-dashes"
 import { buildFormatCopyRefinerPrompt } from "@/lib/agents/format-copy-refiner"
 import { isCopyFormat, type CopyRefineTurn } from "@/lib/format-copy-refine"
+import { parseReferences, referenceBlocks } from "@/lib/ai-edit-references"
 
 /**
  * POST /api/format/refine — "עריכה עם AI" on one format's copy.
@@ -22,22 +23,31 @@ export async function POST(req: NextRequest) {
     const user = await getAuthUser(supabase)
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-    const { format, currentText, hook, messages } = (await req.json()) as {
+    const { format, currentText, hook, messages, references } = (await req.json()) as {
       format?: string
       currentText?: string
       hook?: string
       messages?: CopyRefineTurn[]
+      /** Screenshots she attached to this turn (lib/ai-edit-references). */
+      references?: unknown
     }
 
     if (!format || !isCopyFormat(format) || !currentText || !Array.isArray(messages)) {
       return NextResponse.json({ error: "format, currentText and messages are required" }, { status: 400 })
     }
 
-    const apiMessages = messages
+    const apiMessages: Anthropic.MessageParam[] = messages
       .filter((m) => (m.role === "user" || m.role === "assistant") && m.content?.trim())
       .map((m) => ({ role: m.role, content: m.content }))
     if (apiMessages.length === 0 || apiMessages[apiMessages.length - 1].role !== "user") {
       return NextResponse.json({ error: "last message must be from the user" }, { status: 400 })
+    }
+
+    // Her screenshots go with the instruction they came with — the last turn.
+    const refs = parseReferences(references)
+    if (refs.length) {
+      const last = apiMessages[apiMessages.length - 1]
+      last.content = [...referenceBlocks(refs), { type: "text", text: last.content as string }]
     }
 
     let apiKey: string
