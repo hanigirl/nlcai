@@ -5,8 +5,16 @@ import { ArrowUp, Check, Loader2, X } from "lucide-react"
 import { AiSparkle } from "@/components/ai-refine-button"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { useDismissOnOutsideClick } from "@/lib/use-dismiss-on-outside-click"
 import { startBRollEdit } from "@/lib/broll-generation-store"
 import { getAiStyle, recordAiStyleVote, rememberAiStyle } from "@/lib/ai-style-provenance"
+import { LongWaitBusyRow } from "@/components/long-wait-busy-row"
+import { AWAY_COPY, trackAwayResult, useIsWatching } from "@/lib/long-wait"
+import { SaveToVisualLanguageChip } from "@/components/save-to-visual-language-chip"
+import { dislikeInstruction, type AiEditOpening } from "@/lib/ai-edit-intent"
+import { DislikeReasonChips } from "@/components/dislike-reason-chips"
+import { DISLIKE_REASONS, type DislikeReason } from "@/lib/visual-language/types"
+import { usePreviewAccess } from "@/lib/use-scheduling-access"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
@@ -19,9 +27,12 @@ interface ChatMessage {
   /** Assistant turn that landed a new clip. */
   done?: boolean
   error?: boolean
-  /** A lasting preference distilled from her instruction (Hebrew). */
+  /** A lasting preference distilled from her instruction (Hebrew) — shown by the save chip. */
   remembered?: string | null
 }
+
+/** The first turn when 👎 opened the panel (lib/ai-edit-intent). */
+const DISLIKE_ASK = "מה לא אהבתם? ספרו לנו, ואעדכן את זה עכשיו. מה שתכתבו נשמר גם לשפה הוויזואלית שלכם, לפעמים הבאות."
 
 /**
  * After an edit the card shows new media — move this format's AI provenance
@@ -36,6 +47,17 @@ function markAiMade(postId: string, format: AiEditFormat, mediaKey: string) {
   }
   const prev = getAiStyle(postId, format)
   rememberAiStyle(postId, format, prev?.style && prev.style !== "niche" ? prev.style : "brand", mediaKey)
+}
+
+/** The newest edit that landed, with the instruction that asked for it. */
+function lastLandedEdit(messages: ChatMessage[]) {
+  for (let i = messages.length - 1; i > 0; i--) {
+    if (messages[i].done) {
+      const ask = messages.slice(0, i).reverse().find((m) => m.role === "user")
+      return ask ? { index: i, instruction: ask.content, remembered: messages[i].remembered ?? null } : null
+    }
+  }
+  return null
 }
 
 export type AiEditFormat = "b_roll" | "carousel" | "story" | "image_post"
@@ -86,6 +108,7 @@ export function MediaAiChat({
   open,
   onOpenChange,
   onUpdated,
+  opening,
 }: {
   postId: string
   format: AiEditFormat
@@ -93,36 +116,70 @@ export function MediaAiChat({
   onOpenChange: (open: boolean) => void
   /** Image formats: the saved set, in order, after an edit. */
   onUpdated?: (format: AiEditFormat, urls: string[]) => void
+  /** Opened by 👎 on the card: ask what she didn't like, with the reasons. */
+  opening?: AiEditOpening | null
 }) {
   const copy = COPY[format]
-  const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: copy.intro }])
-  // A different format's chat starts its own conversation.
-  const [chatFormat, setChatFormat] = useState(format)
-  if (chatFormat !== format) {
-    setChatFormat(format)
-    setMessages([{ role: "assistant", content: copy.intro }])
+  // Today's batch (2026-10-29), Hani only: z-50 + outside-click close, the
+  // leave-screen note, the save chip, 👎 opening. Off (or loading) = as before.
+  const preview = usePreviewAccess() === true
+  const firstTurn = (o?: AiEditOpening | null): ChatMessage => ({
+    role: "assistant",
+    content: o ? DISLIKE_ASK : copy.intro,
+  })
+  const [messages, setMessages] = useState<ChatMessage[]>([firstTurn(opening)])
+  // A different format's chat, or a fresh 👎, starts its own conversation.
+  const [chatFormat, setChatFormat] = useState(`${format}:${opening?.id ?? ""}`)
+  // Until her first answer: the reason chips, and that answer teaches the style.
+  const [asking, setAsking] = useState<AiEditOpening | null>(opening ?? null)
+  const [reasons, setReasons] = useState<DislikeReason[]>([])
+  if (chatFormat !== `${format}:${opening?.id ?? ""}`) {
+    setChatFormat(`${format}:${opening?.id ?? ""}`)
+    setMessages([firstTurn(opening)])
+    setAsking(opening ?? null)
+    setReasons([])
   }
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
+  const isWatching = useIsWatching()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  useDismissOnOutsideClick(panelRef, open && preview, () => onOpenChange(false))
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
   }, [messages, loading])
 
   const send = async () => {
-    const text = input.trim()
+    let text = input.trim()
+    // Her 👎 answer: the style-feedback route learns from it, so the edit
+    // doesn't learn it a second time (learn: false).
+    const fromFeedback = !!asking
+    if (asking) {
+      if ((!text && !reasons.length) || loading) return
+      asking.onFeedback(reasons, text)
+      text = dislikeInstruction(reasons.map((r) => DISLIKE_REASONS[r]), text)
+      setAsking(null)
+      setReasons([])
+    }
     if (!text || loading) return
     setInput("")
     setMessages((prev) => [...prev, { role: "user", content: text }])
     setLoading(true)
-    const result =
+    // An edit that came from 👎 is learned by the feedback route, not here.
+    const learn = !fromFeedback
+    // If she leaves before it lands, the result arrives as a toast (the
+    // server has saved it either way) — see lib/long-wait.
+    const run =
       format === "b_roll"
-        ? await startBRollEdit(postId, text, { quiet: true }).then((r) => {
+        ? startBRollEdit(postId, text, { quiet: true, learn }).then((r) => {
             if (r.ok) markAiMade(postId, "b_roll", r.url)
             return r
           })
-        : await editImages(text)
+        : editImages(text, learn)
+    const result = preview
+      ? await trackAwayResult(`ai-edit-${postId}-${format}-${Date.now()}`, run, isWatching, AWAY_COPY[format])
+      : await run
     setLoading(false)
     setMessages((prev) => [
       ...prev,
@@ -134,12 +191,13 @@ export function MediaAiChat({
 
   async function editImages(
     text: string,
+    learn = true,
   ): Promise<{ ok: true; remembered?: string | null } | { ok: false; message: string }> {
     try {
       const res = await fetch("/api/media/ai-edit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, format, instruction: text }),
+        body: JSON.stringify({ postId, format, instruction: text, ...(learn ? {} : { learn: false }) }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         urls?: string[]
@@ -156,14 +214,17 @@ export function MediaAiChat({
     }
   }
 
+  const lastEdit = lastLandedEdit(messages)
+
   if (!open) return null
 
   return (
     <div
+      ref={panelRef}
       dir="rtl"
       role="dialog"
       aria-label={copy.title}
-      className="fixed bottom-6 right-6 z-40 flex max-h-[72vh] w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl"
+      className={`fixed bottom-6 right-6 ${preview ? "z-50" : "z-40"} flex max-h-[72vh] w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl`}
     >
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">
@@ -194,13 +255,22 @@ export function MediaAiChat({
             >
               {m.content}
             </div>
-            {m.done && (
+            {asking && i === 0 && (
+              <DislikeReasonChips value={reasons} onChange={setReasons} className="max-w-[85%] justify-end" />
+            )}
+            {m.done && preview && (
+              <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
+                <Check className="size-3.5 text-green-success-50" />
+                הוחל.
+              </span>
+            )}
+            {m.done && !preview && (
               <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
                 <Check className="size-3.5 text-yellow-30" />
                 הוחל. אהבתם? סמנו 👍 או 👎 בכרטיס, כדי שה-AI ילמד את הסגנון שלכם.
               </span>
             )}
-            {m.remembered && (
+            {m.remembered && !preview && (
               <span className="max-w-[85%] rounded-xl border border-border-neutral-default px-3 py-1.5 text-xs-body text-text-neutral-default">
                 אזכור את זה גם להבא, בכל הפורמטים: {m.remembered}
               </span>
@@ -208,7 +278,10 @@ export function MediaAiChat({
           </div>
         ))}
 
-        {loading && (
+        {loading && preview && (
+          <LongWaitBusyRow text={copy.busy} />
+        )}
+        {loading && !preview && (
           <div className="flex items-center gap-2 text-small text-text-neutral-default">
             <Loader2 className="size-4 animate-spin text-yellow-50" />
             <span>{copy.busy}</span>
@@ -218,6 +291,14 @@ export function MediaAiChat({
 
       {/* Composer */}
       <div className="border-t border-border-neutral-default p-3">
+        {preview && lastEdit && !loading && (
+          <SaveToVisualLanguageChip
+            key={`${chatFormat}:${lastEdit.index}`}
+            instruction={lastEdit.instruction}
+            format={format}
+            remembered={lastEdit.remembered}
+          />
+        )}
         <div className="flex items-end gap-2 rounded-[12px] border border-border-neutral-default bg-white dark:bg-gray-10 p-2 focus-within:border-yellow-50 transition-colors">
           <Textarea
             value={input}
@@ -228,7 +309,7 @@ export function MediaAiChat({
                 void send()
               }
             }}
-            placeholder="מה תרצו לשנות?"
+            placeholder={asking ? "מה לא אהבתם? ספרו לנו" : "מה תרצו לשנות?"}
             rows={1}
             autoFocus
             className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent p-1 text-small shadow-none focus-visible:ring-0"
@@ -236,7 +317,7 @@ export function MediaAiChat({
           <Button
             size="icon-sm"
             onClick={() => void send()}
-            disabled={!input.trim() || loading}
+            disabled={(!input.trim() && !(asking && reasons.length)) || loading}
             aria-label="שליחה"
             className="shrink-0 rounded-full"
           >

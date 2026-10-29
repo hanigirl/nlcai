@@ -23,7 +23,8 @@ export type DriveFolderItem = {
 export type DriveFolderListing = { name: string; items: DriveFolderItem[] }
 
 const VIDEO_EXT = /\.(mp4|mov|m4v|webm|avi|mkv|3gp)$/i
-const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif|bmp|tiff?)$/i
+const IMAGE_EXT_OLD = /\.(jpe?g|png|webp|gif|heic|heif|bmp|tiff?)$/i
+const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif|bmp|tiff?|avif)$/i
 
 /** The folder id from a share link, or why there isn't one. */
 export function parseFolderLink(raw: string): { id: string } | { error: DriveFolderError } {
@@ -55,6 +56,8 @@ function decodeEntities(s: string): string {
  */
 export async function listPublicFolder(
   folderId: string,
+  /** Hani's preview batch (2026-10-29): avif + extension-less files by Drive's type icon. */
+  preview = false,
 ): Promise<DriveFolderListing | { error: DriveFolderError }> {
   const res = await fetch(
     `https://drive.google.com/embeddedfolderview?id=${encodeURIComponent(folderId)}`,
@@ -81,7 +84,13 @@ export async function listPublicFolder(
     // Sub-folders link to /drive/folders/ — not media.
     if (/\/folders\//.test(body)) continue
     const fileName = decodeEntities(rawName.trim())
-    const kind = VIDEO_EXT.test(fileName) ? "video" : IMAGE_EXT.test(fileName) ? "image" : null
+    // By extension first; a file named without one (a phone export, a
+    // renamed upload) falls back to the type icon Drive draws for it
+    // (…/type/image/jpeg, …/type/video/mp4). Before, those were dropped and an
+    // images folder could read as empty.
+    const mime = preview ? (body.match(/\/type\/(image|video)\//)?.[1] as "image" | "video" | undefined) : undefined
+    const imageExt = preview ? IMAGE_EXT : IMAGE_EXT_OLD
+    const kind = VIDEO_EXT.test(fileName) ? "video" : imageExt.test(fileName) ? "image" : (mime ?? null)
     if (!kind) continue
     seen.add(id)
     // The entry's own preview image; its size suffix (=s190) is asked bigger.

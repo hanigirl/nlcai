@@ -3,6 +3,7 @@ import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-cre
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
+import { canUsePreview } from "@/lib/scheduling-access"
 import { finalizeHtml, reviseBRoll } from "@/lib/broll-animation/compose"
 import { renderComposition } from "@/lib/broll-animation/render"
 import { loadComposition, saveBRoll } from "@/lib/broll-animation/store"
@@ -23,9 +24,11 @@ export const maxDuration = 300
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
   try {
-    const { postId, instruction } = (await req.json().catch(() => ({}))) as {
+    const { postId, instruction, learn } = (await req.json().catch(() => ({}))) as {
       postId?: string
       instruction?: string
+      /** false: already learned via the 👎 feedback (style-feedback route). */
+      learn?: boolean
     }
     const text = instruction?.trim()
     if (!postId || !text) {
@@ -91,7 +94,7 @@ export async function POST(req: NextRequest) {
     // ("the brush thin and yellow") applies to every format from now on.
     const [template, remembered] = await Promise.all([
       reviseBRoll(anthropicKey, composition.brief, composition.template, text),
-      learnFromInstruction(supabase, user.id, anthropicKey, text, "b-roll"),
+      learn === false && canUsePreview(user.email) ? Promise.resolve(null) : learnFromInstruction(supabase, user.id, anthropicKey, text, "b-roll"),
     ])
 
     const stamp = crypto.randomUUID()

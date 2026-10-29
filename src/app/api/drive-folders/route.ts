@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { getAuthUser } from "@/lib/auth-user"
+import { canUsePreview } from "@/lib/scheduling-access"
 import {
   listPublicFolder,
   parseFolderLink,
@@ -45,9 +46,9 @@ async function writeSaved(userId: string, folders: Partial<Record<Key, Saved>>) 
   if (error) throw new Error(error.message)
 }
 
-async function list(saved: Saved): Promise<Folder> {
+async function list(saved: Saved, preview: boolean): Promise<Folder> {
   try {
-    const r = await listPublicFolder(saved.id)
+    const r = await listPublicFolder(saved.id, preview)
     if ("error" in r) return { link: saved.link, error: r.error }
     return { link: saved.link, name: r.name || saved.name, items: r.items }
   } catch {
@@ -60,16 +61,17 @@ export async function GET(req: NextRequest) {
   const user = await getAuthUser(supabase)
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const saved = await readSaved(user.id)
+  const preview = canUsePreview(user.email)
 
   const key = req.nextUrl.searchParams.get("key")
   if (key) {
     if (!isKey(key)) return NextResponse.json({ error: "bad key" }, { status: 400 })
     const s = saved[key]
-    return NextResponse.json({ folder: s ? await list(s) : null })
+    return NextResponse.json({ folder: s ? await list(s, preview) : null })
   }
 
   const entries = await Promise.all(
-    KEYS.map(async (k) => [k, saved[k] ? await list(saved[k]!) : null] as const),
+    KEYS.map(async (k) => [k, saved[k] ? await list(saved[k]!, preview) : null] as const),
   )
   return NextResponse.json({ folders: Object.fromEntries(entries) })
 }
@@ -82,6 +84,7 @@ export async function POST(req: NextRequest) {
   const { key, link } = (await req.json().catch(() => ({}))) as { key?: unknown; link?: unknown }
   if (!isKey(key)) return NextResponse.json({ error: "bad key" }, { status: 400 })
   const saved = await readSaved(user.id)
+  const preview = canUsePreview(user.email)
 
   const trimmed = typeof link === "string" ? link.trim() : ""
   if (!trimmed) {
@@ -95,7 +98,7 @@ export async function POST(req: NextRequest) {
   if ("error" in parsed) return NextResponse.json({ error: parsed.error })
   let listing: Awaited<ReturnType<typeof listPublicFolder>>
   try {
-    listing = await listPublicFolder(parsed.id)
+    listing = await listPublicFolder(parsed.id, preview)
   } catch {
     listing = { error: "not_public" }
   }
@@ -103,6 +106,11 @@ export async function POST(req: NextRequest) {
   // shown as the error with its fix, not quietly remembered.
   if ("error" in listing) return NextResponse.json({ error: listing.error })
 
-  await writeSaved(user.id, { ...saved, [key]: { link: trimmed, id: parsed.id, name: listing.name } })
+  // Re-read right before writing. Listing the folder takes seconds, and
+  // `saved` from before it is stale: connecting the images folder while the
+  // b-roll one was still being checked wrote back the old set and silently
+  // dropped one of them — "connected" on screen, gone on the next load.
+  const fresh = preview ? await readSaved(user.id) : saved
+  await writeSaved(user.id, { ...fresh, [key]: { link: trimmed, id: parsed.id, name: listing.name } })
   return NextResponse.json({ folder: { link: trimmed, name: listing.name, items: listing.items } })
 }

@@ -10,6 +10,10 @@ import { getAiStyle, recordAiStyleVote } from "@/lib/ai-style-provenance"
 import { getFormatMeta } from "@/lib/timing-storage"
 import { BRAND_TEMPLATE_ID } from "@/lib/carousel-templates"
 import { DISLIKE_REASONS, type DislikeReason } from "@/lib/visual-language/types"
+import { usePreviewAccess } from "@/lib/use-scheduling-access"
+import { isEditableBRollUrl } from "@/components/media-ai-chat"
+import { DislikeReasonChips } from "@/components/dislike-reason-chips"
+import { openingId, requestAiEdit } from "@/lib/ai-edit-intent"
 
 type FeedbackStyle = "brand" | "ai-dark" | "ai-light"
 
@@ -77,6 +81,11 @@ function StyleFeedbackRow({
   mediaUrl?: string | null
   initialVote?: "like" | "dislike"
 }) {
+  // 👎 opens the AI-edit panel wherever the panel can edit (Hani,
+  // 2026-10-29); a b-roll the new engine didn't make keeps the inline field.
+  // Today's batch, Hani only; everyone else (and while loading) keeps the field.
+  const preview = usePreviewAccess() === true
+  const opensAiEdit = preview && (format !== "b_roll" || isEditableBRollUrl(mediaUrl))
   const [vote, setVote] = useState<"like" | "dislike" | null>(initialVote ?? null)
   const [askingWhy, setAskingWhy] = useState(false)
   const [reasons, setReasons] = useState<DislikeReason[]>([])
@@ -94,6 +103,7 @@ function StyleFeedbackRow({
   const post = async (
     verdict: "like" | "dislike" | "clear",
     withReasons = false,
+    explicit?: { reasons: DislikeReason[]; note: string },
   ): Promise<{ ok: boolean; message?: string }> => {
     try {
       const res = await fetch("/api/visual-language/style-feedback", {
@@ -105,7 +115,7 @@ function StyleFeedbackRow({
           verdict,
           postId,
           mediaUrl: httpUrl,
-          ...(withReasons ? { reasons, note } : {}),
+          ...(withReasons ? explicit ?? { reasons, note } : {}),
         }),
       })
       const data = (await res.json().catch(() => ({}))) as { message?: string }
@@ -125,7 +135,19 @@ function StyleFeedbackRow({
     const prev = vote
     const next = vote === thumb ? null : thumb
     setVoteEverywhere(next)
-    setAskingWhy(next === "dislike")
+    setAskingWhy(next === "dislike" && !opensAiEdit)
+    if (next === "dislike" && opensAiEdit) {
+      // Her answer in the panel fixes this item AND teaches the style.
+      requestAiEdit({
+        postId,
+        format: format as "carousel" | "story" | "image_post" | "b_roll",
+        opening: {
+          id: openingId(),
+          kind: "dislike",
+          onFeedback: (r, n) => void learnFromPanel(r as DislikeReason[], n),
+        },
+      })
+    }
     const res = await post(next ?? "clear")
     if (!res.ok) {
       setVoteEverywhere(prev)
@@ -134,6 +156,15 @@ function StyleFeedbackRow({
     } else if (next === "like" && res.message) {
       toast.success(res.message, { duration: 5000 })
     }
+  }
+
+  // The panel shows the edit; the language update reports in a toast, so
+  // "fix this one" and "remember for next time" read as two things.
+  const learnFromPanel = async (r: DislikeReason[], n: string) => {
+    if (!r.length && !n.trim()) return
+    const res = await post("dislike", true, { reasons: r, note: n })
+    if (!res.ok) toast.error(res.message ?? "לא הצלחנו לשמור את הפידבק לשפה. העריכה ממשיכה.")
+    else if (res.message) toast.success(res.message, { duration: 6000 })
   }
 
   // Submitting the reasons is what rewrites the language (one Claude call).
@@ -171,31 +202,35 @@ function StyleFeedbackRow({
       {askingWhy && (
         <div className="flex flex-col gap-2 px-5">
           <p className="text-xs text-text-primary-default">מה לא עבד?</p>
-          <div className="flex flex-wrap gap-1.5">
-            {(Object.keys(DISLIKE_REASONS) as DislikeReason[]).map((r) => {
-              const on = reasons.includes(r)
-              return (
-                <button
-                  key={r}
-                  type="button"
-                  aria-pressed={on}
-                  onClick={() => setReasons((prev) => (on ? prev.filter((x) => x !== r) : [...prev, r]))}
-                  className={`rounded-full border px-2.5 py-1 text-xs transition-colors cursor-pointer ${
-                    on
-                      ? "border-yellow-50 bg-bg-surface-primary-default text-text-primary-default"
-                      : "border-border-neutral-default text-text-neutral-default hover:bg-gray-95 dark:hover:bg-gray-20"
-                  }`}
-                >
-                  {DISLIKE_REASONS[r]}
-                </button>
-              )
-            })}
-          </div>
+          {preview ? (
+            <DislikeReasonChips value={reasons} onChange={setReasons} />
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {(Object.keys(DISLIKE_REASONS) as DislikeReason[]).map((r) => {
+                const on = reasons.includes(r)
+                return (
+                  <button
+                    key={r}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => setReasons((prev) => (on ? prev.filter((x) => x !== r) : [...prev, r]))}
+                    className={`rounded-full border px-2.5 py-1 text-xs transition-colors cursor-pointer ${
+                      on
+                        ? "border-yellow-50 bg-bg-surface-primary-default text-text-primary-default"
+                        : "border-border-neutral-default text-text-neutral-default hover:bg-gray-95 dark:hover:bg-gray-20"
+                    }`}
+                  >
+                    {DISLIKE_REASONS[r]}
+                  </button>
+                )
+              })}
+            </div>
+          )}
           <Textarea
             rows={2}
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="משהו נוסף? (לא חובה)"
+            placeholder={preview ? "מה לא אהבתם? ספרו לנו" : "משהו נוסף? (לא חובה)"}
             aria-label="פירוט נוסף על מה לא עבד"
             className="text-xs min-h-0"
           />

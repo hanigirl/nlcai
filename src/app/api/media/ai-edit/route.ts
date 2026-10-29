@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
+import { canUsePreview } from "@/lib/scheduling-access"
 import { getUserApiKey } from "@/lib/api-keys"
 import { editImage, type ImageShape } from "@/lib/openai-image"
 import { loadImageForModels } from "@/lib/visual-language/image-input"
@@ -123,10 +124,12 @@ function editPrompt(edit: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { postId, format, instruction } = (await req.json().catch(() => ({}))) as {
+    const { postId, format, instruction, learn } = (await req.json().catch(() => ({}))) as {
       postId?: string
       format?: unknown
       instruction?: string
+      /** false: already learned via the 👎 feedback (style-feedback route). */
+      learn?: boolean
     }
     const text = instruction?.trim()
     if (!postId || !text || !isEditableFormat(format)) {
@@ -188,7 +191,10 @@ export async function POST(req: NextRequest) {
       throw e
     }
 
-    const learning = learnFromInstruction(supabase, user.id, anthropicKey, text, NOUN[format])
+    const learning =
+      learn === false && canUsePreview(user.email)
+        ? Promise.resolve(null)
+        : learnFromInstruction(supabase, user.id, anthropicKey, text, NOUN[format])
 
     // A carousel laid out in code is edited in its layout — exact and
     // obedient — and only the illustrations she asks about are redrawn. Only
