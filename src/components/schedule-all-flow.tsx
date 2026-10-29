@@ -671,11 +671,13 @@ export function parseFlowState(raw: string | null): FlowState {
   return (FLOW_STATES as readonly string[]).includes(raw ?? "") ? (raw as FlowState) : "idle"
 }
 
-const SEED: { id: string; hook: string; formats: FormatId[]; media?: string }[] = [
-  { id: "seed-flow-1", hook: "3 טעויות שעושות יועצות בפוסט הראשון שלהן", formats: ["talking_head", "carousel"], media: "/images/carousel-templates/ai-light.png" },
-  { id: "seed-flow-2", hook: "למה הלקוחות שלכן לא קוראים עד הסוף", formats: ["story", "carousel"], media: "/images/carousel-templates/soft.png" },
-  { id: "seed-flow-3", hook: "מה ששאלתי את עצמי לפני שהעליתי מחיר", formats: ["talking_head", "story"] },
-  { id: "seed-flow-4", hook: "הדבר היחיד שאני כותבת לפני כל פגישת מכירה", formats: ["talking_head"] },
+// Every sample format carries a picture, so the board shows what a real post
+// shows: its own image on the card (Hani, 2026-10-29).
+const SEED: { id: string; hook: string; formats: FormatId[]; media: string[] }[] = [
+  { id: "seed-flow-1", hook: "3 טעויות שעושות יועצות בפוסט הראשון שלהן", formats: ["talking_head", "carousel"], media: ["/images/carousel-templates/ai-dark.png", "/images/carousel-templates/ai-light.png"] },
+  { id: "seed-flow-2", hook: "למה הלקוחות שלכן לא קוראים עד הסוף", formats: ["story", "carousel"], media: ["/images/carousel-templates/vibrant.png", "/images/carousel-templates/soft.png"] },
+  { id: "seed-flow-3", hook: "מה ששאלתי את עצמי לפני שהעליתי מחיר", formats: ["talking_head", "story"], media: ["/images/carousel-templates/ai-amber.png", "/images/carousel-templates/urban.png"] },
+  { id: "seed-flow-4", hook: "הדבר היחיד שאני כותבת לפני כל פגישת מכירה", formats: ["talking_head"], media: ["/images/carousel-templates/ai-collage.png"] },
 ]
 
 export const FLOW_SEED_POSTS: PanelItem[] = SEED.map((s) => ({
@@ -686,9 +688,7 @@ export const FLOW_SEED_POSTS: PanelItem[] = SEED.map((s) => ({
   formats: s.formats,
   formatsWithMedia: s.formats,
   hasBody: true,
-  formatMedia: s.media
-    ? Object.fromEntries(s.formats.filter((f) => f === "carousel").map((f) => [f, s.media!]))
-    : {},
+  formatMedia: Object.fromEntries(s.formats.map((f, i) => [f, s.media[i]])),
 }))
 
 const SEED_CARD_COUNT = SEED.reduce((n, s) => n + s.formats.length, 0)
@@ -953,6 +953,19 @@ export function useScheduleFlowHarness({
     setMoved((m) => new Set(m).add(`${corePostId}:${format}`))
   }
 
+  /**
+   * A card dragged from the panel straight onto a day: scheduled at once,
+   * solid — exactly like production. Drafts are only what "סידור אוטומטי
+   * בלוח" lays out.
+   */
+  const scheduleManual = (corePostId: string, format: FormatId, dayKey: string, time: string) => {
+    const card = railCards.find((c) => c.corePostId === corePostId && c.format === format)
+    if (!card) return
+    const slot: PlannedSlot = { ...card, scheduledDate: dayKey, scheduledTime: time }
+    setPlanned((list) => list.filter((x) => keyOf(x) !== keyOf(slot)))
+    setCommitted((c) => [...c.filter((x) => keyOf(x) !== keyOf(slot)), slot])
+  }
+
   /** The routine editor's save, kept in memory. */
   const saveRoutine = () => {
     const next = cloneSchedule(routineDraft)
@@ -1007,6 +1020,7 @@ export function useScheduleFlowHarness({
     discardRoutine,
     committed,
     movePlanned,
+    scheduleManual,
     seed,
     reset,
   }

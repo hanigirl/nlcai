@@ -878,8 +878,20 @@ export default function CalendarPage() {
       }
       return
     }
-    // Review harness: nothing else may be scheduled from a review link.
-    if (flowReview) return
+    // Review harness: a card dragged from the panel is scheduled at once
+    // (simulated), solid — never a draft. Nothing else is writable here.
+    if (flowReview) {
+      const readyRaw = e.dataTransfer.getData("application/x-ready-format")
+      if (!readyRaw) return
+      try {
+        const { corePostId, format } = JSON.parse(readyRaw) as { corePostId: string; format: FormatId }
+        if (blockedAsTooSoon(dayKey, DEFAULT_SCHEDULED_TIME)) return
+        flow.scheduleManual(corePostId, format, dayKey, DEFAULT_SCHEDULED_TIME)
+      } catch (err) {
+        console.error("[calendar] failed to parse ready-format payload", err)
+      }
+      return
+    }
 
     // Source 1: card-to-card reschedule. A scheduled card stamps this MIME
     // type on dragstart with `{corePostId, format}` — the (post, format)
