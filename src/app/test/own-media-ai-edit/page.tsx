@@ -14,7 +14,8 @@
  *                               &state=idle|working|caption|slide|refused|error|reopen
  *
  * `reopen` — the panel keeps its conversation (lib/ai-chat-session-store):
- * the edit takes ~6 s; close the panel (X / outside click) while it works,
+ * nothing is sent for you; ask something (a chip or your own words), the
+ * edit takes ~6 s; close the panel (X / outside click) while it works,
  * reopen it with the sparkle and it is still working, then the reply lands.
  * Close and reopen again, or reload: the conversation and the half-typed text
  * come back. "שיחה חדשה" in the header starts over. The other states start
@@ -284,7 +285,8 @@ function Preview() {
 
 function Stage({ state, sample }: { state: State; sample: Sample }) {
   // Its own conversation per media × state (the panel keeps conversations).
-  const postId = `${POST_ID}-${sample.id}-${state}`
+  // (`-own-`: conversations from the earlier scripted `reopen` are left behind.)
+  const postId = `${POST_ID}-own-${sample.id}-${state}`
   const [urls, setUrls] = useState<string[]>(() => sample.frames.map(frameUrl))
   const [open, setOpen] = useState(state !== "idle")
   // Stub the network before anything on the stage can call it. The scripted
@@ -395,7 +397,8 @@ function Stage({ state, sample }: { state: State; sample: Sample }) {
             postId={postId}
             format={sample.format}
             own
-            autoSend={state === "idle" ? undefined : ASK[state]}
+            // reopen: no scripted ask — each media's thread is what she writes in it.
+            autoSend={state === "idle" || state === "reopen" ? undefined : ASK[state]}
             currentUrls={urls}
             open
             onOpenChange={(o) => setOpen(o)}
