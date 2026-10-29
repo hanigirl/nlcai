@@ -13,14 +13,10 @@ import {
   usePostingSchedule,
 } from "@/components/posting-schedule-parts"
 import {
-  GhostSlot,
-  RoutineButton,
   RoutineDayEditor,
   RoutineEditBar,
-
-  unfilledSlots,
 } from "@/components/calendar-routine"
-import { slotsForDate } from "@/lib/posting-schedule"
+import { defaultPostingSchedule } from "@/lib/posting-schedule"
 import { AppShell } from "@/components/app-shell"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -56,7 +52,7 @@ import {
   type PlanInputCard,
   type PlannedSlot,
 } from "@/lib/schedule-all"
-import { NoSettingsDialog, PreviewBar, ScheduleAllButton } from "@/components/schedule-all"
+import { PreviewBar, ScheduleAllButton } from "@/components/schedule-all"
 import {
   FlowCollapsedPill,
   FlowHeaderButton,
@@ -702,17 +698,16 @@ export default function CalendarPage() {
   const [railCards, setRailCards] = useState<PlanInputCard[]>([])
   const [planned, setPlanned] = useState<PlannedSlot[] | null>(null)
   const [plannedUnmatched, setPlannedUnmatched] = useState<PlanInputCard[]>([])
-  const [noSettingsOpen, setNoSettingsOpen] = useState(false)
   const onArrange = () => {
-    if (!hasAnySlot(routine.saved)) {
-      setNoSettingsOpen(true)
-      return
-    }
-    const plan = planScheduleAll(railCards, routine.saved, scheduled)
+    // Schedule settings aren't on the board (Hani, 2026-10-29 — a separate
+    // task designs them): her saved routine, or the default one.
+    const plan = planScheduleAll(
+      railCards,
+      hasAnySlot(routine.saved) ? routine.saved : defaultPostingSchedule(),
+      scheduled,
+    )
     if (plan.placed.length === 0) {
-      toast("לפורמטים שנשארו אין משבצת פנויה בלו״ז", {
-        action: { label: "התאמת הלו״ז", onClick: () => startRoutineEdit() },
-      })
+      toast("לפורמטים שנשארו אין משבצת פנויה בלו״ז")
       return
     }
     setPlanned(plan.placed)
@@ -1386,9 +1381,6 @@ export default function CalendarPage() {
                 </Button>
               </div>
               <div className="flex items-center gap-2">
-                {rulesVariant === "a" && (
-                  <RoutineButton schedule={routine.saved} onEdit={startRoutineEdit} />
-                )}
                 <Button variant="outline" size="sm" onClick={goThisWeek} disabled={isCurrentWeek}>
                   השבוע
                 </Button>
@@ -1510,21 +1502,6 @@ export default function CalendarPage() {
                       {(plannedByDay.get(dayKey) ?? []).map((slot) => (
                         <PlannedCard key={`planned:${slot.corePostId}:${slot.format}`} slot={slot} />
                       ))}
-                      {/* Variant A: the routine's still-open slots for this
-                          day, as dashed ghosts. Upcoming days only. */}
-                      {rulesVariant === "a" &&
-                        (flowReview ? flow.view.hasRoutine : routine.hasCustom) &&
-                        !past &&
-                        unfilledSlots(
-                          slotsForDate(flowReview ? flow.routine : routine.saved, day),
-                          [
-                            ...dayPosts.map((p) => p.format),
-                            ...(committedByDay.get(dayKey) ?? []).map((p) => p.format),
-                            ...(plannedByDay.get(dayKey) ?? []).map((p) => p.format),
-                          ],
-                        ).map((slot) => (
-                          <GhostSlot key={slot.id} slot={slot} onEdit={startRoutineEdit} />
-                        ))}
                     </div>
                     )}
                   </div>
@@ -1625,17 +1602,6 @@ export default function CalendarPage() {
         />
       )}
 
-      {schedulingOn && (
-        <NoSettingsDialog
-          open={noSettingsOpen}
-          onOpenChange={setNoSettingsOpen}
-          count={railCards.length}
-          onOpenSettings={() => {
-            setNoSettingsOpen(false)
-            startRoutineEdit()
-          }}
-        />
-      )}
 
       <CorePostSheet
         open={sheetOpen}
