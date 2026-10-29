@@ -6,12 +6,10 @@
  *     panel (`ScheduleSettingsDialog`);
  *   - Settings → "תזמון" (`ScheduleSettings` inline).
  *
- * Infrastructure only: it owns the weekly routine (lib/posting-schedule via
- * usePostingSchedule) and its save, and renders a placeholder. Hani is
- * sending the full design — build it inside `ScheduleSettingsBody`, and both
- * homes get it.
+ * The form itself is schedule-settings-form.tsx (direction B, picked by Hani).
  */
 
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -20,17 +18,26 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { usePostingSchedule } from "@/components/posting-schedule-parts"
+import { SaveErrorAlert, usePostingSchedule } from "@/components/posting-schedule-parts"
+import { ScheduleSettingsForm } from "@/components/schedule-settings-form"
 
 type Routine = ReturnType<typeof usePostingSchedule>
 
-/** The settings themselves. Design goes here. */
+/** Same line under the title in both homes (Hani, 2026-10-29). */
+const SCHEDULE_SETTINGS_DESCRIPTION =
+  "הסידור האוטומטי מניח פוסטים על הלוח. ההגדרות האלה הן ברירת המחדל, אבל מה שקובע הוא הסידור בלוח השנה."
+
+/** The settings themselves. */
 function ScheduleSettingsBody({ routine }: { routine: Routine }) {
   return (
-    <div className="flex min-h-40 items-center justify-center rounded-xl border border-dashed border-border-neutral-default p-6">
-      {/* Placeholder until the design lands. `routine.draft` / `routine.setDraft`
-          hold the weekly routine; `routine.save()` persists it. */}
-      <p className="text-small text-text-neutral-default">הגדרות התזמון</p>
+    <div className="flex flex-col gap-4">
+      {!routine.hasCustom && (
+        <p className="text-xs-body text-text-neutral-default">
+          זו נקודת התחלה שהכנו לכם. מה שתגדירו כאן חל על כל הלוח.
+        </p>
+      )}
+      <ScheduleSettingsForm draft={routine.draft} onChange={routine.setDraft} />
+      {routine.saveError && <SaveErrorAlert onRetry={() => routine.save()} />}
     </div>
   )
 }
@@ -39,10 +46,15 @@ function ScheduleSettingsBody({ routine }: { routine: Routine }) {
 export function ScheduleSettings() {
   const routine = usePostingSchedule()
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
+      <p className="text-small text-text-neutral-default">{SCHEDULE_SETTINGS_DESCRIPTION}</p>
       <ScheduleSettingsBody routine={routine} />
       <div className="flex">
-        <Button size="sm" onClick={() => routine.save()} disabled={routine.saving}>
+        <Button
+          size="sm"
+          disabled={routine.saving || (routine.hasCustom && !routine.dirty)}
+          onClick={() => routine.save(() => toast("הגדרות התזמון נשמרו"))}
+        >
           שמירה
         </Button>
       </div>
@@ -61,33 +73,60 @@ export function ScheduleSettingsDialog({
   /** After a save, so the calendar can re-read the routine. */
   onSaved?: () => void
 }) {
-  const routine = usePostingSchedule()
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent dir="rtl" className="sm:max-w-3xl">
-        <DialogHeader>
+      <DialogContent
+        dir="rtl"
+        className="max-h-[92dvh] overflow-y-auto gap-5 p-4 sm:p-6 sm:max-w-3xl"
+        // Land on the dialog itself, not on the first chip (it read as "selected").
+        onOpenAutoFocus={(e) => {
+          e.preventDefault()
+          ;(e.currentTarget as HTMLElement | null)?.focus()
+        }}
+      >
+        <DialogHeader className="text-start">
           <DialogTitle>הגדרות תזמון</DialogTitle>
-          <DialogDescription className="sr-only">הימים והשעות שבהם הפוסטים עולים</DialogDescription>
+          <DialogDescription className="text-small text-text-neutral-default">
+            {SCHEDULE_SETTINGS_DESCRIPTION}
+          </DialogDescription>
         </DialogHeader>
-        <ScheduleSettingsBody routine={routine} />
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            disabled={routine.saving}
-            onClick={() =>
-              routine.save(() => {
-                onSaved?.()
-                onOpenChange(false)
-              })
-            }
-          >
-            שמירה
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => onOpenChange(false)}>
-            ביטול
-          </Button>
-        </div>
+        {/* Mounted per open: a cancelled edit never comes back next time. */}
+        {open && (
+          <DialogInner
+            onDone={() => {
+              onSaved?.()
+              onOpenChange(false)
+            }}
+            onCancel={() => onOpenChange(false)}
+          />
+        )}
       </DialogContent>
     </Dialog>
+  )
+}
+
+function DialogInner({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+  const routine = usePostingSchedule()
+  return (
+    <>
+      <ScheduleSettingsBody routine={routine} />
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          disabled={routine.saving || (routine.hasCustom && !routine.dirty)}
+          onClick={() =>
+            routine.save(() => {
+              toast("הגדרות התזמון נשמרו")
+              onDone()
+            })
+          }
+        >
+          שמירה
+        </Button>
+        <Button size="sm" variant="outline" onClick={onCancel}>
+          ביטול
+        </Button>
+      </div>
+    </>
   )
 }
