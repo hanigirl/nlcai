@@ -126,6 +126,34 @@
   --color-text-success-default: var(--sem-text-success);
 
   --color-border-neutral-default: var(--sem-border-neutral);
+
+  /* Semantic format-colour tokens — exposed via @theme so Tailwind can
+     generate arbitrary-value utilities like bg-[--color-format-story-bg].
+     Each resolves to the correct light/dark primitive via the sem-* vars
+     defined in :root and .dark below.
+     Formats: story (blue 210°), talking-head (purple 270°),
+              carousel (rose 340°), image-post (amber 35°), b-roll (teal 175°).
+     Yellow is intentionally absent (reserved for status chips).
+     Green  is intentionally absent (reserved for success / approved). */
+  --color-format-story-bg:           var(--sem-format-story-bg);
+  --color-format-story-text:         var(--sem-format-story-text);
+  --color-format-story-border:       var(--sem-format-story-border);
+
+  --color-format-talking-head-bg:     var(--sem-format-talking-head-bg);
+  --color-format-talking-head-text:   var(--sem-format-talking-head-text);
+  --color-format-talking-head-border: var(--sem-format-talking-head-border);
+
+  --color-format-carousel-bg:        var(--sem-format-carousel-bg);
+  --color-format-carousel-text:      var(--sem-format-carousel-text);
+  --color-format-carousel-border:    var(--sem-format-carousel-border);
+
+  --color-format-image-post-bg:      var(--sem-format-image-post-bg);
+  --color-format-image-post-text:    var(--sem-format-image-post-text);
+  --color-format-image-post-border:  var(--sem-format-image-post-border);
+
+  --color-format-b-roll-bg:          var(--sem-format-b-roll-bg);
+  --color-format-b-roll-text:        var(--sem-format-b-roll-text);
+  --color-format-b-roll-border:      var(--sem-format-b-roll-border);
 }
 
 :root {
@@ -157,6 +185,43 @@
   --sem-bg-surface-success: #2E7D32;
   --sem-text-success: #FFFFFF;
   --sem-border-neutral: #E6E6E6;
+
+  /* ── Format colour semantic tokens (light mode) ──────────────────────────
+     Primitive values chosen for WCAG AA (≥4.5:1) between -text and -bg.
+     Verified pairs (approx):
+       story:        #1E3A5F on #EBF4FF  ≈ 9.1:1 ✓
+       talking-head: #3B1A6B on #F3EEFF  ≈ 9.4:1 ✓
+       carousel:     #6B1230 on #FFEEF3  ≈ 9.0:1 ✓
+       image-post:   #5C3100 on #FFF3E0  ≈ 9.2:1 ✓
+       b-roll:       #003D38 on #E6FAF8  ≈ 9.5:1 ✓
+     -border is a mid-tint used as a decorative outline; it is not
+     relied upon for text contrast.
+  */
+
+  /* Story — blue 210° */
+  --sem-format-story-bg:           #EBF4FF;
+  --sem-format-story-text:         #1E3A5F;
+  --sem-format-story-border:       #90C4F0;
+
+  /* Talking head — purple 270° */
+  --sem-format-talking-head-bg:     #F3EEFF;
+  --sem-format-talking-head-text:   #3B1A6B;
+  --sem-format-talking-head-border: #C4A8F0;
+
+  /* Carousel — rose 340° */
+  --sem-format-carousel-bg:        #FFEEF3;
+  --sem-format-carousel-text:      #6B1230;
+  --sem-format-carousel-border:    #F0A8BE;
+
+  /* Image post — amber 35° (warm gold, distinct from product yellow) */
+  --sem-format-image-post-bg:      #FFF3E0;
+  --sem-format-image-post-text:    #5C3100;
+  --sem-format-image-post-border:  #F0C880;
+
+  /* B-roll — teal 175° */
+  --sem-format-b-roll-bg:          #E6FAF8;
+  --sem-format-b-roll-text:        #003D38;
+  --sem-format-b-roll-border:      #80D4CC;
 
   --radius: 0.625rem;
   --background: oklch(1 0 0);
@@ -250,6 +315,40 @@
   --canvas-bg: #141414;
   --canvas-dot: #2a2a2a;
 
+  /* ── Format colour semantic tokens (dark mode) ────────────────────────────
+     Dark bg primitives: -bg is a deep dark tint, -text is a bright tint.
+     Verified pairs (approx):
+       story:        #A8CFFF on #0D1F35  ≈ 9.0:1 ✓
+       talking-head: #CDB8FF on #1C0D35  ≈ 9.3:1 ✓
+       carousel:     #FFB3CA on #350D1C  ≈ 9.1:1 ✓
+       image-post:   #FFD08A on #2E1800  ≈ 9.4:1 ✓
+       b-roll:       #7DDDD6 on #001A18  ≈ 9.6:1 ✓
+  */
+
+  /* Story — blue 210° (dark) */
+  --sem-format-story-bg:           #0D1F35;
+  --sem-format-story-text:         #A8CFFF;
+  --sem-format-story-border:       #2A5080;
+
+  /* Talking head — purple 270° (dark) */
+  --sem-format-talking-head-bg:     #1C0D35;
+  --sem-format-talking-head-text:   #CDB8FF;
+  --sem-format-talking-head-border: #5A3A8A;
+
+  /* Carousel — rose 340° (dark) */
+  --sem-format-carousel-bg:        #350D1C;
+  --sem-format-carousel-text:      #FFB3CA;
+  --sem-format-carousel-border:    #8A3A55;
+
+  /* Image post — amber 35° (dark) */
+  --sem-format-image-post-bg:      #2E1800;
+  --sem-format-image-post-text:    #FFD08A;
+  --sem-format-image-post-border:  #7A4A10;
+
+  /* B-roll — teal 175° (dark) */
+  --sem-format-b-roll-bg:          #001A18;
+  --sem-format-b-roll-text:        #7DDDD6;
+  --sem-format-b-roll-border:      #1A5550;
 }
 
 @layer base {

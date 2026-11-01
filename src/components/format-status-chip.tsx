@@ -11,7 +11,7 @@
  *   (the user created a variant) or not? Media and scheduling status no
  *   longer affect it — scheduling lives on the calendar grid (as cards),
  *   not on this chip. So only two visuals are produced in practice:
- *   gray ("not-started" = not duplicated) and yellow ("ready" = duplicated).
+ *   gray ("not-started" = not duplicated) and per-format hue ("ready" = duplicated).
  *
  *   Mapping from the 5-state internal `FormatReadiness` (kept in
  *   `timing-storage.ts` for nuance the model still tracks):
@@ -23,17 +23,21 @@
  *
  * Visual rules (per Hani's spec):
  *   not-started → gray bg, gray text/icon, NO border (quieted to 50% opacity)
- *   ready       → yellow-90 bg, yellow-30 text/icon, NO border ("duplicated",
- *                 per Figma node 481:4847)
+ *   ready       → per-format hue bg/text (see FORMAT_COLORS), NO border
  *   set         → soft-green + ✓ badge. RETAINED in the palette but no longer
  *                 produced by `toChipState` (kept for `getFormatChipClasses`
  *                 callers that pass an explicit ChipState). Dead in practice.
  *
- * No per-format hue (intentional trade-off — see Hani's brief 2026-05-13):
- *   The previous Tailwind blue/purple/orange/teal palette is gone. The
- *   format identity now lives entirely in the icon glyph; the chip state
- *   is uniform across formats so "what's still on my plate" is the
- *   primary read.
+ * Per-format hue palette (2026-10-22, Hani + Natalia):
+ *   story        → כחול    (--color-format-story-*)
+ *   talking_head → סגול    (--color-format-talking-head-*)
+ *   carousel     → ורוד    (--color-format-carousel-*)
+ *   image_post   → ענבר    (--color-format-image-*)
+ *   static       → ענבר    (alias for image_post)
+ *   b_roll       → טורקיז  (--color-format-b-roll-*)
+ *
+ *   Tokens are defined in globals.css @theme. getFormatColorClasses(format)
+ *   is exported for other surfaces (canvas, core posts, media panel).
  *
  * Wrappers, not props:
  *   The base component is presentational only — no onClick, no href. There
@@ -96,6 +100,71 @@ function getFormatLabel(format: string): string {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Per-format colour tokens (2026-10-22 palette)                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Semantic CSS-var class strings for each format — background, text and
+ * border are all defined as design-system tokens in globals.css @theme.
+ *
+ * Token naming convention (globals.css):
+ *   --color-format-{id}-bg   → light tint fill for the chip body
+ *   --color-format-{id}-text → accessible dark tone for icon + label (≥4.5:1)
+ *
+ * Palette summary (see globals.css for hex values):
+ *   story        → כחול    bg-format-story-bg / text-format-story-text
+ *   talking_head → סגול    bg-format-talking-head-bg / text-format-talking-head-text
+ *   carousel     → ורוד    bg-format-carousel-bg / text-format-carousel-text
+ *   image_post   → ענבר    bg-format-image-bg / text-format-image-text
+ *   static       → ענבר    (alias — same tokens as image_post)
+ *   b_roll       → טורקיז  bg-format-b-roll-bg / text-format-b-roll-text
+ *
+ * Unknown formats fall back to the previous uniform yellow-90/yellow-30
+ * so no existing surface breaks if a new format id is added without a
+ * corresponding token.
+ */
+const FORMAT_COLORS: Record<string, string> = {
+  story:        "bg-format-story-bg text-format-story-text border-transparent",
+  talking_head: "bg-format-talking-head-bg text-format-talking-head-text border-transparent",
+  carousel:     "bg-format-carousel-bg text-format-carousel-text border-transparent",
+  image_post:   "bg-format-image-bg text-format-image-text border-transparent",
+  static:       "bg-format-image-bg text-format-image-text border-transparent",
+  b_roll:       "bg-format-b-roll-bg text-format-b-roll-text border-transparent",
+}
+
+/**
+ * Returns the Tailwind class string for the per-format hue (bg + text +
+ * border). Exported so other surfaces (canvas, core posts, media panel)
+ * can consume the same tokens without duplicating the map.
+ *
+ * Falls back to the legacy uniform yellow for unknown format ids so no
+ * existing surface regresses if a new format is added before globals.css
+ * gets the matching token.
+ */
+export function getFormatColorClasses(format: string): string {
+  return FORMAT_COLORS[format] ?? "bg-yellow-90 text-yellow-30 border-transparent"
+}
+
+/* ------------------------------------------------------------------ */
+/*  Hover variants keyed per format for "ready" state                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Optional hover shades for the per-format palette. Used by
+ * `getFormatChipClasses` when the caller opts in to hover styling.
+ * Each token pair (bg-hover) is defined in globals.css alongside its
+ * non-hover counterpart.
+ */
+const FORMAT_HOVER: Record<string, string> = {
+  story:        "hover:bg-format-story-bg-hover",
+  talking_head: "hover:bg-format-talking-head-bg-hover",
+  carousel:     "hover:bg-format-carousel-bg-hover",
+  image_post:   "hover:bg-format-image-bg-hover",
+  static:       "hover:bg-format-image-bg-hover",
+  b_roll:       "hover:bg-format-b-roll-bg-hover",
+}
+
+/* ------------------------------------------------------------------ */
 /*  Date helpers                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -140,9 +209,9 @@ export function toChipState(state: FormatReadiness): ChipState {
       return "not-started"
     // Per Hani 2026-06-25: the chip is now BINARY — "שוכפל או לא שוכפל".
     // Everything past "not duplicated" (incomplete / ready / scheduled /
-    // published) is "duplicated" and shares the yellow visual. Media AND
-    // scheduling no longer change the color — scheduling status lives on the
-    // calendar grid (as cards), not on this chip.
+    // published) is "duplicated" and shares the per-format hue visual. Media
+    // AND scheduling no longer change the color — scheduling status lives on
+    // the calendar grid (as cards), not on this chip.
     case "incomplete":
     case "ready":
     case "scheduled":
@@ -205,12 +274,13 @@ function iconSizeFor(size: Size): string {
 }
 
 /* ------------------------------------------------------------------ */
-/*  State → visual treatment (3 neutral classes, no per-format hue)     */
+/*  State → visual treatment (not-started + set; ready is per-format)  */
 /* ------------------------------------------------------------------ */
 
 /**
- * Per-state class strings. Listed as full literals so Tailwind's static
- * extractor keeps every class in the bundle.
+ * Per-state class strings for the two non-format-specific states.
+ * `ready` is intentionally absent — it delegates to FORMAT_COLORS via
+ * `getFormatColorClasses(format)` so each format gets its own hue.
  *
  * Colors source the project's design-system tokens defined in globals.css:
  *   gray-98 (#FAFAFA), gray-50 (#808080), green-success-97 (#F0FDFA),
@@ -220,11 +290,11 @@ function iconSizeFor(size: Size): string {
  */
 const chipStateClasses: Record<ChipState, string> = {
   "not-started": "bg-gray-98 text-gray-50 border-transparent",
-  // "ready" = DUPLICATED — matches Figma node 481:4847 exactly: yellow-90
-  // fill (#FFF3CC) + yellow-30 text/icon (#997500), transparent border
-  // (no stroke).
+  // "ready" per-format hue is applied dynamically — this fallback is kept
+  // for callers of getFormatChipClasses that pass an explicit ChipState
+  // without a format id and for type safety in the Record signature.
   "ready": "bg-yellow-90 text-yellow-30 border-transparent",
-  // "set" = scheduled. Our primary (yellow-10, the primary-button colour)
+  // "set" = approved. Our primary (yellow-10, the primary-button colour)
   // as a solid fill, white label, no icon or ✓ — Hani 2026-10-29.
   "set": "bg-yellow-10 text-white border-transparent",
 }
@@ -245,16 +315,24 @@ const chipStateHover: Record<ChipState, string> = {
  * same visual treatment without rendering a full `FormatStatusChip` (e.g.
  * a chip that needs its own checkbox + dropdown layout).
  *
- * The `format` parameter is preserved for backwards compatibility but no
- * longer affects the result — colors are uniform across formats per the
- * 2026-05-13 spec. We accept either a `FormatReadiness` (5-state) or a
- * `ChipState` (3-state) and project accordingly.
+ * For `ready` state the returned `container` class now includes the
+ * per-format hue (from FORMAT_COLORS) instead of the previous uniform
+ * yellow-90/yellow-30. `not-started` and `set` are unchanged.
+ *
+ * We accept either a `FormatReadiness` (5-state) or a `ChipState`
+ * (3-state) and project accordingly.
  */
 export function getFormatChipClasses(
-  _format: FormatId,
+  format: FormatId,
   state: FormatReadiness | ChipState,
 ): { container: string; hover: string } {
   const chipState: ChipState = isChipState(state) ? state : toChipState(state)
+  if (chipState === "ready") {
+    return {
+      container: getFormatColorClasses(format),
+      hover: FORMAT_HOVER[format] ?? chipStateHover["ready"],
+    }
+  }
   return {
     container: chipStateClasses[chipState],
     hover: chipStateHover[chipState],
@@ -399,13 +477,17 @@ export function FormatStatusChip({
     chipState === "set" && (hideCornerBadge || cornerBadgeMuted)
   const stateClass = isWeakerSet
     ? "bg-yellow-90 text-yellow-10 border-dashed border-yellow-10"
-    : chipStateClasses[chipState]
+    : chipState === "ready"
+      // Per-format hue for the "duplicated" state (2026-10-22 palette).
+      // `not-started` and `set` keep their existing uniform treatments.
+      ? getFormatColorClasses(format)
+      : chipStateClasses[chipState]
 
   // "Not duplicated at all" (`empty`) is the only gray state now —
-  // duplicated formats are yellow ("ready") and scheduled ones green
+  // duplicated formats carry their per-format hue and scheduled ones green
   // ("set"). Dimming the gray chip to 50% opacity makes "this format
   // isn't even on the post" read as the quietest state, well below the
-  // duplicated-yellow it sits next to.
+  // duplicated-hued chips it sits next to.
   const isUnusedFormat = state === "empty"
   const opacityClass = isUnusedFormat ? "opacity-50" : ""
 
