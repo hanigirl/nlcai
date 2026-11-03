@@ -187,3 +187,101 @@ export function ReferenceDropHint({ show }: { show: boolean }) {
     </div>
   )
 }
+
+/**
+ * Hook for the AI chat window's own paste + drag-and-drop image attachment.
+ * Returns images as JPEG data URLs, capped at MAX_REFERENCES.
+ * Use `addFromClipboard` on the textarea's onPaste and spread `dragHandlers`
+ * on the panel wrapper. `isDragging` controls the drop-zone highlight.
+ */
+export function useImageAttachment() {
+  const [images, setImages] = useState<string[]>([])
+  const [isDragging, setIsDragging] = useState(false)
+  const imagesRef = useRef(images)
+  useEffect(() => {
+    imagesRef.current = images
+  })
+
+  const addFiles = useCallback(async (files: File[]) => {
+    const room = MAX_REFERENCES - imagesRef.current.length
+    if (room <= 0 || !files.length) return
+    const shrunk = await Promise.all(files.slice(0, room).map((f) => shrink(f).catch(() => null)))
+    setImages((prev) => [...prev, ...shrunk.filter((s): s is string => !!s)].slice(0, MAX_REFERENCES))
+  }, [])
+
+  /** Call on the textarea's onPaste event. */
+  const addFromClipboard = useCallback(
+    (e: ClipboardEvent) => {
+      const files = imageFiles(e.clipboardData?.items)
+      if (!files.length) return
+      e.preventDefault()
+      void addFiles(files)
+    },
+    [addFiles],
+  )
+
+  /** Call on the panel's onDrop event. */
+  const addFromDrop = useCallback(
+    (e: DragEvent) => {
+      const files = imageFiles(e.dataTransfer.files)
+      setIsDragging(false)
+      if (!files.length) return
+      e.preventDefault()
+      void addFiles(files)
+    },
+    [addFiles],
+  )
+
+  const remove = useCallback((i: number) => setImages((prev) => prev.filter((_, j) => j !== i)), [])
+
+  /** Spread these onto the AI panel wrapper div. */
+  const dragHandlers = {
+    onDragOver: (e: DragEvent) => {
+      if (!Array.from(e.dataTransfer.types).includes("Files")) return
+      e.preventDefault()
+      setIsDragging(true)
+    },
+    onDragLeave: (e: DragEvent) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setIsDragging(false)
+    },
+    onDrop: addFromDrop,
+  }
+
+  return {
+    images,
+    addFromClipboard,
+    addFromDrop,
+    remove,
+    isDragging,
+    dragHandlers,
+    full: images.length >= MAX_REFERENCES,
+  }
+}
+
+export type ImageAttachment = ReturnType<typeof useImageAttachment>
+
+/**
+ * Thumbnail strip shown above the AI chat text field.
+ * Accepts data URLs and lets the user remove each one.
+ */
+export function AiImageAttachment({ images, onRemove }: { images: string[]; onRemove: (index: number) => void }) {
+  if (!images.length) return null
+  return (
+    <div className="mb-2 flex flex-wrap gap-2">
+      {images.map((src, i) => (
+        <div key={i} className="relative size-14 overflow-hidden rounded-lg border border-border-neutral-default">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={src} alt={`צילום מסך ${i + 1}`} className="size-full object-cover" />
+          <button
+            type="button"
+            onClick={() => onRemove(i)}
+            aria-label={`הסרת צילום מסך ${i + 1}`}
+            className="absolute end-0.5 top-0.5 inline-flex size-5 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}

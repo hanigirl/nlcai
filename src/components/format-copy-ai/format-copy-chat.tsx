@@ -80,7 +80,7 @@ export function FormatCopyChat({
       role="dialog"
       aria-label={`עריכת ${COPY_NOUN[fid]} עם AI`}
       {...refs.dropProps}
-      className={`${floating ? "fixed bottom-6 right-6 z-50 max-h-[72vh]" : "relative max-h-[560px]"} flex w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl`}
+      className={`${floating ? "fixed bottom-6 right-6 z-50 max-h-[72vh]" : "relative max-h-[560px]"} ${refs.dragging ? "ring-2 ring-yellow-50 border-yellow-50" : ""} flex w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl`}
     >
       <ReferenceDropHint show={refs.dragging} />
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">

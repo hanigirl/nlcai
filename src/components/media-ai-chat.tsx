@@ -37,6 +37,7 @@ import {
   ReferenceTray,
   useReferenceImages,
 } from "@/components/ai-edit-reference"
+import { useCallback, useState } from "react"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
@@ -194,6 +195,88 @@ const OWN_COPY: Record<AiEditFormat, { title: string; intro: string; busy: strin
   },
 }
 
+/** Max number of reference images that can be attached at once. */
+const MAX_REFERENCES = 3
+
+/**
+ * Reads a File or DataTransfer item as a base-64 data-URL.
+ * Resolves to null when the item isn't an image.
+ */
+function fileToDataUrl(file: File): Promise<string | null> {
+  if (!file.type.startsWith("image/")) return Promise.resolve(null)
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => resolve(null)
+    reader.readAsDataURL(file)
+  })
+}
+
+/**
+ * Manages a list of up to MAX_REFERENCES base-64 screenshot / image
+ * attachments for one AI-chat submission.
+ */
+function useImageAttachment() {
+  const [images, setImages] = useState<string[]>([])
+  const [dragging, setDragging] = useState(false)
+
+  const add = useCallback(async (files: FileList | File[]) => {
+    const arr = Array.from(files).filter((f) => f.type.startsWith("image/"))
+    if (!arr.length) return
+    const results = await Promise.all(arr.map(fileToDataUrl))
+    const valid = results.filter(Boolean) as string[]
+    setImages((prev) => {
+      const combined = [...prev, ...valid]
+      return combined.slice(0, MAX_REFERENCES)
+    })
+  }, [])
+
+  const remove = useCallback((index: number) => {
+    setImages((prev) => prev.filter((_, i) => i !== index))
+  }, [])
+
+  const clear = useCallback(() => setImages([]), [])
+
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    if (Array.from(e.dataTransfer.items).some((it) => it.kind === "file" && it.type.startsWith("image/"))) {
+      e.preventDefault()
+      setDragging(true)
+    }
+  }, [])
+
+  const onDragLeave = useCallback((e: React.DragEvent) => {
+    // Only clear when leaving the panel entirely (relatedTarget outside)
+    if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) {
+      setDragging(false)
+    }
+  }, [])
+
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault()
+      setDragging(false)
+      void add(e.dataTransfer.files)
+    },
+    [add],
+  )
+
+  const onPaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      const files = Array.from(e.clipboardData.items)
+        .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+        .map((it) => it.getAsFile())
+        .filter(Boolean) as File[]
+      if (files.length) {
+        e.preventDefault()
+        void add(files)
+      }
+    },
+    [add],
+  )
+
+  return { images, dragging, add, remove, clear, onDragOver, onDragLeave, onDrop, onPaste }
+}
+
 /**
  * "עריכת [פורמט] עם AI" (Hani, 2026-10-22) — the same floating side panel as
  * the core post's "עריכת פוסט ליבה" (CorePostChat): her instruction in, Opus
@@ -271,6 +354,9 @@ export function MediaAiChat({
   const asking =
     session.extra.asking && feedbackById.has(session.extra.asking.id) ? session.extra.asking : null
 
+  // Screenshot / image attachments for the next send.
+  const attachment = useImageAttachment()
+
   // A fresh 👎 asks what she didn't like — as a new turn of the same
   // conversation, or as its first turn if nothing was said yet.
   useLayoutEffect(() => {
@@ -299,6 +385,12 @@ export function MediaAiChat({
   useEffect(() => {
     clearRefs()
   }, [chatKey, clearRefs])
+  // Clear image attachments when the chat key changes (new conversation / format).
+  const { clear: clearAttachment } = attachment
+  useEffect(() => {
+    clearAttachment()
+  }, [chatKey, clearAttachment])
+
   const scrollRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   useDismissOnOutsideClick(panelRef, open && preview, () => onOpenChange(false))
@@ -344,14 +436,18 @@ export function MediaAiChat({
       text = dislikeInstruction(reasons.map((r) => DISLIKE_REASONS[r]), text)
     }
     const attached = refs.refs
-    if (!text && attached.length) text = REFERENCE_ONLY_INSTRUCTION
+    // Collect screenshot attachments and merge with any drag-ref attachments.
+    const screenshots = attachment.images
+    attachment.clear()
+    const allAttached = [...attached, ...screenshots]
+    if (!text && allAttached.length) text = REFERENCE_ONLY_INSTRUCTION
     if (!text) return
     refs.clear()
     patchKey((s) => ({
       ...s,
       input: "",
       busy: true,
-      messages: [...s.messages, { role: "user", content: text, ...(attached.length ? { images: attached } : {}) }],
+      messages: [...s.messages, { role: "user", content: text, ...(allAttached.length ? { images: allAttached } : {}) }],
       extra: { ...s.extra, asking: null, reasons: [] },
     }))
     // An edit that came from 👎 is learned by the feedback route, not here.
@@ -364,11 +460,11 @@ export function MediaAiChat({
     // server has saved it either way) — see lib/long-wait.
     const run =
       format === "b_roll"
-        ? startBRollEdit(postId, text, { quiet: true, learn, references: attached }).then((r) => {
+        ? startBRollEdit(postId, text, { quiet: true, learn, references: allAttached }).then((r) => {
             if (r.ok) markAiMade(postId, "b_roll", r.url)
             return r
           })
-        : editImages(text, learn, attached)
+        : editImages(text, learn, allAttached)
     const result = preview
       ? await trackAwayResult(`ai-edit-${postId}-${format}-${Date.now()}`, run, isWatching, AWAY_COPY[format], postId)
       : await run
@@ -467,9 +563,29 @@ export function MediaAiChat({
       role="dialog"
       aria-label={copy.title}
       {...refs.dropProps}
-      className={`fixed bottom-6 right-6 ${preview ? "z-50" : "z-40"} flex max-h-[72vh] w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl`}
+      onDragOver={(e) => {
+        refs.dropProps.onDragOver?.(e)
+        attachment.onDragOver(e)
+      }}
+      onDragLeave={(e) => {
+        refs.dropProps.onDragLeave?.(e)
+        attachment.onDragLeave(e)
+      }}
+      onDrop={(e) => {
+        refs.dropProps.onDrop?.(e)
+        attachment.onDrop(e)
+      }}
+      className={`fixed bottom-6 right-6 ${preview ? "z-50" : "z-40"} flex max-h-[72vh] w-[380px] flex-col overflow-hidden rounded-[20px] border ${attachment.dragging ? "border-yellow-50 ring-2 ring-yellow-50/40" : "border-border-neutral-default"} bg-white dark:bg-gray-10 shadow-xl transition-colors`}
     >
       <ReferenceDropHint show={refs.dragging} />
+      {/* Drag-over overlay hint for screenshot attachments */}
+      {attachment.dragging && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[20px] bg-yellow-50/10">
+          <span className="rounded-xl bg-white/90 px-4 py-2 text-small-bold text-text-primary-default shadow dark:bg-gray-10/90">
+            שחררו כאן כדי לצרף
+          </span>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">
         <AiSparkle />
@@ -569,11 +685,38 @@ export function MediaAiChat({
           />
         )}
         <ReferenceTray r={refs} />
+        {/* Screenshot / image attachment thumbnails */}
+        {attachment.images.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2" role="list" aria-label="תמונות מצורפות">
+            {attachment.images.map((src, idx) => (
+              <div key={idx} className="relative size-14 shrink-0 overflow-hidden rounded-lg border border-border-neutral-default" role="listitem">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={src} alt={`צילום מסך ${idx + 1}`} className="size-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => attachment.remove(idx)}
+                  aria-label="הסרת תמונה"
+                  className="absolute right-0.5 top-0.5 inline-flex size-4 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+                >
+                  <X className="size-2.5" />
+                </button>
+              </div>
+            ))}
+            {attachment.images.length < MAX_REFERENCES && (
+              <span className="self-center text-xs-body text-text-neutral-default">
+                {`עד ${MAX_REFERENCES} תמונות`}
+              </span>
+            )}
+          </div>
+        )}
         <div className="flex items-end gap-2 rounded-[12px] border border-border-neutral-default bg-white dark:bg-gray-10 p-2 focus-within:border-yellow-50 transition-colors">
           <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onPaste={refs.onPaste}
+            onPaste={(e) => {
+              refs.onPaste(e)
+              attachment.onPaste(e)
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault()
@@ -590,7 +733,7 @@ export function MediaAiChat({
           <Button
             size="icon-sm"
             onClick={() => void send()}
-            disabled={(!input.trim() && !(asking && reasons.length) && !refs.refs.length) || loading}
+            disabled={(!input.trim() && !(asking && reasons.length) && !refs.refs.length && !attachment.images.length) || loading}
             aria-label="שליחה"
             className="shrink-0 rounded-full"
           >
