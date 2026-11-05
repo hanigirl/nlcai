@@ -1,52 +1,37 @@
-"use client"
-
-import { createContext, useContext, type ReactNode } from "react"
+import type { ReactNode } from "react"
 
 /**
- * Horizontal format lanes on the project canvas — REVIEW ONLY (Joey,
- * `joey/horizontal-format-lanes`). Mounted when /project carries
- * `?variant=a|b`; with no param the context is null and every component here
- * renders exactly the vertical tree that ships today.
+ * Format lanes on the project canvas. The flow only ever runs sideways (RTL):
  *
- *   פוסט ← פורמטים ←┬─ טוקינג הד ← סרטון ← קאבר
- *                    ├─ קרוסלה ← תמונות
- *                    └─ סטורי ← פריימים
+ *   פוסט ← פורמטים ←┬─ [ דיבור למצלמה ← וידאו ← קאבר ]
+ *                    ├─ [ קרוסלה ← שקופיות ]
+ *                    └─ [ סטורי ← פריימים ]
  *
- * A — "עץ עם שדרה": bare orthogonal lines. The first lane continues the main
- *     row straight; the others hang off one vertical spine.
- * B — "מסלולים": every format sits in its own outlined lane, and the spine
- *     turns into each lane on a rounded elbow.
+ * Every format sits in its own outlined lane; lanes stack one above the other,
+ * and inside a lane each new card lands to the LEFT of the one before it. One
+ * spine runs down from the formats card and turns into each lane on a rounded
+ * elbow. (Picked by Hani as "מסלולים" over a bare-lines tree, 2026-11-05.)
  */
-export type LaneLayout = "a" | "b" | null
 
-export const LaneLayoutContext = createContext<LaneLayout>(null)
-
-export function useLaneLayout() {
-  return useContext(LaneLayoutContext)
-}
-
-/** Card width shared with the page — every card in a lane is this wide. */
+/** Every card in a lane is this wide. */
 export const LANE_CARD_WIDTH = 346
 
 /**
  * Where a connector meets a card, measured from the card's top. The main row
- * (idea → hooks → core post) already attaches at 55px; lanes keep that line.
+ * (idea → hooks → core post → formats) attaches at 55px; lanes keep that line.
  */
 const ATTACH_Y = 55
-/** B's lane outline pads the cards by this much on every side. */
-const BAND_PAD = 20
+/** The lane outline pads its cards by this much on every side. */
+const LANE_PAD = 20
 /** Vertical space between two lanes. */
 const LANE_GAP = 40
-/** B's elbow radius. */
+/** Elbow radius where the spine turns into a lane. */
 const ELBOW = 16
+/** Length of the line from the spine into a lane. */
+const STUB = 40
 
-/**
- * The line between two cards of the same format. Vertical in the shipped tree,
- * horizontal (pointing to the next card on the left) in a lane.
- */
+/** The line between two cards of the same lane, pointing at the next card. */
 export function TreeConnector() {
-  const lanes = useLaneLayout()
-  if (!lanes) return <div className="w-[2px] h-7 bg-gray-80" />
   return (
     <div
       aria-hidden
@@ -68,8 +53,90 @@ export function LaneStem() {
 }
 
 /**
- * The card a lane is working on right now: its last card (cards only ever get
- * added at the far, left end of a lane). Connectors are aria-hidden.
+ * The column that holds the lanes. Pulled up by the lane padding so the first
+ * lane's cards sit on the same row line as the formats card.
+ */
+export function LaneColumn({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex flex-col" style={{ marginTop: -LANE_PAD }} dir="rtl">
+      {children}
+    </div>
+  )
+}
+
+/**
+ * One format's lane: its cards in a row, wired into the shared spine.
+ * `data-lane` / `data-lane-row` let the page find the lane's newest card.
+ */
+export function FormatLane({
+  fid,
+  index,
+  count,
+  children,
+}: {
+  fid: string
+  index: number
+  count: number
+  children: ReactNode
+}) {
+  const first = index === 0
+  const last = index === count - 1
+  // Where the spine meets this lane, from the lane's top edge.
+  const y = ATTACH_Y + LANE_PAD
+
+  return (
+    <div
+      data-lane={fid}
+      className="relative flex items-start"
+      style={{ paddingBottom: last ? 0 : LANE_GAP }}
+    >
+      {/* The spine — the stretch of it that belongs to this lane. */}
+      {!last && (
+        <div
+          aria-hidden
+          className="absolute start-0 bottom-0 w-[2px] bg-gray-80"
+          style={{ top: first ? y : 0 }}
+        />
+      )}
+      {!first && (
+        <div
+          aria-hidden
+          className="absolute start-0 top-0 border-s-2 border-b-2 border-gray-80 rounded-es-2xl"
+          style={{ height: y + 2, width: ELBOW }}
+        />
+      )}
+
+      {/* Into the lane. Past the first lane the elbow covers its first 16px. */}
+      <div
+        aria-hidden
+        className="h-[2px] shrink-0 bg-gray-80"
+        style={{
+          marginTop: y,
+          marginInlineStart: first ? 0 : ELBOW,
+          width: first ? STUB : STUB - ELBOW,
+        }}
+      />
+
+      {/* Outline: gray-50 on the light canvas (#f7f7f7) ≈ 3.7:1, gray-40 on
+          the dark one (#141414) ≈ 3.2:1 — both clear the 3:1 a visible
+          boundary needs; the earlier gray-98 tint read as nothing. */}
+      <div
+        className="rounded-[28px] border-2 border-dashed border-gray-50 dark:border-gray-40 bg-white/60 dark:bg-gray-10/60"
+        style={{ padding: LANE_PAD }}
+      >
+        {/* Cards are written `w-full` (they used to stack in a column); in a
+            row each one is pinned to the card width instead. */}
+        <div data-lane-row className="flex items-start [&>*]:shrink-0 [&>div.w-full]:w-[346px]">
+          {children}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The card a lane is working on right now: its last card — cards only ever
+ * land at the far (left) end of a lane. Connectors are aria-hidden.
  */
 export function newestLaneCard(fid: string): HTMLElement | null {
   const row = document.querySelector<HTMLElement>(`[data-lane="${fid}"] [data-lane-row]`)
@@ -78,98 +145,4 @@ export function newestLaneCard(fid: string): HTMLElement | null {
     (c): c is HTMLElement => c instanceof HTMLElement && !c.hasAttribute("aria-hidden"),
   )
   return cards[cards.length - 1] ?? null
-}
-
-/** The column that holds the lanes, one under the other. */
-export function laneColumnClass(lanes: Exclude<LaneLayout, null>) {
-  return "flex flex-col"
-    + (lanes === "b" ? " -mt-5" : "") // B: the outline's padding sits above the row line
-}
-
-/**
- * One format: in the shipped tree a 346px column whose results stack DOWN;
- * in a lane, a row whose results run LEFT, wired into the shared spine.
- */
-export function FormatColumn({
-  fid,
-  index,
-  count,
-  children,
-}: {
-  /** The format id — lets the page find this lane's newest card to follow it. */
-  fid: string
-  index: number
-  count: number
-  children: ReactNode
-}) {
-  const lanes = useLaneLayout()
-  if (!lanes) {
-    return (
-      <div className="flex flex-col items-center" style={{ width: LANE_CARD_WIDTH }}>
-        {children}
-      </div>
-    )
-  }
-
-  const first = index === 0
-  const last = index === count - 1
-  // Where the spine meets this lane, from the lane's top edge.
-  const y = lanes === "b" ? ATTACH_Y + BAND_PAD : ATTACH_Y
-
-  // Cards inside a column are `w-full`; in a row that has nothing to be full
-  // of, so every direct child is pinned to the card width instead.
-  const row = (
-    <div data-lane-row className="flex items-start [&>*]:shrink-0 [&>div.w-full]:w-[346px]">
-      {children}
-    </div>
-  )
-
-  return (
-    <div
-      data-lane={fid}
-      className="relative flex items-start"
-      style={{ paddingBottom: last ? 0 : LANE_GAP }}
-    >
-      {/* Spine — the part of it that belongs to this lane. */}
-      {lanes === "a" && !first && (
-        <div aria-hidden className="absolute start-0 top-0 w-[2px] bg-gray-80" style={{ height: y }} />
-      )}
-      {!last && (
-        <div
-          aria-hidden
-          className="absolute start-0 bottom-0 w-[2px] bg-gray-80"
-          style={{ top: lanes === "a" || first ? y : 0 }}
-        />
-      )}
-      {lanes === "b" && !first && (
-        <div
-          aria-hidden
-          className="absolute start-0 top-0 border-s-2 border-b-2 border-gray-80 rounded-es-2xl"
-          style={{ height: y + 2, width: ELBOW }}
-        />
-      )}
-
-      {/* Stub into the lane. B's elbow already covers its first 16px. */}
-      <div
-        aria-hidden
-        className="h-[2px] shrink-0 bg-gray-80"
-        style={{
-          marginTop: y,
-          marginInlineStart: lanes === "b" && !first ? ELBOW : 0,
-          width: lanes === "b" && !first ? 40 - ELBOW : 40,
-        }}
-      />
-
-      {lanes === "b" ? (
-        <div
-          className="rounded-[28px] border border-dashed border-gray-80 bg-gray-98/60 dark:bg-gray-10/40"
-          style={{ padding: BAND_PAD }}
-        >
-          {row}
-        </div>
-      ) : (
-        row
-      )}
-    </div>
-  )
 }
