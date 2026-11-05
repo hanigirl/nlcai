@@ -194,7 +194,7 @@ export function startBRollEdit(
   /** The chat panel reports progress itself — no toasts then. */
   /** references: screenshots she attached (lib/ai-edit-references). */
   opts: { quiet?: boolean; references?: string[] } = {},
-): Promise<{ ok: true; url: string } | { ok: false; message: string }> {
+): Promise<{ ok: true; url: string; unchanged?: string } | { ok: false; message: string }> {
   if (!postId || !instruction.trim()) return Promise.resolve({ ok: false, message: "" })
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   const toastId = `broll-edit-${++toastSeq}`
@@ -216,11 +216,18 @@ export function startBRollEdit(
         url?: string
         error?: string
         message?: string
+        unchanged?: boolean
       }
       if (!res.ok || !data.url) {
         const message = data.message ?? data.error ?? "עריכת הבי-רול נכשלה"
         if (!opts.quiet) toast.error(message, { id: toastId, duration: 10000 })
         return { ok: false as const, message }
+      }
+      // The edit changed nothing — the clip stays, and the reply says so.
+      if (data.unchanged) {
+        const message = data.message ?? "הבקשה לא שינתה כלום, אז השארתי את הבי-רול כמו שהיה."
+        if (!opts.quiet) longWaitDone(toastId, message, { postId })
+        return { ok: true as const, url: data.url, unchanged: message }
       }
       update(postId, (s) => ({ ...s, url: data.url as string }))
       if (!opts.quiet) longWaitDone(toastId, "הבי-רול עודכן", { postId })

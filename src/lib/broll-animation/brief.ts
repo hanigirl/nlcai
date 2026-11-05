@@ -1,7 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { BROLL_VIDEO_CTA, hasDescriptionCta } from "@/lib/broll-copy"
-import type { MediaStyle, VisualLanguage } from "@/lib/visual-language/types"
+import type { MediaStyle, VisualFormat, VisualLanguage } from "@/lib/visual-language/types"
 import type { BrandFont, CompositionBrief } from "./compose"
+import { resolveDesignDirection, type DesignDirection } from "@/lib/visual-language/direction"
+import { languageKey, languageLines, pieceLines, styleOfLines } from "@/lib/visual-language/current-brief"
 
 /**
  * Everything Opus needs to set her hook in her brand: the text, her fonts
@@ -81,4 +83,40 @@ export async function buildCompositionBrief(
     fonts,
     styleSpec: styleLines.join("\n"),
   }
+}
+
+function compositionLanguageKey(b: CompositionBrief): string {
+  return languageKey({
+    lines: languageLines(b.styleSpec.split("\n")),
+    palette: b.palette.map((p) => [p.hex.toLowerCase(), p.role]),
+    fonts: b.fonts.map((f) => [f.family, f.kind === "file" ? f.url : "", f.role ?? ""]),
+  })
+}
+
+/**
+ * A stored b-roll / animated-frame brief with its language read fresh from
+ * her settings (lib/visual-language/current-brief) — same look it was made
+ * in, or hers when she asks for it. Its words, notes and her design wording
+ * are kept. `direction`: for a new background. `changed`: the clip still
+ * shows a language she has since replaced.
+ */
+export async function currentCompositionBrief(
+  supabase: SupabaseClient,
+  userId: string,
+  stored: CompositionBrief,
+  opts: { format: VisualFormat; ownLanguage?: boolean },
+): Promise<{ brief: CompositionBrief; direction: DesignDirection; changed: boolean }> {
+  const lines = stored.styleSpec.split("\n")
+  const madeIn = styleOfLines(lines)
+  const wanted: MediaStyle = opts.ownLanguage ? "brand" : madeIn
+  const base = await resolveDesignDirection(supabase, userId, {
+    format: opts.format,
+    allowReferences: false,
+    ...(wanted === "brand" ? {} : { style: wanted }),
+  })
+  const style: MediaStyle = wanted === "brand" && base.source !== "brand" ? "niche" : wanted
+  const direction = { ...base, lines: [...base.lines, ...pieceLines(lines)] }
+  const fresh = await buildCompositionBrief(supabase, userId, { hook: stored.hook, rest: stored.rest }, direction.lines, style)
+  const brief: CompositionBrief = { ...stored, palette: fresh.palette, fonts: fresh.fonts, styleSpec: fresh.styleSpec }
+  return { brief, direction, changed: compositionLanguageKey(brief) !== compositionLanguageKey(stored) }
 }
