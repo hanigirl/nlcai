@@ -23,6 +23,16 @@ import {
 } from "@/lib/carousel-composition"
 import { isOwnMediaUrl } from "@/lib/own-media"
 import { parseReferences, referenceBlocks, referenceBuffer } from "@/lib/ai-edit-references"
+import { currentCarouselBrief } from "@/lib/carousel-brief"
+import { wantsOwnLanguage } from "@/lib/visual-language/current-brief"
+import type { ModelImage } from "@/lib/visual-language/image-input"
+
+/**
+ * The edit ran and the slides came out exactly as they were: nothing is
+ * saved, and the chat says so instead of "עדכנתי" (Hani, 2026-11-05).
+ */
+const UNCHANGED_MESSAGE =
+  "הבקשה לא שינתה כלום בשקופיות, אז השארתי אותן כמו שהיו. נסו לכתוב מה בדיוק לשנות, למשל צבע הרקע, מיקום הכותרת או גודל התמונה."
 
 // Planning + up to 10 parallel image edits (30–120s each).
 export const maxDuration = 300
@@ -79,6 +89,8 @@ async function plan(
   count: number,
   instruction: string,
   refs: string[] = [],
+  /** She asked for her visual language: its current lines, to spell out in the brief. */
+  language: string[] = [],
 ): Promise<{ targets: number[]; edit: string; place: number[] }> {
   const client = new Anthropic({ apiKey })
   const msg = await client.messages.create({
@@ -101,6 +113,13 @@ async function plan(
             (refs.length
               ? ' The image editor will NOT see her reference images, so spell out in words exactly what to take from them. Images she wants PLACED are different: the editor receives those files themselves, as "input image 2", "input image 3"… in the order you list them in "place" — so say where and how big to place each one, and that it is reproduced exactly as it is (same character / photo / logo, never redrawn).'
               : ""),
+          ...(language.length
+            ? [
+                "",
+                "She asks to apply HER VISUAL LANGUAGE. The image editor cannot see it, so the edit must restyle the whole design into it, spelled out concretely: background treatment, palette (with hex codes), type styling (weight, colour, emphasis), graphic devices and decoration — and say to remove whatever of the current look the language doesn't have. Keep every piece of Hebrew text exactly, and keep any photo of a person and her logo. Her current visual language:",
+                ...language,
+              ]
+            : []),
           ...(refs.length
             ? ['- place: the numbers of the attached images she wants put INTO the design as they are (her own picture, character, logo, product). Empty for images that only show a look to match.']
             : []),
@@ -127,7 +146,21 @@ async function plan(
   }
 }
 
-function editPrompt(edit: string, placing: number): string {
+function editPrompt(edit: string, placing: number, restyle = false, brandRefs = 0): string {
+  if (restyle) {
+    return [
+      "Restyle this design into the creator's visual language. Apply the following:",
+      edit,
+      ...(brandRefs
+        ? [
+            "",
+            `The other input image${brandRefs > 1 ? "s are" : " is"} the creator's brand references (her graphic elements and finished posts in her style): match their look. Never copy their text, photos or subject.`,
+          ]
+        : []),
+      "",
+      "Keep exactly: every piece of Hebrew text (same words, same spelling, right-to-left, same reading order) and any photo of a person or logo. Everything of the previous look that the visual language doesn't have goes. Do not add new text. Nothing may touch or cross the image edge.",
+    ].join("\n")
+  }
   return [
     placing
       ? `Edit the FIRST input image. The other input image${placing > 1 ? "s are the creator's own pictures" : " is the creator's own picture"} to place into it — reproduce ${placing > 1 ? "each one" : "it"} exactly as it is (the same character, photo or logo: same shape, colours, details and proportions; never redraw, restyle or replace it). Apply ONLY the following change:`
@@ -221,10 +254,19 @@ export async function POST(req: NextRequest) {
     // obedient — and only the illustrations she asks about are redrawn. Only
     // while the post still holds exactly the slides that layout made; if she
     // changed any of them, the real images are edited instead.
-    const stored = format === "carousel" ? await loadCarousel(supabase, user.id, postId) : null
-    if (stored && (await carouselStillMatches(stored, urls))) {
-      const revised = await reviseCarousel(anthropicKey, stored, text, refs)
+    const ownLanguage = wantsOwnLanguage(text)
+    const saved0 = format === "carousel" ? await loadCarousel(supabase, user.id, postId) : null
+    if (saved0 && (await carouselStillMatches(saved0, urls))) {
+      // Edited from her CURRENT language, never the snapshot the carousel was
+      // made in (that kept the old look under the new brand elements). When
+      // the language changed since, or she asks for it, the whole carousel
+      // is rebuilt in it.
+      const current = await currentCarouselBrief(supabase, user.id, saved0.brief, { ownLanguage })
+      const restyle = current.changed || ownLanguage
+      const stored = { ...saved0, brief: current.brief }
+      const revised = await reviseCarousel(anthropicKey, stored, text, refs, restyle)
       const illustrations = [...stored.illustrations]
+      const ownArt = stored.illustrations.map((_, i) => stored.ownArt?.[i] ?? false)
       const cutouts = new Set(revised.cutouts)
       // Her attached image placed on a slide is HER FILE, uploaded as that
       // slide's illustration — never a prompt for a redraw (Hani, 2026-11-05:
@@ -235,7 +277,8 @@ export async function POST(req: NextRequest) {
       const isPlaced = (i: number) => placed.some((p) => p.i === i)
       const redraw = revised.illustrations
         .map((idea, i) => ({ idea: idea.trim(), i }))
-        .filter((x) => x.idea && !isPlaced(x.i))
+        // Her own picture is never redrawn, not even by a restyle.
+        .filter((x) => x.idea && !isPlaced(x.i) && !(restyle && ownArt[x.i]))
       // "Remove the background" cuts the EXISTING illustration out (same
       // character, real transparency) — a redraw would paint a new opaque
       // square. A slide whose picture is also being redrawn gets the new one
@@ -248,6 +291,7 @@ export async function POST(req: NextRequest) {
             ? Buffer.from(await cutoutImage(openaiKey, await normaliseImage(file)), "base64")
             : await sharp(file).rotate().resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true }).png().toBuffer()
           illustrations[i] = await uploadIllustration(supabase, user.id, png)
+          ownArt[i] = true
         }),
         ...redraw.map(async ({ idea, i }) => {
           const cutout = cutouts.has(i)
@@ -257,13 +301,14 @@ export async function POST(req: NextRequest) {
             { shape: "1:1", quality: "medium", ...(cutout ? { background: "transparent" as const } : {}) },
           )
           illustrations[i] = await uploadIllustration(supabase, user.id, Buffer.from(raw, "base64"))
+          ownArt[i] = false
         }),
         ...cutOnly.map(async (i) => {
           const raw = await cutoutImage(openaiKey, await loadImageForModels(illustrations[i]))
           illustrations[i] = await uploadIllustration(supabase, user.id, Buffer.from(raw, "base64"))
         }),
       ])
-      const direction = await resolveDesignDirection(supabase, user.id, { format: "carousel" })
+      const direction = current.direction
       const shots = await renderCarousel(revised.html, illustrations, stored.brief.fonts)
       const nextSet = await Promise.all(
         shots.map((shot, i) =>
@@ -274,14 +319,21 @@ export async function POST(req: NextRequest) {
           ),
         ),
       )
+      const hashes = nextSet.map((b64) => slideHash(Buffer.from(b64, "base64")))
+      // Same pixels as before: say so, and save nothing.
+      if (saved0.slideHashes?.length === hashes.length && hashes.every((h, i) => h === saved0.slideHashes![i])) {
+        return NextResponse.json({ urls, edited: [], unchanged: true, message: UNCHANGED_MESSAGE })
+      }
       const saved = await replaceImageAssetSet(supabase, user.id, postId, format, nextSet)
       if (!saved.ok) return NextResponse.json({ error: saved.error }, { status: 500 })
       await saveCarousel(supabase, user.id, postId, {
         html: revised.html,
+        // The brief it now matches — her current language.
         brief: stored.brief,
         illustrations,
         edits: [...stored.edits, text],
-        slideHashes: nextSet.map((b64) => slideHash(Buffer.from(b64, "base64"))),
+        slideHashes: hashes,
+        ownArt,
       })
       const { data: after } = await supabase
         .from("media_assets")
@@ -294,16 +346,22 @@ export async function POST(req: NextRequest) {
         edited: shots.map((_, i) => i + 1),
       })
     }
-    const { targets, edit, place } = await plan(anthropicKey, format, urls.length, text, refs)
-    const prompt = editPrompt(edit, place.length)
+    // "Apply my visual language" on images we edit as pictures: the planner
+    // gets her CURRENT language to spell out, and the image model her brand
+    // references — without them it only ever saw the old design.
+    const language = ownLanguage ? await resolveDesignDirection(supabase, user.id, { format }) : null
+    const { targets, edit, place } = await plan(anthropicKey, format, urls.length, text, refs, language?.lines ?? [])
     // Pictures she asked to place go to the image model as files, not words.
     const placeImages = await Promise.all(place.map((n) => normaliseImage(referenceBuffer(refs[n - 1]))))
+    // Her placed pictures first (the prompt numbers them), then up to two brand references.
+    const brandRefs: ModelImage[] = language && !placeImages.length ? language.references.slice(0, 2) : []
+    const prompt = editPrompt(edit, place.length, !!language, brandRefs.length)
 
     const next = [...urls]
     await Promise.all(
       targets.map(async (n) => {
         const source = await loadImageForModels(urls[n - 1])
-        const out = await editImage(openaiKey, prompt, source, SHAPE[format], placeImages)
+        const out = await editImage(openaiKey, prompt, source, SHAPE[format], [...placeImages, ...brandRefs])
         next[n - 1] = toCanvas(out, CANVAS[format])
       }),
     )

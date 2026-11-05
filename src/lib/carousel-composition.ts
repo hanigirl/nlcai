@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import type { SlideData } from "@/lib/carousel-templates"
 import { fontHead, fontRoleLines, type BrandFont } from "@/lib/broll-animation/compose"
 import { launch } from "@/lib/broll-animation/render"
+import type { MediaStyle } from "@/lib/visual-language/types"
 
 /**
  * AI carousel, laid out in code (Hani, 2026-10-22).
@@ -49,6 +50,11 @@ export interface CarouselBrief {
   examples?: string[]
   /** Names of the brand elements we paste afterwards — never drawn. */
   pastedElements?: string[]
+  /**
+   * The look it was made in. Compositions saved before 2026-11-05 don't have
+   * it — it is read from their visual-language line (styleOfLines).
+   */
+  style?: MediaStyle
 }
 
 export interface StoredCarousel {
@@ -65,6 +71,12 @@ export interface StoredCarousel {
    * the edit works on the real images instead (never overwriting hers).
    */
   slideHashes?: string[]
+  /**
+   * Per slide: true when its illustration is her own picture (placed from
+   * an attached image), never redrawn when the look changes. Missing on
+   * compositions saved before 2026-11-05.
+   */
+  ownArt?: boolean[]
 }
 
 export function slideHash(png: Buffer): string {
@@ -199,7 +211,19 @@ export function composeCarousel(apiKey: string, brief: CarouselBrief, refs: stri
  * images she attached, as her exact file; `cutouts` = slides whose
  * illustration loses its background.
  */
-export function reviseCarousel(apiKey: string, stored: StoredCarousel, instruction: string, refs: string[] = []) {
+export function reviseCarousel(
+  apiKey: string,
+  stored: StoredCarousel,
+  instruction: string,
+  refs: string[] = [],
+  /**
+   * The carousel was designed in a visual language she has since replaced,
+   * or she asked to apply hers: rebuild the whole look in the one in the
+   * brief (which is always her current one), not just her change.
+   */
+  restyle = false,
+) {
+  const own = (stored.ownArt ?? []).flatMap((o, i) => (o ? [i + 1] : []))
   return ask(
     apiKey,
     [
@@ -211,6 +235,17 @@ export function reviseCarousel(apiKey: string, stored: StoredCarousel, instructi
       "```",
       "",
       ...(stored.edits.length ? ["Earlier requests (already applied):", ...stored.edits.map((e) => `- ${e}`), ""] : []),
+      ...(restyle
+        ? [
+            "RESTYLE — the brand fonts, colours, visual language and usage examples above are the creator's CURRENT visual language. The CURRENT CAROUSEL was designed in an earlier look that she has replaced (or drifted from it). Rebuild the whole carousel in the current language, as if it were designed from this brief today — with the usage examples as the template when they are attached: backgrounds, colours, type treatment, layout devices, decoration and the slide number all follow it. Nothing of the earlier look may remain — no colour, shape, ornament, tab, line or layout device the current language doesn't have. An earlier request that was about the old look no longer applies; one about content (words, her placed picture, its size) still does.",
+            "Keep every slide's text exactly as it is.",
+            own.length
+              ? `Slide${own.length > 1 ? "s" : ""} ${own.join(", ")} show${own.length > 1 ? "" : "s"} the creator's own picture — keep it on that slide, restyle only around it, and never give it a new illustration prompt.`
+              : "If an earlier request placed the creator's own picture on a slide, keep that picture there (restyle only around it) and never give it a new illustration prompt.",
+            'Every other illustration was drawn in the earlier look: for each slide that should show one in the current language, give a NEW prompt in "illustrations"; if the current language uses no illustrations, drop its token and give "".',
+            "",
+          ]
+        : []),
       "She wants this change now (Hebrew). Carry it out fully and precisely — this is the most important thing. Keep everything she didn't ask to change, and keep the carousel one consistent system:",
       JSON.stringify(instruction),
       "",
@@ -221,7 +256,9 @@ export function reviseCarousel(apiKey: string, stored: StoredCarousel, instructi
             `She attached ${refs.length === 1 ? "an image" : `${refs.length} images`} (see "Attached image N" above). If she wants one placed in the carousel, put "attached": [one entry per slide: the attached image number to place on that slide, or 0] in the json block, leave that slide's "illustrations" entry empty, and make sure the slide shows it with <img class="art" src="__SLIDE_IMAGE_N__"> (N = the slide number) styled object-fit: contain, so her picture is never cropped, stretched or distorted. We put her exact file there — never describe it as a new illustration prompt. An attached image that only shows the look she wants is a reference: apply the look, and do not list it in "attached". To place it without its background, also list the slide in "cutouts".`,
           ]
         : []),
-      "Change nothing she did not ask about — no new overlays, opacity, filters, blend modes or colour shifts on any slide or element.",
+      ...(restyle
+        ? []
+        : ["Change nothing she did not ask about — no new overlays, opacity, filters, blend modes or colour shifts on any slide or element."]),
       "Return the full revised HTML.",
     ].join("\n"),
     stored.brief.slides.length,
