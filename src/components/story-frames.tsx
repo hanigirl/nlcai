@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Plus, Trash2 } from "lucide-react"
+import { Merge, Plus } from "lucide-react"
 import { RichBodyEditor } from "@/components/rich-body-editor"
 import {
   ContextMenu,
@@ -9,14 +9,16 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
-import { MAX_STORY_SCRIPT_FRAMES, sectionsToScript, storySections } from "@/lib/story-text-split"
+import { MAX_STORY_SCRIPT_FRAMES, removeStorySplit, sectionsToScript, storySections } from "@/lib/story-text-split"
 
 /**
  * The story card's text, as the stories it becomes — Hani's design
  * (2026-11-05): a grey "סטורי 1" label (not editable, not part of her text),
  * the story's text under it as usual, a divider, "סטורי 2", and so on.
- * Right-click: "הוספת סטורי" adds one at the end; "מחיקת סטורי N" removes the
- * one she right-clicked (offered while more than one is left).
+ * Right-click: "הוספת סטורי" adds one at the end; "איחוד סטורי N עם N-1"
+ * removes the split before the story she right-clicked — her text joins the
+ * story before it (story 1's joins story 2), never deleted. Offered while
+ * more than one story is left.
  *
  * The sections are the generator's own split (lib/story-text-split), and
  * what she changes is saved with the "סטורי N" lines that split reads — those
@@ -82,9 +84,11 @@ export function StorySections({
           הוספת סטורי
         </ContextMenuItem>
         {shown.length > 1 && (
-          <ContextMenuItem variant="destructive" onSelect={() => set(shown.filter((_, j) => j !== target))}>
-            <Trash2 />
-            מחיקת סטורי {target + 1}
+          // Removes the split, never her words: the text joins the story
+          // before it (story 1's joins the next one).
+          <ContextMenuItem onSelect={() => set(removeStorySplit(shown, target))}>
+            <Merge className="text-text-neutral-default" />
+            {target === 0 ? "איחוד סטורי 1 עם 2" : `איחוד סטורי ${target + 1} עם ${target}`}
           </ContextMenuItem>
         )}
       </ContextMenuContent>

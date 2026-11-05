@@ -3,7 +3,9 @@
 /**
  * State preview — the story card's text as its stories (Hani's design,
  * 2026-11-05): a grey "סטורי 1" label over each story's text, a divider
- * between them. Right-click the text: "הוספת סטורי" / "מחיקת סטורי N".
+ * between them. Right-click the text: "הוספת סטורי" / "איחוד סטורי N עם N-1"
+ * (the text joins the story before it — story 1's joins story 2; no words
+ * are ever deleted, and the side panel checks it).
  *
  * The side panel shows what the generator receives for this exact text, and
  * a live check that no "סטורי N" line reaches a picture, a burned caption or
@@ -19,7 +21,7 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { Smartphone } from "lucide-react"
 import { StorySections } from "@/components/story-frames"
-import { frameMarkerLeaks, storyFrames } from "@/lib/story-text-split"
+import { frameMarkerLeaks, removeStorySplit, storyFrames, storySections } from "@/lib/story-text-split"
 
 const SAMPLES = {
   auto: "כשקלוד נהיה מטומטם אני בודקת 3 דברים\n\nקונטקסט: עברתם 70%? הביצועים כבר נחלשים.\nמודל: אולי עברתם בטעות להייקו.\nולשאול אותו ישירות מה קרה.\n\nיש לכם דבר רביעי? כתבו לי",
@@ -59,6 +61,11 @@ function Card({ state }: { state: State }) {
   const [text, setText] = useState<string>(SAMPLES[state])
   const generated = storyFrames(text)
   const leaks = frameMarkerLeaks(text)
+  // Removing any split keeps every word (Hani, 2026-11-05).
+  const words = (list: string[]) => list.join(" ").split(/\s+/).filter(Boolean).sort().join(" ")
+  const sections = storySections(text)
+  const mergeKeepsWords =
+    sections.length < 2 || sections.every((_, i) => words(removeStorySplit(sections, i)) === words(sections))
 
   return (
     <div dir="rtl" className="min-h-screen bg-bg-surface p-6">
@@ -74,7 +81,7 @@ function Card({ state }: { state: State }) {
             {s.label}
           </Link>
         ))}
-        <span className="text-text-neutral-default">· קליק ימני על הטקסט: הוספה ומחיקה של סטורי</span>
+        <span className="text-text-neutral-default">· קליק ימני על הטקסט: הוספת סטורי, או איחוד עם הסטורי הקודם</span>
       </div>
 
       <div className="flex flex-wrap items-start gap-6">
@@ -101,6 +108,13 @@ function Card({ state }: { state: State }) {
             {leaks.length
               ? `בדיקה: "סטורי N" דלף אל ${leaks.join(", ")}`
               : 'בדיקה: שורות "סטורי N" לא מגיעות לתמונה, לכיתוב או להעתקה ✓'}
+          </span>
+          <span
+            className={`rounded-md px-2 py-1 font-medium ${
+              mergeKeepsWords ? "bg-gray-95 text-text-primary-default dark:bg-gray-20" : "bg-red-95 text-button-danger-default"
+            }`}
+          >
+            {mergeKeepsWords ? "בדיקה: איחוד סטוריז לא מוחק אף מילה ✓" : "בדיקה: איחוד מוחק טקסט"}
           </span>
           <span className="font-medium text-text-primary-default">מה שיצירת המדיה תקבל ({generated.length})</span>
           {generated.map((f, i) => (

@@ -464,3 +464,15 @@ export function sectionsToScript(sections: string[]): string {
     .map((f, i) => (f.trim() ? `סטורי ${i + 1}\n${f.trim()}` : `סטורי ${i + 1}`))
     .join("\n\n")
 }
+
+/**
+ * Removes the split before or after story `index` — never her words (Hani,
+ * 2026-11-05): story N's text joins the end of story N-1; story 1's text
+ * joins the start of the next one. One story left: nothing to remove.
+ */
+export function removeStorySplit(sections: string[], index: number): string[] {
+  if (sections.length < 2 || index < 0 || index >= sections.length) return sections
+  const join = (a: string, b: string) => [a.trim(), b.trim()].filter(Boolean).join("\n")
+  if (index === 0) return [join(sections[0], sections[1]), ...sections.slice(2)]
+  return [...sections.slice(0, index - 1), join(sections[index - 1], sections[index]), ...sections.slice(index + 1)]
+}
