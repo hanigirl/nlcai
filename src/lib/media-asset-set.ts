@@ -1,3 +1,4 @@
+import { isVideoSlide } from "@/lib/carousel-video"
 import type { createClient } from "@/lib/supabase/server"
 
 type ServerSupabase = Awaited<ReturnType<typeof createClient>>
@@ -52,6 +53,10 @@ export async function replaceImageAssetSet(
   if (!variant) return { ok: true, changed: false }
 
   const variantRow = variant as unknown as { id: string }
+  // A carousel's set can mix pictures and VIDEO slides (Hani, 2026-11-06):
+  // both kinds are the set, replaced together, in her order. (A story's
+  // video lives in its own slot, outside the set — untouched here.)
+  const setTypes = format === "carousel" ? ["image", "video"] : ["image"]
 
   let stamp = metadata
   if (stamp === undefined) {
@@ -67,12 +72,12 @@ export async function replaceImageAssetSet(
       undefined
   }
 
-  // Drop existing image assets — the set is replaced as a whole.
+  // Drop the existing set — it is replaced as a whole.
   const { error: wipeErr } = await supabase
     .from("media_assets")
     .delete()
     .eq("format_variant_id", variantRow.id)
-    .eq("asset_type", "image")
+    .in("asset_type", setTypes)
   if (wipeErr) {
     return { ok: false, error: `${format}_wipe_failed: ${wipeErr.message}` }
   }
@@ -83,7 +88,7 @@ export async function replaceImageAssetSet(
     .from("media_assets")
     .select("id")
     .eq("format_variant_id", variantRow.id)
-    .eq("asset_type", "image")
+    .in("asset_type", setTypes)
     .limit(1)
   if (leftover && leftover.length > 0) {
     console.error(
@@ -111,7 +116,8 @@ export async function replaceImageAssetSet(
       if (/^https?:\/\//i.test(base64)) {
         await supabase.from("media_assets").insert({
           format_variant_id: variantRow.id,
-          asset_type: "image",
+          // A carousel video slide keeps its kind (an mp4 the video-slide route stored).
+          asset_type: format === "carousel" && isVideoSlide(base64) ? "video" : "image",
           url: base64,
           status: "completed",
           ...(stamp ? { metadata: stamp } : {}),
@@ -140,7 +146,7 @@ export async function replaceImageAssetSet(
   return { ok: true, changed: true }
 }
 
-/** The format's stored image URLs, in set order — what a route sends back after saving. */
+/** The format's stored set URLs, in order (a carousel's video slides included) — what a route sends back after saving. */
 export async function storedImageUrls(supabase: ServerSupabase, postId: string, format: string): Promise<string[]> {
   const { data: variant } = await supabase
     .from("format_variants")
@@ -153,7 +159,7 @@ export async function storedImageUrls(supabase: ServerSupabase, postId: string, 
     .from("media_assets")
     .select("url")
     .eq("format_variant_id", (variant as { id: string }).id)
-    .eq("asset_type", "image")
+    .in("asset_type", format === "carousel" ? ["image", "video"] : ["image"])
     .order("created_at", { ascending: true })
   return ((rows ?? []) as { url: string | null }[]).map((r) => r.url).filter((u): u is string => !!u)
 }

@@ -189,7 +189,9 @@ export async function GET(
         const prevType = formatBestType[fmt]
         const isVideo = m.asset_type === "video"
         const prevIsVideo = prevType === "video"
-        if (!formatMedia[fmt] || (isVideo && !prevIsVideo)) {
+        // A carousel's canonical media is slide 1 even when a later slide is
+        // a video (carousel video slides, 2026-11-06).
+        if (!formatMedia[fmt] || (isVideo && !prevIsVideo && fmt !== "carousel")) {
           formatMedia[fmt] = m.url
           formatBestType[fmt] = m.asset_type ?? "image"
         }
@@ -236,18 +238,21 @@ export async function GET(
     // "image") under the `carousel` format_variant. Order ascending by
     // created_at to preserve the slide order they were uploaded in (the
     // PATCH handler inserts them sequentially in array order).
-    const imageUrlsFor = (variantId: string | undefined): string[] =>
+    const imageUrlsFor = (variantId: string | undefined, withVideos = false): string[] =>
       variantId
         ? allMedia
             .filter(
-              (m) => m.format_variant_id === variantId && m.asset_type === "image",
+              (m) =>
+                m.format_variant_id === variantId &&
+                (m.asset_type === "image" || (withVideos && m.asset_type === "video")),
             )
             .map((m) => m.url)
             .filter((u): u is string => !!u)
         : []
 
     const carouselVariant = variants.find((v) => v.format === "carousel")
-    const carouselImageUrls = imageUrlsFor(carouselVariant?.id)
+    // Video slides included, in their place (Hani, 2026-11-06 — a carousel can mix).
+    const carouselImageUrls = imageUrlsFor(carouselVariant?.id, true)
     // What the carousel is — AI-made (and from which template) or brought,
     // and whether her slides carry their own words. Stamped on the slides.
     const carouselStamp = carouselVariant

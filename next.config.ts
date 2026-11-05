@@ -37,6 +37,16 @@ const nextConfig: NextConfig = {
     // The AI carousel lays its slides out in HTML and screenshots them.
     "/api/carousel/generate-ai": ["./node_modules/@sparticuz/chromium/bin/**"],
     "/api/media/ai-edit": ["./node_modules/@sparticuz/chromium/bin/**"],
+    // Her own video: animated caption layer (Chromium) composited with ffmpeg.
+    "/api/media/own-edit": [
+      "./node_modules/ffmpeg-static/ffmpeg",
+      "./node_modules/@sparticuz/chromium/bin/**",
+    ],
+    // Carousel video slide: 4:5 pad + optional animated caption.
+    "/api/carousel/video-slide": [
+      "./node_modules/ffmpeg-static/ffmpeg",
+      "./node_modules/@sparticuz/chromium/bin/**",
+    ],
   },
   typescript: { ignoreBuildErrors: true },
   // Who may show the app inside a frame: the app itself and Phebe (Hani's

@@ -1,5 +1,7 @@
 "use client"
 
+import { isVideoSlide } from "@/lib/carousel-video"
+
 import { useCallback, useEffect, useRef, useState } from "react"
 import { getFormatMeta, setFormatMeta } from "@/lib/timing-storage"
 import type { CaptionPosition } from "@/components/image-caption-block"
@@ -49,6 +51,8 @@ export async function captionCarouselSlide(
   slideIndex: number,
   position: CaptionPosition,
 ): Promise<string> {
+  // A video slide keeps its own frame — the caption is burned into pictures only.
+  if (isVideoSlide(bare)) return bare
   try {
     const res = await fetch("/api/media/caption-image", {
       method: "POST",
@@ -74,9 +78,15 @@ export async function captionCarouselSlide(
 export async function pullBareSlidesFromDrive(
   links: string[],
   onProgress?: (msg: string) => void,
+  /** The set as saved: a VIDEO slide there is kept as it is, not pulled as a picture. */
+  current?: string[] | null,
 ): Promise<string[] | null> {
   const slides: string[] = []
   for (let i = 0; i < links.length; i++) {
+    if (isVideoSlide(current?.[i])) {
+      slides.push(current![i])
+      continue
+    }
     onProgress?.(`טוען שקופית ${i + 1} מתוך ${links.length}...`)
     const res = await fetch("/api/media/from-drive", {
       method: "POST",
@@ -294,7 +304,7 @@ export function useCarouselCaption({
     if (cached && cached.length === slideCount) return cached
     if (links.length === 0) return null
     setProgress("טוענים מחדש את השקופיות מהדרייב...")
-    const pulled = await pullBareSlidesFromDrive(links, setProgress)
+    const pulled = await pullBareSlidesFromDrive(links, setProgress, images)
     if (pulled) carouselBareSlides.set(postId, pulled)
     return pulled
     // eslint-disable-next-line react-hooks/exhaustive-deps

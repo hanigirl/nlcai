@@ -26,6 +26,7 @@ import { SelectionCard } from "@/components/selection-card"
 import { Textarea } from "@/components/ui/textarea"
 import { RichBodyEditor } from "@/components/rich-body-editor"
 import { StorySections } from "@/components/story-frames"
+import { isVideoSlide } from "@/lib/carousel-video"
 import { stripFrameMarkers } from "@/lib/story-text-split"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -4065,7 +4066,22 @@ function CarouselResultCard({
             className="w-full"
           >
           <div className="relative w-full rounded-xl overflow-hidden bg-gray-95">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
+            {isVideoSlide(shownSlides[currentSlide]) ? (
+              // A video slide (2026-11-06): it plays on the card; only its
+              // control bar takes clicks (MediaPreviewZone skips video[controls]).
+              <video
+                key={shownSlides[currentSlide]}
+                src={`${shownSlides[currentSlide]}#t=0.001`}
+                controls
+                playsInline
+                muted
+                preload="metadata"
+                className="w-full aspect-[4/5] object-cover"
+                aria-label={`סלייד ${currentSlide + 1}, וידאו`}
+                onMouseDown={(e) => e.stopPropagation()}
+              />
+            ) : (
+            /* eslint-disable-next-line @next/next/no-img-element */
             <img
               // URL or base64. The card used to assume base64 only, so it
               // depended on the page decoding every slide from storage on
@@ -4079,6 +4095,7 @@ function CarouselResultCard({
               className="w-full h-auto"
               onMouseDown={(e) => e.stopPropagation()}
             />
+            )}
           </div>
           </MediaPreviewZone>
 

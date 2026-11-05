@@ -30,14 +30,19 @@ export const OVERLAY_SECONDS = 3
 const TRANSPARENT_PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg=="
 
-function notes(format: "story" | "b_roll"): string[] {
+/** Where her clip goes: a story / reel (9:16), or a carousel video slide (4:5, the middle 1350px of this 1920px page). */
+export type OwnVideoFormat = "story" | "b_roll" | "carousel"
+
+function notes(format: OwnVideoFormat): string[] {
   return [
     "- THE BACKGROUND IS THE CREATOR'S OWN VIDEO. It is composited UNDER this page afterwards, untouched. The background token here is a fully transparent image: keep it in the document, but paint NOTHING over the whole frame — no full-frame fills, gradients, scrims, vignettes, colour washes or blend modes. The page must stay transparent everywhere except the text and what belongs to it (its plate / pill / highlight / shadow / small accents).",
     "- You cannot see the footage, so assume it is busy and changes: every line needs its own contrast — a solid or semi-solid plate / pill behind it in the brand colours, or a strong shadow — never text straight on the video.",
     "- It reads like a premium caption, not a poster: the words take about a third of the frame at most, and the footage stays the hero.",
     "- Motion: per-word (or per-line) entrances with a clear rhythm, one emphasis on the most important word or phrase (her accent colour, a highlight, a scale pop). EVERYTHING has arrived and is still by 2.5s — only the first 3 seconds are rendered and the last frame then holds for the rest of her clip (we fade it out at the very end).",
     "- Keep the text clear of where a face or the speaker's head usually is in a talking video (the upper and middle part of the frame, around the centre): prefer the lower third of the safe area, unless her own instruction places it elsewhere.",
-    format === "story"
+    format === "carousel"
+      ? "- CAROUSEL SLIDE (4:5): only the middle 1350px of this 1920px-tall page is kept — the top 285px and bottom 285px are cut away. Keep ALL text between 345px from the top and 345px from the bottom, ≥80px from the sides."
+      : format === "story"
       ? "- INSTAGRAM STORY safe zone: keep all text between 270px from the top and 460px from the bottom, ≥80px from the sides."
       : "- INSTAGRAM REELS safe zone: keep all text between 220px from the top and 420px from the bottom, ≥80px from the sides (the right side also holds the like / comment buttons — keep text off the right 160px below the middle).",
   ]
@@ -69,7 +74,7 @@ export async function renderOwnVideoCaption(
   supabase: SupabaseClient,
   userId: string,
   anthropicKey: string,
-  format: "story" | "b_roll",
+  format: OwnVideoFormat,
   spec: CaptionSpec,
   dir: string,
 ): Promise<number> {
