@@ -9,6 +9,7 @@ import { getUserApiKey } from "@/lib/api-keys"
 import {
   desiredFrameCount,
   requestedFrameCount,
+  splitScriptBalanced,
   splitScriptIntoFrames,
 } from "@/lib/story-text-split"
 import { getAuthUser } from "@/lib/auth-user"
@@ -63,7 +64,8 @@ const CONCURRENCY = 3
  */
 /** `asked`: a frame count she named in her brief ("לפצל ל-2 סטוריז") wins over the script's own. */
 function splitStoryIntoFrames(body: string, asked?: number | null): string[] {
-  return splitScriptIntoFrames(body, asked ?? desiredFrameCount(body))
+  // A count she asked for is balanced by length (lib/story-text-split).
+  return asked ? splitScriptBalanced(body, asked) : splitScriptIntoFrames(body, desiredFrameCount(body))
 }
 
 
