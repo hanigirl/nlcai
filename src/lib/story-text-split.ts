@@ -35,13 +35,47 @@ const MAX_SCRIPT_FRAMES = 6
  */
 const FRAME_MARKER = /^\s*[\[(]?\s*(?:פריים|מסך|סטורי|שקופית|frame|screen|slide)\s*\d+\s*[\])]?\s*[:.\-–—]?\s*/i
 
-/** The script divided by its own frame markers, or null when it has fewer than two. */
+/**
+ * The script with its frame marks taken out — "סטורי 1", "[מסך 2]" lines are
+ * the card's way of saying where a story ends (Hani, 2026-11-05) and must
+ * NEVER reach a frame's picture, a burned caption or anything published.
+ * Text after a mark on the same line stays.
+ */
+export function stripFrameMarkers(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => {
+      const m = line.match(FRAME_MARKER)
+      return m && m[0].trim() ? line.slice(m[0].length) : line
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+}
+
+/** True when `text` still carries a frame mark — for the checks. */
+export function hasFrameMarker(text: string): boolean {
+  return text.split("\n").some((line) => {
+    const m = line.match(FRAME_MARKER)
+    return !!m && !!m[0].trim()
+  })
+}
+
+/**
+ * The script divided by its own frame markers, or null when it has none.
+ *
+ * One marker counts too (Hani, 2026-11-05 — the story card's split view):
+ * "סטורי 1" over a script with several paragraphs means ONE story she chose,
+ * not one per paragraph.
+ */
 function markedFrames(body: string): string[] | null {
   const frames: string[] = []
   let current: string[] | null = null
+  let marked = false
   for (const line of body.split("\n")) {
     const m = line.match(FRAME_MARKER)
     if (m && m[0].trim()) {
+      marked = true
       if (current) frames.push(current.join("\n").trim())
       current = []
       const rest = line.slice(m[0].length).trim()
@@ -55,7 +89,7 @@ function markedFrames(body: string): string[] | null {
   }
   if (current) frames.push(current.join("\n").trim())
   const kept = frames.filter(Boolean)
-  return kept.length >= 2 ? kept.slice(0, MAX_SCRIPT_FRAMES) : null
+  return marked && kept.length >= 1 ? kept.slice(0, MAX_SCRIPT_FRAMES) : null
 }
 
 /**
@@ -229,7 +263,8 @@ export function frameCaption(
   frameCount: number,
 ): { headline?: string; body?: string } {
   const frames = splitScriptIntoFrames(body, frameCount)
-  const text = frames[frameIndex]?.trim()
+  // No frame mark ever reaches a burned caption.
+  const text = stripFrameMarkers(frames[frameIndex] ?? "")
   if (!text) return {}
 
   if (frameIndex > 0) return { body: text }
@@ -348,4 +383,96 @@ export function splitScriptBalanced(body: string, frameCount: number): string[] 
     start = end
   }
   return frames
+}
+
+/**
+ * THE story split — what api/story/generate-media draws and what the story
+ * card shows while she writes (Hani, 2026-11-05), so the two never disagree:
+ *   1. her own marks ("סטורי 1"…) win — they are the split she set;
+ *   2. else a count she asked for at generation ("לפצל ל-2 סטוריז",
+ *      requestedFrameCount) — balanced by length (splitScriptBalanced);
+ *   3. else her blank-line paragraphs, one story each (or by length for one
+ *      undivided block) — desiredFrameCount.
+ */
+export function storyFrames(body: string, asked?: number | null): string[] {
+  const marked = markedFrames(body)
+  const frames = marked
+    ? splitScriptIntoFrames(body, marked.length)
+    : asked
+      ? splitScriptBalanced(body, asked)
+      : splitScriptIntoFrames(body, desiredFrameCount(body))
+  // Belt and braces: no mark ever reaches a frame's text.
+  return frames.map(stripFrameMarkers).filter(Boolean)
+}
+
+/** Most frames a script can set for itself. */
+export const MAX_STORY_SCRIPT_FRAMES = MAX_SCRIPT_FRAMES
+
+/**
+ * The check behind "סטורי 1 never ends up in the picture" (Hani, 2026-11-05):
+ * every text the story pipeline hands on — each frame the generator draws,
+ * each caption burned over her own frames (at the script's count and at one
+ * frame), and the copy / planner text — must be free of frame marks. Returns
+ * the names of the ones that aren't (empty = clean). Used by the story card
+ * preview (/test/story-frame-split).
+ */
+export function frameMarkerLeaks(body: string): string[] {
+  const leaks: string[] = []
+  const frames = storyFrames(body)
+  frames.forEach((f, i) => hasFrameMarker(f) && leaks.push(`פריים ${i + 1} ביצירה`))
+  for (let i = 0; i < frames.length; i++) {
+    const c = frameCaption(body, i, frames.length)
+    if (hasFrameMarker([c.headline, c.body].filter(Boolean).join("\n"))) leaks.push(`כיתוב פריים ${i + 1}`)
+  }
+  const one = frameCaption(body, 0, 1)
+  if (hasFrameMarker([one.headline, one.body].filter(Boolean).join("\n"))) leaks.push("כיתוב על תמונה שהעלו")
+  if (hasFrameMarker(stripFrameMarkers(body))) leaks.push("טקסט להעתקה")
+  return leaks
+}
+
+/**
+ * The story card's sections (Hani, 2026-11-05: a grey "סטורי 1" over each
+ * story's text). The stories the generator makes (storyFrames) — plus any
+ * story she added and hasn't written yet: an empty "סטורי 3" stays on the
+ * card, while the generator simply skips it.
+ */
+export function storySections(body: string): string[] {
+  if (!markedFrames(body)) return storyFrames(body)
+  const sections: string[] = []
+  let current: string[] | null = null
+  for (const line of body.split("\n")) {
+    const m = line.match(FRAME_MARKER)
+    if (m && m[0].trim()) {
+      if (current) sections.push(current.join("\n").trim())
+      current = []
+      const rest = line.slice(m[0].length).trim()
+      if (rest) current.push(rest)
+    } else if (current) {
+      current.push(line)
+    } else if (line.trim()) {
+      current = [line]
+    }
+  }
+  if (current) sections.push(current.join("\n").trim())
+  return sections.slice(0, MAX_SCRIPT_FRAMES)
+}
+
+/** The card's sections back to a script — "סטורי N" over each, empty ones kept. */
+export function sectionsToScript(sections: string[]): string {
+  return sections
+    .slice(0, MAX_SCRIPT_FRAMES)
+    .map((f, i) => (f.trim() ? `סטורי ${i + 1}\n${f.trim()}` : `סטורי ${i + 1}`))
+    .join("\n\n")
+}
+
+/**
+ * Removes the split before or after story `index` — never her words (Hani,
+ * 2026-11-05): story N's text joins the end of story N-1; story 1's text
+ * joins the start of the next one. One story left: nothing to remove.
+ */
+export function removeStorySplit(sections: string[], index: number): string[] {
+  if (sections.length < 2 || index < 0 || index >= sections.length) return sections
+  const join = (a: string, b: string) => [a.trim(), b.trim()].filter(Boolean).join("\n")
+  if (index === 0) return [join(sections[0], sections[1]), ...sections.slice(2)]
+  return [...sections.slice(0, index - 1), join(sections[index - 1], sections[index]), ...sections.slice(index + 1)]
 }

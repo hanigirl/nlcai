@@ -24,6 +24,8 @@ import { WorkflowCard } from "@/components/workflow-card"
 import { SelectionCard } from "@/components/selection-card"
 import { Textarea } from "@/components/ui/textarea"
 import { RichBodyEditor } from "@/components/rich-body-editor"
+import { StorySections } from "@/components/story-frames"
+import { stripFrameMarkers } from "@/lib/story-text-split"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipLabel } from "@/components/ui/tooltip"
@@ -3310,6 +3312,22 @@ function FormatTree({
                 </div>
                 <div className="px-6 flex flex-col gap-3">
                   <div className={`${AI_HOVER_ZONE} group`}>
+                    {fid === "story" && !isGenerating ? (
+                      // The story's text as its stories: grey "סטורי N" over
+                      // each, a divider between, right-click to add / delete
+                      // (Hani, 2026-11-05 — components/story-frames).
+                      <div
+                        className={`min-h-[200px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 pt-2 ${copyAi ? "pb-12" : "pb-2"}`}
+                      >
+                        <StorySections
+                          value={formatPosts[fid] ?? ""}
+                          onChange={(text) => onPostChange(fid, text)}
+                          onBlur={() => onPostBlur?.(fid)}
+                          onFocus={() => onActiveChange(`format-${fid}`)}
+                          textClassName={`text-small leading-relaxed select-text ${copyAi?.isBusy(fid) ? "ai-text-shimmer pointer-events-none" : ""}`}
+                        />
+                      </div>
+                    ) : (
                     <RichBodyEditor
                       value={formatPosts[fid] ?? ""}
                       onChange={(text) => onPostChange(fid, text)}
@@ -3323,7 +3341,9 @@ function FormatTree({
                           : "min-h-[200px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text"
                       }
                     />
-                    <CopyButton text={formatPosts[fid] ?? ""} />
+                    )}
+                    {/* A story's frame marks are the card's, never copied text. */}
+                    <CopyButton text={fid === "story" ? stripFrameMarkers(formatPosts[fid] ?? "") : (formatPosts[fid] ?? "")} />
                     {/* ✨ AI edit on this format's copy — the hover sparkle
                         in the text box's corner (Hani, 2026-10-29). */}
                     <FormatCopyAiHoverButton ctrl={copyAi} fid={fid} />

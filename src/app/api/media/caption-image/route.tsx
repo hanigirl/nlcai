@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
 import { fetchDriveFile } from "@/lib/drive-fetch"
-import { frameCaption } from "@/lib/story-text-split"
+import { frameCaption, stripFrameMarkers } from "@/lib/story-text-split"
 import { parseTextToSlides } from "@/lib/carousel-slides"
 import { parseImagePostBody } from "@/lib/image-post-text"
 import { BROLL_VIDEO_CTA, hasDescriptionCta } from "@/lib/broll-copy"
@@ -257,7 +257,7 @@ export async function POST(req: NextRequest) {
       const hook =
         post.hook_text?.trim() ||
         post.title?.trim() ||
-        variant.body?.split(/\n+/)[0]?.trim() ||
+        (variant.body ? stripFrameMarkers(variant.body).split(/\n+/)[0]?.trim() : "") ||
         ""
       const caption = variant.body?.trim()
         ? frameCaption(variant.body, 0, 1)

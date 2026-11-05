@@ -11,6 +11,10 @@ interface RichBodyEditorProps {
   onMouseDown?: (e: React.MouseEvent) => void
   onClick?: (e: React.MouseEvent) => void
   className?: string
+  /** The first line in bold (the hook). Off for text that doesn't open the piece. */
+  boldFirstLine?: boolean
+  /** Shown while empty (via data-placeholder). */
+  placeholder?: string
 }
 
 function escapeHtml(s: string): string {
@@ -74,8 +78,9 @@ function domToText(root: HTMLElement): string {
 // First line is everything before the first \n (or whole text if no newline).
 // We render it inside <strong> so the hook stays visually emphasized whether
 // the user just generated the post or is reading an old one.
-function buildBodyHtml(text: string): string {
+function buildBodyHtml(text: string, bold = true): string {
   if (!text) return ""
+  if (!bold) return escapeHtml(text)
   const newline = text.indexOf("\n")
   if (newline === -1) {
     return `<strong>${escapeHtml(text)}</strong>`
@@ -115,6 +120,8 @@ export function RichBodyEditor({
   onMouseDown,
   onClick,
   className,
+  boldFirstLine = true,
+  placeholder,
 }: RichBodyEditorProps) {
   const ref = useRef<HTMLDivElement>(null)
   const isUserEdit = useRef(false)
@@ -127,9 +134,9 @@ export function RichBodyEditor({
       return
     }
     if (domToText(el) !== value) {
-      el.innerHTML = buildBodyHtml(value)
+      el.innerHTML = buildBodyHtml(value, boldFirstLine)
     }
-  }, [value])
+  }, [value, boldFirstLine])
 
   const handleInput = () => {
     const el = ref.current
@@ -150,7 +157,7 @@ export function RichBodyEditor({
   const handleBlur = () => {
     const el = ref.current
     if (el) {
-      el.innerHTML = buildBodyHtml(domToText(el))
+      el.innerHTML = buildBodyHtml(domToText(el), boldFirstLine)
     }
     onBlur?.()
   }
@@ -167,8 +174,10 @@ export function RichBodyEditor({
       onBlur={handleBlur}
       onMouseDown={onMouseDown}
       onClick={onClick}
+      data-placeholder={placeholder}
       className={cn(
         "whitespace-pre-wrap break-words outline-none overflow-y-auto cursor-text",
+        placeholder && "empty:before:content-[attr(data-placeholder)] empty:before:text-text-neutral-default",
         className,
       )}
     />
