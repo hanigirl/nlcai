@@ -1,4 +1,5 @@
-import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief } from "@/lib/media-brief"
+import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
+import { parseReferences } from "@/lib/ai-edit-references"
 import { NextRequest, NextResponse } from "next/server"
 import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
@@ -148,12 +149,14 @@ function cropToCanvas(imageBase64: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { postId, variationIndex, style, brief } = (await req.json().catch(() => ({}))) as {
+    const { postId, variationIndex, style, brief, references } = (await req.json().catch(() => ({}))) as {
       postId?: string
       variationIndex?: number
       style?: unknown
       /** Her own direction for this piece (lib/media-brief). */
       brief?: unknown
+      /** Reference images she attached with the brief (lib/ai-edit-references). */
+      references?: unknown
     }
     if (!postId) {
       return NextResponse.json({ error: "postId is required" }, { status: 400 })
@@ -237,12 +240,15 @@ export async function POST(req: NextRequest) {
     // The look: her visual language, else one derived from her niche.
     // Resolved once so every frame shares it; regenerate rotates only the
     // composition.
-    const direction = withMediaBrief(
-      await resolveDesignDirection(supabase, user.id, {
-        format: "story",
-        style: isMediaStyle(style) ? style : undefined,
-      }),
-      normalizeMediaBrief(brief),
+    const direction = withMediaReferences(
+      withMediaBrief(
+        await resolveDesignDirection(supabase, user.id, {
+          format: "story",
+          style: isMediaStyle(style) ? style : undefined,
+        }),
+        normalizeMediaBrief(brief),
+      ),
+      parseReferences(references),
     )
     const composition = pickComposition(variationIndex)
 

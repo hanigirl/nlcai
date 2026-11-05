@@ -72,6 +72,8 @@ export function useReferenceImages() {
 
   const remove = useCallback((i: number) => setRefs((prev) => prev.filter((_, j) => j !== i)), [])
   const clear = useCallback(() => setRefs([]), [])
+  /** Put sent references back in the tray (a generation that failed). */
+  const restore = useCallback((list: string[]) => setRefs(list.slice(0, MAX_REFERENCES)), [])
 
   /** On the textarea: ⌘V of a screenshot attaches it; text pastes as usual. */
   const onPaste = useCallback(
@@ -103,7 +105,7 @@ export function useReferenceImages() {
     },
   }
 
-  return { refs, add, remove, clear, onPaste, dropProps, dragging, full: refs.length >= MAX_REFERENCES }
+  return { refs, add, remove, clear, restore, onPaste, dropProps, dragging, full: refs.length >= MAX_REFERENCES }
 }
 
 export type ReferenceImages = ReturnType<typeof useReferenceImages>

@@ -166,6 +166,8 @@ export function getGenerationSnapshot(key: string): GenerationState {
  */
 export interface MediaGenOptions {
   brief?: string
+  /** Reference images she attached with the brief (lib/ai-edit-references). */
+  references?: string[]
   quiet?: boolean
 }
 
@@ -175,7 +177,7 @@ export function startImageGeneration(
   opts: MediaGenOptions = {},
 ): Promise<MediaGenResult> {
   if (!postId) return Promise.resolve({ ok: false, message: "" })
-  const { brief, quiet = false } = opts
+  const { brief, references, quiet = false } = opts
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   // Steers this attempt toward a design distinct from the previous ones.
   const variationIndex = nextVariationIndex(postId)
@@ -194,7 +196,13 @@ export function startImageGeneration(
       const res = await fetch("/api/image-post/generate-media", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, variationIndex, style, ...(brief ? { brief } : {}) }),
+        body: JSON.stringify({
+          postId,
+          variationIndex,
+          style,
+          ...(brief ? { brief } : {}),
+          ...(references?.length ? { references } : {}),
+        }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         image?: string

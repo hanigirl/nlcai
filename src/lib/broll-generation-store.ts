@@ -129,11 +129,11 @@ export function startBRollGeneration(
   postId: string,
   variationIndex: number,
   style?: MediaStyle,
-  /** brief / quiet — see MediaGenOptions in lib/image-generation-store. */
-  opts: { brief?: string; quiet?: boolean } = {},
+  /** brief / references / quiet — see MediaGenOptions in lib/image-generation-store. */
+  opts: { brief?: string; references?: string[]; quiet?: boolean } = {},
 ): Promise<MediaGenResult> {
   if (!postId) return Promise.resolve({ ok: false, message: "" })
-  const { brief, quiet = false } = opts
+  const { brief, references, quiet = false } = opts
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   const toastId = `broll-gen-${++toastSeq}`
   if (!quiet) startLongWait(toastId, "מייצרים בי-רול... זה יכול לקחת כשתי דקות")
@@ -150,7 +150,13 @@ export function startBRollGeneration(
       const res = await fetch("/api/b-roll/generate-media", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, variationIndex, style, ...(brief ? { brief } : {}) }),
+        body: JSON.stringify({
+          postId,
+          variationIndex,
+          style,
+          ...(brief ? { brief } : {}),
+          ...(references?.length ? { references } : {}),
+        }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         url?: string

@@ -1,4 +1,5 @@
-import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief } from "@/lib/media-brief"
+import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
+import { parseReferences } from "@/lib/ai-edit-references"
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { createClient } from "@/lib/supabase/server"
@@ -33,12 +34,14 @@ export const maxDuration = 300
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
   try {
-    const { postId, variationIndex, style, brief: mediaBrief } = (await req.json().catch(() => ({}))) as {
+    const { postId, variationIndex, style, brief: mediaBrief, references } = (await req.json().catch(() => ({}))) as {
       postId?: string
       variationIndex?: number
       style?: unknown
       /** Her own direction for this piece (lib/media-brief). */
       brief?: unknown
+      /** Reference images she attached with the brief (lib/ai-edit-references). */
+      references?: unknown
     }
     if (!postId) {
       return NextResponse.json({ error: "postId is required" }, { status: 400 })
@@ -131,6 +134,11 @@ export async function POST(req: NextRequest) {
       }),
       normalizeMediaBrief(mediaBrief),
     )
+    // Her references: the background gets them as images, the motion design
+    // as referenceBlocks. The saved composition brief keeps the plain lines,
+    // so later edits aren't told about images they don't have.
+    const refs = parseReferences(references)
+    const refDirection = withMediaReferences(direction, refs)
     let anthropicKey: string
     try {
       anthropicKey = await getUserApiKey(supabase, "anthropic_api_key")
@@ -167,13 +175,13 @@ export async function POST(req: NextRequest) {
       generateImage(
         openaiKey,
         buildBackgroundPrompt(
-          direction,
+          refDirection,
           BACKGROUND_FRAMINGS[Math.abs(variationIndex ?? 0) % BACKGROUND_FRAMINGS.length],
           context,
         ),
-        { shape: "9:16", references: direction.references },
+        { shape: "9:16", references: refDirection.references },
       ),
-      composeBRoll(anthropicKey, brief, Math.abs(variationIndex ?? 0), examples),
+      composeBRoll(anthropicKey, brief, Math.abs(variationIndex ?? 0), examples, refs),
     ])
     const background = Buffer.from(cropToCanvas(raw), "base64")
 

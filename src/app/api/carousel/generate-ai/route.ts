@@ -1,4 +1,5 @@
-import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief } from "@/lib/media-brief"
+import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
+import { parseReferences } from "@/lib/ai-edit-references"
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { Resvg } from "@resvg/resvg-js"
@@ -145,11 +146,13 @@ function cropToCanvas(imageBase64: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { slides, templateId, postId, brief: mediaBrief } = (await req.json().catch(() => ({}))) as {
+    const { slides, templateId, postId, brief: mediaBrief, references } = (await req.json().catch(() => ({}))) as {
       slides?: SlideData[]
       templateId?: string
       /** Her own direction for this carousel (lib/media-brief). */
       brief?: unknown
+      /** Reference images she attached with the brief (lib/ai-edit-references). */
+      references?: unknown
       /** Lets "עריכה עם AI" find this carousel's layout later. */
       postId?: string
     }
@@ -241,6 +244,12 @@ export async function POST(req: NextRequest) {
     // Her own direction for this carousel wins over the language where they
     // conflict — and is kept in the saved brief, so later AI edits honour it.
     direction = withMediaBrief(direction, normalizeMediaBrief(mediaBrief))
+    // Her references: the layout step gets them as referenceBlocks, the image
+    // model as reference images. The saved brief keeps the plain lines, so
+    // later edits aren't told about images they don't have.
+    const refs = parseReferences(references)
+    const refDirection = withMediaReferences(direction, refs)
+    const refImages = refDirection.references.slice(direction.references.length)
 
     // Laid out in code when she has a Claude key (lib/carousel-composition):
     // one stylesheet, her fonts, one type scale, identical grid and number on
@@ -275,16 +284,17 @@ export async function POST(req: NextRequest) {
 
         // Layout first: Opus decides which slides get an illustration at all
         // (type-led examples → none), then only those are drawn.
-        const layout = await composeCarousel(anthropicKey, brief)
+        const layout = await composeCarousel(anthropicKey, brief, refs)
         const illustrations: string[] = new Array(total).fill("")
         const wanted = layout.illustrations.map((idea, i) => ({ idea: idea.trim(), i })).filter((x) => x.idea)
         let nextArt = 0
         async function artWorker() {
           while (nextArt < wanted.length) {
             const { idea, i } = wanted[nextArt++]
-            const raw = await generateImage(openaiKey, illustrationPrompt(idea, slides![i], direction.lines), {
+            const raw = await generateImage(openaiKey, illustrationPrompt(idea, slides![i], refDirection.lines), {
               shape: "1:1",
               quality: "medium",
+              ...(refImages.length ? { references: refImages } : {}),
             })
             illustrations[i] = await uploadIllustration(supabase, user!.id, Buffer.from(raw, "base64"))
           }
@@ -319,12 +329,12 @@ export async function POST(req: NextRequest) {
     async function worker() {
       while (next < total) {
         const i = next++
-        const prompt = buildSlidePrompt(slides![i], i, total, topic, direction)
+        const prompt = buildSlidePrompt(slides![i], i, total, topic, refDirection)
         const raw = await generateImage(openaiKey, prompt, {
           shape: "4:5",
           // Legible Hebrew glyphs are the whole point, so we pay for "high".
           quality: "high",
-          references: direction.references,
+          references: refDirection.references,
         })
         // Fixed brand elements go in by code — same pixels on every slide.
         images[i] = await applyFixedElements(cropToCanvas(raw), direction.fixed, slideRole(slides![i]))

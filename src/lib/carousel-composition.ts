@@ -165,8 +165,9 @@ async function ask(apiKey: string, user: string, count: number, examples: string
   return parse(message.content.map((c) => (c.type === "text" ? c.text : "")).join(""), count)
 }
 
-export function composeCarousel(apiKey: string, brief: CarouselBrief) {
-  return ask(apiKey, briefText(brief), brief.slides.length, brief.examples)
+/** `refs`: reference images she attached to a from-zero brief (lib/ai-edit-references). */
+export function composeCarousel(apiKey: string, brief: CarouselBrief, refs: string[] = []) {
+  return ask(apiKey, briefText(brief), brief.slides.length, brief.examples, refs)
 }
 
 /**

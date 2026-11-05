@@ -1,4 +1,5 @@
 import type { DesignDirection } from "@/lib/visual-language/direction"
+import type { ModelImage } from "@/lib/visual-language/image-input"
 
 /**
  * "Think first, then generate" (Hani, 2026-11-05): before an AI media
@@ -48,6 +49,30 @@ export function withMediaBrief(direction: DesignDirection, brief: string | undef
       "",
       "THE CREATOR'S OWN DIRECTION FOR THIS PIECE (hard rule — where it conflicts with the visual language above, follow it; keep everything else from the visual language). It never changes, adds or removes the required text: the exact lines stay as given. If this image carries no text, apply only what it says about the look. Written in Hebrew:",
       `"""${brief}"""`,
+    ],
+  }
+}
+
+/**
+ * References she attached with the brief (lib/ai-edit-references — parsed by
+ * the route with parseReferences). The image model gets them as reference
+ * images after any of hers; every prompt that reads the direction lines is
+ * told what they are: a visual reference for the look, never content.
+ * Claude steps (b-roll motion, carousel layout) get them as referenceBlocks.
+ */
+export function withMediaReferences(direction: DesignDirection, refs: string[]): DesignDirection {
+  if (!refs.length) return direction
+  const images = refs.flatMap((r): ModelImage[] => {
+    const m = r.match(/^data:(image\/(?:png|jpeg));base64,(.+)$/)
+    return m ? [{ mediaType: m[1] as ModelImage["mediaType"], base64: m[2] }] : []
+  })
+  return {
+    ...direction,
+    references: [...direction.references, ...images],
+    lines: [
+      ...direction.lines,
+      "",
+      `THE CREATOR'S REFERENCE IMAGE${refs.length > 1 ? "S" : ""} (${refs.length}, attached${direction.references.length ? " after her brand elements" : ""}): she chose ${refs.length > 1 ? "them" : "it"} to show the look she wants for this piece. Use ${refs.length > 1 ? "them" : "it"} as visual reference only — palette, mood, composition, imagery and type character. NEVER copy any text, words, numbers, logos, faces or people from ${refs.length > 1 ? "them" : "it"} into this piece; the only text is the exact text given for this post.`,
     ],
   }
 }
