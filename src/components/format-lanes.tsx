@@ -67,6 +67,19 @@ export function LaneStem() {
   )
 }
 
+/**
+ * The card a lane is working on right now: its last card (cards only ever get
+ * added at the far, left end of a lane). Connectors are aria-hidden.
+ */
+export function newestLaneCard(fid: string): HTMLElement | null {
+  const row = document.querySelector<HTMLElement>(`[data-lane="${fid}"] [data-lane-row]`)
+  if (!row) return null
+  const cards = Array.from(row.children).filter(
+    (c): c is HTMLElement => c instanceof HTMLElement && !c.hasAttribute("aria-hidden"),
+  )
+  return cards[cards.length - 1] ?? null
+}
+
 /** The column that holds the lanes, one under the other. */
 export function laneColumnClass(lanes: Exclude<LaneLayout, null>) {
   return "flex flex-col"
@@ -78,10 +91,13 @@ export function laneColumnClass(lanes: Exclude<LaneLayout, null>) {
  * in a lane, a row whose results run LEFT, wired into the shared spine.
  */
 export function FormatColumn({
+  fid,
   index,
   count,
   children,
 }: {
+  /** The format id — lets the page find this lane's newest card to follow it. */
+  fid: string
   index: number
   count: number
   children: ReactNode
@@ -103,13 +119,14 @@ export function FormatColumn({
   // Cards inside a column are `w-full`; in a row that has nothing to be full
   // of, so every direct child is pinned to the card width instead.
   const row = (
-    <div className="flex items-start [&>*]:shrink-0 [&>div.w-full]:w-[346px]">
+    <div data-lane-row className="flex items-start [&>*]:shrink-0 [&>div.w-full]:w-[346px]">
       {children}
     </div>
   )
 
   return (
     <div
+      data-lane={fid}
       className="relative flex items-start"
       style={{ paddingBottom: last ? 0 : LANE_GAP }}
     >

@@ -1,7 +1,8 @@
 "use client"
 
 import { CardStyleFeedback } from "@/components/style-feedback-strip"
-import { LaneLayoutContext, FormatColumn, LaneStem, TreeConnector, laneColumnClass, useLaneLayout, type LaneLayout } from "@/components/format-lanes"
+import { LANE_FIXTURE_SLIDES_B64 } from "./lanes-fixture"
+import { LaneLayoutContext, FormatColumn, newestLaneCard, LaneStem, TreeConnector, laneColumnClass, useLaneLayout, type LaneLayout } from "@/components/format-lanes"
 import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
@@ -197,13 +198,14 @@ async function savePatch(
 const CARD_WIDTH = 346
 
 /* ---- REVIEW ONLY: seeded states for ?variant=a|b (horizontal lanes) ---- */
-const LANE_STATES = ["full", "generating", "text", "single"] as const
+const LANE_STATES = ["full", "generating", "text", "single", "live"] as const
 type LaneState = (typeof LANE_STATES)[number]
 const LANE_STATE_LABELS: Record<LaneState, string> = {
   full: "כל המסלולים מלאים",
   generating: "בזמן יצירה",
   text: "טקסט בלבד, לפני מדיה",
   single: "פורמט אחד",
+  live: "יצירה חיה (מעקב)",
 }
 function parseLaneState(raw: string | null): LaneState {
   return (LANE_STATES as readonly string[]).includes(raw ?? "") ? (raw as LaneState) : "full"
@@ -219,11 +221,60 @@ const LANE_SEED_FORMATS: Record<string, string> = {
   story:
     "פריים 1: \"נשמע מעולה\" ≠ כן\nפריים 2: מה אתם אומרים בסוף שיחת מכירה?\nפריים 3: הצעד הבא + תאריך. זה הכול.",
 }
-const LANE_SEED_IMAGES = [
-  "/images/carousel-templates/ai-dark.png",
-  "/images/carousel-templates/ai-light.png",
-  "/images/carousel-templates/ai-amber.png",
-]
+/** The video card shows a still as its thumbnail — a bundled image will do. */
+const LANE_SEED_VIDEO_THUMB = "/images/carousel-templates/ai-dark.png"
+
+type LaneSeed = {
+  formats: string[]
+  formatPosts: Record<string, string>
+  thVideoUrl: string | null
+  thCoverImage: string | null
+  carouselImages: string[] | null
+  storyImages: string[] | null
+  /** Which formats show their media skeleton. */
+  busy: Record<string, boolean>
+  coverLoading: boolean
+}
+
+/**
+ * Steps of the `live` demo: the order a real session produces things in —
+ * the three scripts, then each format's media. Each step is what the canvas
+ * holds at that moment; the auto-focus follows whatever just started or landed.
+ */
+const LANE_LIVE_STEPS = 10
+const LANE_LIVE_STEP_MS = 1800
+
+function laneSeed(state: LaneState, step = 0): LaneSeed {
+  const all = ["talking_head", "carousel", "story"]
+  const slides = LANE_FIXTURE_SLIDES_B64
+  const texts = (fids: string[], generating: string[] = []) =>
+    Object.fromEntries(fids.map((f) => [f, generating.includes(f) ? FORMAT_GENERATING : LANE_SEED_FORMATS[f]]))
+  const none = { thVideoUrl: null, thCoverImage: null, carouselImages: null, storyImages: null, busy: {}, coverLoading: false }
+  const fullMedia = { thVideoUrl: LANE_SEED_VIDEO_THUMB, thCoverImage: slides[1], carouselImages: slides, storyImages: slides.slice(0, 2), busy: {}, coverLoading: false }
+  switch (state) {
+    case "text":
+      return { formats: all, formatPosts: texts(all), ...none }
+    case "single":
+      return { formats: ["talking_head"], formatPosts: texts(["talking_head"]), ...fullMedia, carouselImages: null, storyImages: null }
+    case "generating":
+      return { formats: all, formatPosts: texts(all, ["carousel"]), ...none, busy: { talking_head: true, story: true }, coverLoading: true }
+    case "live": {
+      const s = Math.min(step, LANE_LIVE_STEPS - 1)
+      return {
+        formats: all,
+        formatPosts: texts(all, s === 0 ? all : s === 1 ? ["carousel", "story"] : []),
+        thVideoUrl: s >= 4 ? LANE_SEED_VIDEO_THUMB : null,
+        thCoverImage: s >= 5 ? slides[1] : null,
+        carouselImages: s >= 7 ? slides : null,
+        storyImages: s >= 9 ? slides.slice(0, 2) : null,
+        busy: { talking_head: s === 3, carousel: s === 6, story: s === 8 },
+        coverLoading: s === 4,
+      }
+    }
+    default:
+      return { formats: all, formatPosts: texts(all), ...fullMedia }
+  }
+}
 const CARD_GAP = 24
 
 function shortenTitle(text: string, maxWords = 7): string {
@@ -279,7 +330,16 @@ function ProjectPageInner() {
   // the seeded state. No param = the page exactly as it ships.
   const variantParam = searchParams.get("variant")
   const lanes: LaneLayout = variantParam === "a" || variantParam === "b" ? variantParam : null
+  // The sample content only fills a blank canvas. With a real entry param
+  // (`post_id`, `hook`, `idea`) the lanes lay out her own post instead:
+  // /project?post_id=<id>&variant=a.
+  const laneFixture = !!lanes && !postId && !hookParam && !initialIdea
   const lanesState = parseLaneState(searchParams.get("state"))
+  // Seeded synchronously, into the states' initial values, so the server
+  // render already holds the cards: the review link paints its canvas with
+  // the HTML instead of waiting for hydration + an effect.
+  const [laneStep, setLaneStep] = useState(0)
+  const initialSeed = laneFixture ? laneSeed(lanesState, 0) : null
 
   const [idea, setIdea] = useState(initialIdea)
   useEffect(() => { setIdea(initialIdea) }, [initialIdea])
@@ -303,14 +363,14 @@ function ProjectPageInner() {
   // key is still missing and hooks still cannot run without it.
   const [noticeDismissed, setNoticeDismissed] = useState(false)
   const [response, setResponse] = useState("")
-  const [corePost, setCorePost] = useState("")
+  const [corePost, setCorePost] = useState(initialSeed ? LANE_SEED_POST : "")
   const [postLoading, setPostLoading] = useState(false)
   const [postError, setPostError] = useState("")
   const [celebrationKey, setCelebrationKey] = useState(0)
   const [bodySaveStatus, setBodySaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle")
-  const [showFormats, setShowFormats] = useState(false)
-  const [selectedFormats, setSelectedFormats] = useState<string[]>([])
-  const [duplicatedFormats, setDuplicatedFormats] = useState<string[]>([])
+  const [showFormats, setShowFormats] = useState(!!initialSeed)
+  const [selectedFormats, setSelectedFormats] = useState<string[]>(initialSeed?.formats ?? [])
+  const [duplicatedFormats, setDuplicatedFormats] = useState<string[]>(initialSeed?.formats ?? [])
   // "Keep chatting with the AI about the post" floating panel. Only usable
   // BEFORE the post is duplicated to formats — once format variants exist the
   // core post is frozen (editing it wouldn't propagate to the duplicates), so
@@ -319,10 +379,10 @@ function ProjectPageInner() {
   // True while the chat's AI is generating a revision — drives the shimmer
   // animation on the core post card so the user sees it's working.
   const [chatBusy, setChatBusy] = useState(false)
-  const [formatPosts, setFormatPosts] = useState<Record<string, string>>({})
-  const [activeCard, setActiveCard] = useState<string>(flow === "hook" ? "response" : "hooks")
+  const [formatPosts, setFormatPosts] = useState<Record<string, string>>(initialSeed?.formatPosts ?? {})
+  const [activeCard, setActiveCard] = useState<string>(initialSeed ? "formats" : flow === "hook" ? "response" : "hooks")
   const [editableHook, setEditableHook] = useState<string>(
-    hookParam,
+    initialSeed ? LANE_SEED_HOOK : hookParam,
   )
 
   // Product + trigger-word controls (per-session; persisted via canvas state).
@@ -344,9 +404,9 @@ function ProjectPageInner() {
   const [thAvatar, setThAvatar] = useState<Avatar | null>(null)
   const [thAudioBlob, setThAudioBlob] = useState<Blob | null>(null)
   const [thTranscript, setThTranscript] = useState("")
-  const [thVideoUrl, setThVideoUrl] = useState<string | null>(null)
+  const [thVideoUrl, setThVideoUrl] = useState<string | null>(initialSeed?.thVideoUrl ?? null)
   const [thSourceMode, setThSourceMode] = useState<"choose" | "upload" | "avatar">("choose")
-  const [thCoverImage, setThCoverImage] = useState<string | null>(null)
+  const [thCoverImage, setThCoverImage] = useState<string | null>(initialSeed?.thCoverImage ?? null)
   const [thCoverLoading, setThCoverLoading] = useState(false)
   // Cover pill colour, picked from the colour wheel next to the cover
   // preview in FormatTree. Defaults to black to match the existing
@@ -391,7 +451,7 @@ function ProjectPageInner() {
   // a couple of seconds; without this the talking_head card just doesn't
   // render at all during that gap and the page looks like it has no video.
   const [thVideoLoading, setThVideoLoading] = useState(!!postId)
-  const [coverText, setCoverText] = useState("")
+  const [coverText, setCoverText] = useState(initialSeed ? LANE_SEED_HOOK : "")
   const [thVideoFrameDataUrl, setThVideoFrameDataUrl] = useState<string | null>(null)
   const thVideoCardRef = useRef<HTMLDivElement>(null)
   // Anchor for the post-generation visual feedback. We point it at the
@@ -404,7 +464,7 @@ function ProjectPageInner() {
   const canvasRef = useRef<InfiniteCanvasHandle>(null)
 
   // Carousel state (lifted for panel persistence)
-  const [carouselImages, setCarouselImages] = useState<string[] | null>(null)
+  const [carouselImages, setCarouselImages] = useState<string[] | null>(initialSeed?.carouselImages ?? null)
   const [carouselSlides, setCarouselSlides] = useState<SlideData[] | null>(null)
   // Per-slide Drive links behind an imported carousel, in slide order. Lives
   // on the post (migration 027), not in this browser — so the list follows the
@@ -439,7 +499,7 @@ function ProjectPageInner() {
   // as its own workflow card below the story format card, same pattern as
   // image_post/carousel. Frames are storage URLs on hydration, or base64
   // right after a panel save (both handled by the card's src helper).
-  const [storyImages, setStoryImages] = useState<string[] | null>(null)
+  const [storyImages, setStoryImages] = useState<string[] | null>(initialSeed?.storyImages ?? null)
   const storyCardRef = useRef<HTMLDivElement>(null)
   // Story VIDEO counterpart — the user's clip with the hook burned in, lifted
   // from the panel so it renders as its own workflow card like the frame set.
@@ -637,7 +697,7 @@ function ProjectPageInner() {
   }, [flow, userId, hookIdParam])
 
   useEffect(() => {
-    if (lanes) return // review harness: never read (or, via restoredRef, write) her canvas
+    if (laneFixture) return // review harness: never read (or, via restoredRef, write) her canvas
     if (restoredRef.current) return
     if (!userId) return
     restoredRef.current = true
@@ -694,7 +754,7 @@ function ProjectPageInner() {
       }
       if (typeof saved.triggerWord === "string") setTriggerWord(saved.triggerWord)
     } catch (err) { console.error("[project][canvas-restore]", err) }
-  }, [sessionKey, postId, router, userId, lanes])
+  }, [sessionKey, postId, router, userId, laneFixture])
 
   // Save canvas state on changes (debounced)
   useEffect(() => {
@@ -2013,57 +2073,88 @@ function ProjectPageInner() {
 
   // The formats card + its result tree. Rendered under the core post in the
   // shipped layout, or beside it (same row, flowing left) under ?variant=a|b.
-  // REVIEW ONLY — seed the canvas for ?variant=a|b. Local state only.
+  // REVIEW ONLY — re-seed when the state toggle (or the live demo) moves on.
+  // Local state only. On mount it writes the values the states already hold.
+  const laneSeedNow = laneFixture ? laneSeed(lanesState, laneStep) : null
   useEffect(() => {
-    if (!lanes) return
-    const fids = lanesState === "single" ? ["talking_head"] : ["talking_head", "carousel", "story"]
-    const withMedia = lanesState === "full" || lanesState === "single"
+    if (!laneFixture) return
+    const seed = laneSeed(lanesState, laneStep)
     setCorePost(LANE_SEED_POST)
     setEditableHook(LANE_SEED_HOOK)
     setCoverText(LANE_SEED_HOOK)
     setShowFormats(true)
-    setSelectedFormats(fids)
-    setDuplicatedFormats(fids)
-    setFormatPosts(
-      Object.fromEntries(
-        fids.map((f) => [
-          f,
-          lanesState === "generating" && f === "carousel" ? FORMAT_GENERATING : LANE_SEED_FORMATS[f],
-        ]),
-      ),
+    setSelectedFormats(seed.formats)
+    setDuplicatedFormats(seed.formats)
+    setFormatPosts(seed.formatPosts)
+    setThVideoUrl(seed.thVideoUrl)
+    setThCoverImage(seed.thCoverImage)
+    setCarouselImages(seed.carouselImages)
+    setStoryImages(seed.storyImages)
+  }, [laneFixture, lanesState, laneStep])
+  // `live`: walk through the steps on a timer, then start over.
+  useEffect(() => {
+    if (!laneFixture || lanesState !== "live") return
+    setLaneStep(0)
+    const t = window.setInterval(() => setLaneStep((n) => (n + 1) % (LANE_LIVE_STEPS + 2)), LANE_LIVE_STEP_MS)
+    return () => window.clearInterval(t)
+  }, [laneFixture, lanesState])
+  const laneMediaBusy: Record<string, boolean> = laneSeedNow?.busy ?? {}
+
+  // Lanes: follow the work. Whenever a format starts generating something or
+  // something new lands in it (script, video, cover, slides, frames, b-roll,
+  // image), pan the canvas so that lane's newest card is in view — sideways,
+  // since that's where lanes grow. Through the canvas's own focusOn in
+  // "follow" mode, which stands down while she is moving the canvas herself.
+  const shownBusy = laneFixture ? laneMediaBusy : mediaBusy
+  const shownCoverLoading = laneFixture ? !!laneSeedNow?.coverLoading : thCoverLoading
+  const laneActivity = duplicatedFormats.map((fid) => {
+    const media =
+      fid === "talking_head" ? !!thVideoUrl
+      : fid === "carousel" ? (carouselImages?.length ?? 0) > 0
+      : fid === "story" ? (storyImages?.length ?? 0) > 0 || !!storyVideoUrl
+      : fid === "image_post" ? !!imagePostUrl
+      : fid === "b_roll" ? !!bRollUrl
+      : false
+    return {
+      fid,
+      flags: [
+        formatPosts[fid] === FORMAT_GENERATING,
+        hasFormatText(formatPosts, fid),
+        !!shownBusy[fid],
+        media,
+        fid === "talking_head" && shownCoverLoading,
+        fid === "talking_head" && !!thCoverImage,
+      ],
+    }
+  })
+  const laneActivityKey = JSON.stringify(laneActivity)
+  const prevLaneActivityRef = useRef<Record<string, boolean[]> | null>(null)
+  // Not while a saved post is still loading in: media arriving from the DB
+  // isn't "being made now", and panning on page load would just disorient.
+  const laneFollowArmed = !!lanes && !savedPostLoading && !thVideoLoading
+  useEffect(() => {
+    if (!lanes) return
+    const current: Record<string, boolean[]> = Object.fromEntries(
+      (JSON.parse(laneActivityKey) as { fid: string; flags: boolean[] }[]).map((a) => [a.fid, a.flags]),
     )
-    setActiveCard("formats")
-    setThVideoUrl(withMedia ? LANE_SEED_IMAGES[0] : null)
-    setCarouselImages(null)
-    setStoryImages(null)
-    setThCoverImage(null)
-    if (!withMedia) return
-    // The cover and carousel cards render base64 — read the bundled images,
-    // no network beyond the app's own /public.
-    let cancelled = false
-    const toB64 = (url: string) =>
-      fetch(url)
-        .then((r) => r.blob())
-        .then(
-          (b) =>
-            new Promise<string>((res) => {
-              const fr = new FileReader()
-              fr.onload = () => res(String(fr.result).split(",")[1] ?? "")
-              fr.readAsDataURL(b)
-            }),
-        )
-    Promise.all(LANE_SEED_IMAGES.map(toB64))
-      .then((b64s) => {
-        if (cancelled) return
-        setThCoverImage(b64s[1])
-        setCarouselImages(b64s)
-        setStoryImages(b64s.slice(0, 2))
+    const prev = prevLaneActivityRef.current
+    prevLaneActivityRef.current = current
+    if (!prev || !laneFollowArmed) return
+    // First lane (in canvas order) where something switched on.
+    const target = Object.keys(current).find((fid) =>
+      current[fid].some((on, i) => on && !(prev[fid]?.[i] ?? false)),
+    )
+    if (!target) return
+    // Two frames: let the new card mount and lay out before measuring it.
+    let raf2 = 0
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const card = newestLaneCard(target)
+        if (card) canvasRef.current?.focusOn(card, { mode: "follow" })
       })
-      .catch(() => {})
-    return () => { cancelled = true }
-  }, [lanes, lanesState])
-  const laneMediaBusy: Record<string, boolean> =
-    lanesState === "generating" ? { talking_head: true, story: true } : {}
+    })
+    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2) }
+  }, [lanes, laneActivityKey, laneFollowArmed])
 
   const formatTreeEl = (
                         <FormatTree
@@ -2080,7 +2171,7 @@ function ProjectPageInner() {
                           hookText={activeHook}
                           thVideoUrl={thVideoUrl}
                           thVideoLoading={thVideoLoading}
-                          mediaBusy={lanes ? laneMediaBusy : mediaBusy}
+                          mediaBusy={laneFixture ? laneMediaBusy : mediaBusy}
                           thVideoCardRef={thVideoCardRef}
                           // Clicking the video ONLY opens the panel (Hani,
                           // 2026-10-29: "קודם לוחצים, הפאנל נפתח, ורק אז
@@ -2091,7 +2182,7 @@ function ProjectPageInner() {
                           onThReRecord={() => setSelectedFormatCard("talking_head")}
                           onThDelete={() => setPendingVideoDelete(true)}
                           thCoverImage={thCoverImage}
-                          thCoverLoading={lanes ? lanesState === "generating" : thCoverLoading}
+                          thCoverLoading={laneFixture ? !!laneSeedNow?.coverLoading : thCoverLoading}
                           coverText={coverText}
                           onCoverTextChange={setCoverText}
                           onCoverRegenerate={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
@@ -2399,14 +2490,14 @@ function ProjectPageInner() {
       )}
 
       {/* REVIEW ONLY — state toggle for the ?variant=a|b lanes harness. */}
-      {lanes && (
+      {laneFixture && (
         <div
           dir="rtl"
           role="toolbar"
           aria-label="מצבי תצוגה לסקירה"
           className="fixed top-20 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-md"
         >
-          <span className="text-xs text-text-neutral-default px-1">
+          <span className="text-xs text-text-neutral-default px-1 whitespace-nowrap">
             {lanes === "a" ? "אופציה A · עץ עם שדרה" : "אופציה B · מסלולים"}
           </span>
           {LANE_STATES.map((st) => (
@@ -2452,7 +2543,7 @@ function ProjectPageInner() {
                 they explicitly remove it" — collapsing back to a single-hook
                 view broke that. The hook-flow card stack below is mutex'd
                 against this so they never render simultaneously. */}
-          {!lanes && ((flow === "idea") || hooks.length > 0) && (
+          {!laneFixture && ((flow === "idea") || hooks.length > 0) && (
             <>
               {/* Idea card — editable */}
               <div
@@ -2645,7 +2736,7 @@ function ProjectPageInner() {
                 we have hooks in state (in-session or hydrated by the DB-by-
                 idea fetch); this stack is reserved for hook-flow entries
                 without an associated idea-text + hooks set. */}
-          {!lanes && !((flow === "idea") || hooks.length > 0) &&
+          {!laneFixture && !((flow === "idea") || hooks.length > 0) &&
             (flow === "hook" || (flow === "saved" && !!(savedHookText || editableHook))) && (
             <>
               {/* Hook card — editable */}
@@ -2716,7 +2807,7 @@ function ProjectPageInner() {
                   the URL flips to `saved`), so the connector must follow them
                   rather than be omitted as it was when `saved` had nothing
                   before the core post. */}
-              {!lanes && (flow !== "saved" || !!(savedHookText || editableHook)) && (
+              {!laneFixture && (flow !== "saved" || !!(savedHookText || editableHook)) && (
                 <div className="flex items-center mt-[55px]">
                   <div className="h-[2px] w-7 bg-gray-80" />
                 </div>
@@ -3348,7 +3439,7 @@ function FormatTree({
             )
 
           return (
-            <FormatColumn key={fid} index={laneIndex} count={count}>
+            <FormatColumn key={fid} fid={fid} index={laneIndex} count={count}>
               <div
                 className={`flex flex-col gap-3 rounded-[20px] border bg-white dark:bg-gray-10 pb-6 transition-all w-full ${
                   isSelected
