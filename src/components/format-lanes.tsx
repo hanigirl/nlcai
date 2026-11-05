@@ -117,11 +117,9 @@ export function FormatLane({
         }}
       />
 
-      {/* Outline: gray-50 on the light canvas (#f7f7f7) ≈ 3.7:1, gray-40 on
-          the dark one (#141414) ≈ 3.2:1 — both clear the 3:1 a visible
-          boundary needs; the earlier gray-98 tint read as nothing. */}
+      {/* Soft outline, exactly as Hani approved it in review (2026-11-05). */}
       <div
-        className="rounded-[28px] border-2 border-dashed border-gray-50 dark:border-gray-40 bg-white/60 dark:bg-gray-10/60"
+        className="rounded-[28px] border border-dashed border-gray-80 bg-gray-98/60 dark:bg-gray-10/40"
         style={{ padding: LANE_PAD }}
       >
         {/* Cards are written `w-full` (they used to stack in a column); in a
