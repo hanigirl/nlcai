@@ -4,7 +4,10 @@ import { createWriteStream } from "node:fs"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import ffmpegPath from "ffmpeg-static"
+import { renderOwnVideoCaption } from "@/lib/own-video-captions"
+import { RENDER_FPS } from "@/lib/broll-animation/render"
 import { createClient } from "@/lib/supabase/server"
+import { getUserApiKey } from "@/lib/api-keys"
 import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
 import { fetchDriveFile } from "@/lib/drive-fetch"
 import { frameCaption } from "@/lib/story-text-split"
@@ -19,7 +22,10 @@ import { writeCaptionRecord } from "@/lib/caption-record"
 
 // Downloading + re-encoding a user video is heavier than an image render;
 // libx264 on a short clip still runs in seconds, but leave generous headroom.
-export const maxDuration = 300
+// The animated caption on her own video (lib/own-video-captions) is an Opus
+// composition plus a frame render before the burn — the b-roll engine's
+// budget (Pro + Fluid compute allow 800s).
+export const maxDuration = 800
 
 // Instagram Story — 9:16 vertical (same target as the AI image story).
 const CANVAS_WIDTH = 1080
@@ -49,6 +55,67 @@ const MAX_CLIP_SECONDS = 60
  * Unlike the image route (pure, returns base64), this one persists, because
  * a re-encoded video is too big to round-trip as base64 through the client.
  */
+
+/** The clip's length in seconds, read from ffmpeg's own probe output (null when it can't tell). */
+function clipSeconds(inputPath: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    if (!ffmpegPath) return resolve(null)
+    const proc = spawn(ffmpegPath, ["-i", inputPath])
+    let err = ""
+    proc.stderr.on("data", (d) => {
+      err += d.toString()
+    })
+    proc.on("error", () => resolve(null))
+    proc.on("close", () => {
+      const m = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(err)
+      resolve(m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : null)
+    })
+  })
+}
+
+/**
+ * Lay the ANIMATED caption layer (PNG frames with alpha, lib/own-video-
+ * captions) over her clip: the entrance plays, its last frame holds, and it
+ * fades out over the clip's last half second. Same cover-crop and audio as
+ * the still burn.
+ */
+async function burnAnimatedOverlay(inputPath: string, framesPattern: string, fps: number, outputPath: string): Promise<void> {
+  const total = Math.min(MAX_CLIP_SECONDS, (await clipSeconds(inputPath)) ?? MAX_CLIP_SECONDS)
+  const fadeAt = Math.max(0, total - 0.5)
+  return new Promise((resolve, reject) => {
+    if (!ffmpegPath) {
+      reject(new Error("ffmpeg binary not found"))
+      return
+    }
+    // ONE template literal per line on purpose (see burnOverlay).
+    const filter =
+      `[0:v]scale=${CANVAS_WIDTH}:${CANVAS_HEIGHT}:force_original_aspect_ratio=increase,crop=${CANVAS_WIDTH}:${CANVAS_HEIGHT},setsar=1[bg];` +
+      `[1:v]format=rgba,tpad=stop_mode=clone:stop_duration=${MAX_CLIP_SECONDS},fade=t=out:st=${fadeAt.toFixed(2)}:d=0.5:alpha=1,setsar=1[cap];` +
+      `[bg][cap]overlay=0:0:shortest=1[v]`
+    const args = [
+      "-y",
+      "-i", inputPath,
+      "-framerate", String(fps), "-i", framesPattern,
+      "-filter_complex", filter,
+      "-map", "[v]",
+      "-map", "0:a?",
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac",
+      "-movflags", "+faststart",
+      "-t", String(total),
+      outputPath,
+    ]
+    const proc = spawn(ffmpegPath, args)
+    let stderr = ""
+    proc.stderr.on("data", (d) => {
+      stderr = (stderr + d.toString()).slice(-4000)
+    })
+    proc.on("error", reject)
+    proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}: ${stderr}`))))
+  })
+}
 
 /**
  * Burn the overlay into the source video and cover-crop to exactly
@@ -140,7 +207,15 @@ export async function POST(req: NextRequest) {
       frameIndex: rawFrameIndex,
       frameCount: rawFrameCount,
       caption: rawCaption,
+      animated: rawAnimated,
     } = (await req.json().catch(() => ({}))) as {
+      /**
+       * The AI edit of her own video (lib/own-media-edit): the caption is an
+       * animated motion design in her visual language (lib/own-video-
+       * captions), not the still plate. Needs her Claude key; without one —
+       * or if the composition fails — the still plate is burned as before.
+       */
+      animated?: boolean
       postId?: string
       format?: string
       /**
@@ -362,7 +437,25 @@ export async function POST(req: NextRequest) {
       await fsMod.writeFile(secondaryPath, await renderSecondaryCaptionPng())
     }
 
-    await burnOverlay(inputPath, overlayPath, outputPath, secondaryPath)
+    // Her own video, edited with AI: the animated caption in her visual
+    // language. Any failure on the way falls back to the still plate.
+    let animatedDone = false
+    if (rawAnimated === true && override) {
+      const anthropicKey = await getUserApiKey(supabase, "anthropic_api_key").catch(() => null)
+      if (anthropicKey) {
+        const framesDir = await fs.mkdtemp(path.join(tmp, `story-anim-${id}-`))
+        try {
+          await renderOwnVideoCaption(supabase, user.id, anthropicKey, format, { ...override, position }, framesDir)
+          await burnAnimatedOverlay(inputPath, path.join(framesDir, "f%04d.png"), RENDER_FPS, outputPath)
+          animatedDone = true
+        } catch (err) {
+          console.error("[story/generate-video-media] animated caption, falling back to the still plate", err)
+        } finally {
+          await fs.rm(framesDir, { recursive: true, force: true }).catch(() => undefined)
+        }
+      }
+    }
+    if (!animatedDone) await burnOverlay(inputPath, overlayPath, outputPath, secondaryPath)
 
     const outBuffer = await fs.readFile(outputPath)
     // "burned-" prefix marks a text-baked output. The client reads this from
@@ -406,6 +499,7 @@ export async function POST(req: NextRequest) {
       body: overlayBody,
       position,
       style: override?.style,
+      ...(override?.design ? { design: override.design } : {}),
     })
 
     return NextResponse.json({ url: publicUrl })

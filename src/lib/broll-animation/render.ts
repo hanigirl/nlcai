@@ -128,3 +128,50 @@ export async function renderComposition(html: string, outputPath: string): Promi
     await browser.close().catch(() => undefined)
   }
 }
+
+/**
+ * The composition as a TRANSPARENT text layer, for laying over her own
+ * footage (lib/own-video-captions): the page background is cleared and every
+ * frame is a PNG with alpha, written to `dir` as f0000.png, f0001.png… Only
+ * `seconds` of it — the entrance; the caller holds the last frame.
+ */
+export async function renderOverlayFrames(html: string, seconds: number, dir: string): Promise<number> {
+  const fs = await import("fs/promises")
+  const path = await import("path")
+  const page0 = html.replace(
+    /<\/head>/i,
+    "<style>html,body{background:transparent!important;background-color:transparent!important}</style></head>",
+  )
+  const browser = await launch()
+  try {
+    const page = await browser.newPage()
+    await page.setViewport({ width: COMPOSITION_WIDTH, height: COMPOSITION_HEIGHT })
+    await page.setContent(page0, { waitUntil: "load", timeout: 60_000 })
+    await page.waitForNetworkIdle({ idleTime: 400, timeout: 30_000 }).catch(() => undefined)
+    await page.evaluate(async () => {
+      await document.fonts.ready
+    })
+    const frames = Math.round(seconds * FPS)
+    for (let i = 0; i < frames; i++) {
+      const t = i / FPS
+      await page.evaluate((s: number) => {
+        const w = window as unknown as { gsap?: { globalTimeline: { pause: () => void; totalTime: (t: number) => void } } }
+        if (w.gsap) {
+          w.gsap.globalTimeline.pause()
+          w.gsap.globalTimeline.totalTime(s)
+        }
+        for (const a of document.getAnimations()) {
+          a.pause()
+          a.currentTime = s * 1000
+        }
+      }, t)
+      const shot = await page.screenshot({ type: "png", omitBackground: true })
+      await fs.writeFile(path.join(dir, `f${String(i).padStart(4, "0")}.png`), shot)
+    }
+    return frames
+  } finally {
+    await browser.close().catch(() => undefined)
+  }
+}
+
+export { FPS as RENDER_FPS }

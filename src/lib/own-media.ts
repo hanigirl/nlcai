@@ -56,6 +56,12 @@ export interface CaptionSpec {
   body?: string
   position?: OwnCaptionPosition
   style?: CaptionStyle
+  /**
+   * Her own words about how the caption should look and move, gathered over
+   * her edits (Hebrew). The animated caption on her video follows them over
+   * every default (lib/own-video-captions).
+   */
+  design?: string
 }
 
 /**
@@ -90,11 +96,13 @@ export function cleanCaptionSpec(spec: unknown): CaptionSpec | null {
   const body = typeof s.body === "string" ? s.body.trim() : ""
   const position =
     s.position === "top" || s.position === "center" || s.position === "bottom" ? s.position : undefined
+  const design = typeof s.design === "string" ? s.design.trim().slice(0, 2000) : ""
   return {
     headline: headline || undefined,
     body: body || undefined,
     position,
     style: cleanCaptionStyle(s.style),
+    ...(design ? { design } : {}),
   }
 }
 
