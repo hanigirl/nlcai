@@ -6,7 +6,7 @@
  * every attached image is a look reference — no strict mode, no check.
  * Enforced on the server (the four generate routes), not only in the panel.
  */
-export const REF_PLACE_EMAILS = ["hanigirl@gmail.com"]
+export const REF_PLACE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 
 export function canPlaceRefs(email: string | null | undefined): boolean {
   return !!email && REF_PLACE_EMAILS.includes(email.toLowerCase())
@@ -30,7 +30,7 @@ export function gatePlacement(
  * not pasted as is. Hani only while she tries it; everyone else keeps her
  * photo over a blurred fill. Enforced on the server.
  */
-export const BROLL_BLEND_EMAILS = ["hanigirl@gmail.com"]
+export const BROLL_BLEND_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 
 export function canBlendBRoll(email: string | null | undefined): boolean {
   return !!email && BROLL_BLEND_EMAILS.includes(email.toLowerCase())
@@ -45,7 +45,7 @@ export function canBlendBRoll(email: string | null | undefined): boolean {
  * Hani only while she tries it; enforced on the server (api/media/ai-edit,
  * api/carousel/generate-ai). Everyone else keeps main's behaviour.
  */
-export const PICTURE_EDIT_EMAILS = ["hanigirl@gmail.com"]
+export const PICTURE_EDIT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 
 export function canEditPictures(email: string | null | undefined): boolean {
   return !!email && PICTURE_EDIT_EMAILS.includes(email.toLowerCase())
