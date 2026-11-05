@@ -3,9 +3,15 @@ import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
 import { getSocialPublisher, SocialPublishError } from "@/lib/social"
 import { isProviderInstalled } from "@/lib/social/highlevel-auth"
+import { isSocialPlatform } from "@/lib/social/networks"
+import { canUseMultinetwork } from "@/lib/scheduling-access"
 
 /**
- * Begin connecting an Instagram account.
+ * Begin connecting an account — Instagram, YouTube or LinkedIn.
+ *
+ * Body `{ platform }`, defaulting to Instagram so the old client keeps working.
+ * YouTube's start path is `youtube`, not `google` (that one is Google Business
+ * Profile) — verified live 2026-11-05.
  *
  * Returns a URL for the browser to open in a popup. The provider runs the
  * Instagram consent screen there and reports the result back by posting a
@@ -21,13 +27,31 @@ import { isProviderInstalled } from "@/lib/social/highlevel-auth"
  * The sub-account behind this is created for her by `ensureTenant`, and she
  * has no login to it.
  *
- * POST /api/social/connect  ->  { url }
+ * POST /api/social/connect { platform? }  ->  { url }
  */
-export async function POST() {
+export async function POST(req: Request) {
+  let platform: "instagram" | "youtube" | "linkedin" = "instagram"
+  try {
+    const body = (await req.json()) as { platform?: unknown }
+    if (body?.platform !== undefined) {
+      if (!isSocialPlatform(body.platform)) {
+        return NextResponse.json({ error: "unknown platform" }, { status: 400 })
+      }
+      platform = body.platform
+    }
+  } catch {
+    // No body: the pre-042 client, which only ever connected Instagram.
+  }
+
   const supabase = await createClient()
   const user = await getAuthUser(supabase)
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  // YouTube / LinkedIn are Hani-only for now (lib/scheduling-access).
+  if (platform !== "instagram" && !canUseMultinetwork(user.email)) {
+    return NextResponse.json({ error: "unknown platform" }, { status: 400 })
   }
 
   // Checked before `startConnect`, which provisions a sub-account as a side
@@ -35,7 +59,12 @@ export async function POST() {
   // going ahead would create a real record for her and then fail at attach.
   if (!(await isProviderInstalled())) {
     return NextResponse.json(
-      { error: "not_installed", message: "החיבור לאינסטגרם עדיין לא זמין. נעדכן ברגע שיהיה." },
+      {
+        error: "not_installed",
+        message: canUseMultinetwork(user.email)
+          ? "החיבור לרשתות עדיין לא זמין. נעדכן ברגע שיהיה."
+          : "החיבור לאינסטגרם עדיין לא זמין. נעדכן ברגע שיהיה.",
+      },
       { status: 503 },
     )
   }
@@ -45,7 +74,7 @@ export async function POST() {
     // own, so RLS stays switched on. The service role is for the publish
     // worker, which runs without a session.
     const publisher = getSocialPublisher(supabase)
-    const { url } = await publisher.startConnect(user.id, "instagram")
+    const { url } = await publisher.startConnect(user.id, platform)
     return NextResponse.json({ url })
   } catch (err) {
     if (err instanceof SocialPublishError) {

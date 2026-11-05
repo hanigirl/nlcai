@@ -57,6 +57,25 @@ export type PublishErrorCode =
 /** The one next step a card offers for a given failure. */
 export type PublishAction = "connect" | "reconnect" | "retry" | "fix_media" | "pick_time" | "update" | "mark_published"
 
+/**
+ * One network a slot goes to (042). Same fields as the slot's own state, plus
+ * which network and whether it was taken off this post.
+ */
+export interface TargetPublishState {
+  platform: "instagram" | "youtube" | "linkedin"
+  status: PublishStatus
+  code?: PublishErrorCode | null
+  message?: string | null
+  publishedAt?: string | null
+  permalink?: string | null
+  /** Taken off this one post by the user. Never talks to the provider. */
+  optedOut?: boolean
+  /** The account's handle, for the preview's frame. */
+  handle?: string | null
+  /** YouTube only: how the video goes out. Missing = public. */
+  youtubePrivacy?: "public" | "unlisted" | "private" | null
+}
+
 /** The shape every UI reads. Attached to each `ScheduledPost` as `publish`. */
 export interface PublishState {
   status: PublishStatus
@@ -67,8 +86,62 @@ export interface PublishState {
   publishAt?: string | null
   /** When the provider reports it went live. */
   publishedAt?: string | null
-  /** Link to the live Instagram post, when the provider gave one. */
+  /** Link to the live post, when the provider gave one. */
   permalink?: string | null
+  /**
+   * Per network, when the slot has targets (042). The fields above are the
+   * roll-up of these — what a single line on a card can say.
+   */
+  targets?: TargetPublishState[]
+}
+
+/** Worst first: the roll-up shows the state that most needs her. */
+const ROLLUP_ORDER: PublishStatus[] = ["failed", "pending", "queued", "sent", "published", "idle"]
+
+/**
+ * One slot-level state from its targets.
+ *
+ * - Opted-out targets don't count.
+ * - "published" only when every remaining target is — one network out and
+ *   another failed is a failure she must see, not a success.
+ * - A content-changed flag on any queued target surfaces on the slot.
+ * - The message names the network when only some of them are in that state,
+ *   so a single line on a card still says which one.
+ */
+export function rollupTargets(
+  targets: TargetPublishState[],
+  label: (platform: TargetPublishState["platform"]) => string,
+): Pick<PublishState, "status" | "code" | "message" | "permalink" | "publishedAt"> {
+  const active = targets.filter((t) => !t.optedOut)
+  if (active.length === 0) return { status: "idle", code: null, message: null }
+
+  const changed = active.find((t) => t.status === "queued" && t.code === "content_changed")
+  let status: PublishStatus = "idle"
+  for (const s of ROLLUP_ORDER) {
+    if (active.some((t) => t.status === s)) {
+      status = s
+      break
+    }
+  }
+
+  const worst = active.filter((t) => t.status === status)
+  const lead = status === "queued" && changed ? changed : worst[0]
+  const partial = worst.length < active.length
+  const message =
+    lead?.message && partial && active.length > 1
+      ? `${label(lead.platform)}: ${lead.message}`
+      : (lead?.message ?? null)
+
+  return {
+    status,
+    code: status === "queued" && changed ? "content_changed" : (lead?.code ?? null),
+    message,
+    permalink: active.find((t) => t.permalink)?.permalink ?? null,
+    publishedAt:
+      status === "published"
+        ? active.map((t) => t.publishedAt).filter(Boolean).sort().at(-1) ?? null
+        : null,
+  }
 }
 
 /** The action a card shows for a failure. One action, never a menu. */

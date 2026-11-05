@@ -4,7 +4,8 @@ import { useState } from "react"
 import { AlertCircle, CheckCircle2, ExternalLink, Loader2, Send, Clock } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
-import type { InstagramConnection } from "@/lib/instagram-connection"
+import { useSocialConnections, type InstagramConnection } from "@/lib/instagram-connection"
+import { NETWORK_LABEL, networksForFormat, toNetwork } from "@/lib/social/networks"
 import { actionFor, type PublishAction, type PublishState } from "@/lib/social/publish-state"
 import { formatSlotForHumans, slotToInstant } from "@/lib/social/slot-time"
 import { markPublished, retryPublish, type ScheduledPost } from "@/lib/timing-storage"
@@ -32,8 +33,14 @@ type View = {
 function viewFor(
   post: ScheduledPost,
   connection: InstagramConnection,
+  /** Some network that takes this format is connected (YouTube / LinkedIn count). */
+  fitConnected: boolean,
 ): View | null {
   const state: PublishState | undefined = post.publish
+  // Per-network targets (042) carry their own connection state — the slot's
+  // roll-up is the truth then, not the Instagram badge.
+  const active = (state?.targets ?? []).filter((t) => !t.optedOut)
+  const multi = active.length > 0
 
   // Published wins over everything: by hand, or reported by the provider.
   if (post.publishedAt || state?.status === "published") {
@@ -54,7 +61,9 @@ function viewFor(
     }
   }
 
-  if (connection.status !== "connected") {
+  // No network that takes this format is connected (for everyone off the
+  // multinetwork gate that is exactly "Instagram isn't connected").
+  if (!fitConnected) {
     return {
       tone: "danger",
       label: "לא יפורסם — אינסטגרם לא מחובר",
@@ -78,12 +87,23 @@ function viewFor(
           action: "update",
         }
       }
-      return { tone: "success", label: when ? `תוזמן לאינסטגרם · ${when}` : "תוזמן לאינסטגרם" }
+      {
+        // Where it's going: one network by name, several by count.
+        const where =
+          active.length > 1
+            ? `ל-${active.length} רשתות`
+            : active.length === 1
+              ? toNetwork(active[0].platform)
+              : "לאינסטגרם"
+        return { tone: "success", label: when ? `תוזמן ${where} · ${when}` : `תוזמן ${where}` }
+      }
     case "sent":
       return {
         tone: "neutral",
         label: when ? `יצא לפרסום ב-${when}` : "יצא לפרסום",
-        detail: "אינסטגרם עוד לא אישרה שהפוסט עלה.",
+        detail: multi && !(active.length === 1 && active[0].platform === "instagram")
+          ? "עוד לא קיבלנו אישור שהפוסט עלה."
+          : "אינסטגרם עוד לא אישרה שהפוסט עלה.",
         action: "mark_published",
       }
     case "idle":
@@ -129,7 +149,10 @@ export function PublishStatusLine({
   className?: string
 }) {
   const [working, setWorking] = useState(false)
-  const view = viewFor(post, connection)
+  const connections = useSocialConnections()
+  const fitConnected = networksForFormat(post.format).some((p) => connections[p].status === "connected")
+  const view = viewFor(post, connection, fitConnected)
+  const linkPlatform = (post.publish?.targets ?? []).find((t) => t.permalink)?.platform
   if (!view) return null
 
   // The idle "send it" action reads as retry in code, but on a board-only
@@ -167,7 +190,12 @@ export function PublishStatusLine({
             post.format,
             view.action === "update" ? "update" : "retry",
           )
-          if (next?.status === "queued") toast.success("הפוסט תוזמן לאינסטגרם")
+          if (next?.status === "queued") {
+            const going = (next.targets ?? []).filter((t) => !t.optedOut)
+            toast.success(
+              going.length === 1 ? `הפוסט תוזמן ${toNetwork(going[0].platform)}` : going.length > 1 ? "הפוסט תוזמן לכל הרשתות" : "הפוסט תוזמן לאינסטגרם",
+            )
+          }
           else if (next?.status === "failed" && next.message) toast.error(next.message)
         } finally {
           setWorking(false)
@@ -213,7 +241,7 @@ export function PublishStatusLine({
             target="_blank"
             rel="noreferrer"
             onClick={(e) => e.stopPropagation()}
-            aria-label="צפייה בפוסט באינסטגרם"
+            aria-label={linkPlatform && linkPlatform !== "instagram" ? `צפייה בפוסט ב-${NETWORK_LABEL[linkPlatform]}` : "צפייה בפוסט באינסטגרם"}
             className="ms-auto inline-flex shrink-0 items-center hover:text-text-primary-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 rounded"
           >
             <ExternalLink className="size-3" />

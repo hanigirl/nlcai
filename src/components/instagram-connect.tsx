@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Instagram, Loader2, RefreshCw, Unlink } from "lucide-react"
+import { NETWORK_LOGO } from "@/components/network-logos"
 import { toast } from "sonner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -17,9 +18,12 @@ import { cn } from "@/lib/utils"
 import {
   refreshInstagramConnection,
   useInstagramConnection,
+  useSocialConnections,
   type InstagramConnection,
 } from "@/lib/instagram-connection"
 import { syncScheduledFromServer } from "@/lib/timing-storage"
+import { NETWORK_LABEL, toNetwork } from "@/lib/social/networks"
+import type { SocialPlatform } from "@/lib/supabase/types"
 
 /**
  * Instagram connection — one control, used in two places.
@@ -58,8 +62,28 @@ const PROVIDER_ORIGIN = "https://services.leadconnectorhq.com"
 export const FACEBOOK_PAGE_NOTE =
   "חיבור אינסטגרם לתזמון אפשרי לחשבון שמקושר לדף פייסבוק. אם החשבון שלכם לא מקושר, צריך ליצור דף פייסבוק עסקי ולקשר אותו לחשבון האינסטגרם. אחרת התזמון לא יעבוד."
 
-/** One account the Facebook login exposes, when there are several to pick from. */
-type AccountOption = { originId: string; name: string; avatar: string | null }
+/**
+ * What each network's connect modal says. YouTube and LinkedIn reuse the
+ * Instagram modal as-is (Hani, 2026-11-05: same look, no restyling); only the
+ * words and the glyph change.
+ */
+/** The networks' own logos, in brand colour (see network-logos.tsx). */
+export const NETWORK_ICON: Record<SocialPlatform, (p: { className?: string }) => React.ReactElement> = {
+  instagram: NETWORK_LOGO.instagram,
+  youtube: NETWORK_LOGO.youtube,
+  linkedin: NETWORK_LOGO.linkedin,
+}
+
+export const NETWORK_CONNECT_NOTE: Record<SocialPlatform, string> = {
+  instagram: FACEBOOK_PAGE_NOTE,
+  youtube:
+    "מתחברים עם חשבון הגוגל שהערוץ שלכם שייך אליו. ל-YouTube עולים רק סרטונים (טוקינג הד ו-B-roll), וההוק הוא כותרת הסרטון.",
+  linkedin:
+    "אפשר לחבר את הפרופיל האישי או דף חברה שאתם מנהלים. ל-LinkedIn עולים סרטונים, תמונה בודדת וקרוסלות עד 9 תמונות.",
+}
+
+/** One account the login exposes, when there are several to pick from. */
+type AccountOption = { originId: string; name: string; avatar: string | null; kind?: "profile" | "page" }
 
 /** Where the picker goes when Facebook keeps handing back the old account. */
 const WRONG_ACCOUNT_HELP =
@@ -89,6 +113,8 @@ function accountIdFrom(data: ConnectMessage): string | null {
   return null
 }
 
+const PROFILE_KIND_LABEL = { profile: "פרופיל אישי", page: "דף חברה" } as const
+
 /** After the connection changes, the board's cards change with it. */
 async function afterConnectionChange() {
   await refreshInstagramConnection()
@@ -100,7 +126,8 @@ async function afterConnectionChange() {
  * control rather than only while a popup is open: it must already exist when
  * the popup fires, and re-attaching per click risks missing a fast one.
  */
-function useConnectFlow() {
+function useConnectFlow(platform: SocialPlatform = "instagram") {
+  const label = NETWORK_LABEL[platform]
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Set when the login exposes several accounts: the grant to attach from,
@@ -115,7 +142,7 @@ function useConnectFlow() {
       const res = await fetch("/api/social/accounts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accountId, ...(originId ? { originId } : {}) }),
+        body: JSON.stringify({ accountId, platform, ...(originId ? { originId } : {}) }),
       })
       const json = await res.json()
       if (res.status === 409 && json.error === "choose_account" && Array.isArray(json.choose)) {
@@ -127,14 +154,14 @@ function useConnectFlow() {
         setError(null)
         setChoice(null)
         await afterConnectionChange()
-        toast.success("אינסטגרם מחובר")
+        toast.success(`${label} מחובר`)
       }
     } catch {
       setError("לא הצלחנו לשמור את החיבור.")
     } finally {
       setBusy(false)
     }
-  }, [])
+  }, [platform, label])
 
   useEffect(() => {
     async function onMessage(e: MessageEvent) {
@@ -142,7 +169,8 @@ function useConnectFlow() {
 
       const data = e.data as ConnectMessage | null
       if (!data || data.page !== "social_media_posting") return
-      if (data.platform !== "instagram") return
+      // Each network's control listens only for its own popup.
+      if (data.platform !== platform) return
 
       popupRef.current?.close()
       popupRef.current = null
@@ -158,7 +186,9 @@ function useConnectFlow() {
       const accountId = accountIdFrom(data)
       if (!accountId) {
         setError(
-          "אינסטגרם לא החזירה חשבון. צריך לוודא שהחשבון עסקי או יוצר ומקושר לדף פייסבוק, ולנסות שוב.",
+          platform === "instagram"
+            ? "אינסטגרם לא החזירה חשבון. צריך לוודא שהחשבון עסקי או יוצר ומקושר לדף פייסבוק, ולנסות שוב."
+            : `החיבור ${toNetwork(platform)} לא החזיר חשבון. אפשר לנסות שוב.`,
         )
         setBusy(false)
         return
@@ -169,7 +199,7 @@ function useConnectFlow() {
 
     window.addEventListener("message", onMessage)
     return () => window.removeEventListener("message", onMessage)
-  }, [save])
+  }, [save, platform])
 
   const connect = useCallback(async () => {
     setError(null)
@@ -177,7 +207,7 @@ function useConnectFlow() {
     setBusy(true)
 
     // Opened FIRST, synchronously — see the note at the top of the file.
-    const popup = window.open("", "nlcai-instagram-connect", "width=600,height=760")
+    const popup = window.open("", `nlcai-${platform}-connect`, "width=600,height=760")
     if (!popup) {
       setBusy(false)
       setError("הדפדפן חסם את חלון החיבור. צריך לאפשר חלונות קופצים לאתר הזה ולנסות שוב.")
@@ -186,13 +216,17 @@ function useConnectFlow() {
     popupRef.current = popup
 
     try {
-      const res = await fetch("/api/social/connect", { method: "POST" })
+      const res = await fetch("/api/social/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform }),
+      })
       const json = await res.json()
       if (!res.ok || !json.url) {
         popup.close()
         popupRef.current = null
         setBusy(false)
-        setError(json.message ?? "לא הצלחנו לפתוח את החיבור לאינסטגרם.")
+        setError(json.message ?? `לא הצלחנו לפתוח את החיבור ${toNetwork(platform)}.`)
         return
       }
       popup.location.href = json.url
@@ -200,9 +234,9 @@ function useConnectFlow() {
       popup.close()
       popupRef.current = null
       setBusy(false)
-      setError("לא הצלחנו לפתוח את החיבור לאינסטגרם.")
+      setError(`לא הצלחנו לפתוח את החיבור ${toNetwork(platform)}.`)
     }
-  }, [])
+  }, [platform])
 
   const choose = useCallback(
     (originId: string) => {
@@ -281,16 +315,24 @@ function InstagramConnectDialog({
   connection,
   flow,
   startOnDisconnect = false,
+  platform = "instagram",
+  inert = false,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   connection: InstagramConnection
   flow: ReturnType<typeof useConnectFlow>
+  /** Which network this modal is for. Same modal, its own words and glyph. */
+  platform?: SocialPlatform
+  /** Review only: buttons do nothing but say so. No fetch, no popup. */
+  inert?: boolean
   /** Open straight on the disconnect confirmation (a card's "ניתוק"). */
   startOnDisconnect?: boolean
 }) {
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
+  const label = NETWORK_LABEL[platform]
+  const Icon = NETWORK_ICON[platform]
 
   const account = connection.primary
   const isLive = connection.status === "connected" && account?.status === "connected"
@@ -309,6 +351,11 @@ function InstagramConnectDialog({
 
   async function disconnect() {
     if (!account) return
+    if (inert) {
+      toast("תצוגת סקירה — שום דבר לא נותק")
+      setConfirmingDisconnect(false)
+      return
+    }
     setDisconnecting(true)
     flow.setError(null)
     try {
@@ -324,8 +371,8 @@ function InstagramConnectDialog({
       const cancelled = typeof json?.cancelled === "number" ? json.cancelled : 0
       toast.success(
         cancelled > 0
-          ? `אינסטגרם נותק, ו-${cancelled === 1 ? "פוסט אחד בוטל" : `${cancelled} פוסטים בוטלו`} בתור`
-          : "אינסטגרם נותק",
+          ? `${label} נותק, ו-${cancelled === 1 ? "פוסט אחד בוטל" : `${cancelled} פוסטים בוטלו`} בתור`
+          : `${label} נותק`,
       )
       setConfirmingDisconnect(false)
     } finally {
@@ -338,11 +385,11 @@ function InstagramConnectDialog({
       <DialogContent dir="rtl" className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Instagram className="size-5" aria-hidden />
-            חיבור אינסטגרם
+            <Icon className="size-5" aria-hidden />
+            חיבור {label}
           </DialogTitle>
           <DialogDescription className="text-start text-small text-text-neutral-default">
-            {FACEBOOK_PAGE_NOTE}
+            {NETWORK_CONNECT_NOTE[platform]}
           </DialogDescription>
         </DialogHeader>
 
@@ -357,11 +404,16 @@ function InstagramConnectDialog({
                   role="listitem"
                   onClick={() => flow.choose(o.originId)}
                   disabled={flow.busy}
-                  className="flex items-center gap-3 rounded-xl border border-border-neutral-default p-3 text-start transition-colors hover:bg-bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 disabled:opacity-60"
+                  className="flex items-center gap-3 rounded-xl border border-border-neutral-default p-3 text-start transition-colors hover:bg-gray-95 dark:hover:bg-gray-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 disabled:opacity-60"
                 >
-                  <AccountAvatar src={o.avatar} />
-                  <span className="truncate text-small-bold text-text-primary-default">
-                    <bdi>@{o.name.replace(/^@/, "")}</bdi>
+                  <AccountAvatar src={o.avatar} platform={platform} />
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate text-small-bold text-text-primary-default">
+                      {platform === "instagram" ? <bdi>@{o.name.replace(/^@/, "")}</bdi> : <bdi>{o.name}</bdi>}
+                    </span>
+                    {o.kind && platform === "linkedin" && (
+                      <span className="text-xs-body text-text-neutral-default">{PROFILE_KIND_LABEL[o.kind]}</span>
+                    )}
                   </span>
                 </button>
               ))}
@@ -369,17 +421,21 @@ function InstagramConnectDialog({
           </div>
         ) : connection.status === "unavailable" ? (
           <p className="text-small text-text-neutral-default">
-            החיבור לאינסטגרם ייפתח בקרוב. נעדכן ברגע שיהיה זמין.
+            החיבור {toNetwork(platform)} ייפתח בקרוב. נעדכן ברגע שיהיה זמין.
           </p>
         ) : account && (isLive || isLapsed) ? (
           <div className="flex flex-col gap-3 rounded-xl border border-border-neutral-default p-3">
             <div className="flex items-center gap-3">
-              <AccountAvatar src={account.avatarUrl} />
+              <AccountAvatar src={account.avatarUrl} platform={platform} />
               <div className="flex min-w-0 flex-col">
                 <span className="truncate text-small-bold text-text-primary-default">
                   {/* bdi, not dir="ltr": keeps "@handle" reading correctly
                       while the line itself stays right-aligned. */}
-                  {account.handle ? <bdi>@{account.handle.replace(/^@/, "")}</bdi> : "חשבון אינסטגרם"}
+                  {account.handle ? (
+                    platform === "instagram" ? <bdi>@{account.handle.replace(/^@/, "")}</bdi> : <bdi>{account.handle}</bdi>
+                  ) : (
+                    `חשבון ${label}`
+                  )}
                 </span>
                 <span
                   className={cn(
@@ -402,8 +458,8 @@ function InstagramConnectDialog({
                 className="flex flex-col gap-2 rounded-lg bg-red-95 p-3 text-small text-button-destructive-default dark:bg-red-95/10"
               >
                 {queued > 0
-                  ? `ניתוק יבטל ${queued === 1 ? "פוסט אחד שמתוזמן" : `${queued} פוסטים שמתוזמנים`} לאינסטגרם. הם יישארו על הלוח, אבל לא יתפרסמו.`
-                  : "אחרי הניתוק, פוסטים שתשימו ביומן לא יתפרסמו לאינסטגרם."}
+                  ? `ניתוק יבטל ${queued === 1 ? "פוסט אחד שמתוזמן" : `${queued} פוסטים שמתוזמנים`} ${toNetwork(platform)}. הם יישארו על הלוח, אבל לא יתפרסמו שם.`
+                  : `אחרי הניתוק, פוסטים שתשימו ביומן לא יתפרסמו ${toNetwork(platform)}.`}
                 <div className="flex gap-2">
                   <Button
                     size="sm"
@@ -448,16 +504,33 @@ function InstagramConnectDialog({
                   ניתוק
                 </Button>
               </>
+            ) : isLapsed ? (
+              // Expired: reconnecting is the point; unplugging it stays possible.
+              <>
+                <Button onClick={flow.connect} disabled={flow.busy} className="gap-2">
+                  {flow.busy ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                  {flow.busy ? "מתחבר..." : "חיבור מחדש"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setConfirmingDisconnect(true)}
+                  disabled={flow.busy}
+                  className="gap-2 border-button-destructive-default text-button-destructive-default hover:bg-red-95"
+                >
+                  <Unlink className="size-4" />
+                  ניתוק
+                </Button>
+              </>
             ) : (
               <Button onClick={flow.connect} disabled={flow.busy} className="gap-2">
-                {flow.busy ? <Loader2 className="size-4 animate-spin" /> : <Instagram className="size-4" />}
-                {flow.busy ? "מתחבר..." : "קישור לאינסטגרם"}
+                {flow.busy ? <Loader2 className="size-4 animate-spin" /> : <Icon className="size-4" />}
+                {flow.busy ? "מתחבר..." : `קישור ${toNetwork(platform)}`}
               </Button>
             )}
           </DialogFooter>
         )}
 
-        {connection.status !== "unavailable" && (
+        {connection.status !== "unavailable" && platform === "instagram" && (
           <p className="text-xs-body text-text-neutral-default">
             <span className="font-semibold text-text-primary-default">לא רואה את החשבון הנכון? </span>
             {WRONG_ACCOUNT_HELP}
@@ -516,13 +589,26 @@ export function InstagramConnectDialogHost({
   open,
   onOpenChange,
   startOnDisconnect = false,
+  platform = "instagram",
+  previewConnection,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   startOnDisconnect?: boolean
+  /** YouTube and LinkedIn open this same modal with their own words. */
+  platform?: SocialPlatform
+  /**
+   * Review only: show this connection instead of the live one, with every
+   * button inert (no fetch, no popup, nothing disconnected).
+   */
+  previewConnection?: InstagramConnection
 }) {
-  const connection = useInstagramConnection()
-  const flow = useConnectFlow()
+  const live = useSocialConnections()[platform]
+  const connection = previewConnection ?? live
+  const liveFlow = useConnectFlow(platform)
+  const flow = previewConnection
+    ? { ...liveFlow, connect: async () => void toast("תצוגת סקירה — לא נפתח חיבור") }
+    : liveFlow
   const { setError } = flow
   useEffect(() => {
     if (open) {
@@ -539,6 +625,8 @@ export function InstagramConnectDialogHost({
       connection={connection}
       flow={flow}
       startOnDisconnect={startOnDisconnect}
+      platform={platform}
+      inert={!!previewConnection}
     />
   )
 }
@@ -546,12 +634,19 @@ export function InstagramConnectDialogHost({
 /** Profile picture of an Instagram account. The URL is Facebook's CDN link,
  *  which expires after a while, so the Instagram glyph stands in whenever it
  *  is missing or fails to load. */
-function AccountAvatar({ src }: { src: string | null | undefined }) {
+function AccountAvatar({
+  src,
+  platform = "instagram",
+}: {
+  src: string | null | undefined
+  platform?: SocialPlatform
+}) {
+  const Icon = NETWORK_ICON[platform]
   return (
     <Avatar size="lg">
       {src && <AvatarImage src={src} alt="" className="object-cover" />}
       <AvatarFallback className="bg-bg-surface">
-        <Instagram className="size-4 text-text-neutral-default" aria-hidden />
+        <Icon className="size-4 text-text-neutral-default" aria-hidden />
       </AvatarFallback>
     </Avatar>
   )

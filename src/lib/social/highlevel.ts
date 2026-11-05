@@ -29,6 +29,13 @@ import type {
   SocialPlatform,
 } from "@/lib/supabase/types"
 import { MAX_CAPTION_CHARS, MAX_CAROUSEL_ITEMS } from "./media-spec"
+import {
+  LINKEDIN_MAX_IMAGES,
+  MAX_CAPTION_BY_NETWORK,
+  YOUTUBE_TITLE_MAX,
+  inNetwork,
+  toNetwork,
+} from "./networks"
 import { getLocationToken, locationsToken } from "./highlevel-auth"
 import {
   AccountChoiceRequired,
@@ -90,6 +97,11 @@ type GhlFetchOptions = {
    * not a failure.
    */
   notFoundOk?: boolean
+  /**
+   * Which network the call is about, so the errors she reads name it. Unset
+   * for calls that aren't about one network (sub-account, token, list).
+   */
+  platform?: SocialPlatform
 }
 
 async function ghlFetch<T>(path: string, opts: GhlFetchOptions): Promise<T> {
@@ -113,6 +125,7 @@ async function ghlFetch<T>(path: string, opts: GhlFetchOptions): Promise<T> {
     const detail = await res.text().catch(() => "")
 
     if (res.status === 404 && opts.notFoundOk) return null as T
+    const p = opts.platform ?? "instagram"
 
     // 401 from an agency token is our misconfiguration. A *connection* going
     // stale shows up as 4xx on the posting endpoints instead, which is the
@@ -120,7 +133,7 @@ async function ghlFetch<T>(path: string, opts: GhlFetchOptions): Promise<T> {
     // most likely reason a scheduled post silently never appears.
     if (res.status === 401 || res.status === 403) {
       throw new SocialPublishError(
-        "החיבור לאינסטגרם פג. צריך לחבר מחדש כדי שהפוסטים ימשיכו לצאת.",
+        `החיבור ${toNetwork(p)} פג. צריך לחבר מחדש כדי שהפוסטים ימשיכו לצאת.`,
         "needs_reconnect"
       )
     }
@@ -128,7 +141,9 @@ async function ghlFetch<T>(path: string, opts: GhlFetchOptions): Promise<T> {
       // Nothing re-queues it for tomorrow on its own — saying so would be the
       // exact quiet lie this whole status model exists to prevent.
       throw new SocialPublishError(
-        "הגעתם למגבלת הפרסומים היומית של אינסטגרם. הפוסט לא תוזמן. אפשר לבחור מועד אחר או לנסות שוב מחר.",
+        p === "instagram"
+          ? "הגעתם למגבלת הפרסומים היומית של אינסטגרם. הפוסט לא תוזמן. אפשר לבחור מועד אחר או לנסות שוב מחר."
+          : `הגעתם למגבלת הפרסומים היומית ${inNetwork(p)}. הפוסט לא תוזמן. אפשר לבחור מועד אחר או לנסות שוב מחר.`,
         "rate_limited"
       )
     }
@@ -162,7 +177,9 @@ async function ghlFetch<T>(path: string, opts: GhlFetchOptions): Promise<T> {
           )
         }
         throw new SocialPublishError(
-          "אינסטגרם דחתה את המדיה. צריך לוודא שיחס הגובה-רוחב בין 4:5 ל-1.91:1 ושהקובץ קטן מ-8MB.",
+          p === "instagram"
+            ? "אינסטגרם דחתה את המדיה. צריך לוודא שיחס הגובה-רוחב בין 4:5 ל-1.91:1 ושהקובץ קטן מ-8MB."
+            : `המדיה נדחתה ${inNetwork(p)}. צריך לוודא שהקובץ תקין ולנסות שוב.`,
           "media_rejected"
         )
       }
@@ -216,6 +233,53 @@ function buildPostBody(
   userId: string,
 ) {
   return {
+    ...basePostBody(input, plannerAccountId, userId),
+    ...platformPostFields(input),
+  }
+}
+
+/**
+ * The fields each network adds on top of the shared body.
+ *
+ *   instagram — `type` is post / reel / story (verified 2026-10-08).
+ *   youtube   — `type: "post"` plus `youtubePostDetails` with the title and
+ *               privacy. Verified live 2026-11-05: created, read back with the
+ *               title and privacy intact, then deleted. Not in the provider's
+ *               public schema, which documents only TikTok and Google Business.
+ *   linkedin  — `type: "post"` and nothing else, per the provider's docs.
+ *               If the provider wants more, it answers
+ *               422 "property … should not exist" / "… required", which lands
+ *               in the log as a request-body error, not as her media's fault.
+ *               Verified live 2026-11-05 for a video post (scheduled, read
+ *               back, deleted) — image and carousel posts not yet.
+ */
+function platformPostFields(input: SchedulePostInput): Record<string, unknown> {
+  switch (input.platform) {
+    case "youtube":
+      return {
+        type: "post",
+        youtubePostDetails: {
+          title: input.title ?? "",
+          // Chosen per post in the preview (Hani, 2026-11-05); public when
+          // never chosen. The verify script forces "private" through the env.
+          privacyLevel:
+            process.env.SOCIAL_YOUTUBE_PRIVACY === "private" ? "private" : (input.youtubePrivacy ?? "public"),
+          type: "video",
+        },
+      }
+    case "linkedin":
+      return { type: "post" }
+    default:
+      return { type: input.kind }
+  }
+}
+
+function basePostBody(
+  input: SchedulePostInput,
+  plannerAccountId: string,
+  userId: string,
+) {
+  return {
     accountIds: [plannerAccountId],
     userId,
     summary: input.caption,
@@ -231,7 +295,6 @@ function buildPostBody(
       type: mimeFor(m),
       ...(input.coverUrl && m.type === "video" ? { thumbnail: input.coverUrl } : {}),
     })),
-    type: input.kind,
     // ISO-8601. `publishAt` is already an absolute instant by contract — the
     // calendar's local-day-plus-hour has been resolved before it gets here.
     scheduleDate: input.publishAt.toISOString(),
@@ -242,6 +305,36 @@ function buildPostBody(
 function validate(input: SchedulePostInput): void {
   if (input.media.length === 0) {
     throw new SocialPublishError("אין מדיה לפרסום.", "media_rejected")
+  }
+  if (input.platform === "youtube") {
+    if (input.media.length !== 1 || input.media[0].type !== "video") {
+      throw new SocialPublishError("ל-YouTube עולה סרטון אחד בלבד.", "media_rejected")
+    }
+    if (!input.title?.trim()) {
+      throw new SocialPublishError("ל-YouTube צריך כותרת, והפוסט הזה בלי הוק.", "media_rejected")
+    }
+    if (input.title.length > YOUTUBE_TITLE_MAX) {
+      throw new SocialPublishError(`כותרת ב-YouTube מוגבלת ל-${YOUTUBE_TITLE_MAX} תווים.`, "media_rejected")
+    }
+  }
+  if (input.platform === "linkedin") {
+    const videos = input.media.filter((m) => m.type === "video").length
+    if (videos > 0 && input.media.length > 1) {
+      throw new SocialPublishError("ב-LinkedIn אפשר סרטון אחד או תמונות, לא את שניהם יחד.", "media_rejected")
+    }
+    if (input.media.length > LINKEDIN_MAX_IMAGES) {
+      throw new SocialPublishError(
+        `LinkedIn מקבלת עד ${LINKEDIN_MAX_IMAGES} תמונות בפוסט, ויש כאן ${input.media.length}.`,
+        "media_rejected"
+      )
+    }
+  }
+  if (input.platform !== "instagram") {
+    const max = MAX_CAPTION_BY_NETWORK[input.platform]
+    if (input.caption.length > max) {
+      throw new SocialPublishError(`הכיתוב ארוך מ-${max.toLocaleString("he-IL")} תווים.`, "media_rejected")
+    }
+    return
   }
   if (input.media.length > LIMITS.maxCarouselItems) {
     throw new SocialPublishError(
@@ -401,18 +494,33 @@ export class HighLevelPublisher implements SocialPublisher {
     //
     // Verified live (2026-10-08): POSTing without that body answers 422, and
     // the fields it wants — `originId` and `name` — exist only in this GET.
-    type OAuthPage = { id?: string; originId?: string; name?: string; avatar?: string }
-    const available = await ghlFetch<{
-      results?: { pages?: OAuthPage[]; accounts?: OAuthPage[] } | OAuthPage[]
-    }>(path, { token })
+    type OAuthPage = {
+      id?: string
+      originId?: string
+      name?: string
+      avatar?: string
+      urn?: string
+      /** Which bucket it came from — LinkedIn attaches need it as `type`. */
+      __kind?: "profile" | "page"
+    }
+    type Buckets = { pages?: OAuthPage[]; accounts?: OAuthPage[]; profile?: OAuthPage[] }
+    const available = await ghlFetch<{ results?: Buckets | OAuthPage[] }>(path, {
+      token,
+      platform,
+    })
 
-    // The docs name this `results.pages`, which is Facebook's vocabulary. Read
-    // the other two shapes too rather than betting the connect flow on which
-    // word this platform happens to use.
+    // Verified live 2026-11-05: Instagram answers `results.pages`; YouTube
+    // answers `results.profile`; LinkedIn answers BOTH `results.profile` (her
+    // personal profile) and `results.pages` (company pages, each with a
+    // `urn`). Read every bucket and remember which one each came from.
     const results = available.results
     const pages: OAuthPage[] = Array.isArray(results)
       ? results
-      : (results?.pages ?? results?.accounts ?? [])
+      : [
+          ...(results?.profile ?? []).map((p) => ({ ...p, __kind: "profile" as const })),
+          ...(results?.pages ?? []).map((p) => ({ ...p, __kind: "page" as const })),
+          ...(results?.accounts ?? []).map((p) => ({ ...p, __kind: "profile" as const })),
+        ]
 
     if (pages.length === 0) {
       // The provider's own answer beats our guess at what it means — an empty
@@ -423,7 +531,11 @@ export class HighLevelPublisher implements SocialPublisher {
         JSON.stringify(available).slice(0, 600),
       )
       throw new SocialPublishError(
-        "לא נמצא חשבון אינסטגרם מקצועי שמקושר לדף פייסבוק. צריך לקשר דף ולנסות שוב.",
+        platform === "instagram"
+          ? "לא נמצא חשבון אינסטגרם מקצועי שמקושר לדף פייסבוק. צריך לקשר דף ולנסות שוב."
+          : platform === "youtube"
+            ? "לא נמצא ערוץ YouTube בחשבון הגוגל שבחרתם. צריך לבחור חשבון עם ערוץ ולנסות שוב."
+            : "לא נמצא פרופיל או דף LinkedIn בחיבור הזה. אפשר לנסות שוב.",
         "not_connected"
       )
     }
@@ -463,7 +575,9 @@ export class HighLevelPublisher implements SocialPublisher {
     } else if (pages.length > 1) {
       const options: ConnectOption[] = pages.flatMap((p) => {
         const f = fields(p)
-        return f.originId && f.name ? [{ originId: f.originId, name: f.name, avatar: f.avatar ?? null }] : []
+        return f.originId && f.name
+          ? [{ originId: f.originId, name: f.name, avatar: f.avatar ?? null, kind: p.__kind }]
+          : []
       })
       if (options.length > 1) throw new AccountChoiceRequired(options)
       page = pages.find((p) => fields(p).originId === options[0]?.originId) ?? pages[0]
@@ -479,7 +593,9 @@ export class HighLevelPublisher implements SocialPublisher {
         JSON.stringify(page).slice(0, 600),
       )
       throw new SocialPublishError(
-        "החשבון שאינסטגרם החזירה חסר פרטים. נסו לחבר שוב.",
+        platform === "instagram"
+          ? "החשבון שאינסטגרם החזירה חסר פרטים. נסו לחבר שוב."
+          : "החשבון שחזר מהחיבור חסר פרטים. נסו לחבר שוב.",
         "provider_error",
         false
       )
@@ -490,10 +606,16 @@ export class HighLevelPublisher implements SocialPublisher {
     }>(path, {
       method: "POST",
       token,
+      platform,
       body: {
         originId,
         name,
         ...(avatar ? { avatar } : {}),
+        // Instagram attaches without a `type` (verified 2026-10-08) and is left
+        // exactly as it was. YouTube and LinkedIn answer 422 without one
+        // (verified 2026-11-05); LinkedIn also wants the profile/page `urn`.
+        ...(platform !== "instagram" ? { type: page.__kind ?? "profile" } : {}),
+        ...(platform === "linkedin" && page.urn ? { urn: page.urn } : {}),
       },
     })
 
@@ -506,7 +628,8 @@ export class HighLevelPublisher implements SocialPublisher {
           platform,
           external_account_id: externalAccountId,
           external_tenant_id: locationId,
-          handle: attached.results?.name ?? null,
+          external_origin_id: originId,
+          handle: attached.results?.name ?? name,
           avatar_url: attached.results?.avatar ?? null,
           status: "connected",
         } as never,
@@ -567,7 +690,7 @@ export class HighLevelPublisher implements SocialPublisher {
     const row = data as SocialAccountRow
     if (row.status !== "connected") {
       throw new SocialPublishError(
-        "החיבור לאינסטגרם פג. צריך לחבר מחדש.",
+        `החיבור ${toNetwork(row.platform)} פג. צריך לחבר מחדש.`,
         "needs_reconnect"
       )
     }
@@ -589,26 +712,44 @@ export class HighLevelPublisher implements SocialPublisher {
     const token = await getLocationToken(locationId)
 
     const connected = await ghlFetch<{
-      results?: { accounts?: { id?: string; oauthId?: string; name?: string }[] }
+      results?: {
+        accounts?: {
+          id?: string
+          oauthId?: string
+          name?: string
+          platform?: string
+          originId?: string
+          isExpired?: boolean
+          deleted?: boolean
+        }[]
+      }
     }>(`/social-media-posting/${locationId}/accounts`, { token })
 
     // One grant can have several accounts attached (she switched from one to
-    // another under the same Facebook login), and they share an oauthId. The
-    // handle we stored is the one she picked, so it breaks the tie.
+    // another under the same Facebook login; a LinkedIn login carries a
+    // profile and pages), and they share an oauthId. The origin id stored at
+    // connect time picks the exact one; pre-042 rows fall back to the handle.
     const sameGrant = (connected.results?.accounts ?? []).filter(
-      (a) => a.oauthId === account.external_account_id,
+      (a) =>
+        a.oauthId === account.external_account_id &&
+        !a.deleted &&
+        (!a.platform || a.platform === account.platform),
     )
     const handle = account.handle?.replace(/^@/, "").toLowerCase()
     const match =
+      (account.external_origin_id
+        ? sameGrant.find((a) => a.originId === account.external_origin_id)
+        : undefined) ??
       (sameGrant.length > 1 && handle
         ? sameGrant.find((a) => a.name?.toLowerCase() === handle)
-        : undefined) ?? sameGrant[0]
-    if (!match?.id || !match.oauthId) {
+        : undefined) ??
+      sameGrant[0]
+    if (!match?.id || !match.oauthId || match.isExpired) {
       // The account is no longer attached to her workspace. This is the
       // strongest "reconnect" signal we get, so it is the one flagged as
       // account-level (see SocialPublishError.accountLost).
       throw new SocialPublishError(
-        "החיבור לאינסטגרם פג. צריך לחבר מחדש כדי שהפוסטים ימשיכו לצאת.",
+        `החיבור ${toNetwork(account.platform)} פג. צריך לחבר מחדש כדי שהפוסטים ימשיכו לצאת.`,
         "needs_reconnect",
         true,
         true,
@@ -629,6 +770,7 @@ export class HighLevelPublisher implements SocialPublisher {
       method: "POST",
       body: buildPostBody(input, plannerAccountId, plannerUserId),
       token,
+      platform: input.platform,
     })
 
     // The id arrives nested under `results.post`, not at the top level — the
@@ -667,6 +809,7 @@ export class HighLevelPublisher implements SocialPublisher {
       method: "PUT",
       body: buildPostBody(input, plannerAccountId, plannerUserId),
       token,
+      platform: input.platform,
     })
   }
 

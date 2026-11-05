@@ -53,7 +53,7 @@ import {
   type PreviewSlide,
   type PublishStatus as PreviewPublishStatus,
 } from "@/components/format-preview/shared"
-import { useScheduleAllA, useSchedulingAccess, useSchedulingPreview } from "@/lib/use-scheduling-access"
+import { useMultinetwork, useScheduleAllA, useSchedulingAccess, useSchedulingPreview } from "@/lib/use-scheduling-access"
 import {
   hasAnySlot,
   planScheduleAll,
@@ -63,9 +63,16 @@ import {
 import { NoSettingsDialog, PreviewBar, ScheduleAllButton } from "@/components/schedule-all"
 import { CorePostSheet, type CorePostSheetData } from "@/components/core-post-sheet"
 import { FormatThumbnail } from "@/components/format-thumbnail"
-import { InstagramConnectionControl } from "@/components/instagram-connect"
+import { InstagramConnectDialogHost, InstagramConnectionControl } from "@/components/instagram-connect"
+import {
+  ConnectedNetworksIndicator,
+  type ConnectedNetwork,
+} from "@/components/format-preview/network-switch"
+import type { PreviewNetwork } from "@/components/format-preview/shared"
+import { networksForFormat, PUBLISH_PLATFORMS } from "@/lib/social/networks"
+import type { SocialPlatform } from "@/lib/supabase/types"
 import { PublishStatusLine } from "@/components/publish-status"
-import { useInstagramConnection, type InstagramConnection } from "@/lib/instagram-connection"
+import { useSocialConnections, type InstagramConnection } from "@/lib/instagram-connection"
 import { isSlotTooSoon } from "@/lib/social/slot-time"
 import {
   FormatStatusChip,
@@ -81,6 +88,8 @@ import {
   retryPublish,
   refreshPublishStatus,
   schedulePost,
+  setPublishNetwork,
+  setYouTubePrivacy,
   toDateKey,
   unmarkPublished,
   unschedulePost,
@@ -582,8 +591,22 @@ export default function CalendarPage() {
   // Instagram: one shared connection state for the pill above the board and
   // every card's status line; one modal, opened from either.
   const router = useRouter()
-  const connection = useInstagramConnection()
+  const connections = useSocialConnections()
+  const connection = connections.instagram
   const [igDialogOpen, setIgDialogOpen] = useState(false)
+  // YouTube / LinkedIn connect modal — the Instagram one, with their words.
+  const [networkDialog, setNetworkDialog] = useState<SocialPlatform | null>(null)
+  const openNetworkDialog = (p: SocialPlatform) => (p === "instagram" ? setIgDialogOpen(true) : setNetworkDialog(p))
+
+  // YouTube + LinkedIn (lib/scheduling-access → MULTINETWORK_EMAILS). Off:
+  // Instagram only, the pill above the board and the preview exactly as before.
+  const multinetwork = useMultinetwork() === true
+  const livePlatforms: SocialPlatform[] = multinetwork ? PUBLISH_PLATFORMS : ["instagram"]
+
+  /** Is any network she may use, and that takes this format, connected? */
+  const fitsConnected = (format: string) =>
+    networksForFormat(format).some((p) => livePlatforms.includes(p) && connections[p].status === "connected")
+  const anyConnected = livePlatforms.some((p) => connections[p].status === "connected")
 
   // What happened in the queue since the last visit — outcomes of slots
   // whose time passed, edits after queuing, a lapsed connection.
@@ -598,7 +621,7 @@ export default function CalendarPage() {
    * board-only user (no connection) plans freely, as before.
    */
   const blockedAsTooSoon = (dateKey: string, time: string): boolean => {
-    if (!schedulingOn || connection.status !== "connected") return false
+    if (!schedulingOn || !anyConnected) return false
     if (!isSlotTooSoon(dateKey, time)) return false
     toast.error(`השעה ${time} כבר עברה או קרובה מדי, ולכן הפוסט לא יוכל לצאת בזמן. בחרו יום אחר.`)
     return true
@@ -1050,6 +1073,11 @@ export default function CalendarPage() {
   // caption, the slot, and the Instagram status. The caption and the slot
   // are saved by its one "תזמון פוסט" button.
   const [previewKey, setPreviewKey] = useState<string | null>(null)
+  // Networks unticked in the preview of a post that isn't on the board yet;
+  // sent with the "תזמון פוסט" that puts it there.
+  const [pendingExclusions, setPendingExclusions] = useState<SocialPlatform[]>([])
+  // Same, for the YouTube privacy picked before the post is on the board.
+  const [pendingYouTubePrivacy, setPendingYouTubePrivacy] = useState<"public" | "unlisted" | "private" | null>(null)
   const [previewDetail, setPreviewDetail] = useState<{
     key: string
     caption: string
@@ -1136,7 +1164,7 @@ export default function CalendarPage() {
     if (st?.status === "sent" || (previewPast && (!st || st.status === "idle"))) {
       return { kind: "sent" }
     }
-    if (connection.status !== "connected") return { kind: "not_connected" }
+    if (!fitsConnected(row.format)) return { kind: "not_connected" }
     if (st?.status === "queued" && st.code !== "content_changed") return { kind: "scheduled" }
     if (st?.status === "failed") {
       return {
@@ -1151,6 +1179,54 @@ export default function CalendarPage() {
       }
     }
     return { kind: "pending" }
+  }
+  /** Each network this format can go to, and where it stands (network switch only). */
+  function previewNetworks(row: ScheduledPost): PreviewNetwork[] {
+    const targets = row.publish?.targets ?? []
+    const base = previewPublish(row)
+    return networksForFormat(row.format).map((platform) => {
+      const conn = connections[platform]
+      const connection: PreviewNetwork["connection"] =
+        conn.status === "connected" ? "connected" : conn.primary?.status === "needs_reconnect" ? "expired" : "none"
+      const t = targets.find((x) => x.platform === platform)
+      // No targets yet (not sent, or a draft): every connected network that
+      // fits goes, minus what she unticked here before scheduling.
+      const included = t
+        ? !t.optedOut
+        : connection === "connected" && !pendingExclusions.includes(platform)
+      let publish: PreviewPublishStatus = base
+      if (t && !t.optedOut && base.kind !== "draft" && base.kind !== "unscheduled") {
+        publish =
+          t.status === "published"
+            ? { kind: "published", permalink: t.permalink ?? undefined }
+            : t.status === "queued" && t.code !== "content_changed"
+              ? { kind: "scheduled" }
+              : t.status === "sent"
+                ? { kind: "sent" }
+                : t.status === "failed"
+                  ? {
+                      kind: "failed",
+                      reason: t.message || "הפוסט לא תוזמן.",
+                      action:
+                        t.code === "needs_reconnect" || t.code === "not_connected"
+                          ? "reconnect"
+                          : t.code === "media_rejected"
+                            ? "fix_media"
+                            : "retry",
+                    }
+                  : { kind: "pending" }
+      }
+      return {
+        platform,
+        included,
+        connection,
+        handle: t?.handle ?? conn.primary?.handle ?? null,
+        publish,
+        ...(platform === "youtube"
+          ? { youtubePrivacy: t?.youtubePrivacy ?? pendingYouTubePrivacy ?? "public" }
+          : {}),
+      }
+    })
   }
   const previewData: FormatPreviewData | null = previewRow
     ? {
@@ -1169,6 +1245,7 @@ export default function CalendarPage() {
           : "",
         isPast: previewPast,
         publish: previewPublish(previewRow),
+        networks: multinetwork ? previewNetworks(previewRow) : undefined,
       }
     : null
   const previewContentState: PreviewContentState =
@@ -1196,6 +1273,11 @@ export default function CalendarPage() {
           }
           schedulePost(previewRow.corePostId, previewRow.format, date, time, {
             hook: previewData?.hook,
+            excludeNetworks: multinetwork && !previewRow.publish?.targets?.length ? pendingExclusions : undefined,
+            youtubePrivacy:
+              multinetwork && !previewRow.publish?.targets?.length && pendingYouTubePrivacy
+                ? pendingYouTubePrivacy
+                : undefined,
           })
           reloadBoard()
           toast.success(
@@ -1248,13 +1330,55 @@ export default function CalendarPage() {
           } else {
             void retryPublish(previewRow.corePostId, previewRow.format, "retry").then((next) => {
               reloadBoard()
-              if (next?.status === "queued") toast.success("הפוסט תוזמן לאינסטגרם")
+              if (next?.status === "queued") toast.success(multinetwork ? "הפוסט תוזמן" : "הפוסט תוזמן לאינסטגרם")
               else if (next?.status === "failed" && next.message) toast.error(next.message)
             })
           }
         },
+        onConnectNetwork: openNetworkDialog,
+        onYouTubePrivacy: (privacy: "public" | "unlisted" | "private") => {
+          // Not sent yet: held for the schedule write. Else saved on the post.
+          if (!previewRow.scheduledDate || !previewRow.publish?.targets?.length) {
+            setPendingYouTubePrivacy(privacy)
+            if (!previewRow.scheduledDate || previewData?.publish.kind === "draft") return
+          }
+          void setYouTubePrivacy(previewRow.corePostId, previewRow.format, privacy).then((next) => {
+            reloadBoard()
+            if (next?.status === "failed" && next.message) toast.error(next.message)
+            else toast.success("הפרטיות ב-YouTube נשמרה")
+          })
+        },
+        onNetworkToggle: (platform: SocialPlatform, include: boolean) => {
+          // Not sent yet: remember it for the schedule write.
+          if (!previewRow.scheduledDate || !previewRow.publish?.targets?.length) {
+            setPendingExclusions((list) =>
+              include ? list.filter((p) => p !== platform) : [...new Set([...list, platform])],
+            )
+            if (!previewRow.scheduledDate || previewData?.publish.kind === "draft") return
+          }
+          void setPublishNetwork(previewRow.corePostId, previewRow.format, platform, include).then((next) => {
+            reloadBoard()
+            if (next?.status === "failed" && next.message) toast.error(next.message)
+          })
+        },
       }
     : null
+
+  const headerNetworks: ConnectedNetwork[] = PUBLISH_PLATFORMS.map((p) => {
+        const c = connections[p]
+        return {
+          platform: p,
+          state:
+            c.status === "loading"
+              ? "loading"
+              : c.status === "connected"
+                ? "connected"
+                : c.primary?.status === "needs_reconnect"
+                  ? "expired"
+                  : "none",
+          handle: c.primary?.handle ?? null,
+        }
+      })
 
   // One board card — shared by the day-column board and the hour-rows board.
   const renderCard = (post: ScheduledPost) => {
@@ -1363,12 +1487,31 @@ export default function CalendarPage() {
                 className="w-[48px] h-[48px]"
               />
               <h2 className="text-text-primary-default">תזמון</h2>
-              {schedulingOn && (
-                <InstagramConnectionControl
-                  className="ms-auto"
-                  open={igDialogOpen}
-                  onOpenChange={setIgDialogOpen}
-                />
+              {schedulingOn && multinetwork ? (
+                // One marker for every network (Hani, 2026-11-05) in place of
+                // the Instagram-only pill. Each icon opens that network's
+                // connect window.
+                <>
+                  <ConnectedNetworksIndicator
+                    className="ms-auto"
+                    networks={headerNetworks}
+                    onOpen={openNetworkDialog}
+                  />
+                  <InstagramConnectDialogHost open={igDialogOpen} onOpenChange={setIgDialogOpen} />
+                  <InstagramConnectDialogHost
+                    open={networkDialog !== null}
+                    onOpenChange={(open) => !open && setNetworkDialog(null)}
+                    platform={networkDialog ?? "youtube"}
+                  />
+                </>
+              ) : (
+                schedulingOn && (
+                  <InstagramConnectionControl
+                    className="ms-auto"
+                    open={igDialogOpen}
+                    onOpenChange={setIgDialogOpen}
+                  />
+                )
               )}
             </div>
 
@@ -1673,7 +1816,11 @@ export default function CalendarPage() {
         <FormatPreviewDialog
           open={!!previewData}
           onOpenChange={(open) => {
-            if (!open) setPreviewKey(null)
+            if (!open) {
+              setPreviewKey(null)
+              setPendingExclusions([])
+              setPendingYouTubePrivacy(null)
+            }
           }}
           data={previewData}
           content={previewContentState}
