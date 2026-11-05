@@ -16,6 +16,9 @@ import { cn } from "@/lib/utils"
  * `data-media-control`, never opens the panel.
  */
 
+/** Height of the browser's native video control bar, from the bottom edge. */
+const VIDEO_CONTROL_BAR_PX = 56
+
 const CONTROL_SELECTOR =
   "button, a, input, select, textarea, label, video[controls], iframe, [data-media-control]"
 
@@ -58,7 +61,17 @@ export function MediaPreviewZone({
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => {
         const control = (e.target as HTMLElement).closest(CONTROL_SELECTOR)
-        if (control && e.currentTarget.contains(control)) return
+        if (control && e.currentTarget.contains(control)) {
+          // A clip with native controls fills the whole preview, so treating
+          // the entire <video> as a control meant a click on a b-roll / story
+          // clip never opened the panel (Hani, 2026-11-06). Only its control
+          // bar (the bottom strip) plays it; a click on the picture opens the
+          // panel — and doesn't also start playback.
+          if (!(control instanceof HTMLVideoElement)) return
+          const rect = control.getBoundingClientRect()
+          if (e.clientY >= rect.bottom - VIDEO_CONTROL_BAR_PX) return
+          e.preventDefault()
+        }
         e.stopPropagation()
         onOpen()
       }}
