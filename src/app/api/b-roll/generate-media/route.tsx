@@ -1,11 +1,12 @@
+import { gatePlacement } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
-import { parseReferences } from "@/lib/ai-edit-references"
+import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
-import { BACKGROUND_FRAMINGS, buildBackgroundPrompt, cropToCanvas } from "@/lib/broll-animation/background"
+import { BACKGROUND_FRAMINGS, OWN_BACKGROUND_LINE, buildBackgroundPrompt, cropToCanvas, pictureAsBackground } from "@/lib/broll-animation/background"
 import { buildCompositionBrief } from "@/lib/broll-animation/brief"
 import { composeBRoll, finalizeHtml } from "@/lib/broll-animation/compose"
 import { renderComposition } from "@/lib/broll-animation/render"
@@ -34,14 +35,16 @@ export const maxDuration = 300
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
   try {
-    const { postId, variationIndex, style, brief: mediaBrief, references } = (await req.json().catch(() => ({}))) as {
+    const { postId, variationIndex, style, brief: mediaBrief, references, place } = (await req.json().catch(() => ({}))) as {
       postId?: string
       variationIndex?: number
       style?: unknown
       /** Her own direction for this piece (lib/media-brief). */
       brief?: unknown
-      /** Reference images she attached with the brief (lib/ai-edit-references). */
+      /** Look references (a picture pulled from a link) — lib/ai-edit-references. */
       references?: unknown
+      /** Pictures she attached to put INTO the b-roll as they are — the first one is its background. */
+      place?: unknown
     }
     if (!postId) {
       return NextResponse.json({ error: "postId is required" }, { status: 400 })
@@ -126,7 +129,14 @@ export async function POST(req: NextRequest) {
     // over it afterwards, so a logo would collide with it.
     // Her own direction (lib/media-brief) rides on the direction lines, so it
     // reaches both the background picture and the motion design.
-    const direction = withMediaBrief(
+    // Her own picture (Hani, 2026-11-05: "התמונה תכנס ביצירה הראשונה"):
+    // the b-roll is built ON it — her exact file, whole, never redrawn —
+    // instead of a generated background. A link's picture stays a look only.
+    // Placing is Hani-only for now (lib/feature-access); off it, all are looks.
+    const gated = gatePlacement(user.email, parseReferences(place), parseReferences(references))
+    const placed = gated.place
+    const ownBackground = placed.length ? await pictureAsBackground(referenceBuffer(placed[0])) : null
+    const baseDirection = withMediaBrief(
       await resolveDesignDirection(supabase, user.id, {
         format: "b_roll",
         allowReferences: false,
@@ -134,10 +144,20 @@ export async function POST(req: NextRequest) {
       }),
       normalizeMediaBrief(mediaBrief),
     )
+    const direction = ownBackground
+      ? {
+          ...baseDirection,
+          lines: [
+            ...baseDirection.lines,
+            "",
+            OWN_BACKGROUND_LINE,
+          ],
+        }
+      : baseDirection
     // Her references: the background gets them as images, the motion design
     // as referenceBlocks. The saved composition brief keeps the plain lines,
     // so later edits aren't told about images they don't have.
-    const refs = parseReferences(references)
+    const refs = gated.looks
     const refDirection = withMediaReferences(direction, refs)
     let anthropicKey: string
     try {
@@ -172,18 +192,20 @@ export async function POST(req: NextRequest) {
 
     // Background and motion design don't depend on each other — run both.
     const [raw, template] = await Promise.all([
-      generateImage(
-        openaiKey,
-        buildBackgroundPrompt(
-          refDirection,
-          BACKGROUND_FRAMINGS[Math.abs(variationIndex ?? 0) % BACKGROUND_FRAMINGS.length],
-          context,
-        ),
-        { shape: "9:16", references: refDirection.references },
-      ),
+      ownBackground
+        ? Promise.resolve(null)
+        : generateImage(
+            openaiKey,
+            buildBackgroundPrompt(
+              refDirection,
+              BACKGROUND_FRAMINGS[Math.abs(variationIndex ?? 0) % BACKGROUND_FRAMINGS.length],
+              context,
+            ),
+            { shape: "9:16", references: refDirection.references },
+          ),
       composeBRoll(anthropicKey, brief, Math.abs(variationIndex ?? 0), examples, refs),
     ])
-    const background = Buffer.from(cropToCanvas(raw), "base64")
+    const background = ownBackground ?? Buffer.from(cropToCanvas(raw!), "base64")
 
     const stamp = crypto.randomUUID()
     const backgroundUrl = await uploadBackground(supabase, user.id, stamp, background)

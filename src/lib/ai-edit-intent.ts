@@ -34,8 +34,17 @@ export interface AiEditGenerateOpening {
    * already has media, the page opens the plain edit instead — as before.
    */
   fromEdit?: boolean
+  /**
+   * Images she attaches here go INTO the first generation (lib/feature-access
+   * — Hani only for now). Off: they are look references, as before.
+   */
+  placeRefs?: boolean
   /** Starts the from-zero generation with her brief and the references she attached. */
-  run: (brief: string, references: string[]) => Promise<MediaGenResult>
+  /**
+   * `references`: looks only (a picture from a link). `place`: pictures she
+   * attached, put INTO the media as they are (Hani, 2026-11-05).
+   */
+  run: (brief: string, references: string[], place: string[]) => Promise<MediaGenResult>
 }
 
 export interface AiEditRequest {

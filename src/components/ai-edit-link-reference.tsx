@@ -9,7 +9,8 @@ import type { ReferenceImages } from "@/components/ai-edit-reference"
  * link — an Instagram post, a website — the panel pulls the picture that page
  * shares (api/media/link-reference) and adds it to her references, so she sees
  * exactly what the AI will look at, and can remove it like any screenshot.
- * The link itself stays in her words.
+ * The link itself stays in her words. It is a look to match, never a picture
+ * to put in (that's what an image she attaches herself is).
  *
  * Nothing here calls the AI: one page fetch, no credits.
  */
@@ -70,7 +71,7 @@ export function useLinkReferences(text: string, refs: ReferenceImages, enabled: 
             })
             const data = (await res.json().catch(() => ({}))) as { image?: string; title?: string | null; message?: string }
             if (!res.ok || !data.image) throw new Error(data.message || "לא הצלחנו לפתוח את הקישור. אפשר לצרף צילום מסך במקום.")
-            await add([await dataUrlToFile(data.image)])
+            await add([await dataUrlToFile(data.image)], { look: true })
             next = { url, host, status: "added", title: data.title ?? null }
           } catch (err) {
             next = {

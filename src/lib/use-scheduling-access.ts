@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { canUseFormatGap, canUseMultinetwork, canUsePreview, canUseScheduleAllA, canUseScheduling } from "@/lib/scheduling-access"
+import { canPlaceRefs } from "@/lib/feature-access"
 
 /** null while the session is read, then true/false. */
 export function useSchedulingAccess(): boolean | null {
@@ -23,6 +24,11 @@ export function useFormatGap(): boolean | null {
 
 export function useMultinetwork(): boolean | null {
   return useEmailGate(canUseMultinetwork)
+}
+
+/** Attached images go INTO the first generation — Hani only (lib/feature-access). */
+export function useRefPlace(): boolean | null {
+  return useEmailGate(canPlaceRefs)
 }
 
 /** The scheduling changes still in trial — Hani only (see PREVIEW_EMAILS). */

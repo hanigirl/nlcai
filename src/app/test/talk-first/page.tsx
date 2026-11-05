@@ -16,9 +16,10 @@
  * route answers with a sample picture. Nothing reaches the network: no
  * credits, no DB writes.
  *
+ *   ?gate=off — the panel as everyone but Hani sees it (images are looks only)
  *   ?format=image_post|story|b_roll|carousel
  *   &state=tiles | quick | brand | niche-dark | niche-light | blank | ref |
- *          link | link-failed | generating | done | error | has-media
+ *          link | ref-link | place-failed | link-failed | generating | done | error | has-media
  */
 
 import { Suspense, useEffect, useRef, useState } from "react"
@@ -31,7 +32,7 @@ import { MediaStylePicker } from "@/components/media-style-picker"
 import { clearChat } from "@/lib/ai-chat-session-store"
 import { openingId, requestAiEdit, useAiEditRequests, type AiEditOpening } from "@/lib/ai-edit-intent"
 import { buildBrandTemplate } from "@/lib/carousel-templates"
-import type { MediaGenResult } from "@/lib/media-brief"
+import { PLACE_FAILED_GEN, type MediaGenResult } from "@/lib/media-brief"
 import type { MediaStyle } from "@/lib/visual-language/types"
 
 const POST_ID = "preview-talk-first-post"
@@ -40,6 +41,8 @@ const BRAND = buildBrandTemplate({ thumbnailUrl: "/images/carousel-templates/ai-
 const SAMPLE_BRIEF = "הפעם יותר אוויר וכותרת גדולה, ובלי אייקונים"
 const SAMPLE_REFERENCE = "/images/carousel-templates/ai-dark.png"
 const SAMPLE_LINK = "https://www.instagram.com/p/sample-post/"
+/** The link's picture — a different one from her attached sample. */
+const SAMPLE_LINK_PICTURE = "/images/carousel-templates/ai-light.png"
 const FAILED_LINK = "https://example.com/fail-no-preview"
 
 const STATES = [
@@ -49,8 +52,10 @@ const STATES = [
   { id: "niche-dark", label: "✨ נישה כהה" },
   { id: "niche-light", label: "✨ נישה בהירה" },
   { id: "blank", label: "✨ חדש לגמרי — כמו היום" },
-  { id: "ref", label: "צירפו תמונת רפרנס" },
-  { id: "link", label: "הדביקו קישור" },
+  { id: "ref", label: "צירפו תמונה — תיכנס כמו שהיא" },
+  { id: "link", label: "הדביקו קישור — השראה בלבד" },
+  { id: "ref-link", label: "תמונה + קישור" },
+  { id: "place-failed", label: "התמונה לא נכנסה" },
   { id: "link-failed", label: "קישור בלי תמונה" },
   { id: "generating", label: "בזמן יצירה" },
   { id: "done", label: "התוצאה + ממשיכים לערוך" },
@@ -66,7 +71,7 @@ const FORMATS: { id: AiEditFormat; label: string }[] = [
 type State = (typeof STATES)[number]["id"]
 
 /** A sample picture as a data URL — `fetch` is stubbed, so via canvas. */
-function sampleDataUrl(): Promise<string> {
+function sampleDataUrl(src: string = SAMPLE_REFERENCE): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image()
     img.onload = () => {
@@ -76,7 +81,7 @@ function sampleDataUrl(): Promise<string> {
       canvas.getContext("2d")?.drawImage(img, 0, 0)
       resolve(canvas.toDataURL("image/jpeg", 0.85))
     }
-    img.src = SAMPLE_REFERENCE
+    img.src = src
   })
 }
 
@@ -93,7 +98,7 @@ function stubFetch() {
           { status: 422 },
         )
       return new Response(
-        JSON.stringify({ image: await sampleDataUrl(), title: "פוסט לדוגמה באינסטגרם", host: "instagram.com" }),
+        JSON.stringify({ image: await sampleDataUrl(SAMPLE_LINK_PICTURE), title: "פוסט לדוגמה באינסטגרם", host: "instagram.com" }),
         { status: 200 },
       )
     }
@@ -143,6 +148,8 @@ export default function Page() {
 function Preview() {
   const params = useSearchParams()
   const format: AiEditFormat = FORMATS.find((f) => f.id === params.get("format"))?.id ?? "image_post"
+  // Placing her pictures is Hani-only (lib/feature-access); ?gate=off shows everyone else's panel.
+  const placeOn = params.get("gate") !== "off"
   const state = (STATES.find((s) => s.id === params.get("state"))?.id ?? "tiles") as State
   const startStyle: MediaStyle =
     state === "niche-dark" ? "ai-dark" : state === "niche-light" ? "ai-light" : state === "blank" ? "blank" : "brand"
@@ -164,12 +171,19 @@ function Preview() {
   })
 
   /** Stands in for the generate route: a timer, ending per the state. */
-  const fakeGenerate = (): Promise<MediaGenResult> => {
+  /** What the last generation was handed — shown on the result card. */
+  const [sent, setSent] = useState<{ place: number; looks: number } | null>(null)
+  const fakeGenerate = (looks: string[] = [], place: string[] = []): Promise<MediaGenResult> => {
+    setSent({ place: place.length, looks: looks.length })
     setBusy(true)
     return new Promise<MediaGenResult>((resolve) => {
       if (stateRef.current === "generating") return // stays running
       setTimeout(() => {
         setBusy(false)
+        if (stateRef.current === "place-failed") {
+          resolve({ ok: false, message: PLACE_FAILED_GEN.message })
+          return
+        }
         if (stateRef.current === "error") {
           resolve({ ok: false, message: "היצירה לא הצליחה: נגמר הקרדיט ב-OpenAI. אפשר להטעין קרדיט ולנסות שוב." })
           return
@@ -183,7 +197,7 @@ function Preview() {
   /** The card's generate button — the same branch as the media panel. */
   const pressGenerate = (picked: MediaStyle = style) => {
     if (picked === "blank") {
-      requestAiEdit({ postId: POST_ID, format, opening: { id: openingId(), kind: "generate", run: () => fakeGenerate(), style: picked } })
+      requestAiEdit({ postId: POST_ID, format, opening: { id: openingId(), kind: "generate", run: (_b, looks, place) => fakeGenerate(looks, place), style: picked, placeRefs: placeOn } })
       return
     }
     void fakeGenerate()
@@ -194,7 +208,7 @@ function Preview() {
     requestAiEdit({
       postId: POST_ID,
       format,
-      opening: { id: openingId(), kind: "generate", run: () => fakeGenerate(), style: picked, fromEdit: true },
+      opening: { id: openingId(), kind: "generate", run: (_b, looks, place) => fakeGenerate(looks, place), style: picked, fromEdit: true, placeRefs: placeOn },
     })
 
   // Land on the state: clean conversation, then press where the state needs it.
@@ -205,15 +219,16 @@ function Preview() {
     setResult(seeded)
     resultRef.current = seeded
     setBusy(false)
+    setSent(null)
     setOpen(false)
     setOpening(null)
     setStyle(startStyle)
     if (state === "tiles") return
     const t = setTimeout(() => (state === "quick" ? pressGenerate(startStyle) : pressAiEdit(startStyle)), 400)
     return () => clearTimeout(t)
-    // Once per state / format.
+    // Once per state / format / gate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, format])
+  }, [state, format, placeOn])
 
   // Act inside the open panel per state.
   useEffect(() => {
@@ -221,14 +236,21 @@ function Preview() {
     const root = panelRef.current
     if (!root) return
     const t = setTimeout(() => {
-      if (state === "ref") void attachSample(root)
+      if (state === "ref" || state === "ref-link" || state === "place-failed") void attachSample(root)
+      if (state === "ref-link") typeInto(root, `שיהיה באווירה של הפוסט הזה ${SAMPLE_LINK}`)
+      // place-failed: her picture attached, then sent.
+      if (state === "place-failed")
+        setTimeout(() => {
+          typeInto(root, "לשים את התמונה בצד ימין")
+          setTimeout(() => root.querySelector<HTMLButtonElement>('button[aria-label="יצירה"]')?.click(), 300)
+        }, 900)
       if (state === "link") typeInto(root, `שיהיה באווירה של הפוסט הזה ${SAMPLE_LINK}`)
       if (state === "link-failed") typeInto(root, FAILED_LINK)
     }, 300)
     return () => clearTimeout(t)
   }, [opening, state])
 
-  const href = (f: AiEditFormat, s: State) => `/test/talk-first?format=${f}&state=${s}`
+  const href = (f: AiEditFormat, s: State) => `/test/talk-first?format=${f}&state=${s}${placeOn ? "" : "&gate=off"}`
   const pill = (active: boolean) =>
     `rounded-full border px-2.5 py-1 hover:bg-gray-95 dark:hover:bg-gray-20 ${
       active ? "border-text-primary-default text-text-primary-default" : "border-border-neutral-default text-text-neutral-default"
@@ -282,6 +304,12 @@ function Preview() {
               <span className="text-xs text-text-neutral-default">עוד אין מדיה</span>
             )}
           </div>
+          {sent && (sent.place > 0 || sent.looks > 0) && (
+            // Review aid: what went to the generation — her pictures to put in, and look-only ones.
+            <span className="text-xs text-text-neutral-default">
+              נשלחו ליצירה: {sent.place} להכנסה כמו שהן · {sent.looks} להשראה
+            </span>
+          )}
         </div>
       </div>
 

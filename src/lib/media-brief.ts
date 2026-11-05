@@ -76,3 +76,38 @@ export function withMediaReferences(direction: DesignDirection, refs: string[]):
     ],
   }
 }
+
+/**
+ * "התמונה תכנס ביצירה הראשונה אם שמתי אותה כרפרנס" (Hani, 2026-11-05): an
+ * image she attached in the AI panel's first question is HER picture, and the
+ * first generation puts that very picture in — the same "use, don't redraw"
+ * as the AI edit (api/media/ai-edit). A picture pulled from a link stays a
+ * look reference (withMediaReferences).
+ *
+ * Appended after the references already numbered in the direction lines, and
+ * named by number, so the model knows which inputs are hers to reproduce.
+ * Callers generate with `strict` (lib/openai-image) and check the result
+ * (lib/placed-check) — never a silent stand-in.
+ */
+export function withPlacedImages(direction: DesignDirection, placed: ModelImage[]): DesignDirection {
+  if (!placed.length) return direction
+  const first = direction.references.length + 1
+  const last = first + placed.length - 1
+  const which = placed.length === 1 ? `Reference image ${first} is` : `Reference images ${first}–${last} are`
+  return {
+    ...direction,
+    references: [...direction.references, ...placed],
+    lines: [
+      ...direction.lines,
+      "",
+      `${which} THE CREATOR'S OWN PICTURE${placed.length > 1 ? "S" : ""} TO PLACE IN THIS DESIGN (hard rule): put ${placed.length > 1 ? "each one" : "it"} into the design as a clearly visible element, reproduced exactly as it is — the same photo, character, illustration, logo or product: same shape, colours, details, face and proportions. Never redraw, restyle, recolour, re-imagine or replace it with a look-alike, and never crop away its subject. Lay the design out around it (it may be framed, masked to a shape or given a shadow in the visual language). It never covers the required text.`,
+    ],
+  }
+}
+
+/** The first generation couldn't put her picture in: nothing is saved, and the panel says so. */
+export const PLACE_FAILED_GEN = {
+  error: "place_failed",
+  message:
+    "לא הצלחתי להכניס את התמונה ששלחתם, אז לא שמרתי כלום ולא שמתי במקומה תמונה אחרת. נסו שוב, ואפשר לכתוב איפה בדיוק לשים אותה.",
+} as const

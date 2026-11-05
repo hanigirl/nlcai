@@ -1,4 +1,6 @@
-import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
+import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences, withPlacedImages } from "@/lib/media-brief"
+import { gatePlacement } from "@/lib/feature-access"
+import { picturesPlaced, placedImages } from "@/lib/placed-check"
 import { parseReferences } from "@/lib/ai-edit-references"
 import { NextRequest, NextResponse } from "next/server"
 import { Resvg } from "@resvg/resvg-js"
@@ -119,14 +121,16 @@ function cropToCanvasSvg(imageBase64: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { postId, variationIndex, style, brief, references } = (await req.json().catch(() => ({}))) as {
+    const { postId, variationIndex, style, brief, references, place } = (await req.json().catch(() => ({}))) as {
       postId?: string
       variationIndex?: number
       style?: unknown
       /** Her own direction for this piece (lib/media-brief). */
       brief?: unknown
-      /** Reference images she attached with the brief (lib/ai-edit-references). */
+      /** Look references (a picture pulled from a link) — lib/ai-edit-references. */
       references?: unknown
+      /** Pictures she attached to put INTO the image as they are (lib/media-brief withPlacedImages). */
+      place?: unknown
     }
     if (!postId) {
       return NextResponse.json({ error: "postId is required" }, { status: 400 })
@@ -196,22 +200,36 @@ export async function POST(req: NextRequest) {
     const context = [post.title, post.hook_text, post.body?.slice(0, 600)]
       .filter(Boolean)
       .join("\n")
+    // Her own pictures go in as they are; a link's picture is a look only.
+    // Placing is Hani-only for now (lib/feature-access); off it, all are looks.
+    const gated = gatePlacement(user.email, parseReferences(place), parseReferences(references))
+    const placed = await placedImages(gated.place)
     const direction = withMediaReferences(
-      withMediaBrief(
-        await resolveDesignDirection(supabase, user.id, {
-          format: "image_post",
-          style: isMediaStyle(style) ? style : undefined,
-        }),
-        normalizeMediaBrief(brief),
+      withPlacedImages(
+        withMediaBrief(
+          await resolveDesignDirection(supabase, user.id, {
+            format: "image_post",
+            style: isMediaStyle(style) ? style : undefined,
+          }),
+          normalizeMediaBrief(brief),
+        ),
+        placed,
       ),
-      parseReferences(references),
+      gated.looks,
     )
     const generatedBase64 = await generateImage(
       openaiKey,
       buildImagePrompt(texts, context, direction, pickComposition(variationIndex)),
       // Legible Hebrew glyphs are the whole point here, so we pay for "high".
-      { shape: "4:5", quality: "high", references: direction.references },
+      { shape: "4:5", quality: "high", references: direction.references, strict: placed.length > 0 },
     )
+    // Her picture must really be in it — a look-alike or a miss is not kept.
+    if (placed.length) {
+      const claudeKey = await getUserApiKey(supabase, "anthropic_api_key").catch(() => null)
+      if ((await picturesPlaced(claudeKey, placed, generatedBase64)) === false) {
+        return NextResponse.json(PLACE_FAILED_GEN, { status: 422 })
+      }
+    }
 
     // Center-crop the model's image to an exact 4:5 canvas via Resvg.
     const resvg = new Resvg(cropToCanvasSvg(generatedBase64))
