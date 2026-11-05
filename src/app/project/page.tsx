@@ -2667,6 +2667,7 @@ function ProjectPageInner() {
                                 title={alreadyDuplicated ? `${format.label} כבר שוכפל, מעבר לכרטיס` : undefined}
                               >
                                 <SelectionCard
+                                  centered
                                   description={format.label}
                                   // Its status, as the existing tags (Hani,
                                   // 2026-11-05) — no icon; nothing until it's duplicated.

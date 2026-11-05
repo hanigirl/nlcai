@@ -10,6 +10,8 @@ interface SelectionCardProps {
   isSelected?: boolean
   editable?: boolean
   icon?: React.ReactNode
+  /** Centre the row vertically (single-line cards, e.g. the format picker). */
+  centered?: boolean
   onSelect?: () => void
   onTextChange?: (text: string) => void
   className?: string
@@ -21,6 +23,7 @@ export function SelectionCard({
   isSelected,
   editable,
   icon,
+  centered = false,
   onSelect,
   onTextChange,
   className,
@@ -65,14 +68,15 @@ export function SelectionCard({
         if (e.key === "Enter" && !editable) onSelect?.()
       }}
       className={cn(
-        "relative flex w-full items-start gap-4 rounded-[10px] border p-3 text-right transition-all cursor-pointer",
+        "relative flex w-full gap-4 rounded-[10px] border p-3 text-right transition-all cursor-pointer",
+        centered ? "items-center" : "items-start",
         isSelected
           ? "border-gray-80 bg-gray-95"
           : "border-border-neutral-default bg-bg-surface hover:border-gray-80",
         className
       )}
     >
-      <Radio checked={isSelected} className="mt-1" />
+      <Radio checked={isSelected} className={centered ? undefined : "mt-1"} />
 
       {/* Content */}
       <div
@@ -138,7 +142,7 @@ export function SelectionCard({
       </div>
 
       {/* Icon on the left (end in RTL) */}
-      {icon && <div className="shrink-0 text-text-neutral-default mt-1">{icon}</div>}
+      {icon && <div className={cn("shrink-0 text-text-neutral-default", !centered && "mt-1")}>{icon}</div>}
     </div>
   )
 }
