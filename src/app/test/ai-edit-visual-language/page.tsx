@@ -14,6 +14,7 @@
  *   ?state=unsaved-carousel — the card shows slides the post never stored.
  *   ?state=broll-own-picture — a b-roll built on her picture: it's never repainted.
  *   ?state=broll-picture-failed — a change to the b-roll's picture didn't land.
+ *   ?state=broll-blend-failed — her attached picture didn't blend into the b-roll's scene.
  *   (no param)        — all of them, side by side.
  *
  * The real panel (MediaAiChat) opened on a finished conversation. Nothing is
@@ -30,7 +31,7 @@ const BROLL_INTRO = "מה לשנות בבי-רול? למשל גודל הכותר
 const INTRO = "מה לשנות בקרוסלה? אפשר לבקש על כל השקופיות או על שקופית מסוימת, למשל ״בשקופית 3 הכותרת בצבע המותג״."
 
 // The exact copy the server and panel use for each state.
-type StateId = "applied" | "unchanged" | "image-missing" | "place-failed" | "unsaved-carousel" | "broll-own-picture" | "broll-picture-failed"
+type StateId = "applied" | "unchanged" | "image-missing" | "place-failed" | "unsaved-carousel" | "broll-own-picture" | "broll-picture-failed" | "broll-blend-failed"
 
 const STATES: { id: StateId; title: string; format?: "carousel" | "b_roll"; messages: ChatMessage[] }[] = [
   {
@@ -107,6 +108,20 @@ const STATES: { id: StateId; title: string; format?: "carousel" | "b_roll"; mess
         role: "assistant",
         error: true,
         content: "התמונה שברקע היא שלכם, ואותה אני לא מצייר מחדש. אפשר לשנות את הטקסט והתנועה, או לצרף תמונה אחרת שתחליף אותה.",
+      },
+    ],
+  },
+  {
+    id: "broll-blend-failed",
+    title: "בי-רול: התמונה שצורפה לא השתלבה",
+    format: "b_roll",
+    messages: [
+      { role: "assistant", content: BROLL_INTRO },
+      { role: "user", content: "שים את האישה הזו במקום האישה הקיימת בבירול", images: ["/images/paper-plane-celebrate.png"] },
+      {
+        role: "assistant",
+        error: true,
+        content: "לא הצלחתי לשלב את התמונה ששלחתם ברקע הפעם, אז השארתי את הבי-רול כמו שהיה. נסו שוב, ואם תרצו אותה בדיוק כמו שהיא, כתבו ״כמו שהיא״.",
       },
     ],
   },
