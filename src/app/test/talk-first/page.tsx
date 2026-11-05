@@ -1,22 +1,24 @@
 "use client"
 
 /**
- * State preview — "לדבר איתו קודם" (Hani, 2026-11-05).
+ * State preview — "עריכה עם AI" before there is media (Hani, 2026-11-05:
+ * "אם אני בשפה הויזואלית שלי ולחצתי עריכה - זה אומר: אני אייצר לך מדיה בשפה
+ * ויזואלית שלך, יש דברים שאני צריך לדעת לפני? תמונות שתרצו שאכניס?").
  *
- * The media panel's "יצירה עם AI" card with the real style tiles, the real
- * talk-first control (components/media-talk-first) and the real AI panel
- * (MediaAiChat). Two places for the option:
- *   ?talk=a — a quieter second button under the generate button;
- *   ?talk=b — a checkbox under the tiles that turns the generate button into
- *             "פתיחת שיחה עם AI" (remembered on this device).
- * The generate button alone still generates at once — the quick path.
+ * The media panel's "יצירה עם AI" card with the real style tiles — the picked
+ * tile carries the existing ✨ "עריכת מדיה עם AI" — and the real AI panel
+ * (MediaAiChat). Pressing ✨ opens the panel on a question in the picked style;
+ * she can write, attach a reference, paste a link, or skip — then it
+ * generates in that style and stays open for edits. With media already there
+ * ✨ is the plain edit, as before. The generate button still generates at once.
  *
  * Generation is a stub (a timer) and `fetch` is stubbed — the link preview
  * route answers with a sample picture. Nothing reaches the network: no
  * credits, no DB writes.
  *
- *   ?talk=a|b&state=tiles | quick | ask | ask-ref | ask-link | link-failed |
- *                   generating | done | error | niche | blank
+ *   ?format=image_post|story|b_roll|carousel
+ *   &state=tiles | quick | brand | niche-dark | niche-light | blank | ref |
+ *          link | link-failed | generating | done | error | has-media
  */
 
 import { Suspense, useEffect, useRef, useState } from "react"
@@ -24,9 +26,8 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { MediaAiChat, mediaChatKey } from "@/components/media-ai-chat"
+import { MediaAiChat, mediaChatKey, type AiEditFormat } from "@/components/media-ai-chat"
 import { MediaStylePicker } from "@/components/media-style-picker"
-import { TALK_FIRST_BUTTON, TalkFirstControl, useTalkFirst, type TalkFirstVariant } from "@/components/media-talk-first"
 import { clearChat } from "@/lib/ai-chat-session-store"
 import { openingId, requestAiEdit, useAiEditRequests, type AiEditOpening } from "@/lib/ai-edit-intent"
 import { buildBrandTemplate } from "@/lib/carousel-templates"
@@ -42,18 +43,26 @@ const SAMPLE_LINK = "https://www.instagram.com/p/sample-post/"
 const FAILED_LINK = "https://example.com/fail-no-preview"
 
 const STATES = [
-  { id: "tiles", label: "השפה שלך נבחרה — האפשרות מופיעה" },
-  { id: "quick", label: "לחיצה על יצירה — יוצר מיד" },
-  { id: "ask", label: "מדברים קודם — השאלה" },
-  { id: "ask-ref", label: "צירפו תמונת רפרנס" },
-  { id: "ask-link", label: "הדביקו קישור" },
+  { id: "tiles", label: "השפה שלך נבחרה — ✨ על האריח" },
+  { id: "quick", label: "כפתור היצירה — יוצר מיד" },
+  { id: "brand", label: "✨ בשפה שלך — השאלה" },
+  { id: "niche-dark", label: "✨ נישה כהה" },
+  { id: "niche-light", label: "✨ נישה בהירה" },
+  { id: "blank", label: "✨ חדש לגמרי — כמו היום" },
+  { id: "ref", label: "צירפו תמונת רפרנס" },
+  { id: "link", label: "הדביקו קישור" },
   { id: "link-failed", label: "קישור בלי תמונה" },
   { id: "generating", label: "בזמן יצירה" },
   { id: "done", label: "התוצאה + ממשיכים לערוך" },
   { id: "error", label: "שגיאה" },
-  { id: "niche", label: "נישה כהה — מדברים קודם" },
-  { id: "blank", label: "״חדש לגמרי״ — בלי שינוי" },
+  { id: "has-media", label: "כבר יש מדיה — עריכה רגילה" },
 ] as const
+const FORMATS: { id: AiEditFormat; label: string }[] = [
+  { id: "image_post", label: "פוסט תמונה" },
+  { id: "story", label: "סטורי" },
+  { id: "b_roll", label: "בי-רול" },
+  { id: "carousel", label: "קרוסלה" },
+]
 type State = (typeof STATES)[number]["id"]
 
 /** A sample picture as a data URL — `fetch` is stubbed, so via canvas. */
@@ -133,10 +142,10 @@ export default function Page() {
 
 function Preview() {
   const params = useSearchParams()
-  const variant: TalkFirstVariant = params.get("talk") === "b" ? "b" : "a"
+  const format: AiEditFormat = FORMATS.find((f) => f.id === params.get("format"))?.id ?? "image_post"
   const state = (STATES.find((s) => s.id === params.get("state"))?.id ?? "tiles") as State
-  const talk = useTalkFirst(variant)
-  const startStyle: MediaStyle = state === "niche" ? "ai-dark" : state === "blank" ? "blank" : "brand"
+  const startStyle: MediaStyle =
+    state === "niche-dark" ? "ai-dark" : state === "niche-light" ? "ai-light" : state === "blank" ? "blank" : "brand"
   const [style, setStyle] = useState<MediaStyle>(startStyle)
   const [open, setOpen] = useState(false)
   const [opening, setOpening] = useState<AiEditOpening | null>(null)
@@ -145,11 +154,13 @@ function Preview() {
   const panelRef = useRef<HTMLDivElement>(null)
   const stateRef = useRef(state)
   stateRef.current = state
-  const blank = style === "blank"
+  const resultRef = useRef(result)
+  resultRef.current = result
 
+  // As the project page: ✨ with media already there = the plain edit.
   useAiEditRequests((req) => {
     setOpen(true)
-    setOpening(req.opening)
+    setOpening(req.opening.kind === "generate" && req.opening.fromEdit && resultRef.current ? null : req.opening)
   })
 
   /** Stands in for the generate route: a timer, ending per the state. */
@@ -169,37 +180,40 @@ function Preview() {
     })
   }
 
-  /** The card's buttons — the same branch as the media panel. */
-  const pressGenerate = (askFirst: boolean, picked: MediaStyle = style) => {
-    if (picked === "blank" || askFirst) {
-      requestAiEdit({
-        postId: POST_ID,
-        format: "image_post",
-        opening: { id: openingId(), kind: "generate", run: () => fakeGenerate(), style: picked },
-      })
+  /** The card's generate button — the same branch as the media panel. */
+  const pressGenerate = (picked: MediaStyle = style) => {
+    if (picked === "blank") {
+      requestAiEdit({ postId: POST_ID, format, opening: { id: openingId(), kind: "generate", run: () => fakeGenerate(), style: picked } })
       return
     }
     void fakeGenerate()
   }
 
+  /** ✨ "עריכה עם AI" on the picked tile. */
+  const pressAiEdit = (picked: MediaStyle = style) =>
+    requestAiEdit({
+      postId: POST_ID,
+      format,
+      opening: { id: openingId(), kind: "generate", run: () => fakeGenerate(), style: picked, fromEdit: true },
+    })
+
   // Land on the state: clean conversation, then press where the state needs it.
   useEffect(() => {
     stubFetch()
-    clearChat(mediaChatKey(POST_ID, "image_post"))
-    setResult(null)
+    clearChat(mediaChatKey(POST_ID, format))
+    const seeded = state === "has-media" ? RESULT : null
+    setResult(seeded)
+    resultRef.current = seeded
     setBusy(false)
     setOpen(false)
     setOpening(null)
     setStyle(startStyle)
-    const talking = !["tiles", "quick", "blank"].includes(state)
-    // b: the checkbox is the habit — on for the talking states.
-    if (variant === "b") talk.setHabit(talking)
     if (state === "tiles") return
-    const t = setTimeout(() => pressGenerate(talking, startStyle), 400)
+    const t = setTimeout(() => (state === "quick" ? pressGenerate(startStyle) : pressAiEdit(startStyle)), 400)
     return () => clearTimeout(t)
-    // Once per state / variant.
+    // Once per state / format.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, variant])
+  }, [state, format])
 
   // Act inside the open panel per state.
   useEffect(() => {
@@ -207,60 +221,57 @@ function Preview() {
     const root = panelRef.current
     if (!root) return
     const t = setTimeout(() => {
-      if (state === "ask-ref") void attachSample(root)
-      if (state === "ask-link") typeInto(root, `שיהיה באווירה של הפוסט הזה ${SAMPLE_LINK}`)
+      if (state === "ref") void attachSample(root)
+      if (state === "link") typeInto(root, `שיהיה באווירה של הפוסט הזה ${SAMPLE_LINK}`)
       if (state === "link-failed") typeInto(root, FAILED_LINK)
     }, 300)
     return () => clearTimeout(t)
   }, [opening, state])
 
-  const href = (v: TalkFirstVariant, s: State) => `/test/talk-first?talk=${v}&state=${s}`
+  const href = (f: AiEditFormat, s: State) => `/test/talk-first?format=${f}&state=${s}`
+  const pill = (active: boolean) =>
+    `rounded-full border px-2.5 py-1 hover:bg-gray-95 dark:hover:bg-gray-20 ${
+      active ? "border-text-primary-default text-text-primary-default" : "border-border-neutral-default text-text-neutral-default"
+    }`
 
   return (
     <div dir="rtl" className="min-h-screen bg-bg-surface p-6">
-      <div className="mb-3 flex items-center gap-2 text-xs">
-        <span className="text-text-neutral-default">איפה האפשרות:</span>
-        {(["a", "b"] as const).map((v) => (
-          <Link
-            key={v}
-            href={href(v, state)}
-            className={`rounded-full border px-2.5 py-1 hover:bg-gray-95 dark:hover:bg-gray-20 ${
-              v === variant ? "border-text-primary-default text-text-primary-default" : "border-border-neutral-default text-text-neutral-default"
-            }`}
-          >
-            {v === "a" ? "A · כפתור שני מתחת ליצירה" : "B · תיבת סימון מעל היצירה"}
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-text-neutral-default">פורמט:</span>
+        {FORMATS.map((f) => (
+          <Link key={f.id} href={href(f.id, state)} className={pill(f.id === format)}>
+            {f.label}
           </Link>
         ))}
       </div>
       <div className="mb-6 flex flex-wrap items-center gap-2 text-xs">
         {STATES.map((s) => (
-          <Link
-            key={s.id}
-            href={href(variant, s.id)}
-            className={`rounded-full border px-2.5 py-1 hover:bg-gray-95 dark:hover:bg-gray-20 ${
-              s.id === state ? "border-text-primary-default text-text-primary-default" : "border-border-neutral-default text-text-neutral-default"
-            }`}
-          >
+          <Link key={s.id} href={href(format, s.id)} className={pill(s.id === state)}>
             {s.label}
           </Link>
         ))}
       </div>
 
       <div className="flex flex-wrap items-start gap-6">
-        {/* The media panel's "יצירה עם AI" card, as in the image-post panel. */}
+        {/* The media panel's "יצירה עם AI" card. */}
         <div className="flex w-[352px] flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white px-6 py-4 dark:bg-gray-10">
-          <MediaStylePicker value={style} onChange={setStyle} brandTemplate={BRAND} aspect="4/5" />
-          <TalkFirstControl talk={talk} slot="above" blank={blank} id="talk-first-preview" onTalk={() => pressGenerate(true)} />
-          <Button variant="default" onClick={() => pressGenerate(talk.askFirst)} disabled={busy && !open} className="w-full gap-1.5">
+          <MediaStylePicker
+            value={style}
+            onChange={setStyle}
+            brandTemplate={BRAND}
+            aspect={format === "image_post" ? "4/5" : "9/16"}
+            onAiEdit={() => pressAiEdit()}
+            aiVisible={state === "tiles"}
+          />
+          <Button variant="default" onClick={() => pressGenerate()} disabled={busy && !open} className="w-full gap-1.5">
             {busy && !open && <Loader2 className="size-3.5 animate-spin" />}
-            {talk.askFirst && !blank ? TALK_FIRST_BUTTON : "יצירת תמונה עם AI"}
+            {FORMATS.find((f) => f.id === format)?.id === "carousel" ? "יצירת קרוסלה עם AI" : "יצירה עם AI"}
           </Button>
-          <TalkFirstControl talk={talk} slot="below" blank={blank} disabled={busy && !open} onTalk={() => pressGenerate(true)} />
         </div>
 
         {/* The format's card on the canvas, where the result lands. */}
         <div className="flex w-[220px] flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white p-4 dark:bg-gray-10">
-          <span className="text-p-bold text-text-primary-default">פוסט תמונה</span>
+          <span className="text-p-bold text-text-primary-default">{FORMATS.find((f) => f.id === format)?.label}</span>
           <div className="flex aspect-[4/5] w-full items-center justify-center overflow-hidden rounded-xl border border-border-neutral-default bg-bg-surface">
             {result ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -277,9 +288,9 @@ function Preview() {
       <div ref={panelRef}>
         {open && (
           <MediaAiChat
-            key={`${variant}-${state}`}
+            key={`${format}-${state}`}
             postId={POST_ID}
-            format="image_post"
+            format={format}
             open
             opening={opening}
             // generating / done / error: her words, typed and sent.

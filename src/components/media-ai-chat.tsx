@@ -170,24 +170,30 @@ const GEN_COPY: Record<AiEditFormat, { title: string; busy: string; done: string
 
 /**
  * The one question the panel asks before generating. "חדש לגמרי" needs her
- * words; with a style picked ("talk first", Hani 2026-11-05) they are an
- * addition, and she can skip them (GEN_SKIP).
+ * words. "עריכה עם AI" on any other tile before there is media (Hani,
+ * 2026-11-05: "אני אייצר לך מדיה בשפה ויזואלית שלך, יש דברים שאני צריך לדעת
+ * לפני?") — her words are an addition, and she can skip them (GEN_SKIP).
  */
-function genAsk(style: MediaStyle = "blank"): string {
-  const add = "אפשר גם לצרף תמונת רפרנס או להדביק קישור (פוסט באינסטגרם, אתר)."
-  if (style === "blank")
-    return `איך תרצו להתחיל?\nספרו לי מה אתם רואים בראש: צבעים, אווירה, מה יופיע ומה ממש לא. ${add} מתחילים מדף חלק, בלי השפה הוויזואלית.`
-  const base =
-    style === "brand"
-      ? "אעצב בשפה הוויזואלית שלכם."
-      : style === "ai-dark"
-        ? "אעצב בשפה של התחום שלכם, על רקע כהה."
-        : style === "ai-light"
-          ? "אעצב בשפה של התחום שלכם, על רקע בהיר."
-          : "אעצב בשפה של התחום שלכם."
-  return `איך תרצו להתחיל?\n${base} רוצים להוסיף משהו לפני? ספרו מה חשוב לכם הפעם, צרפו תמונת רפרנס או הדביקו קישור (פוסט באינסטגרם, אתר).`
+const GEN_NOUN: Record<AiEditFormat, string> = {
+  image_post: "את התמונה",
+  story: "את הסטורי",
+  b_roll: "את הבי-רול",
+  carousel: "את הקרוסלה",
 }
-/** Talk first: her way out of the conversation — generate in the style as is. */
+function genAsk(format: AiEditFormat, style: MediaStyle = "blank"): string {
+  if (style === "blank")
+    return "איך תרצו להתחיל?\nספרו לי מה אתם רואים בראש: צבעים, אווירה, מה יופיע ומה ממש לא. מתחילים מדף חלק, בלי השפה הוויזואלית."
+  const lang =
+    style === "brand"
+      ? "בשפה הוויזואלית שלכם"
+      : style === "ai-dark"
+        ? "בשפת הנישה שלכם, בגרסה הכהה"
+        : style === "ai-light"
+          ? "בשפת הנישה שלכם, בגרסה הבהירה"
+          : "בשפת הנישה שלכם"
+  return `אייצר לכם ${GEN_NOUN[format]} ${lang}.\nיש משהו שכדאי שאדע לפני? אפשר לספר מה חשוב לכם הפעם, לצרף תמונת רפרנס או להדביק קישור (פוסט באינסטגרם, אתר).`
+}
+/** Her way out of the conversation — generate in the picked style as is. */
 const GEN_SKIP = "ליצור בלי תוספות"
 const GEN_STALE = "הבקשה הזאת כבר לא פעילה. לחצו שוב על כפתור היצירה בפאנל המדיה."
 
@@ -325,7 +331,7 @@ export function MediaAiChat({
     if (cur?.extra.gen?.id === opening.id || cur?.busy) return
     generatorById.set(opening.id, opening.run)
     updateChat(chatKey, fresh, (s): MediaChat => {
-      const ask: ChatMessage = { role: "assistant", content: genAsk(opening.style) }
+      const ask: ChatMessage = { role: "assistant", content: genAsk(format, opening.style) }
       const next = s.messages.some((m) => m.role === "user") ? [...s.messages, ask] : [ask]
       return {
         ...s,
@@ -333,7 +339,7 @@ export function MediaAiChat({
         extra: { ...s.extra, gen: { id: opening.id, phase: "brief", lastBrief: "", style: opening.style } },
       }
     })
-  }, [chatKey, opening, fresh])
+  }, [chatKey, opening, fresh, format])
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
   // "Watching" = a panel shows this conversation when the reply lands — the
@@ -375,7 +381,7 @@ export function MediaAiChat({
 
   /**
    * Run the generation from her brief (+ any references she attached) — a
-   * blank page, or on top of the style she picked (talk first). `said`:
+   * blank page, or on top of the style she picked. `shown`:
    * what her bubble shows when it isn't the brief itself (GEN_SKIP).
    */
   const generate = async (brief: string, references: string[] = [], shown?: string) => {
@@ -639,7 +645,7 @@ export function MediaAiChat({
 
   const lastEdit = lastLandedEdit(messages)
   const title = gen ? GEN_COPY[format].title : copy.title
-  /** Talk first (a style picked, not "חדש לגמרי"): she may skip the words. */
+  /** A style picked (not "חדש לגמרי"): she may skip the words. */
   const canSkip = gen?.phase === "brief" && !!gen.style && gen.style !== "blank"
   const busyText = progress || (gen?.phase === "running" ? GEN_COPY[format].busy : copy.busy)
 
@@ -724,7 +730,7 @@ export function MediaAiChat({
                 ))}
               </div>
             )}
-            {/* Talk first: generate in the picked style as is — under the question. */}
+            {/* Generate in the picked style as is — under the question. */}
             {canSkip && i === messages.length - 1 && !loading && (
               <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
                 <Chip

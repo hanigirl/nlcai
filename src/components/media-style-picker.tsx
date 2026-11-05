@@ -5,6 +5,7 @@ import { Plus } from "lucide-react"
 import { getTemplate, type TemplateConfig } from "@/lib/carousel-templates"
 import { useBrandCarouselTemplateState } from "@/hooks/use-brand-carousel-template"
 import { Skeleton } from "@/components/ui/skeleton"
+import { AiHoverEditButton } from "@/components/ai-hover-edit"
 import type { MediaStyle } from "@/lib/visual-language/types"
 
 /**
@@ -52,6 +53,8 @@ export function MediaStylePicker({
   brandLoading = false,
   label = "סגנון",
   aspect = "9/16",
+  onAiEdit,
+  aiVisible = false,
 }: {
   value: MediaStyle
   onChange: (s: MediaStyle) => void
@@ -61,6 +64,14 @@ export function MediaStylePicker({
   label?: string
   /** Tile shape — the format's own: 9/16 story & b-roll, 4/5 image post. */
   aspect?: "9/16" | "4/5"
+  /**
+   * "עריכה עם AI" on the picked tile (Hani, 2026-11-05): the same sparkle as
+   * on finished media. Before there is media it means "talk first, then
+   * generate in this style" — the AI panel opens on a question about it.
+   */
+  onAiEdit?: () => void
+  /** Keep the sparkle shown without hover (state previews). */
+  aiVisible?: boolean
 }) {
   const dark = getTemplate("ai-dark")
   const light = getTemplate("ai-light")
@@ -106,7 +117,7 @@ export function MediaStylePicker({
   return (
     <div className="flex w-full flex-col gap-1.5">
       <p className="text-xs text-text-neutral-default">{label}</p>
-      <div role="radiogroup" aria-label={label} aria-busy={brandLoading && !brandTemplate} className="grid grid-cols-2 gap-1.5">
+      <div role="radiogroup" aria-label={label} aria-busy={brandLoading && !brandTemplate} className="grid grid-cols-2 gap-1.5 group/ai">
         {brandLoading && !brandTemplate && (
           <div className="flex flex-col gap-1 rounded-lg border border-border-neutral-default p-1" aria-hidden>
             <Skeleton className={`${aspect === "4/5" ? "aspect-[4/5]" : "aspect-[9/16]"} w-full rounded-md`} />
@@ -116,13 +127,13 @@ export function MediaStylePicker({
         {options.map((o) => {
           const selected = value === o.id
           return (
+            <div key={o.id} className="relative">
             <button
-              key={o.id}
               type="button"
               role="radio"
               aria-checked={selected}
               onClick={() => onChange(o.id)}
-              className={`flex flex-col gap-1 rounded-lg border p-1 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+              className={`flex w-full flex-col gap-1 rounded-lg border p-1 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
                 selected ? "border-yellow-50 ring-1 ring-yellow-50" : "border-border-neutral-default hover:border-gray-80"
               }`}
             >
@@ -133,6 +144,11 @@ export function MediaStylePicker({
                 {o.name}
               </span>
             </button>
+            {selected && onAiEdit && (
+              // Above the tile's name.
+              <AiHoverEditButton target="media" className="bottom-7" visible={aiVisible} onClick={onAiEdit} />
+            )}
+            </div>
           )
         })}
       </div>

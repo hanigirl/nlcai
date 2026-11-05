@@ -23,11 +23,17 @@ export interface AiEditGenerateOpening {
   kind: "generate"
   /**
    * The tile it generates in. "blank" (the default) designs from her words
-   * alone; any other style — her visual language, the niche dark / light —
-   * is "talk first" (Hani, 2026-11-05): her words and references go on top of
-   * that style, and she may also skip them and generate as is.
+   * alone. Any other style — her visual language, the niche dark / light —
+   * comes from "עריכה עם AI" on that tile before there is media (Hani,
+   * 2026-11-05): her words and references go on top of the style, and she
+   * may also skip them and generate as is.
    */
   style?: MediaStyle
+  /**
+   * Pressed as "עריכה עם AI" (not the generate button). If the format
+   * already has media, the page opens the plain edit instead — as before.
+   */
+  fromEdit?: boolean
   /** Starts the from-zero generation with her brief and the references she attached. */
   run: (brief: string, references: string[]) => Promise<MediaGenResult>
 }
