@@ -19,7 +19,16 @@ import { cn } from "@/lib/utils"
 /** Longest side after shrinking. Claude reads up to ~1568px anyway. */
 const MAX_SIDE = 1280
 
-/** Any image file → a JPEG data URL small enough to send. */
+/** Matches MAX_DATA_URL_CHARS on the server (lib/ai-edit-references). */
+const MAX_PNG_CHARS = 1_400_000
+
+function hasTransparency(ctx: CanvasRenderingContext2D, w: number, h: number): boolean {
+  const data = ctx.getImageData(0, 0, w, h).data
+  for (let i = 3; i < data.length; i += 4) if (data[i] < 250) return true
+  return false
+}
+
+/** Any image file → a data URL small enough to send (JPEG; PNG for a cut-out). */
 function shrink(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
@@ -30,11 +39,20 @@ function shrink(file: File): Promise<string> {
       canvas.width = Math.max(1, Math.round(img.width * scale))
       canvas.height = Math.max(1, Math.round(img.height * scale))
       const ctx = canvas.getContext("2d")!
-      // Screenshots with transparency would turn black as JPEG.
-      ctx.fillStyle = "#fff"
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
       URL.revokeObjectURL(url)
+      // A cut-out (a character or logo on a transparent background) stays a
+      // PNG: the media AI edit can place her exact file into the design, and
+      // a JPEG would put it in a white box. Only while it fits the per-image
+      // cap (lib/ai-edit-references) — otherwise the JPEG below.
+      if (file.type !== "image/jpeg" && hasTransparency(ctx, canvas.width, canvas.height)) {
+        const png = canvas.toDataURL("image/png")
+        if (png.length <= MAX_PNG_CHARS) return resolve(png)
+      }
+      // Transparency would turn black as JPEG — flatten onto white.
+      ctx.globalCompositeOperation = "destination-over"
+      ctx.fillStyle = "#fff"
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
       resolve(canvas.toDataURL("image/jpeg", 0.85))
     }
     img.onerror = () => {

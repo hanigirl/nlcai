@@ -6,7 +6,8 @@ import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
 import { getUserApiKey } from "@/lib/api-keys"
 import { CutoutFailedError, cutoutImage, editImage, generateImage, type ImageShape } from "@/lib/openai-image"
-import { loadImageForModels } from "@/lib/visual-language/image-input"
+import sharp from "sharp"
+import { loadImageForModels, normaliseImage } from "@/lib/visual-language/image-input"
 import { replaceImageAssetSet } from "@/lib/media-asset-set"
 import { applyFixedElements } from "@/lib/visual-language/fixed-elements"
 import { resolveDesignDirection } from "@/lib/visual-language/direction"
@@ -21,7 +22,7 @@ import {
   uploadIllustration,
 } from "@/lib/carousel-composition"
 import { isOwnMediaUrl } from "@/lib/own-media"
-import { parseReferences, referenceBlocks } from "@/lib/ai-edit-references"
+import { parseReferences, referenceBlocks, referenceBuffer } from "@/lib/ai-edit-references"
 
 // Planning + up to 10 parallel image edits (30–120s each).
 export const maxDuration = 300
@@ -78,7 +79,7 @@ async function plan(
   count: number,
   instruction: string,
   refs: string[] = [],
-): Promise<{ targets: number[]; edit: string }> {
+): Promise<{ targets: number[]; edit: string; place: number[] }> {
   const client = new Anthropic({ apiKey })
   const msg = await client.messages.create({
     model: "claude-opus-5-5",
@@ -89,15 +90,20 @@ async function plan(
       {
         role: "user",
         content: [
-          ...referenceBlocks(refs),
+          ...referenceBlocks(refs, { placeable: true }),
           { type: "text", text: [
           `Format: ${NOUN[format]}${count > 1 ? `, a set of ${count} (numbered 1..${count} in order)` : ""}.`,
           `Her request (Hebrew): ${JSON.stringify(instruction)}`,
           "",
-          'Return {"targets": [numbers] , "edit": "..."}.',
+          `Return {"targets": [numbers] , "edit": "..."${refs.length ? ', "place": [numbers]' : ""}}.`,
           `- targets: which items the request is about. If she names items (e.g. "שקופית 2", "הפריים האחרון", "הראשונה") use those; if it's about the look in general or doesn't say, all of 1..${count}.`,
           "- edit: one precise English instruction for an image-editing model describing ONLY the change she asked for (colours, sizes, positions, elements, mood…). If she asks to change wording, quote the new Hebrew text exactly. If she asks to remove an illustration's or picture's background, say: keep the subject exactly as it is, and replace its backdrop (box, colour, glow, shadow) with the design's own background continuing seamlessly around it. Do not invent changes she didn't ask for." +
-            (refs.length ? " The image editor will NOT see her reference images, so spell out in words exactly what to take from them." : ""),
+            (refs.length
+              ? ' The image editor will NOT see her reference images, so spell out in words exactly what to take from them. Images she wants PLACED are different: the editor receives those files themselves, as "input image 2", "input image 3"… in the order you list them in "place" — so say where and how big to place each one, and that it is reproduced exactly as it is (same character / photo / logo, never redrawn).'
+              : ""),
+          ...(refs.length
+            ? ['- place: the numbers of the attached images she wants put INTO the design as they are (her own picture, character, logo, product). Empty for images that only show a look to match.']
+            : []),
         ].join("\n") },
         ],
       },
@@ -107,6 +113,7 @@ async function plan(
   const json = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)) as {
     targets?: number[]
     edit?: string
+    place?: number[]
   }
   const targets = (json.targets ?? [])
     .map((n) => Math.round(n))
@@ -114,12 +121,17 @@ async function plan(
   return {
     targets: targets.length ? Array.from(new Set(targets)) : Array.from({ length: count }, (_, i) => i + 1),
     edit: (json.edit ?? "").trim() || instruction,
+    place: Array.from(
+      new Set((json.place ?? []).map((n) => Math.round(n)).filter((n) => n >= 1 && n <= refs.length)),
+    ),
   }
 }
 
-function editPrompt(edit: string): string {
+function editPrompt(edit: string, placing: number): string {
   return [
-    "Edit this image. Apply ONLY the following change:",
+    placing
+      ? `Edit the FIRST input image. The other input image${placing > 1 ? "s are the creator's own pictures" : " is the creator's own picture"} to place into it — reproduce ${placing > 1 ? "each one" : "it"} exactly as it is (the same character, photo or logo: same shape, colours, details and proportions; never redraw, restyle or replace it). Apply ONLY the following change:`
+      : "Edit this image. Apply ONLY the following change:",
     edit,
     "",
     "Keep everything else exactly as it is: the layout, every piece of Hebrew text (same words, same spelling, right-to-left), the fonts, colours, illustrations and any logo. Do not add new text. Nothing may touch or cross the image edge.",
@@ -214,15 +226,29 @@ export async function POST(req: NextRequest) {
       const revised = await reviseCarousel(anthropicKey, stored, text, refs)
       const illustrations = [...stored.illustrations]
       const cutouts = new Set(revised.cutouts)
+      // Her attached image placed on a slide is HER FILE, uploaded as that
+      // slide's illustration — never a prompt for a redraw (Hani, 2026-11-05:
+      // "לשלב את התמונה הזו בקאבר" came back as a look-alike character).
+      const placed = revised.attached
+        .map((n, i) => ({ ref: refs[n - 1], i }))
+        .filter((x): x is { ref: string; i: number } => !!x.ref)
+      const isPlaced = (i: number) => placed.some((p) => p.i === i)
       const redraw = revised.illustrations
         .map((idea, i) => ({ idea: idea.trim(), i }))
-        .filter((x) => x.idea)
+        .filter((x) => x.idea && !isPlaced(x.i))
       // "Remove the background" cuts the EXISTING illustration out (same
       // character, real transparency) — a redraw would paint a new opaque
       // square. A slide whose picture is also being redrawn gets the new one
       // generated straight onto a transparent background instead.
-      const cutOnly = [...cutouts].filter((i) => illustrations[i] && !redraw.some((r) => r.i === i))
+      const cutOnly = [...cutouts].filter((i) => illustrations[i] && !isPlaced(i) && !redraw.some((r) => r.i === i))
       await Promise.all([
+        ...placed.map(async ({ ref, i }) => {
+          const file = referenceBuffer(ref)
+          const png = cutouts.has(i)
+            ? Buffer.from(await cutoutImage(openaiKey, await normaliseImage(file)), "base64")
+            : await sharp(file).rotate().resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true }).png().toBuffer()
+          illustrations[i] = await uploadIllustration(supabase, user.id, png)
+        }),
         ...redraw.map(async ({ idea, i }) => {
           const cutout = cutouts.has(i)
           const raw = await generateImage(
@@ -268,14 +294,16 @@ export async function POST(req: NextRequest) {
         edited: shots.map((_, i) => i + 1),
       })
     }
-    const { targets, edit } = await plan(anthropicKey, format, urls.length, text, refs)
-    const prompt = editPrompt(edit)
+    const { targets, edit, place } = await plan(anthropicKey, format, urls.length, text, refs)
+    const prompt = editPrompt(edit, place.length)
+    // Pictures she asked to place go to the image model as files, not words.
+    const placeImages = await Promise.all(place.map((n) => normaliseImage(referenceBuffer(refs[n - 1]))))
 
     const next = [...urls]
     await Promise.all(
       targets.map(async (n) => {
         const source = await loadImageForModels(urls[n - 1])
-        const out = await editImage(openaiKey, prompt, source, SHAPE[format])
+        const out = await editImage(openaiKey, prompt, source, SHAPE[format], placeImages)
         next[n - 1] = toCanvas(out, CANVAS[format])
       }),
     )
