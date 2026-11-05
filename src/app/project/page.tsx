@@ -1,6 +1,7 @@
 "use client"
 
 import { CardStyleFeedback } from "@/components/style-feedback-strip"
+import { LaneLayoutContext, FormatColumn, LaneStem, TreeConnector, laneColumnClass, useLaneLayout, type LaneLayout } from "@/components/format-lanes"
 import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
@@ -194,6 +195,35 @@ async function savePatch(
 }
 
 const CARD_WIDTH = 346
+
+/* ---- REVIEW ONLY: seeded states for ?variant=a|b (horizontal lanes) ---- */
+const LANE_STATES = ["full", "generating", "text", "single"] as const
+type LaneState = (typeof LANE_STATES)[number]
+const LANE_STATE_LABELS: Record<LaneState, string> = {
+  full: "כל המסלולים מלאים",
+  generating: "בזמן יצירה",
+  text: "טקסט בלבד, לפני מדיה",
+  single: "פורמט אחד",
+}
+function parseLaneState(raw: string | null): LaneState {
+  return (LANE_STATES as readonly string[]).includes(raw ?? "") ? (raw as LaneState) : "full"
+}
+const LANE_SEED_HOOK = "הלקוחות לא קונים ממך כי את לא אומרת להם מה לעשות"
+const LANE_SEED_POST =
+  "שמתי לב לדבר מוזר השבוע.\n\nשלוש שיחות מכירה, שלוש פעמים שמעתי \"זה נשמע מעולה\" — ואף אחת לא סגרה.\n\nהבעיה לא הייתה במחיר ולא בהצעה. הבעיה הייתה שלא אמרתי מה הצעד הבא.\n\nמאז אני מסיימת כל שיחה במשפט אחד: \"בואו נקבע את פגישת ההתנעה ליום שלישי\". שתיים מתוך שלוש סגרו."
+const LANE_SEED_FORMATS: Record<string, string> = {
+  talking_head:
+    "פתיחה למצלמה: שלוש שיחות מכירה, שלוש פעמים \"נשמע מעולה\", אפס סגירות.\n\nמה השתנה? משפט אחד בסוף כל שיחה — הצעד הבא, עם תאריך.\n\nסיום: נסו את זה בשיחה הבאה שלכם וספרו לי.",
+  carousel:
+    "שקופית 1: למה \"נשמע מעולה\" לא סוגר עסקה\nשקופית 2: הלקוחה מחכה שתגידו לה מה עכשיו\nשקופית 3: משפט אחד, תאריך אחד\nשקופית 4: שתיים מתוך שלוש סגרו",
+  story:
+    "פריים 1: \"נשמע מעולה\" ≠ כן\nפריים 2: מה אתם אומרים בסוף שיחת מכירה?\nפריים 3: הצעד הבא + תאריך. זה הכול.",
+}
+const LANE_SEED_IMAGES = [
+  "/images/carousel-templates/ai-dark.png",
+  "/images/carousel-templates/ai-light.png",
+  "/images/carousel-templates/ai-amber.png",
+]
 const CARD_GAP = 24
 
 function shortenTitle(text: string, maxWords = 7): string {
@@ -240,6 +270,16 @@ function ProjectPageInner() {
   const previewOn = usePreviewAccess() === true
 
   const flow: Flow = postId ? "saved" : hookParam ? "hook" : "idea"
+
+  // REVIEW ONLY — horizontal format lanes (Joey, joey/horizontal-format-lanes).
+  // `?variant=a|b` lays the formats out to the LEFT of the core post, one lane
+  // per format, and seeds sample content so the canvas lands straight on it:
+  // no flow, no generation call, no DB write (savedPostId stays null, the
+  // canvas never restores from or persists to localStorage). `?state=` picks
+  // the seeded state. No param = the page exactly as it ships.
+  const variantParam = searchParams.get("variant")
+  const lanes: LaneLayout = variantParam === "a" || variantParam === "b" ? variantParam : null
+  const lanesState = parseLaneState(searchParams.get("state"))
 
   const [idea, setIdea] = useState(initialIdea)
   useEffect(() => { setIdea(initialIdea) }, [initialIdea])
@@ -597,6 +637,7 @@ function ProjectPageInner() {
   }, [flow, userId, hookIdParam])
 
   useEffect(() => {
+    if (lanes) return // review harness: never read (or, via restoredRef, write) her canvas
     if (restoredRef.current) return
     if (!userId) return
     restoredRef.current = true
@@ -653,7 +694,7 @@ function ProjectPageInner() {
       }
       if (typeof saved.triggerWord === "string") setTriggerWord(saved.triggerWord)
     } catch (err) { console.error("[project][canvas-restore]", err) }
-  }, [sessionKey, postId, router, userId])
+  }, [sessionKey, postId, router, userId, lanes])
 
   // Save canvas state on changes (debounced)
   useEffect(() => {
@@ -1970,6 +2011,272 @@ function ProjectPageInner() {
     },
   })
 
+  // The formats card + its result tree. Rendered under the core post in the
+  // shipped layout, or beside it (same row, flowing left) under ?variant=a|b.
+  // REVIEW ONLY — seed the canvas for ?variant=a|b. Local state only.
+  useEffect(() => {
+    if (!lanes) return
+    const fids = lanesState === "single" ? ["talking_head"] : ["talking_head", "carousel", "story"]
+    const withMedia = lanesState === "full" || lanesState === "single"
+    setCorePost(LANE_SEED_POST)
+    setEditableHook(LANE_SEED_HOOK)
+    setCoverText(LANE_SEED_HOOK)
+    setShowFormats(true)
+    setSelectedFormats(fids)
+    setDuplicatedFormats(fids)
+    setFormatPosts(
+      Object.fromEntries(
+        fids.map((f) => [
+          f,
+          lanesState === "generating" && f === "carousel" ? FORMAT_GENERATING : LANE_SEED_FORMATS[f],
+        ]),
+      ),
+    )
+    setActiveCard("formats")
+    setThVideoUrl(withMedia ? LANE_SEED_IMAGES[0] : null)
+    setCarouselImages(null)
+    setStoryImages(null)
+    setThCoverImage(null)
+    if (!withMedia) return
+    // The cover and carousel cards render base64 — read the bundled images,
+    // no network beyond the app's own /public.
+    let cancelled = false
+    const toB64 = (url: string) =>
+      fetch(url)
+        .then((r) => r.blob())
+        .then(
+          (b) =>
+            new Promise<string>((res) => {
+              const fr = new FileReader()
+              fr.onload = () => res(String(fr.result).split(",")[1] ?? "")
+              fr.readAsDataURL(b)
+            }),
+        )
+    Promise.all(LANE_SEED_IMAGES.map(toB64))
+      .then((b64s) => {
+        if (cancelled) return
+        setThCoverImage(b64s[1])
+        setCarouselImages(b64s)
+        setStoryImages(b64s.slice(0, 2))
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [lanes, lanesState])
+  const laneMediaBusy: Record<string, boolean> =
+    lanesState === "generating" ? { talking_head: true, story: true } : {}
+
+  const formatTreeEl = (
+                        <FormatTree
+                          formats={duplicatedFormats}
+                          formatPosts={formatPosts}
+                          onPostChange={(fid, text) => setFormatPosts((prev) => ({ ...prev, [fid]: text }))}
+                          onPostBlur={handleFormatBlur}
+                          onRegenerateFormat={(fid) => setPendingFormatRegen(fid)}
+                          formatSaveStatus={formatSaveStatus}
+                          activeCard={activeCard}
+                          onActiveChange={setActiveCard}
+                          selectedFormat={selectedFormatCard}
+                          onSelectFormat={handleFormatCardClick}
+                          hookText={activeHook}
+                          thVideoUrl={thVideoUrl}
+                          thVideoLoading={thVideoLoading}
+                          mediaBusy={lanes ? laneMediaBusy : mediaBusy}
+                          thVideoCardRef={thVideoCardRef}
+                          // Clicking the video ONLY opens the panel (Hani,
+                          // 2026-10-29: "קודם לוחצים, הפאנל נפתח, ורק אז
+                          // מחליטים"). It used to clear the recording and the
+                          // transcript here, like the old "עריכת סרטון"
+                          // button; that now happens in the panel, at the
+                          // moment a new video is actually attached.
+                          onThReRecord={() => setSelectedFormatCard("talking_head")}
+                          onThDelete={() => setPendingVideoDelete(true)}
+                          thCoverImage={thCoverImage}
+                          thCoverLoading={lanes ? lanesState === "generating" : thCoverLoading}
+                          coverText={coverText}
+                          onCoverTextChange={setCoverText}
+                          onCoverRegenerate={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
+                          pillColor={pillColor}
+                          onPillColorChange={(next) => {
+                            pillTouchedRef.current = true
+                            setPillColor(next)
+                            // The picker leaves `livePillColor` armed when it
+                            // commits; we drop the CSS overlay only after the
+                            // regenerated PNG lands so the user never sees
+                            // the old colour flash back during the round-trip.
+                            generateCoverForPost(coverText, thVideoUrl || undefined, next)
+                              .finally(() => setLivePillColor(null))
+                          }}
+                          livePillColor={livePillColor}
+                          onLivePillPreview={setLivePillColor}
+                          coverBrandColors={coverBrand.colors}
+                          coverSwatches
+                          thVideoFrameDataUrl={thVideoFrameDataUrl}
+                          userId={userId}
+                          carouselImages={carouselImages}
+                          carouselCardRef={carouselCardRef}
+                          // The caption control lives ON the carousel's card
+                          // (Hani, 2026-08-13), so the card needs what it takes
+                          // to redraw the slides: which post they belong to,
+                          // the links they came from, and the way back.
+                          savedPostId={savedPostId}
+                          carouselDriveLinks={carouselDriveLinks}
+                          onCarouselImagesChange={setCarouselImages}
+                          // Opening the media panel must NOT throw the current
+                          // carousel away (Hani, 2026-07-28): the old handler
+                          // cleared images+slides on click, so pressing what
+                          // read as "edit" destroyed the carousel before she
+                          // had seen a single alternative. Now it just opens
+                          // the panel — same as story / image_post — where the
+                          // saved carousel is shown on its template tile and
+                          // deleting it is a separate, explicit action.
+                          onCarouselEdit={() =>
+                            setSelectedFormatCard("carousel")
+                          }
+                          imagePostUrl={imagePostUrl}
+                          imagePostCardRef={imagePostCardRef}
+                          onImagePostEdit={() =>
+                            setSelectedFormatCard("image_post")
+                          }
+                          onImagePostUrlChange={setImagePostUrl}
+                          storyImages={storyImages}
+                          storyCardRef={storyCardRef}
+                          onStoryEdit={() =>
+                            setSelectedFormatCard("story")
+                          }
+                          storyVideoUrl={storyVideoUrl}
+                          bRollUrl={bRollUrl}
+                          bRollCardRef={bRollCardRef}
+                          onBRollEdit={() => setSelectedFormatCard("b_roll")}
+                          // The sparkle opens a format's own conversation — a 👎 question
+                          // from another format must not follow it.
+                          onAiEdit={(f) => { setAiChatFormat(f); setAiChatOpening(null) }}
+                          onDeleteMedia={setPendingMediaDelete}
+                          onBRollUrlChange={setBRollUrl}
+                          copyAi={previewOn ? copyEdit.copyAi : undefined}
+                          approval={
+                            approveVariant
+                              ? {
+                                  variant: approveVariant,
+                                  statusOf: approvals.statusOf,
+                                  approve: approvals.approve,
+                                  revoke: approvals.revoke,
+                                  calendarHref: savedPostId
+                                    ? `/calendar?post_id=${savedPostId}`
+                                    : "/calendar",
+                                }
+                              : undefined
+                          }
+                        />
+  )
+  const renderFormatsBranch = () => (
+    <>
+                  {/* Connector + Formats card — under the core post in the shipped tree,
+                      to its left (same row) in a lane layout. */}
+                  {showFormats && (
+                    <>
+                      {lanes ? (
+                        <div className="flex items-center mt-[55px] shrink-0">
+                          <div className="h-[2px] w-7 bg-gray-80" />
+                        </div>
+                      ) : (
+                        <div className="w-[2px] h-7 bg-gray-80" />
+                      )}
+                      <div
+                        dir="rtl"
+                        className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[567px] shrink-0"
+                      >
+                        <div className={`flex items-center px-6 py-3 rounded-t-[20px] ${activeCard === "formats" ? "bg-bg-surface-primary-default-80" : "bg-bg-surface"}`}>
+                          <span className="text-p-bold text-text-primary-default">לאיזה פורמטים לשכפל?</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 px-6">
+                          {FORMATS.map((format) => {
+                            // A format that already has a script can't be
+                            // un-ticked here. Un-ticking used to drop its card
+                            // from the canvas while the variant stayed in the
+                            // DB (so it came back on reload) — a silent lie.
+                            // Removing a format is a destructive action and
+                            // belongs behind its own control, not behind a
+                            // checkbox that also means "generate".
+                            const alreadyDuplicated = hasFormatText(formatPosts, format.id)
+                            return (
+                              // Native title rather than <TooltipLabel>:
+                              // SelectionCard doesn't forward refs/props, so it
+                              // can't serve as a Radix TooltipTrigger asChild.
+                              <div
+                                key={format.id}
+                                title={alreadyDuplicated ? `${format.label} כבר שוכפל` : undefined}
+                              >
+                                <SelectionCard
+                                  description={format.label}
+                                  icon={<format.icon className="size-4" />}
+                                  isSelected={selectedFormats.includes(format.id)}
+                                  className={alreadyDuplicated ? "cursor-default" : undefined}
+                                  onSelect={() => {
+                                    if (alreadyDuplicated) return
+                                    setSelectedFormats((prev) =>
+                                      prev.includes(format.id)
+                                        ? prev.filter((f) => f !== format.id)
+                                        : [...prev, format.id]
+                                    )
+                                    setActiveCard("formats")
+                                  }}
+                                />
+                              </div>
+                            )
+                          })}
+                        </div>
+                        <div className="px-6 flex justify-end">
+                          {(() => {
+                            // Only the ticked formats that have no script yet.
+                            // Everything already duplicated is left untouched —
+                            // pressing "שכפל!" after adding a format must fill
+                            // the gap, not restart the whole set.
+                            const pendingFormats = selectedFormats.filter(
+                              (fid) => !hasFormatText(formatPosts, fid),
+                            )
+                            // A format mid-generation still reads as "missing"
+                            // (its body is the placeholder), so without this
+                            // guard a second press would fire the same agents
+                            // again while the first round is in flight.
+                            const anyGenerating =
+                              Object.values(formatPosts).includes(FORMAT_GENERATING)
+                            return (
+                              <Button
+                                disabled={
+                                  pendingFormats.length === 0 ||
+                                  anyGenerating ||
+                                  activeCard !== "formats"
+                                }
+                                onClick={async () => {
+                                  // Union, ordered by FORMATS, so existing cards
+                                  // keep their position when a new one appears.
+                                  setDuplicatedFormats((prev) => {
+                                    const union = new Set([...prev, ...pendingFormats])
+                                    return FORMATS.map((f) => f.id).filter((id) => union.has(id))
+                                  })
+                                  await generateFormatVariants(pendingFormats)
+                                }}
+                              >
+                                שכפל!
+                              </Button>
+                            )
+                          })()}
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Format result tree */}
+                  {duplicatedFormats.length > 0 && (lanes ? formatTreeEl : (
+                    <div className="relative w-full">
+                      <div className="absolute top-0 left-1/2 -translate-x-1/2">
+                        {formatTreeEl}
+                      </div>
+                    </div>
+                  ))}
+    </>
+  )
+
   return (
     <AppShell idea={shortenTitle(idea || hookParam || (postId ? "עריכת פוסט" : ""))}>
       {/* Media Panel — sibling to InfiniteCanvas, slides from left */}
@@ -2091,7 +2398,34 @@ function ProjectPageInner() {
         />
       )}
 
+      {/* REVIEW ONLY — state toggle for the ?variant=a|b lanes harness. */}
+      {lanes && (
+        <div
+          dir="rtl"
+          role="toolbar"
+          aria-label="מצבי תצוגה לסקירה"
+          className="fixed top-20 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-md"
+        >
+          <span className="text-xs text-text-neutral-default px-1">
+            {lanes === "a" ? "אופציה A · עץ עם שדרה" : "אופציה B · מסלולים"}
+          </span>
+          {LANE_STATES.map((st) => (
+            <Button
+              key={st}
+              size="sm"
+              variant="outline"
+              aria-pressed={lanesState === st}
+              onClick={() => router.replace(`/project?variant=${lanes}&state=${st}`)}
+              className={`hover:bg-gray-95 dark:hover:bg-gray-20 ${lanesState === st ? "bg-gray-95 dark:bg-gray-20 font-semibold" : ""}`}
+            >
+              {LANE_STATE_LABELS[st]}
+            </Button>
+          ))}
+        </div>
+      )}
+
       <InfiniteCanvas handleRef={canvasRef}>
+        <LaneLayoutContext.Provider value={lanes}>
         {apiNotConnected && (
           <div dir="rtl" className="mx-6 mt-6 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4 flex items-center justify-between">
             <p className="text-small text-text-neutral-default">
@@ -2118,7 +2452,7 @@ function ProjectPageInner() {
                 they explicitly remove it" — collapsing back to a single-hook
                 view broke that. The hook-flow card stack below is mutex'd
                 against this so they never render simultaneously. */}
-          {((flow === "idea") || hooks.length > 0) && (
+          {!lanes && ((flow === "idea") || hooks.length > 0) && (
             <>
               {/* Idea card — editable */}
               <div
@@ -2311,7 +2645,7 @@ function ProjectPageInner() {
                 we have hooks in state (in-session or hydrated by the DB-by-
                 idea fetch); this stack is reserved for hook-flow entries
                 without an associated idea-text + hooks set. */}
-          {!((flow === "idea") || hooks.length > 0) &&
+          {!lanes && !((flow === "idea") || hooks.length > 0) &&
             (flow === "hook" || (flow === "saved" && !!(savedHookText || editableHook))) && (
             <>
               {/* Hook card — editable */}
@@ -2382,7 +2716,7 @@ function ProjectPageInner() {
                   the URL flips to `saved`), so the connector must follow them
                   rather than be omitted as it was when `saved` had nothing
                   before the core post. */}
-              {(flow !== "saved" || !!(savedHookText || editableHook)) && (
+              {!lanes && (flow !== "saved" || !!(savedHookText || editableHook)) && (
                 <div className="flex items-center mt-[55px]">
                   <div className="h-[2px] w-7 bg-gray-80" />
                 </div>
@@ -2557,209 +2891,15 @@ function ProjectPageInner() {
                     </div>
                   </div>
 
-                  {/* Vertical connector + Formats card */}
-                  {showFormats && (
-                    <>
-                      <div className="w-[2px] h-7 bg-gray-80" />
-                      <div
-                        dir="rtl"
-                        className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[567px] shrink-0"
-                      >
-                        <div className={`flex items-center px-6 py-3 rounded-t-[20px] ${activeCard === "formats" ? "bg-bg-surface-primary-default-80" : "bg-bg-surface"}`}>
-                          <span className="text-p-bold text-text-primary-default">לאיזה פורמטים לשכפל?</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3 px-6">
-                          {FORMATS.map((format) => {
-                            // A format that already has a script can't be
-                            // un-ticked here. Un-ticking used to drop its card
-                            // from the canvas while the variant stayed in the
-                            // DB (so it came back on reload) — a silent lie.
-                            // Removing a format is a destructive action and
-                            // belongs behind its own control, not behind a
-                            // checkbox that also means "generate".
-                            const alreadyDuplicated = hasFormatText(formatPosts, format.id)
-                            return (
-                              // Native title rather than <TooltipLabel>:
-                              // SelectionCard doesn't forward refs/props, so it
-                              // can't serve as a Radix TooltipTrigger asChild.
-                              <div
-                                key={format.id}
-                                title={alreadyDuplicated ? `${format.label} כבר שוכפל` : undefined}
-                              >
-                                <SelectionCard
-                                  description={format.label}
-                                  icon={<format.icon className="size-4" />}
-                                  isSelected={selectedFormats.includes(format.id)}
-                                  className={alreadyDuplicated ? "cursor-default" : undefined}
-                                  onSelect={() => {
-                                    if (alreadyDuplicated) return
-                                    setSelectedFormats((prev) =>
-                                      prev.includes(format.id)
-                                        ? prev.filter((f) => f !== format.id)
-                                        : [...prev, format.id]
-                                    )
-                                    setActiveCard("formats")
-                                  }}
-                                />
-                              </div>
-                            )
-                          })}
-                        </div>
-                        <div className="px-6 flex justify-end">
-                          {(() => {
-                            // Only the ticked formats that have no script yet.
-                            // Everything already duplicated is left untouched —
-                            // pressing "שכפל!" after adding a format must fill
-                            // the gap, not restart the whole set.
-                            const pendingFormats = selectedFormats.filter(
-                              (fid) => !hasFormatText(formatPosts, fid),
-                            )
-                            // A format mid-generation still reads as "missing"
-                            // (its body is the placeholder), so without this
-                            // guard a second press would fire the same agents
-                            // again while the first round is in flight.
-                            const anyGenerating =
-                              Object.values(formatPosts).includes(FORMAT_GENERATING)
-                            return (
-                              <Button
-                                disabled={
-                                  pendingFormats.length === 0 ||
-                                  anyGenerating ||
-                                  activeCard !== "formats"
-                                }
-                                onClick={async () => {
-                                  // Union, ordered by FORMATS, so existing cards
-                                  // keep their position when a new one appears.
-                                  setDuplicatedFormats((prev) => {
-                                    const union = new Set([...prev, ...pendingFormats])
-                                    return FORMATS.map((f) => f.id).filter((id) => union.has(id))
-                                  })
-                                  await generateFormatVariants(pendingFormats)
-                                }}
-                              >
-                                שכפל!
-                              </Button>
-                            )
-                          })()}
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  {/* Format result tree */}
-                  {duplicatedFormats.length > 0 && (
-                    <div className="relative w-full">
-                      <div className="absolute top-0 left-1/2 -translate-x-1/2">
-                        <FormatTree
-                          formats={duplicatedFormats}
-                          formatPosts={formatPosts}
-                          onPostChange={(fid, text) => setFormatPosts((prev) => ({ ...prev, [fid]: text }))}
-                          onPostBlur={handleFormatBlur}
-                          onRegenerateFormat={(fid) => setPendingFormatRegen(fid)}
-                          formatSaveStatus={formatSaveStatus}
-                          activeCard={activeCard}
-                          onActiveChange={setActiveCard}
-                          selectedFormat={selectedFormatCard}
-                          onSelectFormat={handleFormatCardClick}
-                          hookText={activeHook}
-                          thVideoUrl={thVideoUrl}
-                          thVideoLoading={thVideoLoading}
-                          mediaBusy={mediaBusy}
-                          thVideoCardRef={thVideoCardRef}
-                          // Clicking the video ONLY opens the panel (Hani,
-                          // 2026-10-29: "קודם לוחצים, הפאנל נפתח, ורק אז
-                          // מחליטים"). It used to clear the recording and the
-                          // transcript here, like the old "עריכת סרטון"
-                          // button; that now happens in the panel, at the
-                          // moment a new video is actually attached.
-                          onThReRecord={() => setSelectedFormatCard("talking_head")}
-                          onThDelete={() => setPendingVideoDelete(true)}
-                          thCoverImage={thCoverImage}
-                          thCoverLoading={thCoverLoading}
-                          coverText={coverText}
-                          onCoverTextChange={setCoverText}
-                          onCoverRegenerate={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
-                          pillColor={pillColor}
-                          onPillColorChange={(next) => {
-                            pillTouchedRef.current = true
-                            setPillColor(next)
-                            // The picker leaves `livePillColor` armed when it
-                            // commits; we drop the CSS overlay only after the
-                            // regenerated PNG lands so the user never sees
-                            // the old colour flash back during the round-trip.
-                            generateCoverForPost(coverText, thVideoUrl || undefined, next)
-                              .finally(() => setLivePillColor(null))
-                          }}
-                          livePillColor={livePillColor}
-                          onLivePillPreview={setLivePillColor}
-                          coverBrandColors={coverBrand.colors}
-                          coverSwatches
-                          thVideoFrameDataUrl={thVideoFrameDataUrl}
-                          userId={userId}
-                          carouselImages={carouselImages}
-                          carouselCardRef={carouselCardRef}
-                          // The caption control lives ON the carousel's card
-                          // (Hani, 2026-08-13), so the card needs what it takes
-                          // to redraw the slides: which post they belong to,
-                          // the links they came from, and the way back.
-                          savedPostId={savedPostId}
-                          carouselDriveLinks={carouselDriveLinks}
-                          onCarouselImagesChange={setCarouselImages}
-                          // Opening the media panel must NOT throw the current
-                          // carousel away (Hani, 2026-07-28): the old handler
-                          // cleared images+slides on click, so pressing what
-                          // read as "edit" destroyed the carousel before she
-                          // had seen a single alternative. Now it just opens
-                          // the panel — same as story / image_post — where the
-                          // saved carousel is shown on its template tile and
-                          // deleting it is a separate, explicit action.
-                          onCarouselEdit={() =>
-                            setSelectedFormatCard("carousel")
-                          }
-                          imagePostUrl={imagePostUrl}
-                          imagePostCardRef={imagePostCardRef}
-                          onImagePostEdit={() =>
-                            setSelectedFormatCard("image_post")
-                          }
-                          onImagePostUrlChange={setImagePostUrl}
-                          storyImages={storyImages}
-                          storyCardRef={storyCardRef}
-                          onStoryEdit={() =>
-                            setSelectedFormatCard("story")
-                          }
-                          storyVideoUrl={storyVideoUrl}
-                          bRollUrl={bRollUrl}
-                          bRollCardRef={bRollCardRef}
-                          onBRollEdit={() => setSelectedFormatCard("b_roll")}
-                          // The sparkle opens a format's own conversation — a 👎 question
-                          // from another format must not follow it.
-                          onAiEdit={(f) => { setAiChatFormat(f); setAiChatOpening(null) }}
-                          onDeleteMedia={setPendingMediaDelete}
-                          onBRollUrlChange={setBRollUrl}
-                          copyAi={previewOn ? copyEdit.copyAi : undefined}
-                          approval={
-                            approveVariant
-                              ? {
-                                  variant: approveVariant,
-                                  statusOf: approvals.statusOf,
-                                  approve: approvals.approve,
-                                  revoke: approvals.revoke,
-                                  calendarHref: savedPostId
-                                    ? `/calendar?post_id=${savedPostId}`
-                                    : "/calendar",
-                                }
-                              : undefined
-                          }
-                        />
-                      </div>
-                    </div>
-                  )}
+                  {!lanes && renderFormatsBranch()}
                 </div>
               )}
+              {(corePost || savedPostId) && !postLoading && lanes && renderFormatsBranch()}
             </>
           )}
 
         </div>
+        </LaneLayoutContext.Provider>
       </InfiniteCanvas>
 
       {/* Floating schedule bar — appears once we have a saved post id, on
@@ -3137,16 +3277,18 @@ function FormatTree({
   /** "עריכה עם AI" on the format copy — the ✨ beside "הוספת מדיה". */
   copyAi?: FormatCopyAiController
 }) {
+  const lanes = useLaneLayout()
   const count = formats.length
   const totalWidth = count * CARD_WIDTH + (count - 1) * CARD_GAP
 
   return (
-    <div className="flex flex-col items-center">
-      {/* Vertical line from formats card */}
-      <div className="w-[2px] h-10 bg-gray-80" />
+    <div className={lanes ? "flex items-start" : "flex flex-col items-center"} dir={lanes ? "rtl" : undefined}>
+      {/* Line from the formats card — down in the shipped tree, left into
+          the fork in a lane layout. */}
+      {lanes ? <LaneStem /> : <div className="w-[2px] h-10 bg-gray-80" />}
 
       {/* Horizontal connector bar + branches */}
-      {count > 1 && (
+      {!lanes && count > 1 && (
         <div className="relative" style={{ width: totalWidth }}>
           {/* Horizontal line */}
           <div
@@ -3173,11 +3315,11 @@ function FormatTree({
 
       {/* Format cards — all uniform width, text-only */}
       <div
-        className="flex items-start gap-6"
-        style={{ width: count > 1 ? totalWidth : undefined }}
+        className={lanes ? laneColumnClass(lanes) : "flex items-start gap-6"}
+        style={lanes ? undefined : { width: count > 1 ? totalWidth : undefined }}
         dir="rtl"
       >
-        {formats.map((fid) => {
+        {formats.map((fid, laneIndex) => {
           const format = FORMAT_MAP[fid]
           if (!format) return null
           const Icon = format.icon
@@ -3206,7 +3348,7 @@ function FormatTree({
             )
 
           return (
-            <div key={fid} className="flex flex-col items-center" style={{ width: CARD_WIDTH }}>
+            <FormatColumn key={fid} index={laneIndex} count={count}>
               <div
                 className={`flex flex-col gap-3 rounded-[20px] border bg-white dark:bg-gray-10 pb-6 transition-all w-full ${
                   isSelected
@@ -3327,7 +3469,7 @@ function FormatTree({
                   Same shape as the real card so the layout doesn't jump. */}
               {fid === "talking_head" && ((!thVideoUrl && thVideoLoading) || mediaBusy.talking_head) && (
                 <>
-                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <TreeConnector />
                   <div
                     dir="rtl"
                     className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
@@ -3354,7 +3496,7 @@ function FormatTree({
               {fid === "talking_head" && thVideoUrl && !mediaBusy.talking_head && (
                 <>
                   {/* Connector line */}
-                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <TreeConnector />
 
                   {/* Video card */}
                   <div
@@ -3416,7 +3558,7 @@ function FormatTree({
                   card so the layout doesn't jump when content arrives. */}
               {fid === "talking_head" && thCoverLoading && !thCoverImage && (
                 <>
-                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <TreeConnector />
                   <div
                     dir="rtl"
                     className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
@@ -3445,7 +3587,7 @@ function FormatTree({
               {/* Cover card below video card */}
               {fid === "talking_head" && thCoverImage && (
                 <>
-                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <TreeConnector />
                   <div
                     dir="rtl"
                     className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
@@ -3631,7 +3773,7 @@ function FormatTree({
               )}
               {fid === "b_roll" && !mediaBusy.b_roll && bRollUrl && (
                 <>
-                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <TreeConnector />
                   <div
                     ref={bRollCardRef}
                     dir="rtl"
@@ -3720,7 +3862,7 @@ function FormatTree({
               )}
               {fid === "image_post" && !mediaBusy.image_post && imagePostUrl && (
                 <>
-                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <TreeConnector />
                   <div
                     ref={imagePostCardRef}
                     dir="rtl"
@@ -3796,7 +3938,7 @@ function FormatTree({
                   </div>
                 </>
               )}
-            </div>
+            </FormatColumn>
           )
         })}
       </div>
@@ -3931,7 +4073,7 @@ function CarouselResultCard({
 
   return (
     <>
-      <div className="w-[2px] h-7 bg-gray-80" />
+      <TreeConnector />
       <div
         ref={cardRef}
         dir="rtl"
@@ -4102,7 +4244,7 @@ function StoryResultCard({
 
   return (
     <>
-      <div className="w-[2px] h-7 bg-gray-80" />
+      <TreeConnector />
       <div
         ref={cardRef}
         dir="rtl"
@@ -4179,7 +4321,7 @@ function MediaSkeletonCard({
 }) {
   return (
     <>
-      <div className="w-[2px] h-7 bg-gray-80" />
+      <TreeConnector />
       <div
         dir="rtl"
         role="status"
