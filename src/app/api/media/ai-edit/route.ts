@@ -5,7 +5,7 @@ import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
 import { getUserApiKey } from "@/lib/api-keys"
-import { editImage, type ImageShape } from "@/lib/openai-image"
+import { CutoutFailedError, cutoutImage, editImage, generateImage, type ImageShape } from "@/lib/openai-image"
 import { loadImageForModels } from "@/lib/visual-language/image-input"
 import { replaceImageAssetSet } from "@/lib/media-asset-set"
 import { applyFixedElements } from "@/lib/visual-language/fixed-elements"
@@ -20,7 +20,6 @@ import {
   slideHash,
   uploadIllustration,
 } from "@/lib/carousel-composition"
-import { generateImage } from "@/lib/openai-image"
 import { isOwnMediaUrl } from "@/lib/own-media"
 import { parseReferences, referenceBlocks } from "@/lib/ai-edit-references"
 
@@ -97,7 +96,7 @@ async function plan(
           "",
           'Return {"targets": [numbers] , "edit": "..."}.',
           `- targets: which items the request is about. If she names items (e.g. "שקופית 2", "הפריים האחרון", "הראשונה") use those; if it's about the look in general or doesn't say, all of 1..${count}.`,
-          "- edit: one precise English instruction for an image-editing model describing ONLY the change she asked for (colours, sizes, positions, elements, mood…). If she asks to change wording, quote the new Hebrew text exactly. Do not invent changes she didn't ask for." +
+          "- edit: one precise English instruction for an image-editing model describing ONLY the change she asked for (colours, sizes, positions, elements, mood…). If she asks to change wording, quote the new Hebrew text exactly. If she asks to remove an illustration's or picture's background, say: keep the subject exactly as it is, and replace its backdrop (box, colour, glow, shadow) with the design's own background continuing seamlessly around it. Do not invent changes she didn't ask for." +
             (refs.length ? " The image editor will NOT see her reference images, so spell out in words exactly what to take from them." : ""),
         ].join("\n") },
         ],
@@ -214,18 +213,30 @@ export async function POST(req: NextRequest) {
     if (stored && (await carouselStillMatches(stored, urls))) {
       const revised = await reviseCarousel(anthropicKey, stored, text, refs)
       const illustrations = [...stored.illustrations]
+      const cutouts = new Set(revised.cutouts)
       const redraw = revised.illustrations
         .map((idea, i) => ({ idea: idea.trim(), i }))
         .filter((x) => x.idea)
-      await Promise.all(
-        redraw.map(async ({ idea, i }) => {
-          const raw = await generateImage(openaiKey, illustrationPrompt(idea, stored.brief.slides[i], stored.brief.styleLines), {
-            shape: "1:1",
-            quality: "medium",
-          })
+      // "Remove the background" cuts the EXISTING illustration out (same
+      // character, real transparency) — a redraw would paint a new opaque
+      // square. A slide whose picture is also being redrawn gets the new one
+      // generated straight onto a transparent background instead.
+      const cutOnly = [...cutouts].filter((i) => illustrations[i] && !redraw.some((r) => r.i === i))
+      await Promise.all([
+        ...redraw.map(async ({ idea, i }) => {
+          const cutout = cutouts.has(i)
+          const raw = await generateImage(
+            openaiKey,
+            illustrationPrompt(idea, stored.brief.slides[i], stored.brief.styleLines, cutout),
+            { shape: "1:1", quality: "medium", ...(cutout ? { background: "transparent" as const } : {}) },
+          )
           illustrations[i] = await uploadIllustration(supabase, user.id, Buffer.from(raw, "base64"))
         }),
-      )
+        ...cutOnly.map(async (i) => {
+          const raw = await cutoutImage(openaiKey, await loadImageForModels(illustrations[i]))
+          illustrations[i] = await uploadIllustration(supabase, user.id, Buffer.from(raw, "base64"))
+        }),
+      ])
       const direction = await resolveDesignDirection(supabase, user.id, { format: "carousel" })
       const shots = await renderCarousel(revised.html, illustrations, stored.brief.fonts)
       const nextSet = await Promise.all(
@@ -286,6 +297,13 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("[media/ai-edit]", msg)
+    if (error instanceof CutoutFailedError) {
+      // Nothing was saved — the carousel stays exactly as it was.
+      return NextResponse.json(
+        { error: "cutout_failed", message: "לא הצלחתי להוריד את הרקע מהאיור הפעם, והקרוסלה נשארה כמו שהייתה. נסו שוב." },
+        { status: 502 },
+      )
+    }
     if (isInvalidClaudeKey(msg)) {
       return NextResponse.json({ error: "anthropic_key_invalid", message: CLAUDE_KEY_INVALID_MESSAGE }, { status: 400 })
     }

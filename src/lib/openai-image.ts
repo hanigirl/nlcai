@@ -1,3 +1,4 @@
+import sharp from "sharp"
 import type { ModelImage } from "@/lib/visual-language/image-input"
 
 /**
@@ -39,7 +40,22 @@ interface Options {
   shape: ImageShape
   quality?: Quality
   references?: ModelImage[]
+  /**
+   * "transparent" = a cut-out subject with a real alpha channel (PNG) — for
+   * art that sits ON a designed background (a carousel illustration). Without
+   * it the model always paints a full, opaque backdrop. gpt-image-2 supports
+   * it (in preview, PNG/WebP only).
+   */
+  background?: "transparent"
 }
+
+/**
+ * gpt-image-2 refuses a transparent background ("Transparent background is
+ * not supported for this model" — its support is only a preview, verified
+ * 2026-11-05), so cut-outs go to a model that does support it. 1024×1024 —
+ * the illustration slot's size — is one of its standard sizes.
+ */
+const TRANSPARENT_MODEL = "gpt-image-1.5"
 
 class BillingError extends Error {}
 class SizeRejectedError extends Error {}
@@ -63,15 +79,17 @@ async function generate(
   prompt: string,
   size: string,
   quality?: Quality,
+  background?: "transparent",
 ): Promise<string> {
   const res = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "gpt-image-2",
+      model: background ? TRANSPARENT_MODEL : "gpt-image-2",
       prompt,
       size,
       ...(quality ? { quality } : {}),
+      ...(background ? { background, output_format: "png" } : {}),
       n: 1,
     }),
   })
@@ -84,13 +102,20 @@ async function edit(
   references: ModelImage[],
   size: string,
   quality?: Quality,
+  background?: "transparent",
 ): Promise<string> {
   const form = new FormData()
-  form.append("model", "gpt-image-2")
+  form.append("model", background ? TRANSPARENT_MODEL : "gpt-image-2")
   form.append("prompt", prompt)
   form.append("size", size)
   form.append("n", "1")
   if (quality) form.append("quality", quality)
+  if (background) {
+    form.append("background", background)
+    form.append("output_format", "png")
+    // Keep the subject's details (face, hands, colours) as they are.
+    form.append("input_fidelity", "high")
+  }
   references.forEach((ref, i) => {
     const ext = ref.mediaType === "image/png" ? "png" : "jpg"
     form.append(
@@ -111,17 +136,17 @@ async function attempt(
   apiKey: string,
   prompt: string,
   size: string,
-  { quality, references }: Omit<Options, "shape">,
+  { quality, references, background }: Omit<Options, "shape">,
 ): Promise<string> {
   if (references?.length) {
     try {
-      return await edit(apiKey, prompt, references, size, quality)
+      return await edit(apiKey, prompt, references, size, quality, background)
     } catch (err) {
       if (err instanceof BillingError || err instanceof SizeRejectedError) throw err
       console.error("[openai-image] edits with brand elements failed, generating without them:", err)
     }
   }
-  return generate(apiKey, prompt, size, quality)
+  return generate(apiKey, prompt, size, quality, background)
 }
 
 export async function generateImage(
@@ -156,6 +181,42 @@ export async function editImage(
     if (!(err instanceof SizeRejectedError)) throw err
     return edit(apiKey, prompt, [image], FALLBACK_SIZE)
   }
+}
+
+/** The model was asked for a cut-out but returned an image with no real transparency. */
+export class CutoutFailedError extends Error {}
+
+const CUTOUT_PROMPT = [
+  "Remove the background from this illustration. Isolate the main subject on a FULLY TRANSPARENT background.",
+  "Keep the subject exactly as it is: the same character or object, the same pose, proportions, colours, details and style. Do not redraw, restyle, recolour or reposition it.",
+  "Remove everything behind it: the backdrop colour or gradient, glow, vignette, floor, cast shadow and any frame or box. Clean alpha edges, no halo or fringing, no checkerboard, no new background.",
+].join("\n")
+
+/** Share of pixels that are (nearly) fully transparent, 0–1. */
+async function transparentShare(png: Buffer): Promise<number> {
+  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+  let clear = 0
+  for (let i = 3; i < data.length; i += info.channels) if (data[i] < 16) clear++
+  return clear / (info.width * info.height)
+}
+
+/**
+ * Cut the subject of an existing illustration out of its background — "להוריד
+ * רקע" on a carousel illustration (Hani, 2026-11-05). An edit of the image
+ * itself with a transparent output, never a fresh drawing, so the character
+ * stays the same one. Returns PNG base64 with a real alpha channel; throws
+ * CutoutFailedError if the result came back opaque (transparency is still a
+ * preview feature on gpt-image-2) — an opaque square must never be saved as
+ * if the background had been removed.
+ */
+export async function cutoutImage(apiKey: string, image: ModelImage, shape: ImageShape = "1:1"): Promise<string> {
+  const out = await edit(apiKey, CUTOUT_PROMPT, [image], SHAPE_SIZE[shape], undefined, "transparent")
+  // A subject usually leaves well over a quarter of a square frame empty; 5%
+  // only rules out "no transparency at all" (or just a few clear corners).
+  if ((await transparentShare(Buffer.from(out, "base64"))) < 0.05) {
+    throw new CutoutFailedError("cutout_not_transparent")
+  }
+  return out
 }
 
 /**

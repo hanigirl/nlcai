@@ -139,17 +139,28 @@ function briefText(b: CarouselBrief): string {
   ].join("\n")
 }
 
-function parse(text: string, count: number): { html: string; illustrations: string[] } {
+function parse(
+  text: string,
+  count: number,
+): { html: string; illustrations: string[]; cutouts: number[] } {
   const json = /```json\s*([\s\S]*?)```/i.exec(text)
   const html = /```html\s*([\s\S]*?)```/i.exec(text)
   if (!html || !/class=["'][^"']*\bslide\b/.test(html[1])) throw new Error("composition_invalid")
   let illustrations: string[] = []
+  let cutouts: number[] = []
   try {
-    illustrations = (JSON.parse(json?.[1] ?? "{}") as { illustrations?: string[] }).illustrations ?? []
+    const parsed = JSON.parse(json?.[1] ?? "{}") as { illustrations?: string[]; cutouts?: unknown }
+    illustrations = parsed.illustrations ?? []
+    cutouts = Array.isArray(parsed.cutouts) ? parsed.cutouts.map(Number) : []
   } catch {
     illustrations = []
   }
-  return { html: html[1].trim(), illustrations: Array.from({ length: count }, (_, i) => illustrations[i] ?? "") }
+  return {
+    html: html[1].trim(),
+    illustrations: Array.from({ length: count }, (_, i) => illustrations[i] ?? ""),
+    // Slide numbers (1-based) → indices, deduped, in range.
+    cutouts: Array.from(new Set(cutouts.filter((n) => Number.isInteger(n) && n >= 1 && n <= count).map((n) => n - 1))),
+  }
 }
 
 async function ask(apiKey: string, user: string, count: number, examples: string[] = [], refs: string[] = []) {
@@ -191,6 +202,8 @@ export function reviseCarousel(apiKey: string, stored: StoredCarousel, instructi
       JSON.stringify(instruction),
       "",
       'In the json block, "illustrations" has one entry per slide: a NEW prompt only for slides whose illustration she asked to change, otherwise an empty string.',
+      'If she asks to remove an illustration\'s background (e.g. "להוריד רקע", "בלי רקע", "לגזור"), also put "cutouts": [slide numbers] in the json block. The illustration image itself is then cut out for you — the same picture, with a truly transparent background — so it sits directly on the slide\'s background. Removing a background is NOT a reason to redraw: leave its "illustrations" entry empty unless she also asked for a different picture. Never imitate a removed background in CSS: no mix-blend-mode, filter, opacity, mask, overlay or background colour on or around the illustration.',
+      "Change nothing she did not ask about — no new overlays, opacity, filters, blend modes or colour shifts on any slide or element.",
       "Return the full revised HTML.",
     ].join("\n"),
     stored.brief.slides.length,
@@ -199,10 +212,17 @@ export function reviseCarousel(apiKey: string, stored: StoredCarousel, instructi
   )
 }
 
-/** Illustration prompt for the image model — art only, never text. */
-export function illustrationPrompt(idea: string, slide: SlideData, styleLines: string[]): string {
+/**
+ * Illustration prompt for the image model — art only, never text. `cutout`:
+ * the subject alone on a transparent background (generate it with
+ * background: "transparent"), for a slide where she removed the backdrop.
+ */
+export function illustrationPrompt(idea: string, slide: SlideData, styleLines: string[], cutout = false): string {
   return [
     "A square illustration for one slide of an Instagram carousel. It will be placed inside a designed layout next to the text, so it must contain NO text at all — no letters, words, numbers, captions, labels or signage.",
+    ...(cutout
+      ? ["The subject stands alone on a FULLY TRANSPARENT background — no backdrop, gradient, glow, floor, cast shadow, frame or box. Clean alpha edges."]
+      : []),
     "",
     idea ? `Idea: ${idea}` : `Make the slide's message visible: ${JSON.stringify(slide.title)}`,
     "",
@@ -247,7 +267,13 @@ export async function renderCarousel(
   })
   // A slot left without art (no idea for it) disappears instead of a broken image.
   page = page.replace(/__SLIDE_IMAGE_\d+__/g, "")
-  page = page.replace(/<\/head>/i, `<style>img[src=""]{display:none!important}</style></head>`)
+  // The illustration is a finished picture: a blend mode only muddies it (a
+  // "multiply" once turned a cut-out request into a dark square). Its
+  // background is removed in the file itself (cutoutImage), never in CSS.
+  page = page.replace(
+    /<\/head>/i,
+    `<style>img[src=""]{display:none!important}.slide img.art{mix-blend-mode:normal!important}</style></head>`,
+  )
   const head = fontHead(fonts) + fontEnforcement(fonts)
   // Appended at the END of <head> so it wins over the composition's own CSS.
   page = /<\/head>/i.test(page) ? page.replace(/<\/head>/i, `${head}</head>`) : `${head}${page}`
