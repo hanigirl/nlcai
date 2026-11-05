@@ -250,15 +250,16 @@ function previewFolder(k: FolderKey, state: DrivePreviewState): Folder {
   const link = "https://drive.google.com/drive/folders/sample-folder"
   if (state === "nofolder") return unset()
   if (state === "noaccess") return { ...unset(), status: "error", link, error: "not_public" }
-  const video = k === "broll" || k === "talking"
+  // Story and carousel folders mix in one clip (what she has in real folders).
+  const isVideo = (i: number) => k === "broll" || k === "talking" || ((k === "story" || k === "carousel") && i === 0)
   const items: MediaItem[] =
     state === "empty"
       ? []
       : PREVIEW_THUMBS.map((thumb, i) => ({
           id: `sample-${k}-${i}`,
-          name: video ? `clip-${i + 1}.mp4` : `photo-${i + 1}.jpg`,
-          kind: video ? "video" : "image",
-          ...(video ? { duration: `0:${String(8 + i * 3).padStart(2, "0")}` } : {}),
+          name: isVideo(i) ? `clip-${i + 1}.mp4` : `photo-${i + 1}.jpg`,
+          kind: isVideo(i) ? "video" : "image",
+          ...(isVideo(i) ? { duration: `0:${String(8 + i * 3).padStart(2, "0")}` } : {}),
           thumb,
           src: `https://drive.google.com/file/d/sample-${k}-${i}/view`,
         }))

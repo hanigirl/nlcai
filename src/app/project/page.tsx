@@ -2055,6 +2055,29 @@ function ProjectPageInner() {
     return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2) }
   }, [laneActivityKey, laneFollowArmed])
 
+  // Whether the open AI panel works on HER media ("own") is read when it
+  // opens and then held: an as-is upload or a video imported for an edit
+  // changes the post's media mid-conversation, and recomputing would switch
+  // the panel to another conversation while her reply is on its way.
+  const aiOwnNow = (() => {
+    if (!aiChatFormat) return false
+    const storyFrames = [
+      ...(storyImages ?? []),
+      ...(storyVideoUrl && !(storyImages ?? []).includes(storyVideoUrl) ? [storyVideoUrl] : []),
+    ]
+    const urls: Record<AiEditFormat, string[]> = {
+      story: storyFrames,
+      carousel: carouselImages ?? [],
+      image_post: imagePostUrl ? [imagePostUrl] : [],
+      b_roll: bRollUrl ? [bRollUrl] : [],
+    }
+    return aiChatOpening?.kind !== "generate" && isOwnMediaFormat(aiChatFormat, urls[aiChatFormat], carouselDriveLinks)
+  })()
+  const aiOwnKey = aiChatFormat ? `${aiChatFormat}:${aiChatOpening?.id ?? "edit"}` : ""
+  const [aiOwnFrozen, setAiOwnFrozen] = useState<{ key: string; own: boolean } | null>(null)
+  if (aiOwnKey && aiOwnFrozen?.key !== aiOwnKey) setAiOwnFrozen({ key: aiOwnKey, own: aiOwnNow })
+  const aiOwn = aiOwnFrozen?.key === aiOwnKey ? aiOwnFrozen.own : aiOwnNow
+
   return (
     <AppShell idea={shortenTitle(idea || hookParam || (postId ? "עריכת פוסט" : ""))}>
       {/* Media Panel — sibling to InfiniteCanvas, slides from left */}
@@ -2916,9 +2939,8 @@ function ProjectPageInner() {
         }
         // A fresh AI generation is the AI's media, even over her own slides —
         // and the thread must not switch conversations when the result lands.
-        const own =
-          aiChatOpening?.kind !== "generate" &&
-          isOwnMediaFormat(aiChatFormat, mediaOf[aiChatFormat], carouselDriveLinks)
+        // Held from when the panel opened (aiOwn, above).
+        const own = aiOwn
         return (
           <MediaAiChat
             // One panel per post + format (+ own media): switching formats

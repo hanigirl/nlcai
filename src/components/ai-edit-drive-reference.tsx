@@ -32,9 +32,9 @@ import {
  * Google Drive" uses). What she picks is attached exactly like a file from
  * her computer, and from there every existing rule applies.
  *
- * A video becomes ONE picture: Drive's own preview frame of the clip
- * (api/media/drive-reference) — the AI panel works with pictures. The panel
- * says so under the attachments.
+ * A video is a video (Hani, 2026-11-06: "אם העלתי סרטון תעשה סרטון"): its
+ * preview frame (api/media/drive-reference) is only the tray thumbnail; what
+ * gets used is the clip itself — lib/as-is-upload and the own-video AI edit.
  */
 
 const ICON_BUTTON =
@@ -49,8 +49,8 @@ const FOLDER_NAME: Record<string, string> = {
 }
 
 /**
- * A video from her computer, as a picture the AI panel can use: its first
- * moment, drawn in the browser. The video itself is kept for "להעלות כמו שזה".
+ * A video from her computer: its first moment, drawn in the browser — the
+ * tray thumbnail only. The video itself is what gets used.
  */
 function videoFrame(file: File): Promise<File | null> {
   return new Promise((resolve) => {
@@ -87,17 +87,15 @@ async function dataUrlToFile(dataUrl: string, name: string): Promise<File> {
   return new File([bytes], name, { type })
 }
 
-/** The menu on the add-image icon. `onFrames`: how many videos came in as a frame. */
+/** The menu on the add-image icon. */
 export function ReferenceAddMenu({
   r,
   format,
   disabled,
-  onFrames,
 }: {
   r: ReferenceImages
   format: string
   disabled?: boolean
-  onFrames?: (count: number) => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   // Opened straight on Drive by the media panel's "מדיה מוכנה מ Google Drive".
@@ -127,21 +125,20 @@ export function ReferenceAddMenu({
           void (async () => {
             const files: File[] = []
             const origins: AsIsItem[] = []
-            let frames = 0
             for (const f of picked) {
               if (f.type.startsWith("video/")) {
+                // Its first moment is only the thumbnail in the tray — the
+                // video itself is what gets used (lib/as-is-upload).
                 const frame = await videoFrame(f)
                 if (!frame) continue
                 files.push(frame)
                 origins.push({ kind: "video", file: f })
-                frames++
               } else {
                 files.push(f)
                 origins.push({ kind: "image", file: f })
               }
             }
             await r.add(files, { origins })
-            if (frames) onFrames?.(frames)
           })()
         }}
       />
@@ -171,7 +168,7 @@ export function ReferenceAddMenu({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <DriveReferenceDialog open={driveOpen} onOpenChange={setDriveOpen} r={r} format={format} onFrames={onFrames} />
+      <DriveReferenceDialog open={driveOpen} onOpenChange={setDriveOpen} r={r} format={format} />
     </>
   )
 }
@@ -182,13 +179,11 @@ export function DriveReferenceDialog({
   onOpenChange,
   r,
   format,
-  onFrames,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   r: ReferenceImages
   format: string
-  onFrames?: (count: number) => void
 }) {
   const key = FORMAT_FOLDER[format]
   const folder = useDrivePickStore().folders[key]
@@ -220,7 +215,6 @@ export function DriveReferenceDialog({
     try {
       const files: File[] = []
       const origins: AsIsItem[] = []
-      let frames = 0
       for (const item of picked) {
         const res = await fetch("/api/media/drive-reference", {
           method: "POST",
@@ -229,13 +223,11 @@ export function DriveReferenceDialog({
         })
         const data = (await res.json().catch(() => ({}))) as { image?: string; frame?: boolean; message?: string }
         if (!res.ok || !data.image) throw new Error(data.message || "לא הצלחתי להביא את הקובץ מהדרייב.")
-        if (data.frame) frames++
         files.push(await dataUrlToFile(data.image, item.name))
         // "להעלות כמו שזה" uses the Drive file itself — a video stays the video.
         origins.push({ kind: item.kind, drive: item.src })
       }
       await r.add(files, { origins })
-      if (frames) onFrames?.(frames)
       setPicked([])
       onOpenChange(false)
     } catch (err) {
@@ -319,9 +311,6 @@ export function DriveReferenceDialog({
           </div>
         )}
 
-        {picked.some((p) => p.kind === "video") && (
-          <p className="text-xs-body text-text-neutral-default">מסרטון נצרפת תמונה אחת ממנו (פריים) לבקשה מה-AI. ״להעלות כמו שזה״ מעלה את הסרטון עצמו.</p>
-        )}
         {error && <p className="text-xs-body text-button-destructive-default">{error}</p>}
 
         <DialogFooter className="gap-2 sm:justify-start">

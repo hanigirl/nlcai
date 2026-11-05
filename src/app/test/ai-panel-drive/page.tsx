@@ -15,6 +15,11 @@
  *
  * Then "להעלות כמו שזה, בלי תוספות" hands the ORIGINALS (a Drive video stays the
  * video) to the media panel's own import — shown by the stand-in card.
+ * A video with an instruction (story / b-roll) makes a VIDEO: the clip is
+ * imported, then the own-video AI edit runs on it. Here the edit's route is
+ * switched off, so the panel shows the honest failure ("הסרטון עלה כמו שהוא,
+ * אבל העריכה לא הצליחה"). In a carousel (or image post) a video is refused at
+ * once, before anything starts.
  * `&open=drive` = the media panel's "מדיה מוכנה מ Google Drive": the panel
  * opens with the Drive gallery already up.
  *
@@ -37,6 +42,7 @@ const SAMPLE = "/images/carousel-templates/ai-dark.png"
 const FORMATS: { id: AiEditFormat; label: string }[] = [
   { id: "story", label: "סטורי (תמונות)" },
   { id: "b_roll", label: "בי-רול (סרטונים)" },
+  { id: "carousel", label: "קרוסלה (סרטון לא נכנס)" },
 ]
 const STATES: { id: DrivePreviewState; label: string }[] = [
   { id: "ready", label: "תיקייה עם קבצים" },
@@ -93,9 +99,11 @@ function Stage({ format, state, shortcut }: { format: AiEditFormat; state: Drive
   // What "להעלות כמו שזה" handed to the media panel's import (the stand-in below).
   const [imported, setImported] = useState<AsIsItem[] | null>(null)
   useEffect(() => {
-    registerAsIsImporter(format, async (items) => {
+    registerAsIsImporter(format, async (items, opts) => {
       setImported(items)
-      return { ok: true, message: "המדיה עולה כמו שהיא, בלי תוספות. ההתקדמות בפאנל המדיה." }
+      return opts?.forEdit
+        ? { ok: true, message: "הסרטון עלה." }
+        : { ok: true, message: "המדיה עולה כמו שהיא, בלי תוספות. ההתקדמות בפאנל המדיה." }
     })
     return () => registerAsIsImporter(format, null)
   }, [format])

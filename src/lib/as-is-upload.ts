@@ -26,10 +26,16 @@ export type AsIsItem = {
 }
 
 export type AsIsResult = { ok: true; message: string } | { ok: false; message: string }
-type Importer = (items: AsIsItem[]) => Promise<AsIsResult>
+/**
+ * `forEdit` (Hani, 2026-11-06 — "אם העלתי סרטון תעשה סרטון"): her video is
+ * imported so the own-video AI edit can caption it right after — wait until
+ * it's saved, and skip the import's own automatic caption.
+ */
+export type AsIsOptions = { forEdit?: boolean }
+type Importer = (items: AsIsItem[], opts?: AsIsOptions) => Promise<AsIsResult>
 
 const importers = new Map<string, Importer>()
-const pending = new Map<string, { items: AsIsItem[]; resolve: (r: AsIsResult) => void }>()
+const pending = new Map<string, { items: AsIsItem[]; opts?: AsIsOptions; resolve: (r: AsIsResult) => void }>()
 const openers = new Set<(format: string) => void>()
 
 /** The media panel's flow for `format` — `null` on unmount. Runs what's waiting. */
@@ -42,16 +48,16 @@ export function registerAsIsImporter(format: string, fn: Importer | null) {
   const wait = pending.get(format)
   if (wait) {
     pending.delete(format)
-    void fn(wait.items).then(wait.resolve, (e) => wait.resolve({ ok: false, message: String(e) }))
+    void fn(wait.items, wait.opts).then(wait.resolve, (e) => wait.resolve({ ok: false, message: String(e) }))
   }
 }
 
 /** The AI panel: make these the format's media, as they are. */
-export function requestAsIsUpload(format: string, items: AsIsItem[]): Promise<AsIsResult> {
+export function requestAsIsUpload(format: string, items: AsIsItem[], opts?: AsIsOptions): Promise<AsIsResult> {
   const fn = importers.get(format)
-  if (fn) return fn(items)
+  if (fn) return fn(items, opts)
   return new Promise<AsIsResult>((resolve) => {
-    pending.set(format, { items, resolve })
+    pending.set(format, { items, opts, resolve })
     openers.forEach((open) => open(format))
     // The panel never came up (no saved post, a format with no panel): say so.
     setTimeout(() => {
