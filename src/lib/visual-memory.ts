@@ -7,9 +7,12 @@ import type { VisualFormat } from "@/lib/visual-language/types"
  * before the edit runs (lib/style-memory → triageVisualMemory):
  *
  *   1. Her SETTINGS — brand colours, fonts and brand elements live in
- *      Settings → שפה ויזואלית and nowhere else. A lasting request for a
- *      colour / font / element the settings don't have is not saved: the
- *      chat says to put it in the visual-language settings, with a link.
+ *      Settings → שפה ויזואלית and nowhere else. A request for a colour /
+ *      font / element the settings don't have — lasting or for this edit
+ *      only — is never saved, and the chat says so: put it in the
+ *      visual-language settings, with a link. Where the font is locked to
+ *      the settings (carousel, b-roll) it also says the font won't change,
+ *      and a message that asks for nothing else runs no edit.
  *   2. Her saved PREFERENCES — how things move, enter and change, layout
  *      habits, a decoration the AI draws. A new lasting one is saved ("שמרתי
  *      את הנתונים."); one that goes against an earlier preference is not
@@ -54,8 +57,20 @@ export type MemoryOutcome =
   | { kind: "saved"; id: string; summary: string; scope: RuleScope; replaced?: boolean }
   /** Taken back with "ביטול". */
   | { kind: "undone"; summary: string }
-  /** A colour / font / brand element the settings don't have — goes there. */
-  | { kind: "settings"; topics: SettingsTopic[]; summary: string }
+  /**
+   * A colour / font / brand element the settings don't have — goes there.
+   * `lasting`: she wanted it from now on (else: for this edit only).
+   * `locked`: a font in a format that always takes it from the settings
+   * (carousel, b-roll) — the edit can't change it.
+   */
+  | {
+      kind: "settings"
+      topics: SettingsTopic[]
+      summary: string
+      lasting?: boolean
+      locked?: boolean
+      format?: VisualFormat
+    }
   /** Goes against an earlier preference — waiting for her answer. */
   | {
       kind: "conflict"
@@ -79,6 +94,14 @@ export interface TriageResult {
 export const VISUAL_SETTINGS_HREF = "/settings?tab=media&sub=visual"
 /** Settings → מדיה → העדפות ויזואליות. */
 export const VISUAL_PREFERENCES_HREF = "/settings?tab=media&sub=preferences"
+
+/** "בקרוסלה" / "בבי-רול" — where a font is locked to the settings. */
+export const FORMAT_IN: Record<VisualFormat, string> = {
+  carousel: "בקרוסלה",
+  story: "בסטורי",
+  image_post: "בתמונה",
+  b_roll: "בבי-רול",
+}
 
 export const SETTINGS_TOPIC_LABEL: Record<SettingsTopic, string> = {
   colors: "צבעים",

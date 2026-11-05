@@ -6,6 +6,7 @@ import { AlertTriangle, Check, Info, Loader2, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
+  FORMAT_IN,
   RULE_SCOPES,
   SETTINGS_TOPIC_LABEL,
   VISUAL_PREFERENCES_HREF,
@@ -92,7 +93,12 @@ export function VisualMemoryNoteView({
         <div className="flex-1 space-y-1 text-xs-body leading-relaxed text-text-primary-default">
           {showHeadline && <p className="font-semibold">{headline}</p>}
           <p className="text-text-neutral-default">
-            ביקשתם: {memory.summary.replace(/[.\s]+$/, "")}. {topics} נקבעים בהגדרות, ולכן לא שמרתי את זה מהצ׳אט.
+            ביקשתם: {memory.summary.replace(/[.\s]+$/, "")}.{" "}
+            {memory.locked && memory.format
+              ? `${FORMAT_IN[memory.format]} הפונט נלקח תמיד מההגדרות, ולכן הוא לא משתנה בעריכה.`
+              : memory.lasting
+                ? `${topics} נקבעים בהגדרות, ולכן לא שמרתי את זה מהצ׳אט.`
+                : "זה חל רק על העריכה הזו. כדי שזה יחול גם בפעמים הבאות, יש לשנות את זה בהגדרות."}
           </p>
           <Link href={VISUAL_SETTINGS_HREF} className={LINK}>
             להגדרות השפה הוויזואלית

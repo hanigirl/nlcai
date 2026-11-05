@@ -207,7 +207,7 @@ export async function triageVisualMemory(
     '  "edit": true|false — does the message ask to change the media she is editing right now? false when it ONLY asks to remember / save / keep something, or only asks a question.',
     '  "edit_instruction": "<the change to make now, in her Hebrew words, without any remember / save wording; empty when edit is false>",',
     '  "lasting": true|false — does it say how her designs should look or move FROM NOW ON, beyond this one item? Words like remember, save, keep, always, from now on, every time make it lasting. "Save this" / "remember that" with no details refers to her previous request. One-off content changes (this word, this slide\'s text) are never lasting.',
-    '  "settings_clash": null | {"topics": ["colors"|"fonts"|"elements"], "summary_he": "<short Hebrew: what she wants that her settings don\'t have>"} — ONLY when a LASTING preference needs a colour, a font or a brand element (logo / her uploaded graphics) that differs from or is missing in HER SETTINGS: a new colour, another font, a different logo. Using her existing colours, fonts or elements in some way is NOT a clash. Motion, transitions, how things enter, timing, layout, spacing, or a decorative shape the designer draws are never a clash.',
+    '  "settings_clash": null | {"topics": ["colors"|"fonts"|"elements"], "summary_he": "<short Hebrew: what she wants that her settings don\'t have>", "only": true|false} — when her message (lasting OR just for this edit) asks for a colour, a font or a brand element (logo / her uploaded graphics) that differs from or is missing in HER SETTINGS: a new colour, another font, a different logo. Using her existing colours, fonts or elements in some way is NOT a clash. Motion, transitions, how things enter, timing, layout, spacing, or a decorative shape the designer draws are never a clash. "only": true when the message asks for nothing besides that clashing item.',
     '  "rule": "<one precise English rule a designer / animator can follow — fill it when lasting is true OR contradicts is not empty; otherwise empty>",',
     '  "summary_he": "<short Hebrew summary of that rule, for her>",',
     `  "scope": "all" | "carousel" | "story" | "image_post" | "b_roll" — what the rule is about. Use "${input.format}" when it is about this format's own behaviour (b-roll motion, how story frames connect, slide numbering…); "all" only when it is clearly about her look everywhere (an element's style, a mood, a habit across formats).`,
@@ -228,7 +228,7 @@ export async function triageVisualMemory(
     edit?: boolean
     edit_instruction?: string
     lasting?: boolean
-    settings_clash?: { topics?: string[]; summary_he?: string } | null
+    settings_clash?: { topics?: string[]; summary_he?: string; only?: boolean } | null
     rule?: string
     summary_he?: string
     scope?: string
@@ -246,14 +246,25 @@ export async function triageVisualMemory(
     .filter((r): r is StyleRule => !!r)
 
   let memory: MemoryOutcome
+  let runEdit = edit
   const clashTopics = (json.settings_clash?.topics ?? []).filter(
     (t): t is SettingsTopic => t === "colors" || t === "fonts" || t === "elements",
   )
-  if (lasting && json.settings_clash && clashTopics.length) {
+  if (json.settings_clash && clashTopics.length) {
+    // Carousel and b-roll always set text in her settings fonts
+    // (lib/carousel-composition fontEnforcement, b-roll loads only hers) —
+    // a font asked for in the chat can't land there, so say it, and skip an
+    // edit that would change nothing.
+    const locked =
+      clashTopics.includes("fonts") && (input.format === "carousel" || input.format === "b_roll")
+    if (locked && json.settings_clash.only && clashTopics.every((t) => t === "fonts")) runEdit = false
+    const clashSummary = json.settings_clash.summary_he?.trim()
     memory = {
       kind: "settings",
       topics: clashTopics,
-      summary: stripDashes(json.settings_clash.summary_he?.trim() || summary),
+      summary: clashSummary ? stripDashes(clashSummary) : summary,
+      ...(lasting ? { lasting: true } : {}),
+      ...(locked ? { locked: true, format: input.format } : {}),
     }
   } else if (contradicted.length && rule) {
     memory = {
@@ -275,7 +286,7 @@ export async function triageVisualMemory(
   } else {
     memory = { kind: "none", ...(input.explicit ? { explicit: true } : {}) }
   }
-  return { edit, editInstruction, memory }
+  return { edit: runEdit, editInstruction, memory }
 }
 
 /**

@@ -31,8 +31,18 @@ const NOTE_STATES: { id: string; label: string; memory: MemoryOutcome }[] = [
   },
   {
     id: "settings",
-    label: "שייך להגדרות",
-    memory: { kind: "settings", topics: ["fonts"], summary: "כל הכותרות בפונט Assistant" },
+    label: "שייך להגדרות (להבא)",
+    memory: { kind: "settings", topics: ["colors"], summary: "מעכשיו רקע ורוד בכל התמונות", lasting: true },
+  },
+  {
+    id: "settings-once",
+    label: "שייך להגדרות (רק בעריכה הזו)",
+    memory: { kind: "settings", topics: ["colors"], summary: "רקע ורוד בתמונה הזו" },
+  },
+  {
+    id: "settings-locked",
+    label: "פונט נעול (קרוסלה)",
+    memory: { kind: "settings", topics: ["fonts"], summary: "הכותרות בפונט Assistant", locked: true, format: "carousel" },
   },
   {
     id: "conflict",
