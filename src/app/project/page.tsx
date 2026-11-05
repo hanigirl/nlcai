@@ -1,6 +1,6 @@
 "use client"
 
-import { FormatLane, LaneColumn, LaneStem, TreeConnector, goToLaneCard, newestLaneCard } from "@/components/format-lanes"
+import { FormatLane, LaneColumn, LaneStem, TreeConnector, newestLaneCard } from "@/components/format-lanes"
 import { useAiEditRequests, type AiEditOpening } from "@/lib/ai-edit-intent"
 import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
@@ -2681,12 +2681,9 @@ function ProjectPageInner() {
                                     // Already duplicated (Hani, 2026-11-05):
                                     // close the picker and take her to that
                                     // format's card — the lanes' own glide.
-                                    if (alreadyDuplicated) {
-                                      setShowFormats(false)
-                                      setActiveCard(`format-${format.id}`)
-                                      goToLaneCard(canvasRef.current, format.id)
-                                      return
-                                    }
+                                    // Jump to its card is off until it's fixed (it threw the
+                                    // canvas to an empty spot — Hani, 2026-11-05).
+                                    if (alreadyDuplicated) return
                                     setSelectedFormats((prev) =>
                                       prev.includes(format.id)
                                         ? prev.filter((f) => f !== format.id)
