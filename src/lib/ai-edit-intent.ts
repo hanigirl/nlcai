@@ -5,10 +5,11 @@ import type { AiEditFormat } from "@/components/media-ai-chat"
 import type { MediaGenResult } from "@/lib/media-brief"
 
 /**
- * "Think first, then generate" (Hani, 2026-11-05): the media panel's generate
- * button no longer fires straight away — it opens the AI-edit panel, which
- * asks whether to generate from her visual language or from a direction she
- * writes for this piece, then runs the generation and stays open for edits.
+ * "חדש לגמרי" (Hani, 2026-11-05): with that tile picked, the media panel's
+ * generate button doesn't fire straight away — it opens the AI-edit panel,
+ * which asks how to start, generates from her answer from a blank page (no
+ * visual language), and stays open for edits. Every other tile generates
+ * immediately, as before.
  *
  * The AI-edit panel is mounted once, by the project page. This is the wire
  * between the media panel and it: a window event keeps it free of prop
@@ -19,12 +20,8 @@ export type AiEditOpening = AiEditGenerateOpening
 export interface AiEditGenerateOpening {
   id: string
   kind: "generate"
-  /** The style picked in the media panel, as she'd say it ("השפה הוויזואלית שלכם", "כהה"). */
-  styleName: string
-  /** The picked style is her own visual language (not a niche tone / template). */
-  isVisualLanguage: boolean
-  /** Starts the generation with her brief (undefined = from the style alone). */
-  run: (brief?: string) => Promise<MediaGenResult>
+  /** Starts the from-zero generation with her brief. */
+  run: (brief: string) => Promise<MediaGenResult>
 }
 
 export interface AiEditRequest {

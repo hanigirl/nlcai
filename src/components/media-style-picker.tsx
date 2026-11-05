@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { Plus } from "lucide-react"
 import { getTemplate, type TemplateConfig } from "@/lib/carousel-templates"
 import { useBrandCarouselTemplateState } from "@/hooks/use-brand-carousel-template"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -29,6 +30,21 @@ export function useMediaStyle(): {
   return { style, setStyle: setPicked, brandTemplate, brandLoading }
 }
 
+/**
+ * The "חדש לגמרי" tile's picture: a blank page — the tile is a style with no
+ * style. Shared by this picker and the carousel template grid.
+ */
+export function BlankTileThumb({ className = "", style }: { className?: string; style?: React.CSSProperties }) {
+  return (
+    <div
+      className={`flex items-center justify-center rounded-md border border-dashed border-gray-80 bg-white dark:bg-gray-10 ${className}`}
+      style={style}
+    >
+      <Plus className="size-4 text-text-neutral-default" aria-hidden />
+    </div>
+  )
+}
+
 export function MediaStylePicker({
   value,
   onChange,
@@ -49,6 +65,8 @@ export function MediaStylePicker({
   const dark = getTemplate("ai-dark")
   const light = getTemplate("ai-light")
   const options: { id: MediaStyle; name: string; thumb: React.ReactNode }[] = [
+    // "חדש לגמרי" first (Hani, 2026-11-05): from her brief, no style at all.
+    { id: "blank", name: "חדש לגמרי", thumb: <BlankTileThumb className="size-full" /> },
     ...(brandTemplate
       ? [
           {
@@ -88,7 +106,7 @@ export function MediaStylePicker({
   return (
     <div className="flex w-full flex-col gap-1.5">
       <p className="text-xs text-text-neutral-default">{label}</p>
-      <div role="radiogroup" aria-label={label} aria-busy={brandLoading && !brandTemplate} className="grid grid-cols-3 gap-1.5">
+      <div role="radiogroup" aria-label={label} aria-busy={brandLoading && !brandTemplate} className="grid grid-cols-4 gap-1.5">
         {brandLoading && !brandTemplate && (
           <div className="flex flex-col gap-1 rounded-lg border border-border-neutral-default p-1" aria-hidden>
             <Skeleton className={`${aspect === "4/5" ? "aspect-[4/5]" : "aspect-[9/16]"} w-full rounded-md`} />

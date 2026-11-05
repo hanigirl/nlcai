@@ -8,10 +8,22 @@ import type { DesignDirection } from "@/lib/visual-language/direction"
  * into the model's design direction, so every downstream prompt sees it (the
  * image prompt, the story frames, the carousel layout + illustrations, the
  * b-roll background and its motion design).
+ *
+ * With "חדש לגמרי" (style "blank", 2026-11-05) the brief is the whole
+ * direction: the visual language, colours, fonts and elements are left out.
  */
 
 /** Long enough for a real paragraph; short enough not to drown the prompt. */
 export const MAX_MEDIA_BRIEF = 600
+
+/**
+ * "חדש לגמרי" (style "blank") is designed from the brief alone — without one
+ * there is nothing to design from, so the routes refuse it with this.
+ */
+export const BLANK_NEEDS_BRIEF = {
+  error: "blank_needs_brief",
+  message: "כדי להתחיל מדף חלק, ספרו קודם איך תרצו להתחיל.",
+} as const
 
 /** What a generation started from the AI panel resolves to. */
 export type MediaGenResult = { ok: true } | { ok: false; message: string }

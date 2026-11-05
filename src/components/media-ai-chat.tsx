@@ -70,20 +70,17 @@ interface MediaChatExtra {
 }
 
 /**
- * "Think first, then generate" (Hani, 2026-11-05). The media panel's generate
- * button opens this panel on a question — her visual language, or a direction
- * of her own for this piece — and the generation runs from here. When it
- * lands, the step is cleared and the same thread carries on as the AI edit.
+ * "חדש לגמרי" (Hani, 2026-11-05). Picking that tile in the media panel and
+ * pressing generate opens this panel on one question — how to start — and
+ * the generation runs from her answer, from a blank page (no visual
+ * language). When it lands, the step is cleared and the same thread carries
+ * on as the AI edit. Every other tile generates straight away, no question.
  */
 interface GenStep {
   /** The opening it came from (its run function lives in generatorById). */
   id: string
-  /** choose: the two options · brief: waiting for her words · running. */
-  phase: "choose" | "brief" | "running"
-  /** The message the option chips sit under. */
-  at: number
-  styleName: string
-  isVisualLanguage: boolean
+  /** brief: waiting for her words · running. */
+  phase: "brief" | "running"
   /** Her last brief — put back in the composer if the generation failed. */
   lastBrief: string
 }
@@ -140,48 +137,35 @@ const COPY: Record<AiEditFormat, { title: string; intro: string; done: string; b
 }
 
 /** The generate step (Hani, 2026-11-05) — what the panel says per format. */
-const GEN_COPY: Record<AiEditFormat, { title: string; what: string; busy: string; done: string; away: { done: string; failed: string } }> = {
+const GEN_COPY: Record<AiEditFormat, { title: string; busy: string; done: string; away: { done: string; failed: string } }> = {
   image_post: {
     title: "יצירת תמונה עם AI",
-    what: "את התמונה",
     busy: "מייצרים את התמונה... זה יכול לקחת עד דקה",
     done: "התמונה מוכנה ונשמרה בכרטיס. רוצים לשנות משהו? כתבו לי כאן ואעדכן.",
     away: { done: "התמונה מוכנה ונשמרה בפוסט.", failed: "יצירת התמונה לא הצליחה. נסו שוב מהפוסט." },
   },
   story: {
     title: "יצירת סטורי עם AI",
-    what: "את הסטורי",
     busy: "מייצרים את הסטורי... זה יכול לקחת עד דקה",
     done: "הסטורי מוכן ונשמר בכרטיס. רוצים לשנות משהו? כתבו לי כאן ואעדכן.",
     away: { done: "הסטורי מוכן ונשמר בפוסט.", failed: "יצירת הסטורי לא הצליחה. נסו שוב מהפוסט." },
   },
   b_roll: {
     title: "יצירת בי-רול עם AI",
-    what: "את הבי-רול",
     busy: "מייצרים את הבי-רול... זה יכול לקחת כשתי דקות",
     done: "הבי-רול מוכן ונשמר בכרטיס. רוצים לשנות משהו? כתבו לי כאן ואעדכן.",
     away: { done: "הבי-רול מוכן ונשמר בפוסט.", failed: "יצירת הבי-רול לא הצליחה. נסו שוב מהפוסט." },
   },
   carousel: {
     title: "יצירת קרוסלה עם AI",
-    what: "את הקרוסלה",
     busy: "מציירים את הקרוסלה... זה יכול לקחת כמה דקות",
     done: "הקרוסלה מוכנה ונשמרה בכרטיס. רוצים לשנות משהו? כתבו לי כאן ואעדכן.",
     away: { done: "הקרוסלה מוכנה ונשמרה בפוסט.", failed: "יצירת הקרוסלה לא הצליחה. נסו שוב מהפוסט." },
   },
 }
 
-/** "השפה הוויזואלית שלכם" / "הסגנון ״כהה״" — the style the media panel had picked. */
-const styleRef = (g: Pick<GenStep, "styleName" | "isVisualLanguage">) =>
-  g.isVisualLanguage ? "השפה הוויזואלית שלכם" : `הסגנון ״${g.styleName}״`
-/** Her answer when she goes with the picked style — the chip label and her bubble. */
-const styleChoice = (g: Pick<GenStep, "styleName" | "isVisualLanguage">) =>
-  g.isVisualLanguage ? "לפי השפה הוויזואלית שלי" : `לפי הסגנון ״${g.styleName}״`
-const OWN_DIRECTION = "יש לי כיוון משלי"
-const genAsk = (format: AiEditFormat, g: Pick<GenStep, "styleName" | "isVisualLanguage">) =>
-  `לפני שמתחילים: ליצור ${GEN_COPY[format].what} לפי ${styleRef(g)}, או שכבר יש לכם כיוון בראש?`
-const genBriefAsk = (g: Pick<GenStep, "styleName" | "isVisualLanguage">) =>
-  `ספרו לי מה אתם רואים בראש: צבעים, אווירה, מה יופיע, ומה ממש לא. מה שתכתבו יקבע, והשאר יגיע מ${styleRef(g)}.`
+/** The one question "חדש לגמרי" asks before generating. */
+const GEN_ASK = "איך תרצו להתחיל?\nספרו לי מה אתם רואים בראש: צבעים, אווירה, מה יופיע ומה ממש לא. מתחילים מדף חלק, בלי השפה הוויזואלית."
 const GEN_STALE = "הבקשה הזאת כבר לא פעילה. לחצו שוב על כפתור היצירה בפאנל המדיה."
 
 /**
@@ -318,25 +302,11 @@ export function MediaAiChat({
     if (cur?.extra.gen?.id === opening.id || cur?.busy) return
     generatorById.set(opening.id, opening.run)
     updateChat(chatKey, fresh, (s): MediaChat => {
-      const ask: ChatMessage = { role: "assistant", content: genAsk(format, opening) }
+      const ask: ChatMessage = { role: "assistant", content: GEN_ASK }
       const next = s.messages.some((m) => m.role === "user") ? [...s.messages, ask] : [ask]
-      return {
-        ...s,
-        messages: next,
-        extra: {
-          ...s.extra,
-          gen: {
-            id: opening.id,
-            phase: "choose",
-            at: next.length - 1,
-            styleName: opening.styleName,
-            isVisualLanguage: opening.isVisualLanguage,
-            lastBrief: "",
-          },
-        },
-      }
+      return { ...s, messages: next, extra: { ...s.extra, gen: { id: opening.id, phase: "brief", lastBrief: "" } } }
     })
-  }, [chatKey, opening, fresh, format])
+  }, [chatKey, opening, fresh])
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
   // "Watching" = a panel shows this conversation when the reply lands — the
@@ -374,31 +344,8 @@ export function MediaAiChat({
   const setInput = (value: string) => patch((s) => ({ ...s, input: value }))
   const gen = session.extra.gen ?? null
 
-  const focusInput = () =>
-    requestAnimationFrame(() => {
-      const el = inputRef.current
-      if (!el) return
-      el.focus()
-      el.setSelectionRange(el.value.length, el.value.length)
-    })
-
-  /** "יש לי כיוון משלי": the panel asks for her words, the composer waits. */
-  const askForBrief = () => {
-    patch((s): MediaChat => {
-      const g = s.extra.gen
-      if (!g) return s
-      const next: ChatMessage[] = [
-        ...s.messages,
-        { role: "user", content: OWN_DIRECTION },
-        { role: "assistant", content: genBriefAsk(g) },
-      ]
-      return { ...s, messages: next, extra: { ...s.extra, gen: { ...g, phase: "brief", at: next.length - 1 } } }
-    })
-    focusInput()
-  }
-
-  /** Run the generation — from the picked style alone, or with her brief. */
-  const generate = async (brief?: string) => {
+  /** Run the generation from her brief — a blank page, no visual language. */
+  const generate = async (brief: string) => {
     const key = chatKey
     const init = fresh
     const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, init, fn)
@@ -406,7 +353,7 @@ export function MediaAiChat({
     const g = cur.extra.gen
     if (cur.busy || !g || g.phase === "running") return
     const run = generatorById.get(g.id)
-    const said: ChatMessage = { role: "user", content: brief ?? styleChoice(g) }
+    const said: ChatMessage = { role: "user", content: brief }
     if (!run) {
       // A reload dropped the button's settings — the media panel starts it again.
       patchKey((s) => ({
@@ -422,7 +369,7 @@ export function MediaAiChat({
       input: "",
       busy: true,
       messages: [...s.messages, said],
-      extra: { ...s.extra, gen: { ...g, phase: "running", lastBrief: brief ?? "" } },
+      extra: { ...s.extra, gen: { ...g, phase: "running", lastBrief: brief } },
     }))
     const isWatching = () => isChatWatched(key) || canRevealChat(key)
     const away = GEN_COPY[format].away
@@ -440,13 +387,13 @@ export function MediaAiChat({
         return {
           ...s,
           busy: false,
-          // Her brief can be kept for next time (the save chip); a plain
-          // "from my language" has nothing to keep.
-          messages: [...s.messages, { role: "assistant", content: GEN_COPY[format].done, done: true, noStyle: !brief }],
+          // A from-zero brief is about this piece, not her lasting style —
+          // nothing to offer saving to the visual language.
+          messages: [...s.messages, { role: "assistant", content: GEN_COPY[format].done, done: true, noStyle: true }],
           extra: { ...s.extra, gen: null },
         }
       }
-      // Failed: the options come back under the error, her words back in the composer.
+      // Failed: her words back in the composer — send retries.
       const next: ChatMessage[] = [
         ...s.messages,
         { role: "assistant", content: aiErrorMessage(result.message || "היצירה לא הצליחה. נסו שוב."), error: true },
@@ -454,9 +401,9 @@ export function MediaAiChat({
       return {
         ...s,
         busy: false,
-        input: brief ?? "",
+        input: brief,
         messages: next,
-        extra: { ...s.extra, gen: { ...g, phase: "choose", at: next.length - 1, lastBrief: brief ?? "" } },
+        extra: { ...s.extra, gen: { ...g, phase: "brief", lastBrief: brief } },
       }
     })
     revealChatReply(key, result.ok ? away.done : away.failed)
@@ -691,13 +638,6 @@ export function MediaAiChat({
               {m.content}
               <ReferenceThumbs images={m.images} className="mt-1.5" />
             </div>
-            {/* The generate step: her visual language, or her own direction. */}
-            {gen && i === gen.at && gen.phase !== "running" && !loading && (
-              <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5" role="group" aria-label="איך ליצור">
-                <Chip onClick={() => void generate()}>{styleChoice(gen)}</Chip>
-                {gen.phase === "choose" && <Chip onClick={askForBrief}>{OWN_DIRECTION}</Chip>}
-              </div>
-            )}
             {/* Own media: what it can do, one tap away — until her first ask. */}
             {own && i === 0 && messages.length === 1 && !loading && (
               <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5" role="group" aria-label="הצעות לעריכה">
@@ -778,9 +718,7 @@ export function MediaAiChat({
             placeholder={
               gen?.phase === "brief"
                 ? "למשל: רקע לבן ונקי, הרבה אוויר, בלי איורים"
-                : gen?.phase === "choose"
-                  ? "או כתבו כאן את הכיוון שלכם"
-                  : "מה תרצו לשנות?"
+                : "מה תרצו לשנות?"
             }
             ref={inputRef}
             rows={1}

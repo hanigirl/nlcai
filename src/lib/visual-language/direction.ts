@@ -139,6 +139,16 @@ function toneLine(tone: "dark" | "light"): string {
     : "Make it a LIGHT design: a light, airy background with dark readable text."
 }
 
+/** "חדש לגמרי" — a blank page; her brief is the whole direction. */
+const BLANK_DIRECTION: DesignDirection = {
+  source: "none",
+  lines: [
+    "VISUAL LANGUAGE — none fixed. Start from a blank page: design this piece entirely from the creator's own direction below. Do not borrow any brand palette, logo or house style; where her direction is silent, choose what best serves the content — calm, readable, premium; avoid dark neon gradients and glossy 3D glass objects.",
+  ],
+  references: [],
+  fixed: [],
+}
+
 /**
  * The direction plus her standing preferences (lib/style-memory) — the ones
  * saved for this format or for every format.
@@ -151,6 +161,9 @@ export async function resolveDesignDirection(
   // She picked the niche language (or its dark / light variant) to get away
   // from her brand: her standing preferences came from brand edits and
   // "override" everything, so they'd pull it straight back (Hani, 2026-10-29).
+  // "חדש לגמרי": nothing of hers — no language, colours, elements or standing
+  // preferences. The brief (lib/media-brief) is added on top by the route.
+  if (opts.style === "blank") return BLANK_DIRECTION
   const nicheChosen = !!opts.style && opts.style !== "brand"
   const [direction, rules] = await Promise.all([
     resolveBaseDirection(supabase, userId, opts),
