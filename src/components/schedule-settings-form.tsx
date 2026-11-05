@@ -320,9 +320,9 @@ export function ScheduleSettingsForm({ draft, onChange }: Edit) {
         />
       </RuleRow>
 
-      <RuleRow label="כמה ימים בין פורמטים של אותו פוסט?" hint="למשל רילס וקרוסלה של אותו רעיון">
+      <RuleRow label="כמה ימים בין פורמטים של אותו פוסט ליבה?" hint="למשל רילס וקרוסלה של אותו רעיון">
         <ChoiceChips
-          label="ימים בין פורמטים של אותו פוסט"
+          label="ימים בין פורמטים של אותו פוסט ליבה"
           value={draft.formatGapDays}
           options={FORMAT_GAP_CHOICES}
           onChange={(v) => onChange(withGlobal(draft, { formatGapDays: v }))}
