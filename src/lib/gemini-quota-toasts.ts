@@ -53,13 +53,29 @@ export function formatResetTime(iso?: string | null): string {
 
 type Frame = {
   gemini_quota_claude_fallback?: number
+  /** Google was overloaded or never answered, so Claude wrote N hooks. */
+  gemini_busy_claude_fallback?: number
   gemini_quota_warning?: boolean
   daily?: boolean
   reset_at?: string | null
 }
 
-/** Shows the toast for a quota frame. Returns true if the frame was one. */
+/** Shows the toast for a quota (or busy) frame. Returns true if the frame was one. */
 export function handleGeminiQuotaFrame(frame: Frame): boolean {
+  if (typeof frame.gemini_busy_claude_fallback === "number") {
+    const n = frame.gemini_busy_claude_fallback
+    // Sticky for the same reason as the quota toast below: these hooks may
+    // read differently, and the toast is the only place that says why. No
+    // usage link — the user's quota is fine, Google's servers weren't.
+    toast.message("השרתים של Gemini היו עמוסים", {
+      id: "gemini-busy",
+      description: `${n === 1 ? "הוק אחד נוצר" : `${n} הוקים נוצרו`} ב-Claude Sonnet במקום Gemini (מהקרדיטים של Claude), ולכן הם עשויים להיות שונים מהרגיל. בפעם הבאה ננסה שוב עם Gemini.`,
+      duration: Infinity,
+      closeButton: true,
+      classNames: NOTICE_TOAST_CLASSES,
+    })
+    return true
+  }
   if (typeof frame.gemini_quota_claude_fallback === "number") {
     const n = frame.gemini_quota_claude_fallback
     const reset = frame.daily ? formatResetTime(frame.reset_at) : "בעוד דקה"

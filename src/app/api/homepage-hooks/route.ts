@@ -9,7 +9,7 @@ import { judgeHook, validateHookLocally, ownNamesFor, ownNameRule } from "@/lib/
 import { findNearDuplicate } from "@/lib/agents/hook-similarity"
 import { buildHookVoiceSection } from "@/lib/agents/hook-voice"
 import { classifyHooksByProduct } from "@/lib/agents/hook-product-classifier"
-import { GeminiError, generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
+import { GeminiError, claudeStandInReason, generateWithGeminiFallback, geminiErrorCode, type ClaudeStandInReason } from "@/lib/gemini"
 
 interface PlanItem {
   category: TemplateCategory
@@ -569,9 +569,12 @@ ${categoriesCatalog}
         let dailyRetryAfterMs: number | undefined
         let geminiKeyInvalid = false
         let geminiSucceeded = false
-        // Set on the first quota error: the rest of the round is written by
-        // Claude, and `claudeStandIns` counts those hooks for the notice.
+        // Set on the first quota, overload or timeout error: the rest of the
+        // round is written by Claude, and `claudeStandIns` counts those hooks
+        // for the notice. Quota outranks busy in `geminiOutReason`, because
+        // a shut key is the one that lasts.
         let geminiOut = false
+        let geminiOutReason: ClaudeStandInReason | null = null
         let claudeStandIns = 0
         // One engine announcement per batch, from the first writer that
         // actually succeeds — that's the only point where the model in use is
@@ -757,9 +760,18 @@ ${formatTemplatesForPrompt()}
                 // round goes straight to Claude (Hani, 2026-10-08: "if there's
                 // no Gemini quota, write the hooks with Claude Sonnet and say
                 // so") — no more requests against a key that's already shut.
+                //
+                // Overload and timeouts get the same treatment (2026-11-05).
+                // They used to just drop the hook: Google's "high demand"
+                // spells last minutes, so the next batch a minute later
+                // mostly hit the same wall, and the round quietly shrank.
+                const reason = claudeStandInReason(err)
+                if (reason) {
+                  geminiOut = true
+                  if (reason === "quota" || !geminiOutReason) geminiOutReason = reason
+                }
                 if (err instanceof GeminiError && err.code === "quota") {
                   quotaHit = true
-                  geminiOut = true
                   if (err.daily) {
                     dailyLimitHit = true
                     dailyRetryAfterMs = err.retryAfterMs ?? dailyRetryAfterMs
@@ -1021,7 +1033,9 @@ ${formatTemplatesForPrompt()}
           // When Google said how long until the daily cap resets, pass the
           // moment on — the client shows it in local time, never a guess.
           const reset_at = dailyRetryAfterMs ? new Date(Date.now() + dailyRetryAfterMs).toISOString() : null
-          if (claudeStandIns > 0) {
+          if (claudeStandIns > 0 && geminiOutReason === "busy") {
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ gemini_busy_claude_fallback: claudeStandIns })}\n\n`))
+          } else if (claudeStandIns > 0) {
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ gemini_quota_claude_fallback: claudeStandIns, daily: dailyLimitHit, reset_at })}\n\n`))
           } else if (quotaHit) {
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ gemini_quota_warning: true, daily: dailyLimitHit, reset_at })}\n\n`))

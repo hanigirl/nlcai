@@ -6,7 +6,7 @@ import { getAuthUser } from "@/lib/auth-user"
 import { getUserApiKey } from "@/lib/api-keys"
 import { extractFileContent } from "@/lib/extract-file-content"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
-import { GeminiError, generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
+import { claudeStandInReason, generateWithGeminiFallback, geminiErrorCode, type GeminiError } from "@/lib/gemini"
 import {
   buildHookExtractionPrompt,
   dedupeHooks,
@@ -144,11 +144,12 @@ async function extractWithModel(
       return parseExtractedHooks(raw)
     } catch (err) {
       // Same stand-in as the hook writers: when Google refuses the key for
-      // quota, Claude reads the file instead of the import failing outright.
-      // No notice — copying lines out of a document comes out the same
-      // either way, unlike writing new hooks.
-      if (!(err instanceof GeminiError && err.code === "quota" && anthropicKey)) throw err
-      console.warn("[api/hooks/import] Gemini quota hit — Claude extracts instead:", err.message)
+      // quota, is overloaded, or never answers, Claude reads the file instead
+      // of the import failing outright. No notice — copying lines out of a
+      // document comes out the same either way, unlike writing new hooks.
+      const reason = claudeStandInReason(err)
+      if (!reason || !anthropicKey) throw err
+      console.warn(`[api/hooks/import] Gemini ${reason} — Claude extracts instead:`, (err as GeminiError).message)
     }
   }
 
