@@ -104,3 +104,16 @@ export const FORMAT_NOUN: Record<string, string> = {
   talking_head: "הסרטון",
   b_roll: "הבי-רול",
 }
+
+/**
+ * A format's status as one of the existing tags, for a list of formats (the
+ * canvas's "לאיזה פורמטים לשכפל?" — Hani, 2026-11-05). The same states the
+ * approvals compute; a format with no media yet has no tag.
+ */
+export function ApprovalStatusPill({ status }: { status: ApprovalStatus | undefined }) {
+  if (status === "scheduled") return <ScheduledTag />
+  if (status === "approved") return <ApprovedTag />
+  if (status === "edited") return <EditedTag />
+  if (status === "pending") return <PendingTag />
+  return null
+}
