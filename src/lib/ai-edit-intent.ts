@@ -20,8 +20,8 @@ export type AiEditOpening = AiEditGenerateOpening
 export interface AiEditGenerateOpening {
   id: string
   kind: "generate"
-  /** Starts the from-zero generation with her brief. */
-  run: (brief: string) => Promise<MediaGenResult>
+  /** Starts the from-zero generation with her brief and the references she attached. */
+  run: (brief: string, references: string[]) => Promise<MediaGenResult>
 }
 
 export interface AiEditRequest {

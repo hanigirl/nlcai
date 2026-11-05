@@ -224,6 +224,8 @@ export async function composeBRoll(
   brief: CompositionBrief,
   variation: number,
   examples: ModelImage[] = [],
+  /** Reference images she attached to a from-zero brief (lib/ai-edit-references). */
+  refs: string[] = [],
 ): Promise<string> {
   return ask(
     apiKey,
@@ -236,7 +238,7 @@ export async function composeBRoll(
           : `This is attempt #${variation + 1} for the same post — take a clearly different typographic and motion idea from an obvious first take.`
         : "",
     ].join("\n"),
-    [],
+    refs,
     examples,
   )
 }

@@ -226,7 +226,7 @@ interface MediaPanelProps {
 function openGenerateBrief(
   postId: string,
   format: AiEditFormat,
-  run: (brief: string) => Promise<MediaGenResult>,
+  run: (brief: string, references: string[]) => Promise<MediaGenResult>,
 ) {
   requestAiEdit({ postId, format, opening: { id: openingId(), kind: "generate", run } })
 }
@@ -1718,7 +1718,9 @@ function CarouselFlow({
       void handleGenerate()
       return
     }
-    openGenerateBrief(postId, "carousel", (brief) => handleGenerate({ brief, fromPanel: true }))
+    openGenerateBrief(postId, "carousel", (brief, references) =>
+      handleGenerate({ brief, references, fromPanel: true }),
+    )
   }
 
   /**
@@ -1726,7 +1728,11 @@ function CarouselFlow({
    * result itself — no toasts, and no preview dialog over the canvas.
    */
   const handleGenerate = async (
-    { brief, fromPanel = false }: { brief?: string; fromPanel?: boolean } = {},
+    {
+      brief,
+      references = [],
+      fromPanel = false,
+    }: { brief?: string; references?: string[]; fromPanel?: boolean } = {},
   ): Promise<MediaGenResult> => {
     if (!carouselText.trim()) return { ok: false, message: "אין עדיין טקסט לקרוסלה" }
     setGenerating(true)
@@ -1787,6 +1793,7 @@ function CarouselFlow({
             templateId: genId,
             postId,
             ...(brief ? { brief } : {}),
+            ...(references.length ? { references } : {}),
           }),
         },
       )
@@ -3162,8 +3169,8 @@ function MediaUploadFlow({
     const style = mediaStyle.style
     // "חדש לגמרי" asks how to start first; every other style generates now.
     if (style === "blank") {
-      openGenerateBrief(postId, "image_post", (brief) =>
-        startImageGeneration(postId, "blank", { brief, quiet: true }),
+      openGenerateBrief(postId, "image_post", (brief, references) =>
+        startImageGeneration(postId, "blank", { brief, references, quiet: true }),
       )
       return
     }
@@ -3178,8 +3185,8 @@ function MediaUploadFlow({
     }
     const style = mediaStyle.style
     if (style === "blank") {
-      openGenerateBrief(postId, "story", (brief) =>
-        startStoryGeneration(postId, "blank", { brief, quiet: true }),
+      openGenerateBrief(postId, "story", (brief, references) =>
+        startStoryGeneration(postId, "blank", { brief, references, quiet: true }),
       )
       return
     }
@@ -3466,8 +3473,8 @@ function MediaUploadFlow({
     // near-identical picture.
     const style = mediaStyle.style
     if (style === "blank") {
-      openGenerateBrief(postId, "b_roll", (brief) =>
-        startBRollGeneration(postId, bRollAttemptRef.current++, "blank", { brief, quiet: true }),
+      openGenerateBrief(postId, "b_roll", (brief, references) =>
+        startBRollGeneration(postId, bRollAttemptRef.current++, "blank", { brief, references, quiet: true }),
       )
       return
     }

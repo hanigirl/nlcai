@@ -114,11 +114,11 @@ export function getStoryGenerationSnapshot(key: string): StoryGenerationState {
 export function startStoryGeneration(
   postId: string,
   style?: MediaStyle,
-  /** brief / quiet — see MediaGenOptions in lib/image-generation-store. */
-  opts: { brief?: string; quiet?: boolean } = {},
+  /** brief / references / quiet — see MediaGenOptions in lib/image-generation-store. */
+  opts: { brief?: string; references?: string[]; quiet?: boolean } = {},
 ): Promise<MediaGenResult> {
   if (!postId) return Promise.resolve({ ok: false, message: "" })
-  const { brief, quiet = false } = opts
+  const { brief, references, quiet = false } = opts
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   // Steers this attempt toward a palette distinct from the previous ones.
   const variationIndex = nextVariationIndex(postId)
@@ -137,7 +137,13 @@ export function startStoryGeneration(
       const res = await fetch("/api/story/generate-media", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, variationIndex, style, ...(brief ? { brief } : {}) }),
+        body: JSON.stringify({
+          postId,
+          variationIndex,
+          style,
+          ...(brief ? { brief } : {}),
+          ...(references?.length ? { references } : {}),
+        }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         images?: string[]

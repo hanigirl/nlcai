@@ -14,7 +14,7 @@
  * panel calls afterwards — nothing reaches the network: no credits, no DB
  * writes.
  *
- *   ?state=tiles | ask | generating | done | error | brand
+ *   ?state=tiles | ask | ask-ref | generating | done | error | brand
  */
 
 import { Suspense, useEffect, useRef, useState } from "react"
@@ -34,10 +34,36 @@ const POST_ID = "preview-blank-tile-post"
 const RESULT = "/images/carousel-templates/ai-light.png"
 const BRAND = buildBrandTemplate({ thumbnailUrl: "/images/carousel-templates/ai-amber.png" })
 const SAMPLE_BRIEF = "רקע לבן ונקי, הרבה אוויר, כותרת שחורה גדולה ובלי איורים"
+const SAMPLE_REFERENCE = "/images/carousel-templates/ai-dark.png"
+
+/**
+ * ask-ref: attach a sample screenshot through the panel's real reference
+ * button (its file input), the way she would. Drawn via canvas — `fetch` is
+ * stubbed on this page.
+ */
+function attachSampleReference(root: HTMLElement) {
+  const img = new Image()
+  img.onload = () => {
+    const canvas = document.createElement("canvas")
+    canvas.width = img.naturalWidth
+    canvas.height = img.naturalHeight
+    canvas.getContext("2d")?.drawImage(img, 0, 0)
+    canvas.toBlob((blob) => {
+      const input = root.querySelector<HTMLInputElement>('input[type="file"]')
+      if (!blob || !input) return
+      const dt = new DataTransfer()
+      dt.items.add(new File([blob], "reference.png", { type: "image/png" }))
+      input.files = dt.files
+      input.dispatchEvent(new Event("change", { bubbles: true }))
+    }, "image/png")
+  }
+  img.src = SAMPLE_REFERENCE
+}
 
 const STATES = [
   { id: "tiles", label: "אריח ״חדש לגמרי״ נבחר" },
   { id: "ask", label: "הפאנל שואל איך להתחיל" },
+  { id: "ask-ref", label: "צירפו רפרנס" },
   { id: "generating", label: "בזמן יצירה" },
   { id: "done", label: "התוצאה + ממשיכים לערוך" },
   { id: "error", label: "שגיאה" },
@@ -73,6 +99,7 @@ function Preview() {
   const [opening, setOpening] = useState<AiEditOpening | null>(null)
   const [result, setResult] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
   const stateRef = useRef(state)
   stateRef.current = state
 
@@ -124,6 +151,12 @@ function Preview() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state])
 
+  useEffect(() => {
+    if (!opening || state !== "ask-ref") return
+    const t = setTimeout(() => panelRef.current && attachSampleReference(panelRef.current), 300)
+    return () => clearTimeout(t)
+  }, [opening, state])
+
   return (
     <div dir="rtl" className="min-h-screen bg-bg-surface p-6">
       <div className="mb-6 flex flex-wrap items-center gap-2 text-xs">
@@ -166,6 +199,7 @@ function Preview() {
         </div>
       </div>
 
+      <div ref={panelRef}>
       {open && (
         <MediaAiChat
           key={state}
@@ -183,6 +217,7 @@ function Preview() {
           }}
         />
       )}
+      </div>
     </div>
   )
 }

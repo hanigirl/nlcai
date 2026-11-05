@@ -315,7 +315,7 @@ export function MediaAiChat({
   useWatchChat(chatKey)
   // Screenshots waiting to go with the next message; another conversation starts clean.
   const refs = useReferenceImages()
-  const { clear: clearRefs } = refs
+  const { clear: clearRefs, restore: restoreRefs } = refs
   useEffect(() => {
     clearRefs()
   }, [chatKey, clearRefs])
@@ -344,8 +344,11 @@ export function MediaAiChat({
   const setInput = (value: string) => patch((s) => ({ ...s, input: value }))
   const gen = session.extra.gen ?? null
 
-  /** Run the generation from her brief — a blank page, no visual language. */
-  const generate = async (brief: string) => {
+  /**
+   * Run the generation from her brief (+ any references she attached) — a
+   * blank page, no visual language.
+   */
+  const generate = async (brief: string, references: string[] = []) => {
     const key = chatKey
     const init = fresh
     const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, init, fn)
@@ -353,7 +356,7 @@ export function MediaAiChat({
     const g = cur.extra.gen
     if (cur.busy || !g || g.phase === "running") return
     const run = generatorById.get(g.id)
-    const said: ChatMessage = { role: "user", content: brief }
+    const said: ChatMessage = { role: "user", content: brief, ...(references.length ? { images: references } : {}) }
     if (!run) {
       // A reload dropped the button's settings — the media panel starts it again.
       patchKey((s) => ({
@@ -376,8 +379,8 @@ export function MediaAiChat({
     let result: Awaited<ReturnType<typeof run>>
     try {
       result = preview
-        ? await trackAwayResult(`ai-gen-${postId}-${format}-${Date.now()}`, run(brief), isWatching, away, postId)
-        : await run(brief)
+        ? await trackAwayResult(`ai-gen-${postId}-${format}-${Date.now()}`, run(brief, references), isWatching, away, postId)
+        : await run(brief, references)
     } catch (err) {
       result = { ok: false, message: err instanceof Error ? err.message : String(err) }
     }
@@ -393,7 +396,7 @@ export function MediaAiChat({
           extra: { ...s.extra, gen: null },
         }
       }
-      // Failed: her words back in the composer — send retries.
+      // Failed: her words (and references) back in the composer — send retries.
       const next: ChatMessage[] = [
         ...s.messages,
         { role: "assistant", content: aiErrorMessage(result.message || "היצירה לא הצליחה. נסו שוב."), error: true },
@@ -406,6 +409,7 @@ export function MediaAiChat({
         extra: { ...s.extra, gen: { ...g, phase: "brief", lastBrief: brief } },
       }
     })
+    if (!result.ok && references.length) restoreRefs(references)
     revealChatReply(key, result.ok ? away.done : away.failed)
   }
 
@@ -420,10 +424,15 @@ export function MediaAiChat({
     const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, init, fn)
     const cur = getChat<ChatMessage, MediaChatExtra>(key) ?? init()
     if (cur.busy) return
-    // Before the generation: whatever she types is her brief for it.
+    // Before the generation: whatever she types (and attaches) is her brief
+    // for it — references alone work too, as in the AI edit.
     if (cur.extra.gen && cur.extra.gen.phase !== "running") {
-      const brief = (preset ?? cur.input).trim()
-      if (brief) void generate(brief)
+      const attached = refs.refs
+      const typed = (preset ?? cur.input).trim()
+      const brief = typed || (attached.length ? REFERENCE_ONLY_INSTRUCTION : "")
+      if (!brief) return
+      refs.clear()
+      void generate(brief, attached)
       return
     }
     let text = (preset ?? cur.input).trim()
@@ -725,8 +734,7 @@ export function MediaAiChat({
             autoFocus
             className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent px-1 py-2 text-small shadow-none focus-visible:ring-0"
           />
-          {/* Screenshots go with edits; the generate routes don't take them yet. */}
-          {!gen && <ReferenceButton r={refs} disabled={loading} />}
+          <ReferenceButton r={refs} disabled={loading} />
           <Button
             size="icon-sm"
             onClick={() => void send()}
