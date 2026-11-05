@@ -782,10 +782,10 @@ function TalkingHeadFlow({
       if (data.covers?.[0]) {
         onCoverImageChange(data.covers[0])
       } else {
-        // The cover route refuses without a brand_style (see CLAUDE.md). That
-        // refusal was invisible here — the cover slot just stayed empty and the
-        // user had no idea why or what to do about it.
-        toast.error("לא הצלחנו לייצר קאבר. ודאו שהעליתם דוגמאות קאברים בהגדרות > מדיה.")
+        // An empty answer used to mean "no brand_style", but the cover route
+        // no longer reads brand_style (one shared style + her pill colour),
+        // so uploading cover examples wouldn't help — don't send her there.
+        toast.error("לא הצלחנו לייצר קאבר. נסו שוב.")
       }
     } catch (err) {
       console.error("[media-panel][generate-cover]", err)
@@ -955,7 +955,7 @@ function TalkingHeadFlow({
         const coverData = await coverRes.json()
         if (coverData.covers?.[0]) onCoverImageChange(coverData.covers[0])
         else {
-          toast.error("לא הצלחנו לייצר קאבר. ודאו שהעליתם דוגמאות קאברים בהגדרות > מדיה.")
+          toast.error("לא הצלחנו לייצר קאבר. נסו שוב.")
         }
       } catch (err) {
         console.error("[media-panel][cover-from-drive]", err)

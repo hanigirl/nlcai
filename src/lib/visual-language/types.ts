@@ -9,7 +9,7 @@
 
 export const MAX_BRAND_COLORS = 3
 export const MAX_BRAND_ELEMENTS = 8
-/** Per format (carousel / cover / story / image), not in total. */
+/** Per format (carousel / cover / story / image / b-roll), not in total. */
 export const MAX_BRAND_EXAMPLES = 6
 
 /**
@@ -26,12 +26,17 @@ export function isMediaStyle(v: unknown): v is MediaStyle {
 /** The media formats a visual language is adapted to. */
 export type VisualFormat = "carousel" | "story" | "image_post" | "b_roll"
 
-/** What kind of design each example is — the analysis decides. */
+/**
+ * What kind of design each example is — the analysis decides, except
+ * b_roll: only she files that one (a b-roll frame and a story look alike,
+ * so the model is never asked to tell them apart).
+ */
 export type ExampleKind =
   | "carousel"
   | "story"
   | "feed_post"
   | "cover"
+  | "b_roll"
   | "website"
   | "banner"
   | "poster"
@@ -42,6 +47,7 @@ export const EXAMPLE_KIND_LABELS: Record<ExampleKind, string> = {
   story: "סטורי",
   feed_post: "פוסט",
   cover: "קאבר",
+  b_roll: "בי-רול",
   website: "אתר",
   banner: "באנר",
   poster: "פוסטר",
@@ -49,7 +55,7 @@ export const EXAMPLE_KIND_LABELS: Record<ExampleKind, string> = {
 }
 
 /** The kinds she can file an example under herself (Settings → דוגמאות לשימוש). */
-export const USER_EXAMPLE_KINDS = ["carousel", "cover", "story", "feed_post"] as const
+export const USER_EXAMPLE_KINDS = ["carousel", "cover", "story", "feed_post", "b_roll"] as const
 export type UserExampleKind = (typeof USER_EXAMPLE_KINDS)[number]
 
 /** The kind she filed an example under, read from user_media.metadata.kind. */

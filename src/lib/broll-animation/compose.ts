@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { referenceBlocks } from "@/lib/ai-edit-references"
+import type { ModelImage } from "@/lib/visual-language/image-input"
 
 /**
  * B-roll text animation, written by Claude Opus (Hani, 2026-10-22).
@@ -168,8 +169,34 @@ function assertSeekable(html: string): void {
   }
 }
 
-async function ask(apiKey: string, user: string, refs: string[] = []): Promise<string> {
+/**
+ * Her finished b-roll frames (Settings → דוגמאות לשימוש → בי-רול) as image
+ * blocks, then what they are for. Unlike an edit reference, these are the
+ * standing look of her b-rolls.
+ */
+function exampleBlocks(examples: ModelImage[]): Anthropic.ContentBlockParam[] {
+  if (!examples.length) return []
+  return [
+    ...examples.map(
+      (ex): Anthropic.ContentBlockParam => ({
+        type: "image",
+        source: { type: "base64", media_type: ex.mediaType, data: ex.base64 },
+      }),
+    ),
+    {
+      type: "text",
+      text:
+        (examples.length === 1
+          ? "The image above is a frame from a b-roll reel the creator already made, in her own style."
+          : `The ${examples.length} images above are frames from b-roll reels the creator already made, in her own style.`) +
+        " Set her text the way it looks there: the type's character, weight and scale, its colours, any plate / highlight / outline behind it, where it sits in the frame and how much of it there is. If she wrote her own design instruction, it still wins. Do NOT copy their words — use exactly the text given below.",
+    },
+  ]
+}
+
+async function ask(apiKey: string, user: string, refs: string[] = [], examples: ModelImage[] = []): Promise<string> {
   const client = new Anthropic({ apiKey })
+  const blocks = [...exampleBlocks(examples), ...referenceBlocks(refs)]
   // Streamed: an Opus composition can run long, and the SDK refuses long
   // non-streaming requests.
   const message = await client.messages
@@ -177,7 +204,7 @@ async function ask(apiKey: string, user: string, refs: string[] = []): Promise<s
       model: BROLL_MODEL,
       max_tokens: 16000,
       system: SYSTEM,
-      messages: [{ role: "user", content: refs.length ? [...referenceBlocks(refs), { type: "text", text: user }] : user }],
+      messages: [{ role: "user", content: blocks.length ? [...blocks, { type: "text", text: user }] : user }],
     })
     .finalMessage()
   const text = message.content
@@ -188,11 +215,15 @@ async function ask(apiKey: string, user: string, refs: string[] = []): Promise<s
   return html
 }
 
-/** A fresh composition for this hook. `variation` nudges a re-press to a new idea. */
+/**
+ * A fresh composition for this hook. `variation` nudges a re-press to a new
+ * idea. `examples` are her own finished b-roll frames — the text's look.
+ */
 export async function composeBRoll(
   apiKey: string,
   brief: CompositionBrief,
   variation: number,
+  examples: ModelImage[] = [],
 ): Promise<string> {
   return ask(
     apiKey,
@@ -200,9 +231,13 @@ export async function composeBRoll(
       briefText(brief),
       "",
       variation > 0
-        ? `This is attempt #${variation + 1} for the same post — take a clearly different typographic and motion idea from an obvious first take.`
+        ? examples.length
+          ? `This is attempt #${variation + 1} for the same post — keep the look of her example frames, but take a clearly different motion and layout idea from an obvious first take.`
+          : `This is attempt #${variation + 1} for the same post — take a clearly different typographic and motion idea from an obvious first take.`
         : "",
     ].join("\n"),
+    [],
+    examples,
   )
 }
 
