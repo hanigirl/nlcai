@@ -21,7 +21,9 @@ export function useDismissOnOutsideClick(
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as Element | null
       if (!target || ref.current?.contains(target)) return
-      if (target.closest("[data-sonner-toaster], [data-radix-popper-content-wrapper], [role='dialog']")) return
+      // A dialog's dimmed backdrop closes that dialog, not the panel under it
+      // (the AI panel's "מגוגל דרייב" gallery — 2026-11-06).
+      if (target.closest("[data-sonner-toaster], [data-radix-popper-content-wrapper], [role='dialog'], [data-slot='dialog-overlay']")) return
       dismissRef.current()
     }
     document.addEventListener("pointerdown", onPointerDown)

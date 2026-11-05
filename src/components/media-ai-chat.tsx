@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { AI_ERROR_BOX, aiErrorMessage } from "@/lib/ai-error-message"
 import { ArrowUp, Check, Loader2, X } from "lucide-react"
 import { AiSparkle } from "@/components/ai-refine-button"
@@ -30,13 +30,13 @@ import { AiChatNewButton } from "@/components/ai-chat-new-button"
 import { canRevealChat, revealChatReply } from "@/lib/ai-chat-reveal"
 import { REFERENCE_ONLY_INSTRUCTION } from "@/lib/ai-edit-references"
 import {
-  ReferenceButton,
   ReferenceDropHint,
   ReferenceThumbs,
   ReferenceTray,
   useReferenceImages,
 } from "@/components/ai-edit-reference"
 import { LinkReferenceRows, useLinkReferences } from "@/components/ai-edit-link-reference"
+import { ReferenceAddMenu } from "@/components/ai-edit-drive-reference"
 import type { MediaStyle } from "@/lib/visual-language/types"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
@@ -372,6 +372,11 @@ export function MediaAiChat({
   useWatchChat(chatKey)
   // Screenshots waiting to go with the next message; another conversation starts clean.
   const refs = useReferenceImages()
+  // Videos from Drive come in as one frame each — said under the attachments.
+  const [driveFrames, setDriveFrames] = useState(0)
+  useEffect(() => {
+    if (!refs.refs.length) setDriveFrames(0)
+  }, [refs.refs.length])
   const { clear: clearRefs, restore: restoreRefs } = refs
   // A link in her words becomes a reference too — while the panel asks how to start.
   const links = useLinkReferences(session.input, refs, session.extra.gen?.phase === "brief")
@@ -815,6 +820,13 @@ export function MediaAiChat({
         )}
         <LinkReferenceRows l={links} />
         <ReferenceTray r={refs} />
+        {driveFrames > 0 && refs.refs.length > 0 && (
+          <p className="mb-2 text-xs-body text-text-neutral-default">
+            {driveFrames === 1
+              ? "מהסרטון שבחרתם צורפה תמונה אחת ממנו (פריים), לא הסרטון עצמו."
+              : `מ-${driveFrames} הסרטונים שבחרתם צורפה תמונה אחת מכל אחד (פריים), לא הסרטונים עצמם.`}
+          </p>
+        )}
         {gen?.phase === "brief" && gen.placeRefs && refs.refs.length > 0 && (() => {
           const { place, looks } = refs.split(refs.refs)
           return (
@@ -846,7 +858,8 @@ export function MediaAiChat({
             autoFocus
             className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent px-1 py-2 text-small shadow-none focus-visible:ring-0"
           />
-          <ReferenceButton r={refs} disabled={loading} />
+          {/* "מהמחשב" / "מגוגל דרייב" — the folder linked to this format (Hani, 2026-11-06). */}
+          <ReferenceAddMenu r={refs} format={format} disabled={loading} onFrames={setDriveFrames} />
           <Button
             size="icon-sm"
             onClick={() => void send()}
