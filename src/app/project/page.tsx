@@ -1,6 +1,6 @@
 "use client"
 
-import { FormatLane, LaneColumn, LaneStem, TreeConnector, newestLaneCard } from "@/components/format-lanes"
+import { FormatLane, LaneColumn, LaneStem, TreeConnector, goToLaneCard, newestLaneCard } from "@/components/format-lanes"
 import { useAiEditRequests, type AiEditOpening } from "@/lib/ai-edit-intent"
 import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
@@ -69,6 +69,7 @@ import { mediaSignature } from "@/lib/timing-storage"
 import { useFormatApprovals, type ApprovalStatus } from "@/components/format-approval/use-format-approvals"
 import {
   ApprovalHeaderTag,
+  ApprovalStatusPill,
   FORMAT_NOUN,
   approvalCardBorder,
   approvalHeaderFill,
@@ -2661,15 +2662,28 @@ function ProjectPageInner() {
                               // can't serve as a Radix TooltipTrigger asChild.
                               <div
                                 key={format.id}
-                                title={alreadyDuplicated ? `${format.label} כבר שוכפל` : undefined}
+                                title={alreadyDuplicated ? `${format.label} כבר שוכפל, מעבר לכרטיס` : undefined}
                               >
                                 <SelectionCard
                                   description={format.label}
-                                  icon={<format.icon className="size-4" />}
+                                  // Its status, as the existing tags (Hani,
+                                  // 2026-11-05) — no icon; nothing until it's duplicated.
+                                  icon={
+                                    alreadyDuplicated ? (
+                                      <ApprovalStatusPill status={approvals.statusOf(format.id as Parameters<typeof approvals.statusOf>[0])} />
+                                    ) : undefined
+                                  }
                                   isSelected={selectedFormats.includes(format.id)}
-                                  className={alreadyDuplicated ? "cursor-default" : undefined}
                                   onSelect={() => {
-                                    if (alreadyDuplicated) return
+                                    // Already duplicated (Hani, 2026-11-05):
+                                    // close the picker and take her to that
+                                    // format's card — the lanes' own glide.
+                                    if (alreadyDuplicated) {
+                                      setShowFormats(false)
+                                      setActiveCard(`format-${format.id}`)
+                                      goToLaneCard(canvasRef.current, format.id)
+                                      return
+                                    }
                                     setSelectedFormats((prev) =>
                                       prev.includes(format.id)
                                         ? prev.filter((f) => f !== format.id)

@@ -12,6 +12,12 @@
  *   ?state=single — one format only
  *   ?state=live   — cards land one by one; the canvas follows each new card
  *                   (drag the canvas mid-run: it stops following while you do)
+ *   ?state=jump   — the real "לאיזה פורמטים לשכפל?" tiles: pressing a ✓
+ *                   (already duplicated) format closes the picker and glides
+ *                   to that format's card (Hani, 2026-11-05).
+ *                   "שיכפול לפורמטים" on the core post opens it again.
+ *                   Each duplicated format shows its status as the existing
+ *                   tag (sample: תוזמן / מאושר / מחכה לאישור); no icons.
  */
 
 import { Suspense, useEffect, useRef, useState } from "react"
@@ -19,7 +25,11 @@ import { useSearchParams } from "next/navigation"
 import { Layers, Smartphone, Video, ImageIcon } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { InfiniteCanvas, type InfiniteCanvasHandle } from "@/components/infinite-canvas"
-import { FormatLane, LaneColumn, LaneStem, TreeConnector, newestLaneCard } from "@/components/format-lanes"
+import { FormatLane, LaneColumn, LaneStem, TreeConnector, goToLaneCard, newestLaneCard } from "@/components/format-lanes"
+import { SelectionCard } from "@/components/selection-card"
+import { ApprovalStatusPill } from "@/components/format-approval/approval-visuals"
+import type { ApprovalStatus } from "@/components/format-approval/use-format-approvals"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 
 type Card = { title: string; icon: LucideIcon; tall?: boolean; loading?: boolean }
@@ -82,6 +92,8 @@ function LanesPreview() {
   const state = useSearchParams().get("state") ?? "full"
   const canvasRef = useRef<InfiniteCanvasHandle>(null)
   const [step, setStep] = useState(0)
+  // jump: the picker is open until a ✓ format is pressed.
+  const [pickerOpen, setPickerOpen] = useState(true)
 
   useEffect(() => {
     if (state !== "live") return
@@ -127,13 +139,32 @@ function LanesPreview() {
     <div className="h-screen w-full">
       <InfiniteCanvas handleRef={canvasRef}>
         <div className="flex items-start gap-0 pt-24 pr-24" dir="rtl">
-          <StandInCard title="פוסט ליבה" icon={Layers} />
-          <div className="flex items-center mt-[55px] shrink-0">
-            <div className="h-[2px] w-7 bg-gray-80" />
+          <div className="flex w-[346px] shrink-0 flex-col gap-2 [&>div]:w-full">
+            <StandInCard title="פוסט ליבה" icon={Layers} />
+            {state === "jump" && (
+              <Button onClick={() => setPickerOpen(true)}>שיכפול לפורמטים</Button>
+            )}
           </div>
-          <div className="w-[346px] shrink-0 [&>div]:w-full">
-            <StandInCard title="לאיזה פורמטים לשכפל?" icon={Layers} />
-          </div>
+          {(state !== "jump" || pickerOpen) && (
+            <>
+              <div className="flex items-center mt-[55px] shrink-0">
+                <div className="h-[2px] w-7 bg-gray-80" />
+              </div>
+              {state === "jump" ? (
+                <DuplicatePicker
+                  duplicated={lanes.map((l) => l.fid)}
+                  onJump={(fid) => {
+                    setPickerOpen(false)
+                    goToLaneCard(canvasRef.current, fid)
+                  }}
+                />
+              ) : (
+                <div className="w-[346px] shrink-0 [&>div]:w-full">
+                  <StandInCard title="לאיזה פורמטים לשכפל?" icon={Layers} />
+                </div>
+              )}
+            </>
+          )}
           <div className="flex items-start" dir="rtl">
             <LaneStem />
             <LaneColumn>
@@ -148,6 +179,48 @@ function LanesPreview() {
           </div>
         </div>
       </InfiniteCanvas>
+    </div>
+  )
+}
+
+const PICKER_FORMATS: { id: string; label: string }[] = [
+  { id: "talking_head", label: "דיבור למצלמה" },
+  { id: "carousel", label: "קרוסלה" },
+  { id: "story", label: "סטורי" },
+  { id: "image_post", label: "פוסט תמונה" },
+]
+/** Sample statuses, as useFormatApprovals computes them on /project. */
+const SAMPLE_STATUS: Record<string, ApprovalStatus> = {
+  talking_head: "scheduled",
+  carousel: "approved",
+  story: "pending",
+}
+
+/** The canvas's "לאיזה פורמטים לשכפל?" card, as /project draws it. */
+function DuplicatePicker({ duplicated, onJump }: { duplicated: string[]; onJump: (fid: string) => void }) {
+  return (
+    <div
+      dir="rtl"
+      className="flex w-[567px] shrink-0 flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white pb-6 dark:bg-gray-10"
+    >
+      <div className="flex items-center rounded-t-[20px] bg-bg-surface px-6 py-3">
+        <span className="text-p-bold text-text-primary-default">לאיזה פורמטים לשכפל?</span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 px-6">
+        {PICKER_FORMATS.map((f) => {
+          const done = duplicated.includes(f.id)
+          return (
+            <div key={f.id} title={done ? `${f.label} כבר שוכפל, מעבר לכרטיס` : undefined}>
+              <SelectionCard
+                description={f.label}
+                icon={done ? <ApprovalStatusPill status={SAMPLE_STATUS[f.id]} /> : undefined}
+                isSelected={done}
+                onSelect={() => done && onJump(f.id)}
+              />
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

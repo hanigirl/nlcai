@@ -144,3 +144,34 @@ export function newestLaneCard(fid: string): HTMLElement | null {
   )
   return cards[cards.length - 1] ?? null
 }
+
+/** A lane's own format card — its first card (the format's text). */
+export function laneFormatCard(fid: string): HTMLElement | null {
+  const row = document.querySelector<HTMLElement>(`[data-lane="${fid}"] [data-lane-row]`)
+  if (!row) return null
+  return (
+    Array.from(row.children).find(
+      (c): c is HTMLElement => c instanceof HTMLElement && !c.hasAttribute("aria-hidden"),
+    ) ?? null
+  )
+}
+
+/**
+ * Take her to a format's card (Hani, 2026-11-05: a ✓ format in "לאיזה
+ * פורמטים לשכפל?" jumps to its card). The same canvas glide as the lanes'
+ * auto-follow; two frames first so a layout change (the picker closing) has
+ * settled before the card is measured.
+ */
+export function goToLaneCard(
+  canvas: { focusOn: (el: HTMLElement, opts?: { mode?: "centre" | "follow" }) => void } | null,
+  fid: string,
+) {
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      const card = laneFormatCard(fid)
+      // "centre", not "follow": she asked to go there — follow mode stands
+      // down right after her own click on the canvas.
+      if (card) canvas?.focusOn(card, { mode: "centre" })
+    }),
+  )
+}
