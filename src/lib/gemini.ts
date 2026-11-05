@@ -236,6 +236,31 @@ function extractText(data: InteractionResponse): string {
 }
 
 /**
+ * Why Claude should write this round instead of Gemini, or null when it
+ * shouldn't.
+ *
+ * - "quota": Google won't serve the key right now (429).
+ * - "busy": Google's side is overloaded (5xx) or never answered (timeout /
+ *   network). In production this was the common case: 14 of the 17 failed
+ *   hook rounds on 2026-11-02..03 were Google's own "gemini-3.6-flash is
+ *   currently experiencing high demand" 503, the other 3 were timeouts. Only
+ *   quota used to switch to Claude, so these users got "השרתים של Gemini
+ *   עמוסים" and zero hooks while their Claude key sat unused (Hani,
+ *   2026-11-05).
+ *
+ * A rejected key is deliberately NOT here: that needs the user to fix the
+ * key, and quietly billing their Claude credits would hide it.
+ */
+export type ClaudeStandInReason = "quota" | "busy"
+
+export function claudeStandInReason(err: unknown): ClaudeStandInReason | null {
+  if (!(err instanceof GeminiError)) return null
+  if (err.code === "quota") return "quota"
+  if (err.code === "overloaded") return "busy"
+  return null
+}
+
+/**
  * Maps a Gemini failure to the error codes the hook routes already return, so
  * the existing client-side error banners keep working unchanged.
  */

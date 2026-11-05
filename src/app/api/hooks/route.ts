@@ -9,7 +9,7 @@ import { findNearDuplicate } from "@/lib/agents/hook-similarity"
 import { DUMMY_HOOKS } from "@/lib/agents/dummy-data"
 import { fetchLearningInsights } from "@/lib/learning-insights"
 import { PRIMARY_MODEL, FALLBACK_MODEL, isOverloadError } from "@/lib/anthropic-fallback"
-import { GeminiError, generateWithGeminiFallback, geminiErrorCode } from "@/lib/gemini"
+import { claudeStandInReason, generateWithGeminiFallback, geminiErrorCode, type ClaudeStandInReason, type GeminiError } from "@/lib/gemini"
 import { detectAddressGender, detectAddressGenderFromText } from "@/lib/detect-addressing"
 import { getAuthUser } from "@/lib/auth-user"
 import { stripDashes } from "@/lib/strip-dashes"
@@ -141,6 +141,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Engine selection, by capability rather than by an allowlist.
+    // (When the Gemini call itself fails for quota, overload or a timeout,
+    // Claude writes the round instead — see the Gemini branch below.)
     //
     // Gemini is live for every user who has connected a Gemini key: one call,
     // no judge, no polish. Everyone who has not keeps the Claude chain exactly
@@ -256,11 +258,11 @@ export async function POST(req: NextRequest) {
 
     let hookTexts: string[] = []
     let modelFallback = false
-    // Set when Google refused the Gemini call for quota and Claude wrote the
-    // round instead — the same stand-in /api/homepage-hooks got on
-    // 2026-10-08. This route was missed then, so on /project a blocked key
-    // still ended in "Google חסמה זמנית" and zero hooks (Rivki, 2026-10-21).
-    let geminiQuotaFallback: { daily: boolean; resetAt: string | null } | null = null
+    // Set when the Gemini call failed in a way Claude can cover and Claude
+    // wrote the round instead. Quota first (Rivki, 2026-10-21: a blocked key
+    // ended in "Google חסמה זמנית" and zero hooks), then Google overload and
+    // timeouts (2026-11-05) — see claudeStandInReason.
+    let claudeStandIn: { reason: ClaudeStandInReason; daily: boolean; resetAt: string | null } | null = null
     let writeWithClaude = !geminiCohort
 
     if (geminiCohort) {
@@ -272,33 +274,36 @@ export async function POST(req: NextRequest) {
       // running out mid-response truncates the list and silently costs the
       // user hooks, while unused budget costs nothing.
       //
-      // Timeouts, explicitly: the library's 90s default was cutting off calls
-      // that were still working — it was two of the three Gemini failures in
-      // production on 2026-09-01, and the user just saw "השרתים עמוסים" for a
-      // generation that would have landed. Pro thinking through ten hooks
-      // routinely runs past a minute, so it gets 180s; Flash is fast enough
-      // that 60s is already generous. Worst case both fire back to back at
-      // 240s, still inside this route's maxDuration of 300.
+      // Timeout: 120s, one call. It used to pass timeoutMs 180s AND
+      // fallbackTimeoutMs 60s; once Flash became the only call, the fallback
+      // value is the one generateWithGeminiFallback applies, so the real cap
+      // was 60s. Flash thinking through ten hooks ran past it three times on
+      // 2026-11-03 and the user saw "השרתים עמוסים". 120s leaves room for
+      // Claude to still write the round after a timeout: 120s + the Claude
+      // writer and judge stays inside this route's maxDuration of 300.
       let rawText: string | null = null
       try {
         const res = await generateWithGeminiFallback(geminiKey, {
           prompt: `${systemPrompt}\n\n${prompt}`,
           maxOutputTokens: count > 5 ? 24576 : 16384,
           thinkingLevel: "high",
-          timeoutMs: 180_000,
-          fallbackTimeoutMs: 60_000,
+          timeoutMs: 120_000,
         })
         rawText = res.text
         modelFallback = res.fallback
       } catch (err) {
-        // Quota is the one Gemini failure Claude can stand in for — the key
-        // works, Google just won't serve it right now. Without a Claude key
-        // there's nothing to fall back to, so the quota error stands.
-        if (!(err instanceof GeminiError && err.code === "quota" && anthropicKey)) throw err
-        console.warn(`[api/hooks] Gemini quota hit (daily=${!!err.daily}) — Claude writes this round:`, err.message)
-        geminiQuotaFallback = {
-          daily: !!err.daily,
-          resetAt: err.retryAfterMs ? new Date(Date.now() + err.retryAfterMs).toISOString() : null,
+        // Quota, overload and timeouts are failures Claude can stand in for:
+        // the request was fine, Google just didn't serve it. Without a Claude
+        // key there's nothing to fall back to, so the Gemini error stands.
+        const reason = claudeStandInReason(err)
+        if (!reason || !anthropicKey) throw err
+        // A non-null reason means it is a GeminiError.
+        const gErr = err as GeminiError
+        console.warn(`[api/hooks] Gemini ${reason} (daily=${!!gErr.daily}) — Claude writes this round:`, gErr.message)
+        claudeStandIn = {
+          reason,
+          daily: !!gErr.daily,
+          resetAt: gErr.retryAfterMs ? new Date(Date.now() + gErr.retryAfterMs).toISOString() : null,
         }
         writeWithClaude = true
       }
@@ -465,13 +470,15 @@ export async function POST(req: NextRequest) {
       model_fallback: modelFallback,
       // Same frame shape the home page streams, so the client reuses
       // handleGeminiQuotaFrame for the "Claude wrote these" toast.
-      ...(geminiQuotaFallback
+      ...(claudeStandIn?.reason === "quota"
         ? {
             gemini_quota_claude_fallback: hooks.length,
-            daily: geminiQuotaFallback.daily,
-            reset_at: geminiQuotaFallback.resetAt,
+            daily: claudeStandIn.daily,
+            reset_at: claudeStandIn.resetAt,
           }
-        : {}),
+        : claudeStandIn?.reason === "busy"
+          ? { gemini_busy_claude_fallback: hooks.length }
+          : {}),
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
