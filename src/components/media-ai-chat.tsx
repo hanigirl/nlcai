@@ -488,10 +488,23 @@ export function MediaAiChat({
     }
     // If she leaves before it lands, the result arrives as a toast (the
     // server has saved it either way) — see lib/long-wait.
-    const run =
+    // The edit ran but changed nothing (the server saved nothing): the reply
+    // says so instead of "עדכנתי" (Hani, 2026-11-05).
+    let unchanged: string | null = null
+    const run = (
       format === "b_roll"
         ? startBRollEdit(postId, editText, { quiet: true, references: attached })
-        : editImages(editText, attached)
+        : editImages(
+            editText,
+            attached,
+            // No image this time: the ones from her last message that had any
+            // ("שימי את התמונה!" after a try that missed means those).
+            attached.length ? [] : ([...cur.messages].reverse().find((m) => m.role === "user" && m.images?.length)?.images ?? []),
+          )
+    ).then((r) => {
+      if (r.ok && r.unchanged) unchanged = r.unchanged
+      return r
+    })
     const result = preview
       ? await trackAwayResult(`ai-edit-${postId}-${format}-${Date.now()}`, run, isWatching, AWAY_COPY[format], postId)
       : await run
@@ -500,7 +513,9 @@ export function MediaAiChat({
       busy: false,
       messages: [
         ...s.messages,
-        result.ok
+        result.ok && unchanged
+          ? { role: "assistant", content: unchanged, memory }
+          : result.ok
           ? { role: "assistant", content: copy.done, done: true, memory }
           : {
               role: "assistant",
@@ -562,7 +577,8 @@ export function MediaAiChat({
   async function editImages(
     text: string,
     references: string[] = [],
-  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    earlierReferences: string[] = [],
+  ): Promise<{ ok: true; unchanged?: string } | { ok: false; message: string }> {
     try {
       const res = await fetch("/api/media/ai-edit", {
         method: "POST",
@@ -572,14 +588,17 @@ export function MediaAiChat({
           format,
           instruction: text,
           ...(references.length ? { references } : {}),
+          ...(earlierReferences.length ? { earlierReferences } : {}),
         }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         urls?: string[]
         message?: string
         error?: string
+        unchanged?: boolean
       }
       if (!res.ok || !data.urls) return { ok: false, message: data.message ?? data.error ?? "העריכה לא הצליחה" }
+      if (data.unchanged) return { ok: true, unchanged: data.message || "הבקשה לא שינתה כלום, אז השארתי את המדיה כמו שהייתה." }
       onUpdated?.(format, data.urls)
       return { ok: true }
     } catch (err) {

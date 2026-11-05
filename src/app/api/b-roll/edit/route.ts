@@ -5,7 +5,11 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
 import { finalizeHtml, reviseBRoll } from "@/lib/broll-animation/compose"
 import { renderComposition } from "@/lib/broll-animation/render"
-import { loadComposition, saveBRoll } from "@/lib/broll-animation/store"
+import { loadComposition, saveBRoll, uploadBackground } from "@/lib/broll-animation/store"
+import { currentCompositionBrief } from "@/lib/broll-animation/brief"
+import { BACKGROUND_FRAMINGS, buildBackgroundPrompt, cropToCanvas } from "@/lib/broll-animation/background"
+import { generateImage } from "@/lib/openai-image"
+import { MOTION_RESTYLE_NOTE, wantsOwnLanguage } from "@/lib/visual-language/current-brief"
 import { parseReferences } from "@/lib/ai-edit-references"
 
 // Opus revision + frame-by-frame render.
@@ -92,22 +96,65 @@ export async function POST(req: NextRequest) {
 
     // What to remember is decided before the edit, by the chat's memory
     // check (POST /api/visual-language/style-memory) — this route only edits.
-    const template = await reviseBRoll(anthropicKey, composition.brief, composition.template, text, refs)
-
+    // Edited from her CURRENT language — never the snapshot the clip was made
+    // in. When that language changed since, or she asks for hers, the look is
+    // rebuilt in it, background included (Hani, 2026-11-05).
+    const ownLanguage = wantsOwnLanguage(text)
+    const current = await currentCompositionBrief(supabase, user.id, composition.brief, { format: "b_roll", ownLanguage })
+    const restyle = current.changed || ownLanguage
+    const brief = current.brief
     const stamp = crypto.randomUUID()
+    let backgroundUrl = composition.backgroundUrl
+    let template: string
+    if (restyle) {
+      let openaiKey: string
+      try {
+        openaiKey = await getUserApiKey(supabase, "openai_api_key")
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        if (msg === "openai_not_connected") {
+          return NextResponse.json(
+            { error: msg, message: "כדי להחיל את השפה הוויזואלית על הבי-רול צריך לחבר מפתח OpenAI בהגדרות." },
+            { status: 400 },
+          )
+        }
+        throw e
+      }
+      const context = [brief.hook, brief.rest].filter(Boolean).join("\n")
+      const [raw, revised] = await Promise.all([
+        generateImage(openaiKey, buildBackgroundPrompt(current.direction, BACKGROUND_FRAMINGS[0], context), { shape: "9:16" }),
+        reviseBRoll(anthropicKey, brief, composition.template, `${text}\n\n${MOTION_RESTYLE_NOTE}`, refs),
+      ])
+      backgroundUrl = await uploadBackground(supabase, user.id, stamp, Buffer.from(cropToCanvas(raw), "base64"))
+      template = revised
+    } else {
+      template = await reviseBRoll(anthropicKey, brief, composition.template, text, refs)
+      // Opus handed back the same composition: nothing to render or save.
+      if (template.trim() === composition.template.trim()) {
+        return NextResponse.json({
+          url: clipUrl,
+          unchanged: true,
+          message: "הבקשה לא שינתה כלום בבי-רול, אז השארתי אותו כמו שהיה. נסו לכתוב מה בדיוק לשנות, למשל גודל הכותרת, הצבע או איך המילים נכנסות.",
+        })
+      }
+    }
+
     const os = await import("os")
     const fs = await import("fs/promises")
     const path = await import("path")
     const outPath = path.join(os.tmpdir(), `broll-edit-${stamp}.mp4`)
     tmpFiles.push(outPath)
     await renderComposition(
-      finalizeHtml(template, composition.backgroundUrl, composition.brief.fonts),
+      finalizeHtml(template, backgroundUrl, brief.fonts),
       outPath,
     )
     const clip = await fs.readFile(outPath)
 
     const url = await saveBRoll(supabase, user.id, postId, stamp, clip, {
       ...composition,
+      // The brief and background it now matches — her current language.
+      brief,
+      backgroundUrl,
       template,
       edits: [...composition.edits, text],
     })

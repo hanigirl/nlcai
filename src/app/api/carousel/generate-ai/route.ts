@@ -15,7 +15,7 @@ import {
   reservedZoneLines,
   type ImageRole,
 } from "@/lib/visual-language/fixed-elements"
-import { loadBrandFonts } from "@/lib/broll-animation/brief"
+import { buildCarouselBrief } from "@/lib/carousel-brief"
 import {
   composeCarousel,
   illustrationPrompt,
@@ -23,9 +23,7 @@ import {
   saveCarousel,
   slideHash,
   uploadIllustration,
-  type CarouselBrief,
 } from "@/lib/carousel-composition"
-import { userExampleKind, type VisualLanguage } from "@/lib/visual-language/types"
 import {
   noExtrasRule,
   resolveDesignDirection,
@@ -102,33 +100,6 @@ function buildSlidePrompt(
     KEEP_INSIDE_FRAME_RULE,
     `${noExtrasRule(direction)} No extra words.`,
   ].join("\n")
-}
-
-/**
- * Her carousel usage examples — the template the layout copies one-to-one.
- * The ones she filed under "קרוסלה" in Settings; else the ones the analysis
- * recognised as carousel slides; else all of them.
- */
-async function carouselExamples(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-  vl: VisualLanguage | null | undefined,
-): Promise<string[]> {
-  const { data } = await supabase
-    .from("user_media")
-    .select("id, storage_path, metadata")
-    .eq("user_id", userId)
-    .eq("category", "brand_example")
-    .order("created_at", { ascending: true })
-  const rows = (data ?? []) as { id: string; storage_path: string; metadata: Record<string, unknown> | null }[]
-  const filed = rows.filter((r) => userExampleKind(r.metadata) === "carousel")
-  const carouselIds = new Set((vl?.example_kinds ?? []).filter((k) => k.kind === "carousel").map((k) => k.id))
-  const recognised = rows.filter((r) => carouselIds.has(r.id))
-  const picked = filed.length ? filed : recognised.length ? recognised : rows
-  return picked
-    .filter((r) => /\.(png|jpe?g|webp|gif)$/i.test(r.storage_path))
-    .slice(0, 6)
-    .map((r) => supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl)
 }
 
 function slideRole(slide: SlideData): ImageRole {
@@ -261,26 +232,21 @@ export async function POST(req: NextRequest) {
     if (anthropicKey) {
       const started = Date.now()
       try {
-        const [fonts, { data: userRow }] = await Promise.all([
-          // "חדש לגמרי": default fonts and a palette from her brief.
-          isBlankTemplate ? Promise.resolve([]) : loadBrandFonts(supabase, user.id),
-          supabase.from("users").select("brand_colors, visual_language").eq("id", user.id).single(),
-        ])
-        const row = userRow as { brand_colors?: string[] | null; visual_language?: VisualLanguage | null } | null
-        const palette = isBlankTemplate
-          ? []
-          : isBrandTemplate && row?.visual_language?.palette?.length
-            ? row.visual_language.palette
-            : (row?.brand_colors ?? []).map((hex, i) => ({ hex, role: i === 0 ? "primary brand colour" : "brand colour" }))
-        const brief: CarouselBrief = {
+        // Built the same way on every AI edit, from her settings at that time.
+        const brief = await buildCarouselBrief(supabase, user.id, {
           slides: slides!,
-          fonts,
-          palette,
-          styleLines: direction.lines,
-          reservedLines: reservedZoneLines(direction.fixed, "content", IMAGE_WIDTH, IMAGE_HEIGHT),
-          examples: isBrandTemplate ? await carouselExamples(supabase, user.id, row?.visual_language) : [],
-          pastedElements: direction.fixed.map((el) => el.name),
-        }
+          style: isBlankTemplate
+            ? "blank"
+            : isBrandTemplate
+              ? "brand"
+              : templateId === "ai-light"
+                ? "ai-light"
+                : templateId === "ai-dark"
+                  ? "ai-dark"
+                  : "niche",
+          direction,
+        })
+        const fonts = brief.fonts
 
         // Layout first: Opus decides which slides get an illustration at all
         // (type-led examples → none), then only those are drawn.

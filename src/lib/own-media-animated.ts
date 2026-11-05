@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { BACKGROUND_FRAMINGS, buildBackgroundPrompt, cropToCanvas } from "@/lib/broll-animation/background"
-import { buildCompositionBrief } from "@/lib/broll-animation/brief"
+import { buildCompositionBrief, currentCompositionBrief } from "@/lib/broll-animation/brief"
+import { MOTION_RESTYLE_NOTE, wantsOwnLanguage } from "@/lib/visual-language/current-brief"
 import { composeBRoll, finalizeHtml, reviseBRoll, type CompositionBrief } from "@/lib/broll-animation/compose"
 import { renderComposition } from "@/lib/broll-animation/render"
 import type { StoredComposition } from "@/lib/broll-animation/store"
@@ -155,8 +156,14 @@ export async function editAnimatedStoryFrame(
   }
 
   const headline = input.headline?.trim()
+  // Her CURRENT language, never the snapshot the frame was made in. If it
+  // changed since (or she asks for hers), the frame is rebuilt in it —
+  // background and the pasted brand layer too (Hani, 2026-11-05).
+  const ownLanguage = wantsOwnLanguage(input.instruction)
+  const current = await currentCompositionBrief(supabase, userId, stored.brief, { format: "story", ownLanguage })
+  const restyle = current.changed || ownLanguage
   const brief: CompositionBrief = {
-    ...stored.brief,
+    ...current.brief,
     // New words replace both lines; no new words keep the frame's own.
     ...(headline ? { hook: headline, rest: input.body?.trim() || undefined } : {}),
     design: [stored.brief.design, design].filter(Boolean).join("\n"),
@@ -165,11 +172,14 @@ export async function editAnimatedStoryFrame(
   const stamp = crypto.randomUUID()
   const prefix = `${userId}/story/ai-anim-${stamp}`
   let { backgroundUrl, brandLayerUrl } = stored
-  const reviseInstruction = headline
-    ? `${input.instruction}\n(The frame's text is now: ${JSON.stringify([brief.hook, brief.rest].filter(Boolean).join(" / "))} — use exactly these words.)`
-    : input.instruction
+  const reviseInstruction = [
+    headline
+      ? `${input.instruction}\n(The frame's text is now: ${JSON.stringify([brief.hook, brief.rest].filter(Boolean).join(" / "))} — use exactly these words.)`
+      : input.instruction,
+    ...(restyle ? ["", MOTION_RESTYLE_NOTE] : []),
+  ].join("\n")
 
-  if (input.newBackground) {
+  if (input.newBackground || restyle) {
     const [bgDirection, storyDirection] = await Promise.all([
       resolveDesignDirection(supabase, userId, { format: "story", allowReferences: false }),
       resolveDesignDirection(supabase, userId, { format: "story" }),
