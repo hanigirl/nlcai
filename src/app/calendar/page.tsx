@@ -1076,6 +1076,11 @@ export default function CalendarPage() {
   // Networks unticked in the preview of a post that isn't on the board yet;
   // sent with the "תזמון פוסט" that puts it there.
   const [pendingExclusions, setPendingExclusions] = useState<SocialPlatform[]>([])
+  // The tick she just gave, shown at once while the server (and HighLevel)
+  // catch up — otherwise the box sits unchanged for seconds and reads as a
+  // missed click. Keyed post:format:platform; the latest click wins.
+  const [networkOverrides, setNetworkOverrides] = useState<Record<string, boolean>>({})
+  const networkSeq = useRef<Record<string, number>>({})
   // Same, for the YouTube privacy picked before the post is on the board.
   const [pendingYouTubePrivacy, setPendingYouTubePrivacy] = useState<"public" | "unlisted" | "private" | null>(null)
   const [previewDetail, setPreviewDetail] = useState<{
@@ -1191,9 +1196,10 @@ export default function CalendarPage() {
       const t = targets.find((x) => x.platform === platform)
       // No targets yet (not sent, or a draft): every connected network that
       // fits goes, minus what she unticked here before scheduling.
-      const included = t
-        ? !t.optedOut
-        : connection === "connected" && !pendingExclusions.includes(platform)
+      const override = networkOverrides[`${row.corePostId}:${row.format}:${platform}`]
+      const included =
+        override ??
+        (t ? !t.optedOut : connection === "connected" && !pendingExclusions.includes(platform))
       let publish: PreviewPublishStatus = base
       if (t && !t.optedOut && base.kind !== "draft" && base.kind !== "unscheduled") {
         publish =
@@ -1356,9 +1362,24 @@ export default function CalendarPage() {
             )
             if (!previewRow.scheduledDate || previewData?.publish.kind === "draft") return
           }
+          const key = `${previewRow.corePostId}:${previewRow.format}:${platform}`
+          const seq = (networkSeq.current[key] ?? 0) + 1
+          networkSeq.current[key] = seq
+          setNetworkOverrides((o) => ({ ...o, [key]: include }))
           void setPublishNetwork(previewRow.corePostId, previewRow.format, platform, include).then((next) => {
             reloadBoard()
             if (next?.status === "failed" && next.message) toast.error(next.message)
+            // A later click owns the box now; leave its override alone.
+            if (networkSeq.current[key] !== seq) return
+            // Saved: the override now equals the server, keep it (no flicker
+            // back while the board reloads). Not saved: drop it, so the box
+            // shows what is really there.
+            if (next) return
+            toast.error("לא הצלחנו לשמור את השינוי. נסו שוב.")
+            setNetworkOverrides((o) => {
+              const { [key]: _drop, ...rest } = o
+              return rest
+            })
           })
         },
       }
