@@ -319,7 +319,11 @@ export async function POST(req: NextRequest) {
     // past the 4.5MB a request may carry on our host, so the browser's save
     // never arrived and the chat said "נוצר אבל לא נשמר" (Hani, 2026-11-05).
     // Generating is choosing — the set is the post's.
-    const saved = await replaceImageAssetSet(supabase, user.id, postId, "story", images)
+    // Stamped with the style it was made in — the panel reopens on it.
+    const madeIn = isMediaStyle(style) ? style : base.source === "brand" ? "brand" : "niche"
+    const saved = await replaceImageAssetSet(supabase, user.id, postId, "story", images, {
+      style: madeIn === "brand" && base.source !== "brand" ? "niche" : madeIn,
+    })
     if (!saved.ok) {
       console.error("[story/generate-media] save to post", saved.error)
       return NextResponse.json(

@@ -1596,17 +1596,30 @@ function CarouselFlow({
     [brandTemplate],
   )
 
-  const [selectedTemplate, setSelectedTemplate] = useState(
-    () => savedTemplateId ?? CAROUSEL_TEMPLATES[0].id,
+  // Her last tapped tile (kept with the post across a remount), else the
+  // saved carousel's template, else the first.
+  const pickedTemplateId = (() => {
+    if (!postId || typeof window === "undefined") return undefined
+    const tid = getFormatMeta(postId, "carousel").pickedTemplateId
+    return tid && (tid === BRAND_TEMPLATE_ID || tid === BLANK_TEMPLATE_ID || CAROUSEL_TEMPLATES.some((t) => t.id === tid))
+      ? tid
+      : undefined
+  })()
+  const [selectedTemplate, setSelectedTemplateState] = useState(
+    () => pickedTemplateId ?? savedTemplateId ?? CAROUSEL_TEMPLATES[0].id,
   )
+  const setSelectedTemplate = (id: string) => {
+    setSelectedTemplateState(id)
+    if (postId) setFormatMeta(postId, "carousel", { pickedTemplateId: id })
+  }
   // Her own language is the natural default once it loads — unless this
   // post already has a carousel from another template, or she has already
   // tapped a tile.
   const [brandDefaultApplied, setBrandDefaultApplied] = useState(false)
   if (brandTemplate && !brandDefaultApplied) {
     setBrandDefaultApplied(true)
-    if (!savedTemplateId && selectedTemplate === CAROUSEL_TEMPLATES[0].id) {
-      setSelectedTemplate(BRAND_TEMPLATE_ID)
+    if (!savedTemplateId && !pickedTemplateId && selectedTemplate === CAROUSEL_TEMPLATES[0].id) {
+      setSelectedTemplateState(BRAND_TEMPLATE_ID)
     }
   }
   const [generating, setGenerating] = useState(false)
@@ -3177,7 +3190,8 @@ function MediaUploadFlow({
   // Image post / story / b-roll style: her visual language, the niche
   // language, or its dark / light version — picked in the AI card, like the
   // carousel templates.
-  const mediaStyle = useMediaStyle()
+  // Remembered per post × format: the style its media was made in, or her pick since.
+  const mediaStyle = useMediaStyle(postId, format)
 
 
   /**

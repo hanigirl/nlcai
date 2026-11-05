@@ -270,9 +270,24 @@ export async function GET(
     const storyVariant = variants.find((v) => v.format === "story")
     const storyImageUrls = imageUrlsFor(storyVariant?.id)
 
+    // The style each format's media was made in ("חדש לגמרי", her language,
+    // dark / light…), stamped on its newest media row — the panel opens on it
+    // instead of guessing her visual language (Hani, 2026-11-06).
+    const mediaStyles: Record<string, string> = {}
+    for (const v of variants) {
+      for (let i = allMedia.length - 1; i >= 0; i--) {
+        const m = allMedia[i]
+        if (m.format_variant_id !== v.id || m.asset_type === "cover") continue
+        const st = m.metadata?.style
+        if (typeof st === "string") mediaStyles[v.format] = st
+        break
+      }
+    }
+
     return NextResponse.json({
       post: {
         ...(post as Record<string, unknown>),
+        mediaStyles,
         formatPosts,
         formatsWithMedia,
         formatMedia,

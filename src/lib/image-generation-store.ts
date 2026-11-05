@@ -231,7 +231,8 @@ export function startImageGeneration(
         const saveRes = await fetch(`/api/core-posts/${postId}/media`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ format: "image_post", url: entry, assetType: "image" }),
+          // The style it was made in — the panel reopens on it.
+          body: JSON.stringify({ format: "image_post", url: entry, assetType: "image", ...(style ? { style } : {}) }),
         }).catch(() => null)
         if (!saveRes?.ok) {
           return fail("התמונה נוצרה אבל לא נשמרה בפוסט. כדי לשמור אותה: בפאנל המדיה של התמונה פתחו את הגרסה החדשה ולחצו ״שמירה כתמונת הפוסט״. אם זה לא עובד, צרו אותה שוב.")

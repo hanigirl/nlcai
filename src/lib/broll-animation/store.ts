@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { CompositionBrief } from "./compose"
+import { styleOfLines } from "@/lib/visual-language/current-brief"
 
 /**
  * A generated b-roll is three things in storage, side by side under one stamp:
@@ -119,6 +120,9 @@ export async function saveBRoll(
     asset_type: "video",
     url: publicUrl,
     status: "completed",
+    // The look it was made in — read from its brief, so an edit keeps the
+    // generation's ("חדש לגמרי" stays blank) and the panel reopens on it.
+    metadata: { style: styleOfLines(composition.brief.styleSpec.split("\n")) },
   } as never)
 
   return publicUrl

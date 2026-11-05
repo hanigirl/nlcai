@@ -1,12 +1,13 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Plus } from "lucide-react"
 import { getTemplate, type TemplateConfig } from "@/lib/carousel-templates"
 import { useBrandCarouselTemplateState } from "@/hooks/use-brand-carousel-template"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AiHoverEditButton } from "@/components/ai-hover-edit"
-import type { MediaStyle } from "@/lib/visual-language/types"
+import { isMediaStyle, type MediaStyle } from "@/lib/visual-language/types"
+import { getFormatMeta, setFormatMeta, type FormatId } from "@/lib/timing-storage"
 
 /**
  * Style picker for AI image post / story / b-roll — the same grid as the
@@ -17,7 +18,7 @@ import type { MediaStyle } from "@/lib/visual-language/types"
  * Default: her visual language when she has one, otherwise the light niche
  * version — until she taps a tile herself.
  */
-export function useMediaStyle(): {
+export function useMediaStyle(postId?: string | null, format?: FormatId): {
   style: MediaStyle
   setStyle: (s: MediaStyle) => void
   brandTemplate: TemplateConfig | null
@@ -25,10 +26,26 @@ export function useMediaStyle(): {
   brandLoading: boolean
 } {
   const { template: brandTemplate, loading: brandLoading } = useBrandCarouselTemplateState()
-  const [picked, setPicked] = useState<MediaStyle | null>(null)
+  // The style this format's media was made in, or her pick since — kept with
+  // the post's format meta, so closing and reopening the panel (a remount)
+  // never falls back to her visual language (Hani, 2026-11-06).
+  const remembered = () => {
+    const s = postId && format ? getFormatMeta(postId, format).mediaStyle : undefined
+    return isMediaStyle(s) ? s : null
+  }
+  const [picked, setPicked] = useState<MediaStyle | null>(remembered)
+  useEffect(() => {
+    setPicked(remembered())
+    // A different post / format: its own remembered style.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [postId, format])
+  const setStyle = (s: MediaStyle) => {
+    setPicked(s)
+    if (postId && format) setFormatMeta(postId, format, { mediaStyle: s })
+  }
   // While it loads, nothing jumps: her language is the expected default.
   const style: MediaStyle = picked ?? (brandTemplate || brandLoading ? "brand" : "ai-light")
-  return { style, setStyle: setPicked, brandTemplate, brandLoading }
+  return { style, setStyle, brandTemplate, brandLoading }
 }
 
 /**
