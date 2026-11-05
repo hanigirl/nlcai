@@ -245,10 +245,11 @@ function buildPostBody(
  *               title and privacy intact, then deleted. Not in the provider's
  *               public schema, which documents only TikTok and Google Business.
  *   linkedin  — `type: "post"` and nothing else, per the provider's docs.
- *               UNVERIFIED: no live LinkedIn post has been made yet (needs
- *               Hani's explicit OK). If the provider wants more, it answers
+ *               If the provider wants more, it answers
  *               422 "property … should not exist" / "… required", which lands
  *               in the log as a request-body error, not as her media's fault.
+ *               Verified live 2026-11-05 for a video post (scheduled, read
+ *               back, deleted) — image and carousel posts not yet.
  */
 function platformPostFields(input: SchedulePostInput): Record<string, unknown> {
   switch (input.platform) {
@@ -257,9 +258,10 @@ function platformPostFields(input: SchedulePostInput): Record<string, unknown> {
         type: "post",
         youtubePostDetails: {
           title: input.title ?? "",
-          // Public: it is her channel and she scheduled it to go out. The
-          // test path overrides this to "private" (see scripts in the PR).
-          privacyLevel: process.env.SOCIAL_YOUTUBE_PRIVACY === "private" ? "private" : "public",
+          // Chosen per post in the preview (Hani, 2026-11-05); public when
+          // never chosen. The verify script forces "private" through the env.
+          privacyLevel:
+            process.env.SOCIAL_YOUTUBE_PRIVACY === "private" ? "private" : (input.youtubePrivacy ?? "public"),
           type: "video",
         },
       }

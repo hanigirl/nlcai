@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
-import { refreshPublishStates, setTargetOptOut, slotKey, syncSlot } from "@/lib/social/bridge"
-import { isSocialPlatform } from "@/lib/social/networks"
+import { refreshPublishStates, setTargetOptOut, setYouTubePrivacy, slotKey, syncSlot } from "@/lib/social/bridge"
+import { isSocialPlatform, isYouTubePrivacy } from "@/lib/social/networks"
 import { canUseScheduling } from "@/lib/scheduling-access"
 
 /**
@@ -25,6 +25,9 @@ import { canUseScheduling } from "@/lib/scheduling-access"
  *   The preview's per-post network choice: take one network off this post
  *   (cancelled at the provider first) or put it back / add it.
  *
+ * POST { action: "youtube_privacy", corePostId, format, privacy }
+ *   The YouTube tab's ציבורי / לא רשום / פרטי, saved for this post.
+ *
  * Answers `{ publish: { "<corePostId>:<format>": PublishState } }`.
  */
 
@@ -45,6 +48,7 @@ export async function POST(req: NextRequest) {
     format?: unknown
     platform?: unknown
     include?: unknown
+    privacy?: unknown
   }
   try {
     body = await req.json()
@@ -79,6 +83,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "platform and include are required" }, { status: 400 })
     }
     const state = await setTargetOptOut(supabase, user.id, corePostId, format, body.platform, !body.include)
+    return NextResponse.json({ publish: { [slotKey(corePostId, format)]: state } })
+  }
+
+  if (body.action === "youtube_privacy") {
+    if (!isYouTubePrivacy(body.privacy)) {
+      return NextResponse.json({ error: "privacy must be public, unlisted or private" }, { status: 400 })
+    }
+    const state = await setYouTubePrivacy(supabase, user.id, corePostId, format, body.privacy)
     return NextResponse.json({ publish: { [slotKey(corePostId, format)]: state } })
   }
 

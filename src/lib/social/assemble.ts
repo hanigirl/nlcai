@@ -40,6 +40,8 @@ type AssembleArgs = {
   socialAccountId: string
   /** Which network this copy goes to. Defaults to Instagram (pre-042 callers). */
   platform?: SocialPlatform
+  /** YouTube only: the privacy chosen for this post. */
+  youtubePrivacy?: "public" | "unlisted" | "private"
   /** "YYYY-MM-DD" from the calendar. */
   scheduledDate: string
   /** "HH:00" from the calendar. */
@@ -181,6 +183,7 @@ export async function assembleScheduledPost(
     socialAccountId,
     platform,
     title,
+    ...(platform === "youtube" ? { youtubePrivacy: args.youtubePrivacy ?? "public" } : {}),
     caption,
     media,
     coverUrl,

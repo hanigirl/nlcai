@@ -347,12 +347,14 @@ function forWire(row: ScheduledPost): Omit<ScheduledPost, "publish"> {
  */
 function mirrorUpsert(
   rows: ScheduledPost[],
-  opts?: { backfill?: boolean; excludeNetworks?: string[] },
+  opts?: { backfill?: boolean; excludeNetworks?: string[]; youtubePrivacy?: string },
 ): void {
   if (typeof window === "undefined" || rows.length === 0) return
-  const wire = rows.map((r) =>
-    opts?.excludeNetworks ? { ...forWire(r), excludeNetworks: opts.excludeNetworks } : forWire(r),
-  )
+  const wire = rows.map((r) => ({
+    ...forWire(r),
+    ...(opts?.excludeNetworks?.length ? { excludeNetworks: opts.excludeNetworks } : {}),
+    ...(opts?.youtubePrivacy ? { youtubePrivacy: opts.youtubePrivacy } : {}),
+  }))
   const body =
     rows.length === 1 && !opts?.backfill
       ? wire[0]
@@ -490,6 +492,31 @@ export async function retryPublish(
   }
   applyPublishStates({ [slotKeyOf(corePostId, format)]: failed })
   return failed
+}
+
+/** YouTube privacy for one scheduled post (043). Answers the slot's new state. */
+export async function setYouTubePrivacy(
+  corePostId: string,
+  format: FormatId,
+  privacy: "public" | "unlisted" | "private",
+): Promise<PublishState | undefined> {
+  try {
+    const res = await fetch(`${SCHEDULE_API}/publish`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "youtube_privacy", corePostId, format, privacy }),
+    })
+    const json = (await res.json().catch(() => null)) as {
+      publish?: Record<string, PublishState>
+    } | null
+    if (json?.publish) {
+      applyPublishStates(json.publish)
+      return json.publish[slotKeyOf(corePostId, format)]
+    }
+  } catch (err) {
+    mirrorFailed("publish-youtube-privacy", err)
+  }
+  return undefined
 }
 
 /**
@@ -717,6 +744,8 @@ export function schedulePost(
      * scheduled. Sent with this one write; the server keeps it from then on.
      */
     excludeNetworks?: ("instagram" | "youtube" | "linkedin")[]
+    /** YouTube privacy picked in the preview before it was first scheduled. */
+    youtubePrivacy?: "public" | "unlisted" | "private"
   },
 ): void {
   const scheduled = getScheduledPosts()
@@ -744,7 +773,12 @@ export function schedulePost(
     (p) => !(p.corePostId === corePostId && p.format === format),
   )
   writeArray(SCHEDULED_KEY, [...others, next])
-  mirrorUpsert([next], cached?.excludeNetworks?.length ? { excludeNetworks: cached.excludeNetworks } : undefined)
+  mirrorUpsert(
+    [next],
+    cached?.excludeNetworks?.length || cached?.youtubePrivacy
+      ? { excludeNetworks: cached.excludeNetworks, youtubePrivacy: cached.youtubePrivacy }
+      : undefined,
+  )
 }
 
 /**

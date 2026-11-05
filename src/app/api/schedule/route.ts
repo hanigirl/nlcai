@@ -9,8 +9,8 @@ import {
   syncSlot,
   toPublishState,
 } from "@/lib/social/bridge"
-import { isSocialPlatform } from "@/lib/social/networks"
-import type { SocialPlatform } from "@/lib/supabase/types"
+import { isSocialPlatform, isYouTubePrivacy } from "@/lib/social/networks"
+import type { SocialPlatform, YouTubePrivacy } from "@/lib/supabase/types"
 import type { PublishState } from "@/lib/social/publish-state"
 import { canUseScheduling } from "@/lib/scheduling-access"
 import type { SchedulePublishStatus } from "@/lib/supabase/types"
@@ -64,6 +64,8 @@ type WireRow = {
    * preview of a not-yet-scheduled post). Ignored once the slot has targets.
    */
   excludeNetworks?: SocialPlatform[]
+  /** PUT only: YouTube privacy picked before the post was first sent. */
+  youtubePrivacy?: YouTubePrivacy
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -101,7 +103,9 @@ function parseWire(input: unknown): WireRow | null {
     ? r.excludeNetworks.filter(isSocialPlatform)
     : undefined
 
-  return { corePostId, format, scheduledDate, scheduledTime, publishedAt, hook, excludeNetworks }
+  const youtubePrivacy = isYouTubePrivacy(r.youtubePrivacy) ? r.youtubePrivacy : undefined
+
+  return { corePostId, format, scheduledDate, scheduledTime, publishedAt, hook, excludeNetworks, youtubePrivacy }
 }
 
 // GET — the whole board for the signed-in user.
@@ -233,6 +237,7 @@ export async function PUT(req: NextRequest) {
       if (!moved && prev.publish_status !== "failed") continue
       publish[key] = await syncSlot(supabase, user.id, r.corePostId, r.format, {
         exclude: r.excludeNetworks,
+        youtubePrivacy: r.youtubePrivacy,
       })
     }
   }

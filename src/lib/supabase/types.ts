@@ -435,6 +435,9 @@ export type SocialAccountInsert = Pick<
 
 // ---- scheduled_post_targets (042) ----
 
+/** `youtubePostDetails.privacyLevel` — ציבורי / לא רשום / פרטי. */
+export type YouTubePrivacy = "public" | "unlisted" | "private";
+
 /**
  * One network one slot goes to. The slot's own publish columns are the
  * roll-up of these rows; each row carries its own provider id and status.
@@ -447,6 +450,8 @@ export interface ScheduledPostTargetRow {
   social_account_id: string | null;
   /** The per-post opt-out: this network was taken off this one post. */
   opted_out: boolean;
+  /** YouTube only (043): null = never chosen, sent as public. */
+  youtube_privacy: YouTubePrivacy | null;
   provider_post_id: string | null;
   publish_status: SchedulePublishStatus;
   publish_error: string | null;
@@ -465,6 +470,7 @@ export type ScheduledPostTargetInsert = Pick<
       ScheduledPostTargetRow,
       | "social_account_id"
       | "opted_out"
+      | "youtube_privacy"
       | "provider_post_id"
       | "publish_status"
       | "publish_error"

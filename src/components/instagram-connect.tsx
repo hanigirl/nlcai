@@ -316,6 +316,7 @@ function InstagramConnectDialog({
   flow,
   startOnDisconnect = false,
   platform = "instagram",
+  inert = false,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -323,6 +324,8 @@ function InstagramConnectDialog({
   flow: ReturnType<typeof useConnectFlow>
   /** Which network this modal is for. Same modal, its own words and glyph. */
   platform?: SocialPlatform
+  /** Review only: buttons do nothing but say so. No fetch, no popup. */
+  inert?: boolean
   /** Open straight on the disconnect confirmation (a card's "ניתוק"). */
   startOnDisconnect?: boolean
 }) {
@@ -348,6 +351,11 @@ function InstagramConnectDialog({
 
   async function disconnect() {
     if (!account) return
+    if (inert) {
+      toast("תצוגת סקירה — שום דבר לא נותק")
+      setConfirmingDisconnect(false)
+      return
+    }
     setDisconnecting(true)
     flow.setError(null)
     try {
@@ -496,6 +504,23 @@ function InstagramConnectDialog({
                   ניתוק
                 </Button>
               </>
+            ) : isLapsed ? (
+              // Expired: reconnecting is the point; unplugging it stays possible.
+              <>
+                <Button onClick={flow.connect} disabled={flow.busy} className="gap-2">
+                  {flow.busy ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                  {flow.busy ? "מתחבר..." : "חיבור מחדש"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setConfirmingDisconnect(true)}
+                  disabled={flow.busy}
+                  className="gap-2 border-button-destructive-default text-button-destructive-default hover:bg-red-95"
+                >
+                  <Unlink className="size-4" />
+                  ניתוק
+                </Button>
+              </>
             ) : (
               <Button onClick={flow.connect} disabled={flow.busy} className="gap-2">
                 {flow.busy ? <Loader2 className="size-4 animate-spin" /> : <Icon className="size-4" />}
@@ -565,15 +590,25 @@ export function InstagramConnectDialogHost({
   onOpenChange,
   startOnDisconnect = false,
   platform = "instagram",
+  previewConnection,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   startOnDisconnect?: boolean
   /** YouTube and LinkedIn open this same modal with their own words. */
   platform?: SocialPlatform
+  /**
+   * Review only: show this connection instead of the live one, with every
+   * button inert (no fetch, no popup, nothing disconnected).
+   */
+  previewConnection?: InstagramConnection
 }) {
-  const connection = useSocialConnections()[platform]
-  const flow = useConnectFlow(platform)
+  const live = useSocialConnections()[platform]
+  const connection = previewConnection ?? live
+  const liveFlow = useConnectFlow(platform)
+  const flow = previewConnection
+    ? { ...liveFlow, connect: async () => void toast("תצוגת סקירה — לא נפתח חיבור") }
+    : liveFlow
   const { setError } = flow
   useEffect(() => {
     if (open) {
@@ -591,6 +626,7 @@ export function InstagramConnectDialogHost({
       flow={flow}
       startOnDisconnect={startOnDisconnect}
       platform={platform}
+      inert={!!previewConnection}
     />
   )
 }

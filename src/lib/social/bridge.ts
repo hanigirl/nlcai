@@ -45,6 +45,7 @@ import type {
   ScheduledPostTargetRow,
   SocialAccountRow,
   SocialPlatform,
+  YouTubePrivacy,
 } from "@/lib/supabase/types"
 import { assembleScheduledPost } from "./assemble"
 import { getSocialPublisher } from "./index"
@@ -76,7 +77,7 @@ const SLOT_COLUMNS =
   "id, user_id, core_post_id, format, scheduled_date, scheduled_time, published_at, social_account_id, provider_post_id, publish_status, publish_error, publish_synced_at"
 
 const TARGET_COLUMNS =
-  "id, user_id, scheduled_post_id, platform, social_account_id, opted_out, provider_post_id, publish_status, publish_error, publish_synced_at, published_at"
+  "id, user_id, scheduled_post_id, platform, social_account_id, opted_out, youtube_privacy, provider_post_id, publish_status, publish_error, publish_synced_at, published_at"
 
 type SlotRow = Pick<
   ScheduledPostRow,
@@ -102,6 +103,7 @@ type TargetRow = Pick<
   | "platform"
   | "social_account_id"
   | "opted_out"
+  | "youtube_privacy"
   | "provider_post_id"
   | "publish_status"
   | "publish_error"
@@ -114,6 +116,7 @@ type TargetPatch = Partial<
     ScheduledPostTargetRow,
     | "social_account_id"
     | "opted_out"
+    | "youtube_privacy"
     | "provider_post_id"
     | "publish_status"
     | "publish_error"
@@ -177,6 +180,7 @@ function toTargetState(
     publishedAt: t.published_at,
     optedOut: t.opted_out,
     handle: handle ?? null,
+    ...(t.platform === "youtube" ? { youtubePrivacy: t.youtube_privacy ?? "public" } : {}),
     ...extra,
   }
 }
@@ -280,6 +284,7 @@ async function ensureTargets(
   slot: SlotRow,
   accounts: Map<SocialPlatform, SocialAccountRow>,
   exclude: SocialPlatform[] = [],
+  youtubePrivacy?: YouTubePrivacy,
 ): Promise<TargetRow[]> {
   const existing = await loadTargets(db, slot)
 
@@ -291,6 +296,7 @@ async function ensureTargets(
         platform: p,
         social_account_id: accounts.get(p)!.id,
         opted_out: exclude.includes(p),
+        ...(p === "youtube" && youtubePrivacy ? { youtube_privacy: youtubePrivacy } : {}),
       }),
     )
     if (fresh.length === 0) return []
@@ -473,6 +479,8 @@ export type SyncOptions = {
    * written; after that, opt-outs go through `setTargetOptOut`.
    */
   exclude?: SocialPlatform[]
+  /** Same, for the YouTube privacy picked before the post was first sent. */
+  youtubePrivacy?: YouTubePrivacy
 }
 
 /**
@@ -516,7 +524,7 @@ async function syncSlotInner(
   if (!slot) return { status: "idle" }
 
   const accounts = await accountsByPlatform(db, userId)
-  const targets = await ensureTargets(db, slot, accounts, opts.exclude)
+  const targets = await ensureTargets(db, slot, accounts, opts.exclude, opts.youtubePrivacy)
 
   // No networks at all: the board is a planning board, exactly as before. Not
   // an error and not blocked — the card says "won't publish" on its own.
@@ -580,6 +588,7 @@ async function syncTarget(
       format: slot.format,
       socialAccountId: account.id,
       platform: p,
+      youtubePrivacy: target.youtube_privacy ?? undefined,
       scheduledDate: slot.scheduled_date,
       scheduledTime: slot.scheduled_time,
     })
@@ -807,6 +816,56 @@ export async function setTargetOptOut(
       status: "failed",
       code: "provider_error",
       message: "לא הצלחנו לעדכן לאן הפוסט עולה. אפשר לנסות שוב.",
+    }
+  }
+}
+
+/**
+ * YouTube privacy for one post (Hani, 2026-11-05). Saved on the YouTube
+ * target; a post already queued is re-sent so the provider holds the new
+ * privacy too (a move is a full replace — see `reschedulePost`).
+ */
+export async function setYouTubePrivacy(
+  db: Db,
+  userId: string,
+  corePostId: string,
+  format: string,
+  privacy: YouTubePrivacy,
+): Promise<PublishState> {
+  try {
+    const slot = await loadSlot(db, userId, corePostId, format)
+    if (!slot || !networkFitsFormat("youtube", format)) return { status: "idle" }
+    const accounts = await accountsByPlatform(db, userId)
+    const targets = await ensureTargets(db, slot, accounts)
+    const target = targets.find((t) => t.platform === "youtube")
+    if (!target) {
+      const { error } = await db
+        .from("scheduled_post_targets")
+        .upsert(
+          {
+            user_id: userId,
+            scheduled_post_id: slot.id,
+            platform: "youtube",
+            social_account_id: accounts.get("youtube")?.id ?? null,
+            opted_out: !accounts.has("youtube"),
+            youtube_privacy: privacy,
+          } as never,
+          { onConflict: "scheduled_post_id,platform" },
+        )
+      if (error) throw new BridgeReadError(error.message)
+      return (await rollupSlot(db, userId, slot.id))?.state ?? toPublishState(slot)
+    }
+    await patchTarget(db, target, { youtube_privacy: privacy })
+    if (target.provider_post_id && !target.opted_out && target.publish_status !== "published") {
+      return syncSlot(db, userId, corePostId, format, { mode: "update" })
+    }
+    return (await rollupSlot(db, userId, slot.id))?.state ?? toPublishState(slot)
+  } catch (err) {
+    console.error("[social/bridge][youtube-privacy]", err)
+    return {
+      status: "failed",
+      code: "provider_error",
+      message: "לא הצלחנו לשמור את הפרטיות ב-YouTube. אפשר לנסות שוב.",
     }
   }
 }

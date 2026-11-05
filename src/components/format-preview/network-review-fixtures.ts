@@ -7,10 +7,12 @@
  * when a variant is picked.
  */
 
+import type { InstagramConnection } from "@/lib/instagram-connection"
+import type { SocialPlatform } from "@/lib/supabase/types"
 import type { ConnectedNetwork } from "./network-switch"
 import type { FormatPreviewData, PreviewNetwork } from "./shared"
 
-export type NetworkReviewState = "one" | "three" | "failed" | "optout" | "mixed"
+export type NetworkReviewState = "one" | "three" | "failed" | "optout" | "mixed" | "expired"
 
 export const NETWORK_REVIEW_STATES: { id: NetworkReviewState; label: string }[] = [
   { id: "one", label: "רשת אחת (סטורי, אינסטגרם בלבד)" },
@@ -18,6 +20,7 @@ export const NETWORK_REVIEW_STATES: { id: NetworkReviewState; label: string }[] 
   { id: "failed", label: "רשת אחת נכשלה" },
   { id: "optout", label: "רשת שהורדה מהפוסט" },
   { id: "mixed", label: "חלק מהרשתות לא מחוברות" },
+  { id: "expired", label: "החיבור ל-YouTube פג" },
 ]
 
 export function isNetworkReviewState(v: string | null): v is NetworkReviewState {
@@ -33,6 +36,7 @@ const ok = (platform: PreviewNetwork["platform"], handle: string): PreviewNetwor
   connection: "connected",
   handle,
   publish: { kind: "scheduled" },
+  ...(platform === "youtube" ? { youtubePrivacy: "public" as const } : {}),
 })
 
 function base(format: FormatPreviewData["format"]): FormatPreviewData {
@@ -73,7 +77,7 @@ export function reviewPreviewData(state: NetworkReviewState): FormatPreviewData 
         },
         networks: [
           ok("instagram", "noa.cohen.consulting"),
-          ok("youtube", "Noa Cohen Consulting"),
+          { ...ok("youtube", "Noa Cohen Consulting"), youtubePrivacy: "unlisted" },
           {
             ...ok("linkedin", "נועה כהן"),
             publish: {
@@ -91,6 +95,15 @@ export function reviewPreviewData(state: NetworkReviewState): FormatPreviewData 
           ok("instagram", "noa.cohen.consulting"),
           { ...ok("youtube", "Noa Cohen Consulting"), included: false, publish: { kind: "unscheduled" } },
           ok("linkedin", "נועה כהן"),
+        ],
+      }
+    case "expired":
+      return {
+        ...base("b_roll"),
+        networks: [
+          ok("instagram", "noa.cohen.consulting"),
+          { ...ok("youtube", "Noa Cohen Consulting"), connection: "expired", publish: { kind: "not_connected" } },
+          { platform: "linkedin", included: false, connection: "none", handle: null, publish: { kind: "not_connected" } },
         ],
       }
     case "mixed":
@@ -117,6 +130,8 @@ export function reviewConnections(state: NetworkReviewState): ConnectedNetwork[]
       return [c("instagram", "connected", "noa.cohen.consulting"), c("youtube", "none"), c("linkedin", "none")]
     case "mixed":
       return [c("instagram", "connected", "noa.cohen.consulting"), c("youtube", "connected", "Noa Cohen Consulting"), c("linkedin", "none")]
+    case "expired":
+      return [c("instagram", "connected", "noa.cohen.consulting"), c("youtube", "expired", "Noa Cohen Consulting"), c("linkedin", "none")]
     default:
       return [
         c("instagram", "connected", "noa.cohen.consulting"),
@@ -124,4 +139,22 @@ export function reviewConnections(state: NetworkReviewState): ConnectedNetwork[]
         c("linkedin", "connected", "נועה כהן"),
       ]
   }
+}
+
+/**
+ * The connect modal's view of one network in a review state — what the
+ * marker's icon opens on a review link (buttons inert there).
+ */
+export function reviewConnectionFor(state: NetworkReviewState, platform: SocialPlatform): InstagramConnection {
+  const n = reviewConnections(state).find((x) => x.platform === platform)
+  if (!n || n.state === "none" || n.state === "loading") return { status: "disconnected", accounts: [], primary: null }
+  const account = {
+    id: `review-${platform}`,
+    platform,
+    handle: n.handle ?? null,
+    avatarUrl: null,
+    status: n.state === "connected" ? ("connected" as const) : ("needs_reconnect" as const),
+    queuedCount: n.state === "connected" ? 2 : 0,
+  }
+  return { status: n.state === "connected" ? "connected" : "disconnected", accounts: [account], primary: account }
 }

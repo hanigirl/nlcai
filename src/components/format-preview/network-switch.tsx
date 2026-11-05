@@ -18,7 +18,14 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { NetworkLogo } from "@/components/network-logos"
-import { NETWORK_LABEL, toNetwork } from "@/lib/social/networks"
+import {
+  DEFAULT_YOUTUBE_PRIVACY,
+  NETWORK_LABEL,
+  YOUTUBE_PRIVACY_OPTIONS,
+  isYouTubePrivacy,
+  toNetwork,
+} from "@/lib/social/networks"
+import { Select } from "@/components/ui/select"
 import type { SocialPlatform } from "@/lib/supabase/types"
 import { cn } from "@/lib/utils"
 import {
@@ -173,6 +180,42 @@ export function IncludeNetworkRow({
       />
       הפוסט עולה {toNetwork(network.platform)}
     </label>
+  )
+}
+
+/**
+ * YouTube privacy for this post — ציבורי / לא רשום / פרטי (Hani, 2026-11-05).
+ * The app's own select, in the preview's section style.
+ */
+export function YouTubePrivacyField({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: "public" | "unlisted" | "private" | undefined
+  disabled?: boolean
+  onChange: (v: "public" | "unlisted" | "private") => void
+}) {
+  return (
+    <section className="flex flex-col gap-2" aria-labelledby="pv-yt-privacy">
+      <h4 id="pv-yt-privacy" className="text-small-bold text-text-primary-default">
+        פרטיות ב-YouTube
+      </h4>
+      <Select
+        selectSize="small"
+        variant="homepage"
+        aria-labelledby="pv-yt-privacy"
+        value={value ?? DEFAULT_YOUTUBE_PRIVACY}
+        disabled={disabled}
+        onChange={(e) => isYouTubePrivacy(e.target.value) && onChange(e.target.value)}
+      >
+        {YOUTUBE_PRIVACY_OPTIONS.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.label}
+          </option>
+        ))}
+      </Select>
+    </section>
   )
 }
 

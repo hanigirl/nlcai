@@ -68,6 +68,8 @@ export interface SchedulePostInput {
   caption: string
   /** YouTube only: the video title — the hook, at most 100 characters. */
   title?: string
+  /** YouTube only: public / unlisted / private, chosen per post. Default public. */
+  youtubePrivacy?: "public" | "unlisted" | "private"
   media: SocialMedia[]
   /**
    * When it goes live, as an absolute instant.

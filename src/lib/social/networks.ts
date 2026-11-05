@@ -14,7 +14,7 @@
  *     network we never saw publish is a network we can't promise.
  */
 
-import type { SocialPlatform } from "@/lib/supabase/types"
+import type { SocialPlatform, YouTubePrivacy } from "@/lib/supabase/types"
 
 /** Display order everywhere — Instagram first, it's where she started. */
 export const PUBLISH_PLATFORMS: SocialPlatform[] = ["instagram", "youtube", "linkedin"]
@@ -71,6 +71,19 @@ export function youtubeTitleFromHook(hook: string): string {
   const cut = clean.slice(0, YOUTUBE_TITLE_MAX - 1)
   const lastSpace = cut.lastIndexOf(" ")
   return `${(lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trim()}…`
+}
+
+/** YouTube privacy, per post (Hani, 2026-11-05). Default public. */
+export const YOUTUBE_PRIVACY_OPTIONS: { id: YouTubePrivacy; label: string }[] = [
+  { id: "public", label: "ציבורי" },
+  { id: "unlisted", label: "לא רשום" },
+  { id: "private", label: "פרטי" },
+]
+
+export const DEFAULT_YOUTUBE_PRIVACY: YouTubePrivacy = "public"
+
+export function isYouTubePrivacy(v: unknown): v is YouTubePrivacy {
+  return v === "public" || v === "unlisted" || v === "private"
 }
 
 export function isSocialPlatform(v: unknown): v is SocialPlatform {

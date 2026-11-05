@@ -113,6 +113,8 @@ export type PreviewNetwork = {
   handle: string | null
   /** This network's own publish status. */
   publish: PublishStatus
+  /** YouTube only: ציבורי / לא רשום / פרטי for this post. Default public. */
+  youtubePrivacy?: "public" | "unlisted" | "private"
 }
 
 export type PreviewContentState = "ready" | "loading" | "no-media"

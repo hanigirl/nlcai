@@ -22,6 +22,9 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { toast } from "sonner"
 import { FormatPreviewDialog } from "@/components/format-preview/format-preview-dialog"
+import { InstagramConnectDialogHost } from "@/components/instagram-connect"
+import type { InstagramConnection } from "@/lib/instagram-connection"
+import type { SocialPlatform } from "@/lib/supabase/types"
 import {
   ConnectedNetworksIndicator,
   type ConnectedNetwork,
@@ -70,13 +73,43 @@ const MARKER_MIXES: { title: string; networks: ConnectedNetwork[] }[] = [
   },
 ]
 
+/** A marker entry as the connect modal sees it. */
+function asConnection(n: ConnectedNetwork | undefined): InstagramConnection {
+  if (!n || n.state === "none" || n.state === "loading") return { status: "disconnected", accounts: [], primary: null }
+  const account = {
+    id: `sample-${n.platform}`,
+    platform: n.platform,
+    handle: n.handle ?? null,
+    avatarUrl: null,
+    status: n.state === "connected" ? ("connected" as const) : ("needs_reconnect" as const),
+    queuedCount: n.state === "connected" ? 2 : 0,
+  }
+  return { status: n.state === "connected" ? "connected" : "disconnected", accounts: [account], primary: account }
+}
+
 function Header({ networks }: { networks: ConnectedNetwork[] }) {
+  // Each icon opens that network's real connect modal, on sample data, inert.
+  const [open, setOpen] = useState<SocialPlatform | null>(null)
+  return (
+    <>
+      <HeaderRow networks={networks} onOpen={setOpen} />
+      <InstagramConnectDialogHost
+        open={open !== null}
+        onOpenChange={(o) => !o && setOpen(null)}
+        platform={open ?? "instagram"}
+        previewConnection={asConnection(networks.find((n) => n.platform === (open ?? "instagram")))}
+      />
+    </>
+  )
+}
+
+function HeaderRow({ networks, onOpen }: { networks: ConnectedNetwork[]; onOpen: (p: SocialPlatform) => void }) {
   return (
     <div className="flex items-center gap-2">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src="/images/calendar-min.png" alt="" className="h-[48px] w-[48px]" />
       <h2 className="text-text-primary-default">תזמון</h2>
-      <ConnectedNetworksIndicator className="ms-auto" networks={networks} onOpen={() => toast("תצוגת סקירה")} />
+      <ConnectedNetworksIndicator className="ms-auto" networks={networks} onOpen={onOpen} />
     </div>
   )
 }
@@ -104,6 +137,9 @@ function StateView({ state }: { state: NetworkReviewState }) {
         onOpenCanvas={noop}
         onStatusAction={noop}
         onConnectNetwork={noop}
+        onYouTubePrivacy={(privacy) =>
+          setNetworks((list) => list.map((n) => (n.platform === "youtube" ? { ...n, youtubePrivacy: privacy } : n)))
+        }
         onNetworkToggle={(platform, include) =>
           setNetworks((list) =>
             list.map((n) =>

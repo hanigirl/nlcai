@@ -70,6 +70,7 @@ import {
 } from "@/components/format-preview/network-switch"
 import {
   isNetworkReviewState,
+  reviewConnectionFor,
   reviewConnections,
   reviewPreviewData,
   type NetworkReviewState,
@@ -95,6 +96,7 @@ import {
   refreshPublishStatus,
   schedulePost,
   setPublishNetwork,
+  setYouTubePrivacy,
   toDateKey,
   unmarkPublished,
   unschedulePost,
@@ -1094,6 +1096,8 @@ export default function CalendarPage() {
   // Networks unticked in the preview of a post that isn't on the board yet;
   // sent with the "תזמון פוסט" that puts it there.
   const [pendingExclusions, setPendingExclusions] = useState<SocialPlatform[]>([])
+  // Same, for the YouTube privacy picked before the post is on the board.
+  const [pendingYouTubePrivacy, setPendingYouTubePrivacy] = useState<"public" | "unlisted" | "private" | null>(null)
   const [previewDetail, setPreviewDetail] = useState<{
     key: string
     caption: string
@@ -1239,6 +1243,9 @@ export default function CalendarPage() {
         connection,
         handle: t?.handle ?? conn.primary?.handle ?? null,
         publish,
+        ...(platform === "youtube"
+          ? { youtubePrivacy: t?.youtubePrivacy ?? pendingYouTubePrivacy ?? "public" }
+          : {}),
       }
     })
   }
@@ -1288,6 +1295,8 @@ export default function CalendarPage() {
           schedulePost(previewRow.corePostId, previewRow.format, date, time, {
             hook: previewData?.hook,
             excludeNetworks: !previewRow.publish?.targets?.length ? pendingExclusions : undefined,
+            youtubePrivacy:
+              !previewRow.publish?.targets?.length && pendingYouTubePrivacy ? pendingYouTubePrivacy : undefined,
           })
           reloadBoard()
           toast.success(
@@ -1346,6 +1355,18 @@ export default function CalendarPage() {
           }
         },
         onConnectNetwork: openNetworkDialog,
+        onYouTubePrivacy: (privacy: "public" | "unlisted" | "private") => {
+          // Not sent yet: held for the schedule write. Else saved on the post.
+          if (!previewRow.scheduledDate || !previewRow.publish?.targets?.length) {
+            setPendingYouTubePrivacy(privacy)
+            if (!previewRow.scheduledDate || previewData?.publish.kind === "draft") return
+          }
+          void setYouTubePrivacy(previewRow.corePostId, previewRow.format, privacy).then((next) => {
+            reloadBoard()
+            if (next?.status === "failed" && next.message) toast.error(next.message)
+            else toast.success("הפרטיות ב-YouTube נשמרה")
+          })
+        },
         onNetworkToggle: (platform: SocialPlatform, include: boolean) => {
           // Not sent yet: remember it for the schedule write.
           if (!previewRow.scheduledDate || !previewRow.publish?.targets?.length) {
@@ -1374,6 +1395,10 @@ export default function CalendarPage() {
         onOpenCanvas: reviewNoop,
         onStatusAction: reviewNoop,
         onConnectNetwork: reviewNoop,
+        onYouTubePrivacy: (privacy: "public" | "unlisted" | "private") =>
+          setReviewNetworks((list) =>
+            (list ?? []).map((n) => (n.platform === "youtube" ? { ...n, youtubePrivacy: privacy } : n)),
+          ),
         onNetworkToggle: (platform: SocialPlatform, include: boolean) =>
           setReviewNetworks((list) =>
             (list ?? []).map((n) =>
@@ -1516,13 +1541,23 @@ export default function CalendarPage() {
                   <ConnectedNetworksIndicator
                     className="ms-auto"
                     networks={headerNetworks}
-                    onOpen={reviewState ? reviewNoop : openNetworkDialog}
+                    onOpen={openNetworkDialog}
                   />
-                  <InstagramConnectDialogHost open={igDialogOpen} onOpenChange={setIgDialogOpen} />
+                  {/* On a review link the modals show the seeded connection
+                      and every button is inert — nothing connects or
+                      disconnects. */}
+                  <InstagramConnectDialogHost
+                    open={igDialogOpen}
+                    onOpenChange={setIgDialogOpen}
+                    previewConnection={reviewState ? reviewConnectionFor(reviewState, "instagram") : undefined}
+                  />
                   <InstagramConnectDialogHost
                     open={networkDialog !== null}
                     onOpenChange={(open) => !open && setNetworkDialog(null)}
                     platform={networkDialog ?? "youtube"}
+                    previewConnection={
+                      reviewState ? reviewConnectionFor(reviewState, networkDialog ?? "youtube") : undefined
+                    }
                   />
                 </>
               )}
@@ -1844,6 +1879,7 @@ export default function CalendarPage() {
               if (!open) {
                 setPreviewKey(null)
                 setPendingExclusions([])
+                setPendingYouTubePrivacy(null)
               }
             }}
             data={previewData}

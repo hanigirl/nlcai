@@ -72,6 +72,8 @@ export interface TargetPublishState {
   optedOut?: boolean
   /** The account's handle, for the preview's frame. */
   handle?: string | null
+  /** YouTube only: how the video goes out. Missing = public. */
+  youtubePrivacy?: "public" | "unlisted" | "private" | null
 }
 
 /** The shape every UI reads. Attached to each `ScheduledPost` as `publish`. */

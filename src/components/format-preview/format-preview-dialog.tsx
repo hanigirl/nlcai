@@ -26,7 +26,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { destinationForFormat } from "@/lib/social/media-spec"
 import { NETWORK_LABEL, toNetwork, youtubeTitleFromHook } from "@/lib/social/networks"
 import type { SocialPlatform } from "@/lib/supabase/types"
-import { IncludeNetworkRow, LinkedInFrame, NetworkTabs, YouTubeFrame } from "./network-switch"
+import { IncludeNetworkRow, LinkedInFrame, NetworkTabs, YouTubeFrame, YouTubePrivacyField } from "./network-switch"
 import {
   CaptionCounter,
   CaptionTooLong,
@@ -51,6 +51,8 @@ export type FormatPreviewHandlers = {
   onNetworkToggle?: (platform: SocialPlatform, include: boolean) => void
   /** Open a network's connect modal. */
   onConnectNetwork?: (platform: SocialPlatform) => void
+  /** The YouTube tab's privacy select. */
+  onYouTubePrivacy?: (privacy: "public" | "unlisted" | "private") => void
 }
 
 export function FormatPreviewDialog({
@@ -89,6 +91,7 @@ function DialogBody({
   onStatusAction,
   onNetworkToggle,
   onConnectNetwork,
+  onYouTubePrivacy,
 }: {
   data: FormatPreviewData
   content: PreviewContentState
@@ -218,6 +221,13 @@ function DialogBody({
                 <IncludeNetworkRow
                   network={current}
                   onToggle={(include) => onNetworkToggle?.(current.platform, include)}
+                />
+              )}
+              {current.platform === "youtube" && current.included && current.connection === "connected" && (
+                <YouTubePrivacyField
+                  value={current.youtubePrivacy}
+                  disabled={isPublished}
+                  onChange={(v) => onYouTubePrivacy?.(v)}
                 />
               )}
               {networks.length === 1 && (
