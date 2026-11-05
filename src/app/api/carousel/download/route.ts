@@ -12,11 +12,28 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // A saved carousel reaches the panel as storage URLs (the post loads them
+    // that way, and the AI edit panel hands them back that way), a fresh
+    // generation as base64. Zipping a URL string "as base64" produced a broken
+    // archive, so URLs are fetched — only from our own storage, never an
+    // arbitrary host.
+    const storageOrigin = process.env.NEXT_PUBLIC_SUPABASE_URL
+      ? new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).origin
+      : null
     const zip = new JSZip()
-    images.forEach((base64, i) => {
+    for (const [i, item] of images.entries()) {
       const slideNum = String(i + 1).padStart(2, "0")
-      zip.file(`slide-${slideNum}.png`, base64, { base64: true })
-    })
+      if (/^https?:/.test(item)) {
+        if (!storageOrigin || new URL(item).origin !== storageOrigin) {
+          return NextResponse.json({ error: "unsupported image url" }, { status: 400 })
+        }
+        const res = await fetch(item)
+        if (!res.ok) throw new Error(`slide ${i + 1}: status ${res.status}`)
+        zip.file(`slide-${slideNum}.png`, await res.arrayBuffer())
+      } else {
+        zip.file(`slide-${slideNum}.png`, item.replace(/^data:[^,]*,/, ""), { base64: true })
+      }
+    }
 
     const zipBuffer = await zip.generateAsync({ type: "arraybuffer" })
 

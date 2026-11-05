@@ -32,6 +32,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { ChevronLeft, ChevronRight, Pause, Play, RotateCcw } from "lucide-react"
+import { imageSrc } from "@/lib/image-src"
 
 /** Instagram holds a still image for 5 seconds. */
 const IMAGE_FRAME_MS = 5000
@@ -41,9 +42,7 @@ const MAX_VIDEO_SEGMENT_MS = 15000
 
 /** Frames arrive either as storage URLs or as raw base64 straight from a generation. */
 export function storyFrameSrc(frame: string): string {
-  return frame.startsWith("http") || frame.startsWith("data:")
-    ? frame
-    : `data:image/png;base64,${frame}`
+  return imageSrc(frame)
 }
 
 function isVideoFrame(frame: string): boolean {
