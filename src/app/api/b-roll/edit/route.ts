@@ -64,8 +64,14 @@ const OWN_PICTURE_KEPT = {
 
 class KeyMissing extends Error {}
 
-// Opus revision + frame-by-frame render.
-export const maxDuration = 300
+// Rendering the clip alone takes ~250–270s on our functions (175 frames
+// screenshotted by a Lambda-sized Chromium; the same render is 10–18s on a
+// laptop). Anything before it — reading the request, editing the picture,
+// checking it, a new background — pushed past the old 300s cap and the whole
+// edit was cut off after the work was done (Hani, 2026-11-05: her blended
+// picture was ready at 29s; the render was killed at 300s). The project runs
+// on Pro with Fluid compute, where 800s is allowed.
+export const maxDuration = 800
 
 /**
  * "עריכה עם AI" on a b-roll (Hani, 2026-10-22): her instruction, in her words,
