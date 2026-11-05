@@ -105,7 +105,7 @@ export async function runOwnMediaEdit(opts: {
         message: plan.reply || "לא הבנתי מה לשנות. אפשר לנסח שוב?",
       }
     }
-    return await execute(postId, format, plan, frames, driveLinks ?? null, opts.onProgress)
+    return await execute(postId, format, plan, frames, driveLinks ?? null, opts.onProgress, opts.instruction)
   } catch (err) {
     console.error("[own-media-edit]", err)
     return { ok: false, message: FAIL }
@@ -122,6 +122,8 @@ async function execute(
   frames: OwnFrameInfo[],
   driveLinks: string[] | null,
   onProgress?: (text: string) => void,
+  /** Her words this turn — the animated caption on a video follows them. */
+  instruction?: string,
 ): Promise<OwnEditResult> {
   // Ops address frames by their number in the set she was looking at, so
   // caption ops resolve against `original`; structure ops then rebuild `set`.
@@ -177,7 +179,8 @@ async function execute(
           ? `מורידים את הכיתוב (${n} מתוך ${frames.length})...`
           : `מעדכנים את הכיתוב (${n} מתוך ${frames.length})...`,
       )
-      const next = op.op === "remove_caption" ? await uncaption(item) : await caption(postId, format, item, op)
+      const next =
+        op.op === "remove_caption" ? await uncaption(item) : await caption(postId, format, item, op, instruction)
       if ("error" in next) problems.push(next.error)
       else original[n - 1] = next.item
     }
@@ -286,6 +289,8 @@ async function caption(
   format: OwnEditFormat,
   item: Item,
   op: Extract<OwnEditOp, { op: "set_caption" }>,
+  /** Her words this turn — how the animated caption on a video should look and move. */
+  instruction?: string,
 ): Promise<{ item: Item } | { error: string }> {
   if (item.aiMade) return { error: "את השקופית שה-AI עיצב אפשר לערוך בבקשה נפרדת." }
   if (item.caption === "ours-legacy") {
@@ -300,6 +305,8 @@ async function caption(
     body: op.body ?? prev.body,
     position: op.position ?? prev.position ?? "bottom",
     style: op.style ? { ...prev.style, ...op.style } : prev.style,
+    // Her words build up over the edits: later ones win where they clash.
+    design: [prev.design, item.kind === "video" ? instruction?.trim() : undefined].filter(Boolean).join("\n") || undefined,
   }
   if (!spec.headline && !spec.body) {
     return { error: "לא היה כתוב לי מה לשים בכיתוב. כתבו את הנוסח ואעדכן." }
@@ -316,6 +323,8 @@ async function caption(
       sourceUrl: source,
       persist: false,
       caption: spec,
+      // Animated, in her visual language — like the AI b-roll (Hani, 2026-11-06).
+      animated: true,
     })
     if (!r.ok || !r.data.url) return { error: r.data.message ?? r.data.error ?? "הטמעת הכיתוב בסרטון נכשלה." }
     return { item: { ...item, url: r.data.url, caption: "ours", record: { v: 1, sourceUrl: source, caption: spec } } }
