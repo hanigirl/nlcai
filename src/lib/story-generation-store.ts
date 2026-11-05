@@ -1,4 +1,3 @@
-import { rememberAiStyle } from "@/lib/ai-style-provenance"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import { toast } from "sonner"
 import { longWaitDone, startLongWait } from "@/lib/long-wait"
@@ -158,8 +157,6 @@ export function startStoryGeneration(postId: string, style?: MediaStyle): void {
         return
       }
       update(postId, (s) => ({ ...s, saved: set }))
-      // A story set has no stable URL until reload — tracked by format only.
-      if (style) rememberAiStyle(postId, "story", style, "story-set")
       const count = set.length
       longWaitDone(toastId, count > 1 ? `הסטורי מוכן ונשמר — ${count} פריימים` : "הסטורי מוכן ונשמר", { postId })
     } catch (err) {

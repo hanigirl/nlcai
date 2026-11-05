@@ -1,12 +1,10 @@
 "use client"
 
-import { CardStyleFeedback } from "@/components/style-feedback-strip"
 import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Plus, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
 import { MediaAiChat, isEditableBRollUrl, mediaChatKey, type AiEditFormat } from "@/components/media-ai-chat"
-import { useAiEditRequests, type AiEditOpening } from "@/lib/ai-edit-intent"
 import { clearBRollUrl } from "@/lib/broll-generation-store"
 import { CaptionControls } from "@/components/image-caption-block"
 import {
@@ -336,13 +334,6 @@ function ProjectPageInner() {
   // "עריכה עם AI" / trash on the result cards (Hani, 2026-10-22).
   const [pendingMediaDelete, setPendingMediaDelete] = useState<AiEditFormat | null>(null)
   const [aiChatFormat, setAiChatFormat] = useState<AiEditFormat | null>(null)
-  // "לא אהבתי" on a card opens the AI edit with her feedback (lib/ai-edit-intent).
-  const [aiChatOpening, setAiChatOpening] = useState<AiEditOpening | null>(null)
-  useAiEditRequests((req) => {
-    if (req.postId !== savedPostId) return
-    setAiChatFormat(req.format)
-    setAiChatOpening(req.opening)
-  })
   // Format id whose script the user asked to regenerate, awaiting confirmation.
   // Regeneration overwrites text they may have hand-edited, so the card's
   // button only arms this — the actual agent call happens on confirm.
@@ -1961,7 +1952,6 @@ function ProjectPageInner() {
     open: (key) => {
       const [kind, , part] = key.split(":")
       setAiChatFormat(null)
-      setAiChatOpening(null)
       setChatOpen(false)
       copyEdit.copyAi.close()
       if (kind === "media") setAiChatFormat(part as AiEditFormat)
@@ -2731,9 +2721,7 @@ function ProjectPageInner() {
                           bRollUrl={bRollUrl}
                           bRollCardRef={bRollCardRef}
                           onBRollEdit={() => setSelectedFormatCard("b_roll")}
-                          // The sparkle opens a format's own conversation — a 👎 question
-                          // from another format must not follow it.
-                          onAiEdit={(f) => { setAiChatFormat(f); setAiChatOpening(null) }}
+                          onAiEdit={setAiChatFormat}
                           onDeleteMedia={setPendingMediaDelete}
                           onBRollUrlChange={setBRollUrl}
                           copyAi={previewOn ? copyEdit.copyAi : undefined}
@@ -2826,8 +2814,7 @@ function ProjectPageInner() {
             own={own}
             currentUrls={mediaOf[aiChatFormat]}
             open
-            opening={aiChatOpening}
-            onOpenChange={(open) => { if (!open) { setAiChatFormat(null); setAiChatOpening(null) } }}
+            onOpenChange={(open) => { if (!open) setAiChatFormat(null) }}
             onUpdated={(format, urls, extra) => {
               if (format === "image_post") setImagePostUrl(urls[0] ?? null)
               if (format === "carousel") {
@@ -3606,7 +3593,6 @@ function FormatTree({
                     onEdit={onStoryEdit}
                     onAiEdit={() => onAiEdit("story")}
                     onDelete={() => onDeleteMedia("story")}
-                    postId={savedPostId}
                     approvalStatus={approvalStatus}
                     footer={mediaFooter}
                   />
@@ -3642,7 +3628,6 @@ function FormatTree({
                       <Film className="size-4 text-text-neutral-default" />
                       <ApprovalHeaderTag status={approvalStatus} />
                     </div>
-                    <CardStyleFeedback postId={savedPostId} format="b_roll" mediaUrl={bRollUrl} />
                     <div className="px-6 flex flex-col gap-4">
                       {/* Click the b-roll → media panel; hover → ✨ AI edit.
                           The clip's own controls still play it (Hani,
@@ -3731,7 +3716,6 @@ function FormatTree({
                       <Image className="size-4 text-text-neutral-default" />
                       <ApprovalHeaderTag status={approvalStatus} />
                     </div>
-                    <CardStyleFeedback postId={savedPostId} format="image_post" mediaUrl={imagePostUrl} />
                     <div className="px-6 flex flex-col gap-4">
                       {/* Click the image → media panel; hover → ✨ AI edit on a
                           stored image (Hani, 2026-10-29). */}
@@ -3942,7 +3926,6 @@ function CarouselResultCard({
           <Layers className="size-4 text-text-neutral-default" />
           <ApprovalHeaderTag status={approvalStatus} />
         </div>
-        <CardStyleFeedback postId={postId} format="carousel" mediaUrl={images[0]} />
         <div className="px-6 flex flex-col items-center gap-4">
           {/* Slide preview — no fixed aspect: templates are square (1080²)
               or IG-portrait (1080×1350); the img sets its natural ratio. */}
@@ -4050,7 +4033,6 @@ function StoryResultCard({
   onEdit,
   onAiEdit,
   onDelete,
-  postId,
   approvalStatus,
   footer,
 }: {
@@ -4065,7 +4047,6 @@ function StoryResultCard({
   onAiEdit: () => void
   /** Trash — confirm, then remove the frames. */
   onDelete: () => void
-  postId: string | null
 }) {
   const [downloading, setDownloading] = useState(false)
 
@@ -4113,7 +4094,6 @@ function StoryResultCard({
           <Smartphone className="size-4 text-text-neutral-default" />
           <ApprovalHeaderTag status={approvalStatus} />
         </div>
-        <CardStyleFeedback postId={postId} format="story" />
         <div className="px-6 flex flex-col items-center gap-4">
           {/* Plays on Instagram's clock rather than sitting on frame 1 — the
               point of the preview is to show the pacing the audience gets. */}

@@ -12,7 +12,7 @@ import { stripDashes } from "@/lib/strip-dashes"
  * applied to that one image and was forgotten; the next carousel or b-roll
  * drew the brush the old way.
  *
- * So every AI-edit instruction (and every 👎 note) is read once by Claude:
+ * So every AI-edit instruction is read once by Claude:
  * if it states a lasting preference, it's distilled into one English rule and
  * kept here. Every generator then gets the rules (via resolveDesignDirection,
  * and the b-roll's Opus brief). One-off content changes ("make slide 3's title

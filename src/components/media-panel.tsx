@@ -71,7 +71,6 @@ import { flushPendingSaves } from "@/lib/pending-saves"
 import { BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import { useBrandCarouselTemplate } from "@/hooks/use-brand-carousel-template"
 import { MediaStylePicker, useMediaStyle } from "@/components/media-style-picker"
-import { forgetAiStyle } from "@/lib/ai-style-provenance"
 import { parseTextToSlides } from "@/lib/carousel-slides"
 import {
   carouselBareSlides,
@@ -3452,7 +3451,6 @@ function MediaUploadFlow({
   }, [format, aiPreviews])
 
   const handleStoryDriveImport = (rows: string[]) => {
-    if (postId) forgetAiStyle(postId, "story")
     if (!postId) {
       toast.error("שמרו את הפוסט לפני ייבוא הסטורי", { duration: 4000 })
       return
@@ -3463,7 +3461,6 @@ function MediaUploadFlow({
   /** Clear the saved story set (PATCH { storyImages: null }). */
   const handleStoryDelete = async () => {
     if (!postId) return
-    forgetAiStyle(postId, "story")
     try {
       const res = await fetch(`/api/core-posts/${postId}`, {
         method: "PATCH",

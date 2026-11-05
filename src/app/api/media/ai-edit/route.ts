@@ -130,14 +130,12 @@ function editPrompt(edit: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { postId, format, instruction, learn, references } = (await req.json().catch(() => ({}))) as {
+    const { postId, format, instruction, references } = (await req.json().catch(() => ({}))) as {
       postId?: string
       format?: unknown
       instruction?: string
       /** Screenshots she attached (lib/ai-edit-references). */
       references?: unknown
-      /** false: already learned via the 👎 feedback (style-feedback route). */
-      learn?: boolean
     }
     const text = instruction?.trim()
     const refs = parseReferences(references)
@@ -209,10 +207,7 @@ export async function POST(req: NextRequest) {
       throw e
     }
 
-    const learning =
-      learn === false
-        ? Promise.resolve(null)
-        : learnFromInstruction(supabase, user.id, anthropicKey, text, NOUN[format], refs)
+    const learning = learnFromInstruction(supabase, user.id, anthropicKey, text, NOUN[format], refs)
 
     // A carousel laid out in code is edited in its layout — exact and
     // obedient — and only the illustrations she asks about are redrawn. Only
