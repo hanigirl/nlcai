@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
-import { Loader2, Link2, Unlink, Plus, Trash2, Upload, X, Sparkles, Check, Type, Image as ImageIcon, Search, Download, AlertCircle, AlertTriangle, FolderOpen, SlidersHorizontal } from "lucide-react"
+import { Loader2, Link2, Plus, Trash2, Upload, X, Sparkles, Check, Type, Image as ImageIcon, Search, Download, FolderOpen, SlidersHorizontal } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { VisualLanguagePanel, type ExamplesTab } from "@/components/visual-language-panel"
 import { Input } from "@/components/ui/input"
@@ -17,10 +17,19 @@ import { ProductsList, type ProductEntry } from "@/components/products-list"
 import { BusinessSourcesPanel } from "@/components/business-sources-panel"
 import { LearnedInsightsPanel } from "@/components/learned-insights-panel"
 import { VisualPreferencesPanel } from "@/components/visual-preferences-panel"
-import { InstagramConnect } from "@/components/instagram-connect"
+import {
+  ApiKeyCard,
+  CATEGORY_KEYS,
+  CONNECTION_CATEGORIES,
+  KEYS,
+  SettingsSubNav,
+  SocialNetworksPanel,
+  connectionAnchorId,
+  resolveConnectionsSub,
+  type KeyName,
+} from "@/components/settings-connections"
 import { toast } from "sonner"
 import { validateIdentityFile } from "@/lib/validate-identity-file"
-import { isLegacyGeminiKey } from "@/lib/api-keys"
 import {
   EMPTY_CORE_IDENTITY,
   type CoreIdentityValues,
@@ -49,62 +58,7 @@ const GOOGLE_FONTS = [
   "Plus Jakarta Sans", "Figtree", "Geist", "Satoshi",
 ]
 
-type KeyName = "anthropic_api_key" | "heygen_api_key" | "apify_api_key" | "openai_api_key" | "gemini_api_key"
 type SettingsTab = "connections" | "business" | "products" | "creators" | "media" | "schedule"
-
-interface KeyConfig {
-  key: KeyName
-  label: string
-  placeholder: string
-  helpUrl: string
-  helpLabel: string
-}
-
-const KEYS: KeyConfig[] = [
-  {
-    key: "anthropic_api_key",
-    label: "Claude API Key",
-    placeholder: "sk-ant-...",
-    helpUrl: "https://console.anthropic.com/settings/keys",
-    helpLabel: "console.anthropic.com",
-  },
-  {
-    key: "heygen_api_key",
-    label: "HeyGen API Key",
-    placeholder: "הכניסו את ה-API key שלכם",
-    helpUrl: "https://app.heygen.com/settings?nav=API",
-    helpLabel: "app.heygen.com",
-  },
-  {
-    key: "apify_api_key",
-    label: "Apify API Key",
-    placeholder: "apify_api_...",
-    helpUrl: "https://console.apify.com/settings/integrations",
-    helpLabel: "console.apify.com",
-  },
-  {
-    key: "openai_api_key",
-    label: "OpenAI API Key",
-    placeholder: "sk-...",
-    helpUrl: "https://platform.openai.com/api-keys",
-    helpLabel: "platform.openai.com",
-  },
-  {
-    key: "gemini_api_key",
-    label: "Gemini API Key",
-    // AI Studio issues "AQ." auth keys today; "AIza" is the legacy format
-    // still in circulation until Google retires it. Show both so neither
-    // looks wrong.
-    placeholder: "AQ.... / AIza...",
-    helpUrl: "https://aistudio.google.com/apikey",
-    helpLabel: "aistudio.google.com",
-  },
-]
-
-function maskKey(key: string): string {
-  if (key.length <= 4) return "••••"
-  return "••••••" + key.slice(-4)
-}
 
 // Stitch parse-identity's response into a CoreIdentityValues for popup prefill.
 function buildCoreIdentityFromResponse(
@@ -204,17 +158,10 @@ type MediaSection = "visual" | "examples" | "preferences" | "drive"
 // initial state has to resolve `?sub=...` against it before the first render —
 // leaving the fallback to a mount effect is what broke every deep link.
 const SUB_SECTIONS: Record<SettingsTab, { id: string; label: string; icon: typeof Type }[]> = {
-  connections: [
-    { id: "claude", label: "Claude", icon: Link2 },
-    { id: "heygen", label: "HeyGen", icon: Link2 },
-    { id: "apify", label: "Apify", icon: Link2 },
-    { id: "openai", label: "OpenAI", icon: Link2 },
-    { id: "gemini", label: "Gemini", icon: Link2 },
-    // Appended rather than placed first on purpose: the tab's initial
-    // sub-section is whichever entry leads this list, so promoting Instagram
-    // would quietly change which panel every existing user lands on.
-    { id: "instagram", label: "אינסטגרם", icon: Link2 },
-  ],
+  // Three categories (Hani, 2026-11-05). Old per-service `?sub=` links
+  // (claude, openai, instagram…) resolve to their category in
+  // resolveConnectionsSub and scroll to that service's card.
+  connections: CONNECTION_CATEGORIES,
   business: [
     { id: "about", label: "על העסק", icon: Type },
     { id: "you", label: "עליך", icon: Type },
@@ -274,7 +221,8 @@ function SettingsPageInner() {
   // Resolved once, up front: a `?sub` that names a real section of the opening
   // tab wins, anything else (missing, misspelled, belonging to another tab)
   // falls back to that tab's first section.
-  const resolvedSub =
+  const connectionsLink = initialTab === "connections" ? resolveConnectionsSub(initialSub) : null
+  const resolvedSub = connectionsLink?.category ??
     (initialTab === "media" ? mediaSections : SUB_SECTIONS[initialTab] ?? []).find((s) => s.id === initialSub)?.id ??
     SUB_SECTIONS[initialTab]?.[0]?.id ??
     ""
@@ -1064,26 +1012,15 @@ function SettingsPageInner() {
     if (activeTab === "media") setActiveMediaSection(subs[0].id as MediaSection)
   }, [activeTab])
 
-  function SubNav({ sections, active, onChange }: { sections: { id: string; label: string; icon: typeof Type }[]; active: string; onChange: (id: string) => void }) {
-    return (
-      <nav className="w-[200px] shrink-0 flex flex-col gap-1">
-        {sections.map((item) => (
-          <button
-            key={item.id}
-            onClick={() => onChange(item.id)}
-            className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors cursor-pointer text-start ${
-              active === item.id
-                ? "bg-bg-surface-primary-default text-yellow-20 font-medium"
-                : "text-text-neutral-default hover:bg-bg-surface hover:text-text-primary-default"
-            }`}
-          >
-            <item.icon className="size-4 shrink-0" />
-            {item.label}
-          </button>
-        ))}
-      </nav>
-    )
-  }
+  // A link that named one service (?sub=openai) opens its category; once the
+  // cards are on screen, bring that service's card into view.
+  const scrollAnchor = connectionsLink?.anchor ?? null
+  const scrolledRef = useRef(false)
+  useEffect(() => {
+    if (loading || !scrollAnchor || scrolledRef.current) return
+    scrolledRef.current = true
+    document.getElementById(connectionAnchorId(scrollAnchor))?.scrollIntoView({ block: "start", behavior: "smooth" })
+  }, [loading, scrollAnchor])
 
   return (
     <AppShell>
@@ -1175,88 +1112,31 @@ function SettingsPageInner() {
             {/* ==================== CONNECTIONS TAB ==================== */}
             {activeTab === "connections" && (
               <div className="flex gap-8">
-                <SubNav sections={SUB_SECTIONS.connections} active={activeSubSection} onChange={setActiveSubSection} />
-                <div className="flex-1 min-w-0 max-w-lg">
-                  {/* Instagram is an OAuth connection, not a pasted key, so it
-                      owns its whole panel instead of joining the KEYS list. */}
-                  {activeSubSection === "instagram" && <InstagramConnect />}
-                  {KEYS.filter((cfg) => {
-                    if (activeSubSection === "claude") return cfg.key === "anthropic_api_key"
-                    if (activeSubSection === "heygen") return cfg.key === "heygen_api_key"
-                    if (activeSubSection === "apify") return cfg.key === "apify_api_key"
-                    if (activeSubSection === "openai") return cfg.key === "openai_api_key"
-                    if (activeSubSection === "gemini") return cfg.key === "gemini_api_key"
-                    return false
-                  }).map((cfg) => {
-                    const stored = storedKeys[cfg.key]
-                    const isSaving = saving === cfg.key
-                    const error = keyErrors[cfg.key]
-                    const errorId = `${cfg.key}-error`
-                    const showLegacyGeminiWarning = cfg.key === "gemini_api_key" && isLegacyGeminiKey(stored)
-                    return (
-                      <div key={cfg.key} className="flex flex-col gap-3 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 p-6">
-                        <div className="flex items-center justify-between">
-                          <span className="text-p-bold text-text-primary-default">{cfg.label}</span>
-                          {stored && <span className="text-xs-body text-text-neutral-default font-mono">{maskKey(stored)}</span>}
-                        </div>
-                        {stored ? (
-                          <div className="flex flex-col gap-3">
-                            <Button size="sm" variant="outline" onClick={() => handleDisconnect(cfg.key)} disabled={isSaving} className="w-fit gap-2 border-button-destructive-default text-button-destructive-default hover:bg-red-95">
-                              {isSaving ? <Loader2 className="size-4 animate-spin" /> : <Unlink className="size-4" />}
-                              {isSaving ? "מנתק..." : "נתק"}
-                            </Button>
-                            {/* Google retires the legacy "AIza" key format in
-                                September 2026. Warn now, while she can
-                                replace it calmly, instead of letting hook
-                                generation die mid-flow later. */}
-                            {showLegacyGeminiWarning && (
-                              <div className="flex items-start gap-2 rounded-xl border border-yellow-80 bg-bg-surface-primary-default px-3 py-2.5 dark:border-yellow-30">
-                                <AlertTriangle className="size-4 shrink-0 mt-0.5 text-yellow-30 dark:text-yellow-80" aria-hidden="true" />
-                                <p className="text-xs-body text-text-primary-default leading-relaxed">
-                                  המפתח המחובר הוא מהסוג הישן של Google (מתחיל ב-<bdi>AIza</bdi>), שיפסיק לעבוד בספטמבר 2026.
-                                  היכנסו ל-{" "}
-                                  <a href={cfg.helpUrl} target="_blank" rel="noopener noreferrer" className="font-semibold hover:underline">{cfg.helpLabel}</a>
-                                  , צרו מפתח חדש (מתחיל ב-<bdi>AQ.</bdi>) והחליפו אותו כאן.
-                                </p>
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="flex flex-col gap-2">
-                            <div className="flex gap-2">
-                              <Input
-                                dir="ltr"
-                                placeholder={cfg.placeholder}
-                                value={inputValues[cfg.key]}
-                                onChange={(e) => {
-                                  const next = e.target.value
-                                  setInputValues((prev) => ({ ...prev, [cfg.key]: next }))
-                                  setKeyErrors((prev) => (prev[cfg.key] ? { ...prev, [cfg.key]: null } : prev))
-                                }}
-                                aria-invalid={error ? true : undefined}
-                                aria-describedby={error ? errorId : undefined}
-                                className="flex-1"
-                              />
-                              <Button size="sm" onClick={() => handleConnect(cfg.key)} disabled={!inputValues[cfg.key].trim() || isSaving} className="gap-2">
-                                {isSaving ? <Loader2 className="size-4 animate-spin" /> : <Link2 className="size-4" />}
-                                {isSaving ? "מתחבר..." : "חבר"}
-                              </Button>
-                            </div>
-                            {error && (
-                              <div id={errorId} role="alert" className="flex items-start gap-2 rounded-xl border border-red-90 bg-red-95 px-3 py-2.5 dark:border-red-90/25 dark:bg-red-95/10">
-                                <AlertCircle className="size-4 shrink-0 mt-0.5 text-button-danger-default" aria-hidden="true" />
-                                <p className="text-xs-body text-text-primary-default leading-relaxed">{error}</p>
-                              </div>
-                            )}
-                            <p className="text-xs-body text-text-neutral-default">
-                              מצאו את ה-API key שלכם ב-{" "}
-                              <a href={cfg.helpUrl} target="_blank" rel="noopener noreferrer" className="text-text-primary-default font-semibold hover:underline">{cfg.helpLabel}</a>
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
+                <SettingsSubNav sections={SUB_SECTIONS.connections} active={activeSubSection} onChange={setActiveSubSection} />
+                <div className="flex-1 min-w-0 max-w-lg flex flex-col gap-4">
+                  {activeSubSection === "social" ? (
+                    <SocialNetworksPanel />
+                  ) : (
+                    (CATEGORY_KEYS[activeSubSection as keyof typeof CATEGORY_KEYS] ?? []).map((keyName) => {
+                      const cfg = KEYS.find((k) => k.key === keyName)!
+                      return (
+                        <ApiKeyCard
+                          key={cfg.key}
+                          cfg={cfg}
+                          stored={storedKeys[cfg.key]}
+                          inputValue={inputValues[cfg.key]}
+                          error={keyErrors[cfg.key]}
+                          saving={saving === cfg.key}
+                          onInputChange={(next) => {
+                            setInputValues((prev) => ({ ...prev, [cfg.key]: next }))
+                            setKeyErrors((prev) => (prev[cfg.key] ? { ...prev, [cfg.key]: null } : prev))
+                          }}
+                          onConnect={() => handleConnect(cfg.key)}
+                          onDisconnect={() => handleDisconnect(cfg.key)}
+                        />
+                      )
+                    })
+                  )}
                 </div>
               </div>
             )}
@@ -1264,7 +1144,7 @@ function SettingsPageInner() {
             {/* ==================== BUSINESS TAB ==================== */}
             {activeTab === "business" && (
               <div className="flex gap-8">
-                <SubNav sections={SUB_SECTIONS.business} active={activeSubSection} onChange={setActiveSubSection} />
+                <SettingsSubNav sections={SUB_SECTIONS.business} active={activeSubSection} onChange={setActiveSubSection} />
                 <div className="flex-1 min-w-0 max-w-lg flex flex-col gap-5">
                 {activeSubSection === "about" && (
                   <>
@@ -1466,7 +1346,7 @@ function SettingsPageInner() {
             {/* ==================== PRODUCTS TAB ==================== */}
             {activeTab === "products" && (
               <div className="flex gap-8">
-                <SubNav sections={SUB_SECTIONS.products} active={activeSubSection} onChange={setActiveSubSection} />
+                <SettingsSubNav sections={SUB_SECTIONS.products} active={activeSubSection} onChange={setActiveSubSection} />
                 <div className="flex-1 min-w-0 max-w-lg flex flex-col gap-4">
                 {!loading && products.length === 0 && (
                   <p className="text-small text-text-neutral-default">לא נמצאו מוצרים. הוסיפו מוצרים כדי ליצור תוכן מותאם.</p>
@@ -1485,7 +1365,7 @@ function SettingsPageInner() {
             {/* ==================== CREATORS TAB ==================== */}
             {activeTab === "creators" && (
               <div className="flex gap-8">
-                <SubNav sections={SUB_SECTIONS.creators} active={activeSubSection} onChange={setActiveSubSection} />
+                <SettingsSubNav sections={SUB_SECTIONS.creators} active={activeSubSection} onChange={setActiveSubSection} />
                 <div className="flex-1 min-w-0 max-w-lg flex flex-col gap-4">
                   <div>
                     <h3 className="text-p-bold text-text-primary-default">היוצרים שמעניינים אתכם</h3>
@@ -1511,7 +1391,7 @@ function SettingsPageInner() {
             {/* ==================== MEDIA TAB ==================== */}
             {activeTab === "media" && (
               <div className="flex gap-8">
-                <SubNav sections={mediaSections} active={activeMediaSection} onChange={(id) => { setActiveMediaSection(id as MediaSection); setActiveSubSection(id) }} />
+                <SettingsSubNav sections={mediaSections} active={activeMediaSection} onChange={(id) => { setActiveMediaSection(id as MediaSection); setActiveSubSection(id) }} />
 
                 <div className="flex-1 min-w-0 max-w-lg">
                   {activeMediaSection === "preferences" && <VisualPreferencesPanel />}
