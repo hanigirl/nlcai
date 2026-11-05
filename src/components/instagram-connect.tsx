@@ -24,11 +24,11 @@ import { syncScheduledFromServer } from "@/lib/timing-storage"
 /**
  * Instagram connection — one control, used in two places.
  *
- * Above the calendar and in Settings → Instagram, the same pill says whether
- * scheduled posts will actually go out (green "אינסטגרם · מחובר" / red
- * "אינסטגרם · לא מחובר"), and the same modal opens on click: Hani's copy about
- * the Facebook-page requirement, the connect button, and — once connected —
- * the account with reconnect and disconnect. One component, so the two
+ * Above the calendar the pill says whether scheduled posts will actually go
+ * out (green "אינסטגרם · מחובר" / red "אינסטגרם · לא מחובר"); in Settings →
+ * חיבורים → רשתות חברתיות the Instagram card says it. Both open the same
+ * modal: Hani's copy about the Facebook-page requirement, the connect button,
+ * and — once connected — the account with reconnect and disconnect. One modal, so the two
  * screens cannot drift apart, and one shared store (`instagram-connection`),
  * so connecting in either updates both without a refresh.
  *
@@ -55,7 +55,7 @@ import { syncScheduledFromServer } from "@/lib/timing-storage"
 const PROVIDER_ORIGIN = "https://services.leadconnectorhq.com"
 
 /** Hani's copy (2026-10-15). Light Hebrew polish only — not the content. */
-const FACEBOOK_PAGE_NOTE =
+export const FACEBOOK_PAGE_NOTE =
   "חיבור אינסטגרם לתזמון אפשרי לחשבון שמקושר לדף פייסבוק. אם החשבון שלכם לא מקושר, צריך ליצור דף פייסבוק עסקי ולקשר אותו לחשבון האינסטגרם. אחרת התזמון לא יעבוד."
 
 /** One account the Facebook login exposes, when there are several to pick from. */
@@ -280,11 +280,14 @@ function InstagramConnectDialog({
   onOpenChange,
   connection,
   flow,
+  startOnDisconnect = false,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   connection: InstagramConnection
   flow: ReturnType<typeof useConnectFlow>
+  /** Open straight on the disconnect confirmation (a card's "ניתוק"). */
+  startOnDisconnect?: boolean
 }) {
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
@@ -299,8 +302,10 @@ function InstagramConnectDialog({
     if (!open) {
       setConfirmingDisconnect(false)
       setChoice(null)
+    } else if (startOnDisconnect && isLive) {
+      setConfirmingDisconnect(true)
     }
-  }, [open, setChoice])
+  }, [open, setChoice, startOnDisconnect, isLive])
 
   async function disconnect() {
     if (!account) return
@@ -468,7 +473,7 @@ function InstagramConnectDialog({
 // ---------------------------------------------------------------------------
 
 /**
- * Pill + modal. What sits above the calendar, and inside the settings card.
+ * Pill + modal. What sits above the calendar.
  * `open` / `onOpenChange` let a card's "לחבר מחדש" action open the same modal.
  */
 export function InstagramConnectionControl({
@@ -502,23 +507,39 @@ export function InstagramConnectionControl({
   )
 }
 
-/** Settings → Instagram. */
-export function InstagramConnect() {
+/**
+ * Settings → חיבורים → רשתות חברתיות. The Instagram card there owns its own
+ * status line and buttons, so it mounts only the modal — the same one the
+ * calendar pill opens, with the same connect flow.
+ */
+export function InstagramConnectDialogHost({
+  open,
+  onOpenChange,
+  startOnDisconnect = false,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  startOnDisconnect?: boolean
+}) {
+  const connection = useInstagramConnection()
+  const flow = useConnectFlow()
+  const { setError } = flow
+  useEffect(() => {
+    if (open) {
+      setError(null)
+      // Fresh queued counts before anyone reads "disconnect will cancel N".
+      void refreshInstagramConnection()
+    }
+  }, [open, setError])
+
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 p-6">
-      <div className="flex items-center justify-between">
-        <span className="text-p-bold text-text-primary-default">אינסטגרם</span>
-        <Instagram className="size-4 text-text-neutral-default" aria-hidden />
-      </div>
-
-      <p className="text-xs-body text-text-neutral-default">
-        חיבור החשבון מאפשר לפוסטים שתזמנתם ביומן להתפרסם לבד, בשעה שקבעתם.
-      </p>
-
-      <InstagramConnectionControl className="w-fit" />
-
-      <p className="text-xs-body text-text-neutral-default">{FACEBOOK_PAGE_NOTE}</p>
-    </div>
+    <InstagramConnectDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      connection={connection}
+      flow={flow}
+      startOnDisconnect={startOnDisconnect}
+    />
   )
 }
 
