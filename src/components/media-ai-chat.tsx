@@ -38,6 +38,7 @@ import {
 import { LinkReferenceRows, useLinkReferences } from "@/components/ai-edit-link-reference"
 import { ReferenceAddMenu } from "@/components/ai-edit-drive-reference"
 import { requestAsIsUpload, type AsIsItem } from "@/lib/as-is-upload"
+import { CAROUSEL_VIDEO_MAX_SECONDS } from "@/lib/carousel-video"
 import type { MediaStyle } from "@/lib/visual-language/types"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
@@ -218,9 +219,7 @@ const PLACE_ONLY_INSTRUCTION = "להכניס את התמונה שצירפתי"
 /** Her way out of the conversation — generate in the picked style as is. */
 const GEN_SKIP = "ליצור בלי תוספות"
 /** A video can't be a still format's media — said at once, nothing starts. */
-const STILL_FORMAT_VIDEO: Record<"image_post" | "carousel", string> = {
-  carousel:
-    "בקרוסלה כאן כל שקופית היא תמונה, אז סרטון לא יכול להיכנס לשקופית. צרפו במקומו תמונה, או צילום מסך של הרגע שאתם רוצים מתוך הסרטון.",
+const STILL_FORMAT_VIDEO: Record<"image_post", string> = {
   image_post:
     "פוסט תמונה הוא תמונה, אז סרטון לא יכול להיות המדיה שלו. צרפו במקומו תמונה, או צילום מסך של הרגע שאתם רוצים מתוך הסרטון.",
 }
@@ -503,7 +502,7 @@ export function MediaAiChat({
     const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, fresh, fn)
     if (getChat<ChatMessage, MediaChatExtra>(key)?.busy) return
     // A still format can't take a video — at once, before anything starts.
-    if ((format === "image_post" || format === "carousel") && items.some((it) => it.kind === "video")) {
+    if (format === "image_post" && items.some((it) => it.kind === "video")) {
       patchKey((s) => ({
         ...s,
         messages: [...s.messages, { role: "assistant", content: STILL_FORMAT_VIDEO[format], error: true }],
@@ -548,7 +547,7 @@ export function MediaAiChat({
     if (!video) return false
     const key = chatKey
     const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, fresh, fn)
-    if (format === "image_post" || format === "carousel") {
+    if (format === "image_post") {
       patchKey((s) => ({
         ...s,
         messages: [...s.messages, { role: "assistant", content: STILL_FORMAT_VIDEO[format], error: true }],
@@ -566,7 +565,26 @@ export function MediaAiChat({
       extra: { ...s.extra, progress: "מעלים את הסרטון שלכם...", gen: null },
       messages: [...s.messages, { role: "user", content: text, ...(attached.length ? { images: attached } : {}) }],
     }))
-    const imported = await requestAsIsUpload(format, [video], { forEdit: true })
+    // A carousel (2026-11-06): the clip becomes one more VIDEO slide, its
+    // animated caption made in the same step (api/carousel/video-slide).
+    const imported = await requestAsIsUpload(format, [video], {
+      forEdit: true,
+      ...(format === "carousel" ? { instruction: text } : {}),
+    })
+    if (format === "carousel") {
+      patchKey((s) => ({
+        ...s,
+        busy: false,
+        extra: { ...s.extra, progress: "" },
+        messages: [
+          ...s.messages,
+          imported.ok
+            ? { role: "assistant", content: `${imported.message}${extra}`, done: true, noStyle: true }
+            : { role: "assistant", content: imported.message, error: true },
+        ],
+      }))
+      return true
+    }
     if (!imported.ok) {
       patchKey((s) => ({
         ...s,
@@ -595,7 +613,7 @@ export function MediaAiChat({
   }
   const asIsAttached = refs.originals(refs.refs)
   // A still format can't take a video as is — no chip for it (the note says why).
-  const stillWithVideo = (format === "image_post" || format === "carousel") && asIsAttached.some((o) => o.kind === "video")
+  const stillWithVideo = format === "image_post" && asIsAttached.some((o) => o.kind === "video")
   const asIsNow = stillWithVideo ? [] : asIsAttached
 
   const send = async (preset?: string) => {
@@ -961,9 +979,13 @@ export function MediaAiChat({
         <ReferenceTray r={refs} />
         {/* A video attached: said right away what happens with it. */}
         {asIsAttached.some((o) => o.kind === "video") ? (
-          format === "image_post" || format === "carousel" ? (
+          format === "image_post" ? (
             <p role="alert" className="mb-2 text-xs-body text-button-destructive-default">
               {STILL_FORMAT_VIDEO[format]}
+            </p>
+          ) : format === "carousel" ? (
+            <p className="mb-2 text-xs-body text-text-neutral-default">
+              הסרטון ייכנס כשקופית וידאו (4:5, עד {CAROUSEL_VIDEO_MAX_SECONDS} שניות). עם בקשה, יתווסף עליו כיתוב מונפש; מה שצילמתם לא משתנה.
             </p>
           ) : (
             <p className="mb-2 text-xs-body text-text-neutral-default">

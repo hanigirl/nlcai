@@ -302,7 +302,9 @@ export async function POST(req: NextRequest) {
     const videos = rows.filter((r) => r.asset_type === "video").map((r) => r.url)
     let urls: string[]
     if (format === "story") urls = [...images, ...videos.filter((v) => !images.includes(v))]
-    else if (format === "carousel") urls = images
+    // Pictures and VIDEO slides, in her order (2026-11-06): a set saved back
+    // without its clips would delete them.
+    else if (format === "carousel") urls = rows.map((r) => r.url)
     else if (format === "b_roll") urls = videos.length ? [videos[videos.length - 1]] : images.slice(-1)
     else urls = images.slice(-1)
     if (urls.length === 0) return json({ error: "no_media", message: "אין כאן מדיה לערוך." }, 400)
@@ -326,6 +328,9 @@ export async function POST(req: NextRequest) {
     const frames: OwnFrameInfo[] = await Promise.all(
       urls.map(async (url, i): Promise<OwnFrameInfo> => {
         const kind = isVideoMediaUrl(url) ? "video" : "image"
+        // A carousel video slide is kept as it is here (its caption is made
+        // with the slide — api/carousel/video-slide).
+        if (format === "carousel" && kind === "video") return { url, kind, aiMade: false, caption: "baked" }
         const aiMade =
           /\/ai-(slide|anim)-[0-9a-f-]+\.(png|mp4)/.test(url) ||
           (format === "carousel"

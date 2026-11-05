@@ -31,7 +31,11 @@ export type AsIsResult = { ok: true; message: string } | { ok: false; message: s
  * imported so the own-video AI edit can caption it right after — wait until
  * it's saved, and skip the import's own automatic caption.
  */
-export type AsIsOptions = { forEdit?: boolean }
+export type AsIsOptions = {
+  forEdit?: boolean
+  /** Her words — a carousel video slide's caption design (api/carousel/video-slide). */
+  instruction?: string
+}
 type Importer = (items: AsIsItem[], opts?: AsIsOptions) => Promise<AsIsResult>
 
 const importers = new Map<string, Importer>()

@@ -29,7 +29,10 @@ export async function POST(req: NextRequest) {
         }
         const res = await fetch(item)
         if (!res.ok) throw new Error(`slide ${i + 1}: status ${res.status}`)
-        zip.file(`slide-${slideNum}.png`, await res.arrayBuffer())
+        // A video slide (Hani, 2026-11-06) goes in as the mp4 itself.
+        const isVideo =
+          /\.(mp4|mov|m4v|webm)(?:[?#].*)?$/i.test(item) || (res.headers.get("content-type") ?? "").startsWith("video/")
+        zip.file(`slide-${slideNum}.${isVideo ? "mp4" : "png"}`, await res.arrayBuffer())
       } else {
         zip.file(`slide-${slideNum}.png`, item.replace(/^data:[^,]*,/, ""), { base64: true })
       }

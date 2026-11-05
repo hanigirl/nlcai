@@ -34,6 +34,7 @@ import {
 import { currentCarouselBrief } from "@/lib/carousel-brief"
 import { wantsOwnLanguage } from "@/lib/visual-language/current-brief"
 import { canEditPictures } from "@/lib/feature-access"
+import { isVideoSlide } from "@/lib/carousel-video"
 import { PICTURE_MISSING, adaptPictureForSlide, editPicture, wantsPictureAsIs } from "@/lib/picture-edit"
 import type { ModelImage } from "@/lib/visual-language/image-input"
 
@@ -134,7 +135,7 @@ export async function POST(req: NextRequest) {
           .from("media_assets")
           .select("url")
           .eq("format_variant_id", (variant as { id: string }).id)
-          .eq("asset_type", "image")
+          .in("asset_type", format === "carousel" ? ["image", "video"] : ["image"])
           .order("created_at", { ascending: true })
       : { data: [] }
     const urls = ((assets ?? []) as { url: string | null }[])
@@ -343,7 +344,7 @@ export async function POST(req: NextRequest) {
         .from("media_assets")
         .select("url")
         .eq("format_variant_id", (variant as unknown as { id: string }).id)
-        .eq("asset_type", "image")
+        .in("asset_type", format === "carousel" ? ["image", "video"] : ["image"])
         .order("created_at", { ascending: true })
       return NextResponse.json({
         urls: ((after ?? []) as { url: string }[]).map((a) => a.url),
@@ -354,10 +355,22 @@ export async function POST(req: NextRequest) {
     // gets her CURRENT language to spell out, and the image model her brand
     // references — without them it only ever saw the old design.
     const language = ownLanguage ? await resolveDesignDirection(supabase, user.id, { format }) : null
-    const { targets, edit, place, needsImage } = await plan(anthropicKey, format, urls.length, ask!, refs, language?.lines ?? [], canEditPictures(user.email))
+    const { targets: planned, edit, place, needsImage } = await plan(anthropicKey, format, urls.length, ask!, refs, language?.lines ?? [], canEditPictures(user.email))
     // She asked for a specific picture that isn't here: say so, edit nothing.
     // Sending the editor words instead is how an astronaut came back (Hani, 2026-11-05).
     if (needsImage) return NextResponse.json(IMAGE_MISSING, { status: 400 })
+    // A carousel's VIDEO slides are never repainted by the picture editor —
+    // they stay exactly as they are, in their place (2026-11-06).
+    const targets = planned.filter((n) => !isVideoSlide(urls[n - 1]))
+    if (!targets.length) {
+      return NextResponse.json(
+        {
+          error: "video_slide",
+          message: "השקופית הזאת היא סרטון, ועורך התמונות לא משנה סרטונים. אפשר לבקש שינוי בשקופיות התמונה.",
+        },
+        { status: 400 },
+      )
+    }
     // Pictures she asked to place go to the image model as files, not words.
     const placeImages = await Promise.all(place.map((n) => normaliseImage(referenceBuffer(refs[n - 1]))))
     // Her placed pictures first (the prompt numbers them), then up to two brand references.
@@ -390,7 +403,7 @@ export async function POST(req: NextRequest) {
       .from("media_assets")
       .select("url")
       .eq("format_variant_id", (variant as unknown as { id: string }).id)
-      .eq("asset_type", "image")
+      .in("asset_type", format === "carousel" ? ["image", "video"] : ["image"])
       .order("created_at", { ascending: true })
     return NextResponse.json({
       urls: ((after ?? []) as { url: string }[]).map((a) => a.url),

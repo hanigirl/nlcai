@@ -436,8 +436,13 @@ export function SlideStrip({
             i === index ? "border-yellow-50" : "border-transparent hover:border-gray-80"
           }`}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={s.url} alt="" className="size-full object-cover" draggable={false} />
+          {s.type === "video" ? (
+            // A video slide's thumbnail: its first moment (2026-11-06).
+            <video src={`${s.url}#t=0.1`} muted playsInline preload="metadata" className="size-full object-cover" />
+          ) : (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img src={s.url} alt="" className="size-full object-cover" draggable={false} />
+          )}
           <span className="absolute bottom-0.5 start-0.5 rounded bg-black/60 px-1 text-[10px] leading-4 text-white tabular-nums">
             {i + 1}
           </span>

@@ -70,6 +70,8 @@ import type { SlideData, TemplateConfig } from "@/lib/carousel-templates"
 import { flushPendingSaves } from "@/lib/pending-saves"
 import { BLANK_TEMPLATE, BLANK_TEMPLATE_ID, BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import { openingId, requestAiEdit } from "@/lib/ai-edit-intent"
+import { makeCarouselVideoSlide } from "@/lib/carousel-video-client"
+import { isVideoSlide } from "@/lib/carousel-video"
 import { registerAsIsImporter, requestDrivePicker, type AsIsItem, type AsIsOptions, type AsIsResult } from "@/lib/as-is-upload"
 import { AiHoverEditButton } from "@/components/ai-hover-edit"
 import { useRefPlace } from "@/lib/use-scheduling-access"
@@ -2059,31 +2061,97 @@ function CarouselFlow({
    * Import entry point. Asks first when there is already a carousel to lose;
    * a first import has nothing to overwrite and goes straight through.
    */
-  /** "להעלות כמו שזה" (lib/as-is-upload): her Drive files become the slides, in order. */
-  const asIsRef = useRef<((items: AsIsItem[]) => Promise<AsIsResult>) | null>(null)
+  /**
+   * "להעלות כמו שזה" (lib/as-is-upload): her files become the slides, in
+   * order — pictures and, since 2026-11-06, VIDEO slides (4:5, padded).
+   * `forEdit` + `instruction`: her clip is added as one more slide with the
+   * own-video animated caption (the slide's words, designed per her words).
+   */
+  const asIsRef = useRef<((items: AsIsItem[], opts?: AsIsOptions) => Promise<AsIsResult>) | null>(null)
   useEffect(() => {
-    asIsRef.current = async (items) => {
-      // Every slide here is a picture: a video is refused before anything starts.
-      if (items.some((it) => it.kind === "video")) {
-        return {
-          ok: false,
-          message: "בקרוסלה כאן כל שקופית היא תמונה, אז סרטון לא יכול להיכנס לשקופית. בחרו תמונות.",
+    asIsRef.current = async (items, opts) => {
+      if (!postId) return { ok: false, message: "שמרו קודם את הפוסט, ואז אפשר להעלות מדיה." }
+      if (opts?.forEdit) {
+        const video = items.find((it) => it.kind === "video")
+        if (!video) return { ok: false, message: "אין כאן סרטון." }
+        const at = images?.length ?? 0
+        setDriveImportError(null)
+        setDriveImporting(true)
+        onBusyChange?.("carousel", true)
+        setDriveImportProgress("מכינים את שקופית הווידאו עם הכיתוב...")
+        try {
+          const made = await makeCarouselVideoSlide({
+            postId,
+            drive: video.drive,
+            file: video.file,
+            caption: { design: opts.instruction, slideIndex: at },
+          })
+          if (!made.ok) return { ok: false, message: made.message }
+          onImagesChange([...(images ?? []), made.url])
+          return { ok: true, message: `הוספתי את הסרטון כשקופית ${at + 1}, ועליו הכיתוב שביקשתם. מה שצילמתם לא השתנה.` }
+        } finally {
+          setDriveImporting(false)
+          onBusyChange?.("carousel", false)
+          setDriveImportProgress("")
         }
       }
       const drive = items.flatMap((it) => (it.drive ? [it.drive] : []))
-      if (!drive.length) {
-        return { ok: false, message: "קרוסלה עולה כמו שהיא רק מהדרייב. צרפו את השקופיות מהתיקייה בדרייב." }
+      if (drive.length === items.length) {
+        // All from Drive: the carousel's own Drive import (pictures and clips).
+        requestDriveImport(drive)
+        return {
+          ok: true,
+          message: `${drive.length === 1 ? "השקופית עולה" : `${drive.length} השקופיות עולות, לפי הסדר,`} כמו שהן, בלי תוספות. ההתקדמות בפאנל המדיה.`,
+        }
       }
-      requestDriveImport(drive)
-      const skipped = items.length - drive.length
-      return {
-        ok: true,
-        message: `${drive.length === 1 ? "השקופית עולה" : `${drive.length} השקופיות עולות, לפי הסדר,`} כמו שהן, בלי תוספות. ההתקדמות בפאנל המדיה.${skipped ? " הקבצים מהמחשב לא נכללו." : ""}`,
+      // From her computer (or mixed): each file as a slide, in order.
+      setDriveImportError(null)
+      setDriveImporting(true)
+      onBusyChange?.("carousel", true)
+      try {
+        const slides: string[] = []
+        for (let i = 0; i < items.length; i++) {
+          const it = items[i]
+          setDriveImportProgress(`מכינים שקופית ${i + 1} מתוך ${items.length}...`)
+          if (it.kind === "video") {
+            const made = await makeCarouselVideoSlide({ postId, drive: it.drive, file: it.file })
+            if (!made.ok) return { ok: false, message: `${made.message} (שקופית ${i + 1})` }
+            slides.push(made.url)
+          } else if (it.file) {
+            const b64 = await new Promise<string>((resolve, reject) => {
+              const r = new FileReader()
+              r.onload = () => resolve(String(r.result).replace(/^data:[^,]*,/, ""))
+              r.onerror = () => reject(new Error("read"))
+              r.readAsDataURL(it.file!)
+            })
+            slides.push(b64)
+          } else if (it.drive) {
+            const res = await fetch("/api/media/from-drive", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ url: it.drive, store: false }),
+            })
+            const data = (await res.json().catch(() => ({}))) as { base64?: string }
+            if (!res.ok || !data.base64) return { ok: false, message: `טעינת שקופית ${i + 1} מהדרייב נכשלה.` }
+            slides.push(data.base64)
+          }
+        }
+        onImagesChange(slides)
+        if (postId) setFormatMeta(postId, "carousel", { templateId: undefined })
+        setSavedTemplateId(undefined)
+        return {
+          ok: true,
+          message: `${slides.length === 1 ? "השקופית עלתה" : `${slides.length} השקופיות עלו, לפי הסדר,`} כמו שהן, בלי תוספות.`,
+        }
+      } finally {
+        setDriveImporting(false)
+        onBusyChange?.("carousel", false)
+        setDriveImportProgress("")
       }
     }
   })
   useEffect(() => {
-    registerAsIsImporter("carousel", (items) => asIsRef.current?.(items) ?? Promise.resolve({ ok: false, message: "" }))
+    registerAsIsImporter("carousel", (items, opts) => asIsRef.current?.(items, opts) ?? Promise.resolve({ ok: false, message: "" }))
     return () => registerAsIsImporter("carousel", null)
   }, [])
 
@@ -2129,6 +2197,7 @@ function CarouselFlow({
       // The pictures as they arrived, kept so moving the caption later is a
       // redraw rather than a second download of every file.
       const bares: string[] = []
+      let textChecked = false
       for (let i = 0; i < links.length; i++) {
         setDriveImportProgress(`טוען שקופית ${i + 1} מתוך ${links.length}...`)
         const res = await fetch("/api/media/from-drive", {
@@ -2137,6 +2206,19 @@ function CarouselFlow({
           body: JSON.stringify({ url: links[i], store: false }),
         })
         const data = await res.json()
+        // A clip (Hani, 2026-11-06): Instagram carousels can mix pictures and
+        // videos — it becomes a VIDEO slide (4:5, padded), kept as it is.
+        if (data.error === "not_an_image" && postId) {
+          setDriveImportProgress(`מכינים את שקופית הווידאו ${i + 1} מתוך ${links.length}...`)
+          const made = await makeCarouselVideoSlide({ postId, drive: links[i] })
+          if (!made.ok) {
+            setDriveImportError(`${made.message} (שקופית ${i + 1})`)
+            return
+          }
+          bares.push(made.url)
+          slides.push(made.url)
+          continue
+        }
         if (!res.ok || data.error || !data.base64) {
           setDriveImportError(
             `${errMap[data.error] ?? "טעינת אחת השקופיות נכשלה."} (שקופית ${i + 1})`,
@@ -2155,7 +2237,9 @@ function CarouselFlow({
         // speaks for the set: one look, before any slide is captioned, so a
         // carousel is never half captioned. Recorded either way — the card
         // shows the caption controls only on bare pictures.
-        if (i === 0 && postId) {
+        // Asked of the first PICTURE (a video slide has no designed words to check).
+        if (!textChecked && postId) {
+          textChecked = true
           setDriveImportProgress("בודקים אם יש טקסט בשקופיות...")
           const hasText = await slideHasBakedText(bare)
           setFormatMeta(postId, "carousel", {
@@ -2351,12 +2435,24 @@ function CarouselFlow({
           {dialogSlides && dialogSlides.length > 0 && (
             <div className="flex flex-col items-center gap-3">
               <div className="relative w-full overflow-hidden rounded-xl border border-border-neutral-default bg-bg-surface">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={imageSrc(dialogSlides[previewIndex])}
-                  alt={`סלייד ${previewIndex + 1}`}
-                  className="w-full h-auto"
-                />
+                {isVideoSlide(dialogSlides[previewIndex]) ? (
+                  <video
+                    key={dialogSlides[previewIndex]}
+                    src={dialogSlides[previewIndex]}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    className="w-full aspect-[4/5] object-cover"
+                    aria-label={`סלייד ${previewIndex + 1}, וידאו`}
+                  />
+                ) : (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img
+                    src={imageSrc(dialogSlides[previewIndex])}
+                    alt={`סלייד ${previewIndex + 1}`}
+                    className="w-full h-auto"
+                  />
+                )}
               </div>
 
               {dialogSlides.length > 1 && (
@@ -2554,6 +2650,35 @@ function CarouselFlow({
  * `imageSrc`, never a hard-coded `data:` prefix (that was the broken image,
  * 2026-11-05).
  */
+/** A slide's still: the picture, or a video slide's first moment (2026-11-06). */
+function SlideThumb({
+  slide,
+  alt,
+  className,
+  style,
+}: {
+  slide: string
+  alt: string
+  className?: string
+  style?: React.CSSProperties
+}) {
+  if (isVideoSlide(slide)) {
+    return (
+      <video
+        src={`${slide}#t=0.1`}
+        muted
+        playsInline
+        preload="metadata"
+        aria-label={alt}
+        className={className}
+        style={style}
+      />
+    )
+  }
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={imageSrc(slide)} alt={alt} className={className} style={style} />
+}
+
 export function YourCarouselTile({ images, onOpen }: { images: string[]; onOpen: () => void }) {
   return (
     <div className="grid grid-cols-3 gap-2">
@@ -2563,9 +2688,8 @@ export function YourCarouselTile({ images, onOpen }: { images: string[]; onOpen:
         aria-label={`הקרוסלה שלך — ${images.length} שקופיות, לצפייה ולעריכה`}
         className="relative flex flex-col gap-1 rounded-xl border border-yellow-50 p-1 pb-1.5 ring-1 ring-yellow-50 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={imageSrc(images[0])}
+        <SlideThumb
+          slide={images[0]}
           alt="השקופית הראשונה של הקרוסלה שלך"
           className="w-full rounded-lg"
           style={{ aspectRatio: "1 / 1", objectFit: "cover" }}
@@ -2595,12 +2719,7 @@ export function YourCarouselBand({ images, onOpen }: { images: string[]; onOpen:
         aria-label={`הקרוסלה שלך — ${images.length} שקופיות, לצפייה`}
         className="relative w-[200px] overflow-hidden rounded-[10px] border border-border-neutral-default bg-bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={imageSrc(images[0])}
-          alt="השקופית הראשונה של הקרוסלה שלך"
-          className="w-full"
-        />
+        <SlideThumb slide={images[0]} alt="השקופית הראשונה של הקרוסלה שלך" className="w-full" />
         <span className="absolute bottom-2 start-2 rounded-md bg-black/60 px-2 py-0.5 text-xs text-white">
           1/{images.length}
         </span>
