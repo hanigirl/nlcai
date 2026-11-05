@@ -32,6 +32,8 @@ import {
 } from "@/lib/ai-edit-plan"
 import { currentCarouselBrief } from "@/lib/carousel-brief"
 import { wantsOwnLanguage } from "@/lib/visual-language/current-brief"
+import { canEditPictures } from "@/lib/feature-access"
+import { PICTURE_MISSING, editPicture } from "@/lib/picture-edit"
 import type { ModelImage } from "@/lib/visual-language/image-input"
 
 /**
@@ -195,7 +197,11 @@ export async function POST(req: NextRequest) {
       const current = await currentCarouselBrief(supabase, user.id, saved0.brief, { ownLanguage })
       const restyle = current.changed || ownLanguage
       const stored = { ...saved0, brief: current.brief }
-      const revised = await reviseCarousel(anthropicKey, stored, ask!, refs, restyle)
+      // A change to a picture itself is a real picture edit — Hani only for now (lib/feature-access).
+      const pictureEditsOn = canEditPictures(user.email)
+      const revised = await reviseCarousel(anthropicKey, stored, ask!, refs, restyle, pictureEditsOn)
+      const pictureEdits = pictureEditsOn ? revised.pictureEdits : []
+      const isPictureEdit = (i: number) => pictureEdits.some((e) => e.slide === i)
       // She named a picture we don't have: ask for it — never a stand-in.
       if (revised.needsImage) return NextResponse.json(IMAGE_MISSING, { status: 400 })
       const illustrations = [...stored.illustrations]
@@ -211,16 +217,19 @@ export async function POST(req: NextRequest) {
       const redraw = revised.illustrations
         .map((idea, i) => ({ idea: idea.trim(), i }))
         // Her own picture is never redrawn, not even by a restyle.
-        .filter((x) => x.idea && !isPlaced(x.i) && !(restyle && ownArt[x.i]))
+        .filter((x) => x.idea && !isPlaced(x.i) && !isPictureEdit(x.i) && !(restyle && ownArt[x.i]))
       // "Remove the background" cuts the EXISTING illustration out (same
       // character, real transparency) — a redraw would paint a new opaque
       // square. A slide whose picture is also being redrawn gets the new one
       // generated straight onto a transparent background instead.
-      const cutOnly = [...cutouts].filter((i) => illustrations[i] && !isPlaced(i) && !redraw.some((r) => r.i === i))
+      const cutOnly = [...cutouts].filter(
+        (i) => illustrations[i] && !isPlaced(i) && !isPictureEdit(i) && !redraw.some((r) => r.i === i),
+      )
       await Promise.all([
         ...placed.map(async ({ ref, i }) => {
           const file = referenceBuffer(ref)
-          const png = cutouts.has(i)
+          // A picture edit on this slide cuts out after the edit (below).
+          const png = cutouts.has(i) && !isPictureEdit(i)
             ? Buffer.from(await cutoutImage(openaiKey, await normaliseImage(file)), "base64")
             : await sharp(file).rotate().resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true }).png().toBuffer()
           illustrations[i] = await uploadIllustration(supabase, user.id, png)
@@ -241,6 +250,30 @@ export async function POST(req: NextRequest) {
           illustrations[i] = await uploadIllustration(supabase, user.id, Buffer.from(raw, "base64"))
         }),
       ])
+      // The picture itself changes (Hani, 2026-11-05): through the image
+      // model, then back on its slide — never a crop that hides the problem.
+      // Any miss saves nothing and says so.
+      if (pictureEdits.length) {
+        const claudeKey = anthropicKey
+        const outcomes = await Promise.all(
+          pictureEdits.map(async ({ slide: i, edit }) => {
+            if (!illustrations[i]) return { ok: false as const, message: PICTURE_MISSING }
+            const res = await fetch(illustrations[i])
+            if (!res.ok) return { ok: false as const, message: PICTURE_MISSING }
+            const out = await editPicture(openaiKey, claudeKey, Buffer.from(await res.arrayBuffer()), edit)
+            if (!out.ok) return out
+            const png = cutouts.has(i)
+              ? Buffer.from(await cutoutImage(openaiKey, await normaliseImage(out.png)), "base64")
+              : out.png
+            illustrations[i] = await uploadIllustration(supabase, user.id, png)
+            // Still her picture — kept through later restyles, never redrawn.
+            ownArt[i] = ownArt[i] || isPlaced(i)
+            return { ok: true as const }
+          }),
+        )
+        const miss = outcomes.find((o) => !o.ok)
+        if (miss && !miss.ok) return NextResponse.json({ error: "picture_edit_failed", message: miss.message }, { status: 422 })
+      }
       const direction = current.direction
       const shots = await renderCarousel(revised.html, illustrations, stored.brief.fonts)
       const nextSet = await Promise.all(
@@ -283,7 +316,7 @@ export async function POST(req: NextRequest) {
     // gets her CURRENT language to spell out, and the image model her brand
     // references — without them it only ever saw the old design.
     const language = ownLanguage ? await resolveDesignDirection(supabase, user.id, { format }) : null
-    const { targets, edit, place, needsImage } = await plan(anthropicKey, format, urls.length, ask!, refs, language?.lines ?? [])
+    const { targets, edit, place, needsImage } = await plan(anthropicKey, format, urls.length, ask!, refs, language?.lines ?? [], canEditPictures(user.email))
     // She asked for a specific picture that isn't here: say so, edit nothing.
     // Sending the editor words instead is how an astronaut came back (Hani, 2026-11-05).
     if (needsImage) return NextResponse.json(IMAGE_MISSING, { status: 400 })

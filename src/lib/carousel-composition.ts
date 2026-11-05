@@ -154,7 +154,15 @@ function briefText(b: CarouselBrief): string {
 function parse(
   text: string,
   count: number,
-): { html: string; illustrations: string[]; cutouts: number[]; attached: number[]; needsImage: boolean } {
+): {
+  html: string
+  illustrations: string[]
+  cutouts: number[]
+  attached: number[]
+  needsImage: boolean
+  /** Slides (0-based) whose PICTURE itself is to change (lib/picture-edit), with the edit. */
+  pictureEdits: { slide: number; edit: string }[]
+} {
   const json = /```json\s*([\s\S]*?)```/i.exec(text)
   const html = /```html\s*([\s\S]*?)```/i.exec(text)
   if (!html || !/class=["'][^"']*\bslide\b/.test(html[1])) throw new Error("composition_invalid")
@@ -162,17 +170,25 @@ function parse(
   let cutouts: number[] = []
   let attached: number[] = []
   let needsImage = false
+  let pictureEdits: { slide: number; edit: string }[] = []
   try {
     const parsed = JSON.parse(json?.[1] ?? "{}") as {
       illustrations?: string[]
       cutouts?: unknown
       attached?: unknown
       needs_image?: unknown
+      picture_edits?: unknown
     }
     illustrations = parsed.illustrations ?? []
     needsImage = parsed.needs_image === true
     cutouts = Array.isArray(parsed.cutouts) ? parsed.cutouts.map(Number) : []
     attached = Array.isArray(parsed.attached) ? parsed.attached.map(Number) : []
+    pictureEdits = (Array.isArray(parsed.picture_edits) ? parsed.picture_edits : [])
+      .map((e) => {
+        const x = (e ?? {}) as { slide?: unknown; edit?: unknown }
+        return { slide: Number(x.slide) - 1, edit: typeof x.edit === "string" ? x.edit.trim() : "" }
+      })
+      .filter((e) => Number.isInteger(e.slide) && e.slide >= 0 && e.slide < count && !!e.edit)
   } catch {
     illustrations = []
   }
@@ -184,6 +200,8 @@ function parse(
     // Per slide: which attached image (1-based) is placed as its illustration; 0 = none.
     attached: Array.from({ length: count }, (_, i) => (Number.isInteger(attached[i]) && attached[i] > 0 ? attached[i] : 0)),
     needsImage,
+    // One edit per slide.
+    pictureEdits: pictureEdits.filter((e, i, all) => all.findIndex((o) => o.slide === e.slide) === i),
   }
 }
 
@@ -208,19 +226,37 @@ async function ask(
 }
 
 /**
+ * A change to a PICTURE on a slide is made to the picture itself (Hani,
+ * 2026-11-05 — lib/picture-edit, gated by lib/feature-access): never faked
+ * with CSS. Told to the layout model when the gate is on.
+ */
+const PICTURE_EDIT_NOTE = [
+  'CHANGES TO A PICTURE ITSELF: if she asks to change a picture that is on a slide — her photo, her placed picture or an illustration — such as removing text, a caption, a logo or an object from it, cleaning it up, extending it, blending it into the design, or recolouring it to fit, do NOT do it in HTML/CSS. No cropping, object-position, clip-path, mask, overflow, scaling, overlay, filter or covering shape to hide or fake it. Instead put "picture_edits": [{"slide": N, "edit": "<one precise English instruction for an image-editing model, describing only the change to the picture>"}] in the json block, keep that slide\'s <img class="art"> showing the whole picture (object-fit: contain), and leave its "illustrations" entry empty. We edit the actual image and put the result back in the same place.',
+  "Placing a picture as it is (no change to the picture itself) is NOT a picture edit.",
+].join("\n")
+
+/**
  * `refs`: look references for a from-zero brief (a picture from a link —
  * lib/ai-edit-references). `place`: pictures she attached to be PUT IN the
  * carousel as they are (Hani, 2026-11-05: "התמונה תכנס ביצירה הראשונה") —
  * each one lands on a slide through `attached`, and the route puts her exact
  * file there, never a redraw.
  */
-export function composeCarousel(apiKey: string, brief: CarouselBrief, refs: string[] = [], place: string[] = []) {
+export function composeCarousel(
+  apiKey: string,
+  brief: CarouselBrief,
+  refs: string[] = [],
+  place: string[] = [],
+  /** Hani only (lib/feature-access): a change to her picture is a real picture edit. */
+  pictureEdits = false,
+) {
   if (!place.length) return ask(apiKey, briefText(brief), brief.slides.length, brief.examples, refs)
   const k = place.length
   const placeNote = [
     "",
     `HER OWN PICTURE${k > 1 ? "S" : ""}: attached image${k > 1 ? `s 1–${k} are` : " 1 is"} her own picture${k > 1 ? "s" : ""} (photo, character, illustration, logo or product) to PUT INTO this carousel as ${k > 1 ? "they are" : "it is"}.${refs.length ? ` Attached image${refs.length > 1 ? `s ${k + 1}–${k + refs.length} are` : ` ${k + 1} is`} only a reference for the look — apply the look, never place ${refs.length > 1 ? "them" : "it"}.` : ""}`,
     `Place EVERY one of her pictures on exactly one slide — the cover unless the brief says otherwise; one picture per slide. Put "attached": [one entry per slide: the attached image number placed on that slide, or 0] in the json block, leave that slide's "illustrations" entry empty, and show it with <img class="art" src="__SLIDE_IMAGE_N__"> (N = the slide number) styled object-fit: contain, so her picture is never cropped, stretched or distorted. We put her exact file there — never describe it as an illustration prompt. The layout makes room for it; it never covers the slide's text.`,
+    ...(pictureEdits ? ["", PICTURE_EDIT_NOTE] : []),
   ].join("\n")
   return ask(apiKey, briefText(brief) + placeNote, brief.slides.length, brief.examples, [...place, ...refs], true)
 }
@@ -243,6 +279,8 @@ export function reviseCarousel(
    * brief (which is always her current one), not just her change.
    */
   restyle = false,
+  /** Hani only (lib/feature-access): a change to a picture is a real picture edit. */
+  pictureEdits = false,
 ) {
   const own = (stored.ownArt ?? []).flatMap((o, i) => (o ? [i + 1] : []))
   return ask(
@@ -277,6 +315,7 @@ export function reviseCarousel(
             `She attached ${refs.length === 1 ? "an image" : `${refs.length} images`} (see "Attached image N" above). If she wants one placed in the carousel, put "attached": [one entry per slide: the attached image number to place on that slide, or 0] in the json block, leave that slide's "illustrations" entry empty, and make sure the slide shows it with <img class="art" src="__SLIDE_IMAGE_N__"> (N = the slide number) styled object-fit: contain, so her picture is never cropped, stretched or distorted. We put her exact file there — never describe it as a new illustration prompt. An attached image that only shows the look she wants is a reference: apply the look, and do not list it in "attached". To place it without its background, also list the slide in "cutouts".`,
           ]
         : []),
+      ...(pictureEdits ? [PICTURE_EDIT_NOTE] : []),
       'If she asks to put in, swap in or use a SPECIFIC picture (her photo, her character, "this image", a picture from somewhere else) and that picture is not among the attached images, do NOT invent one: return the HTML unchanged and put "needs_image": true in the json block. Never add a person, character or object she did not ask for.',
       ...(restyle
         ? []
