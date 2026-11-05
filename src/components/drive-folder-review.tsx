@@ -5,7 +5,7 @@
  *
  * Settings → מדיה → "מדיה מ-Google Drive": one shared folder per kind of
  * media (b-roll, talking head, images, story, carousel), each in an accordion
- * row, view-only links. On the canvas, "מדיה משלכם מ Google Drive" in a
+ * row, view-only links. On the canvas, "מדיה מוכנה מ Google Drive" (was "מדיה משלכם…") in a
  * format's media panel swaps the panel for a gallery of that folder.
  * Multi-frame formats (carousel, story): tap pictures in the order they
  * should appear, rearrange in the tray. Single-file formats: select, confirm.
@@ -647,10 +647,16 @@ export function DriveFolderEntry({
   onImport,
   pulling,
   error,
+  onOpen,
 }: {
   format: string
   /** The format's own Drive import — receives the picked files' links, in order. */
   onImport?: (links: string[]) => void
+  /**
+   * The button's own action instead of the gallery (Hani, 2026-11-06): the
+   * AI panel with its Drive gallery up — one pipeline from there.
+   */
+  onOpen?: () => void
   /** The import after a pick is still running (the panel's own Drive pull). */
   pulling?: boolean
   /** The import after a pick failed — shown here, where she picked. Before
@@ -715,9 +721,9 @@ export function DriveFolderEntry({
       )}
       {!preview ? (
         <>
-          <Button variant="outline" onClick={() => openDrivePicker(format)} className="w-full gap-2">
+          <Button variant="outline" onClick={() => (onOpen ? onOpen() : openDrivePicker(format))} className="w-full gap-2">
             <DriveMark />
-            מדיה משלכם מ Google Drive
+            מדיה מוכנה מ Google Drive
           </Button>
           <p className="text-xs-body text-text-neutral-default">
             {f.status === "connected"
@@ -729,9 +735,14 @@ export function DriveFolderEntry({
         </>
       ) : (
       <>
-      <Button variant="outline" onClick={() => openDrivePicker(format)} disabled={!!pulling} className="w-full gap-2">
+      <Button
+        variant="outline"
+        onClick={() => (onOpen ? onOpen() : openDrivePicker(format))}
+        disabled={!!pulling}
+        className="w-full gap-2"
+      >
         <DriveMark />
-        מדיה משלכם מ Google Drive
+        מדיה מוכנה מ Google Drive
       </Button>
       {pulling ? (
         <p className="flex items-center gap-2 text-xs text-text-neutral-default" role="status">

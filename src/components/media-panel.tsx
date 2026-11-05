@@ -70,6 +70,7 @@ import type { SlideData, TemplateConfig } from "@/lib/carousel-templates"
 import { flushPendingSaves } from "@/lib/pending-saves"
 import { BLANK_TEMPLATE, BLANK_TEMPLATE_ID, BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import { openingId, requestAiEdit } from "@/lib/ai-edit-intent"
+import { registerAsIsImporter, requestDrivePicker, type AsIsItem, type AsIsResult } from "@/lib/as-is-upload"
 import { AiHoverEditButton } from "@/components/ai-hover-edit"
 import { useRefPlace } from "@/lib/use-scheduling-access"
 import type { MediaStyle } from "@/lib/visual-language/types"
@@ -315,7 +316,8 @@ export function MediaPanel({
   const isOpen = formatId !== null
   const meta = formatId ? FORMAT_META[formatId] : null
   const Icon = meta?.icon
-  // "מדיה משלכם מ Google Drive" swaps the panel for the folder's gallery.
+  // "מדיה מוכנה מ Google Drive" swaps the panel for the folder's gallery (talking head; the
+  // other formats open the AI panel with Drive up — lib/as-is-upload).
   const drivePick = useDrivePickVariant()
   const drivePickStore = useDrivePickStore()
   const drivePickerOpen = !!drivePick && !!formatId && drivePickStore.pickerFor === formatId
@@ -2057,6 +2059,27 @@ function CarouselFlow({
    * Import entry point. Asks first when there is already a carousel to lose;
    * a first import has nothing to overwrite and goes straight through.
    */
+  /** "להעלות כמו שזה" (lib/as-is-upload): her Drive files become the slides, in order. */
+  const asIsRef = useRef<((items: AsIsItem[]) => Promise<AsIsResult>) | null>(null)
+  useEffect(() => {
+    asIsRef.current = async (items) => {
+      const drive = items.flatMap((it) => (it.drive ? [it.drive] : []))
+      if (!drive.length) {
+        return { ok: false, message: "קרוסלה עולה כמו שהיא רק מהדרייב. צרפו את השקופיות מהתיקייה בדרייב." }
+      }
+      requestDriveImport(drive)
+      const skipped = items.length - drive.length
+      return {
+        ok: true,
+        message: `${drive.length === 1 ? "השקופית עולה" : `${drive.length} השקופיות עולות, לפי הסדר,`} כמו שהן, בלי תוספות. ההתקדמות בפאנל המדיה.${skipped ? " הקבצים מהמחשב לא נכללו." : ""}`,
+      }
+    }
+  })
+  useEffect(() => {
+    registerAsIsImporter("carousel", (items) => asIsRef.current?.(items) ?? Promise.resolve({ ok: false, message: "" }))
+    return () => registerAsIsImporter("carousel", null)
+  }, [])
+
   const requestDriveImport = (rows: string[]) => {
     if (images?.length) {
       setPendingDriveReimport(rows)
@@ -2443,7 +2466,19 @@ function CarouselFlow({
             images), so a single Canva/folder link is intentionally NOT the
             mechanism here. */}
       {drivePick ? (
-        <DriveFolderEntry format="carousel" onImport={requestDriveImport} />
+        <DriveFolderEntry
+          format="carousel"
+          onImport={requestDriveImport}
+          // One pipeline (Hani, 2026-11-06): the AI panel, Drive gallery up.
+          onOpen={
+            postId
+              ? () => {
+                  requestDrivePicker("carousel")
+                  requestGenerate(true)
+                }
+              : undefined
+          }
+        />
       ) : (
       <div className="flex flex-col gap-2">
         <DriveMediaLinks
@@ -3597,6 +3632,54 @@ function MediaUploadFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [format, aiPreviews])
 
+  /**
+   * "להעלות כמו שזה, בלי תוספות" from the AI panel (Hani, 2026-11-06 —
+   * lib/as-is-upload): her attachments become this format's media through
+   * the imports this panel already has — the Drive pull (a video stays the
+   * video) and the computer upload. No generation, no style.
+   */
+  const asIsRef = useRef<((items: AsIsItem[]) => Promise<AsIsResult>) | null>(null)
+  useEffect(() => {
+    asIsRef.current = async (items) => {
+      if (!postId) return { ok: false, message: "שמרו קודם את הפוסט, ואז אפשר להעלות מדיה." }
+      const drive = items.flatMap((it) => (it.drive ? [it.drive] : []))
+      const files = items.flatMap((it) => (it.file ? [it.file] : []))
+      const skippedFiles = drive.length > 0 && files.length > 0
+      const tail = skippedFiles ? " הקבצים מהמחשב לא נכללו — מעלים פעם אחת מקור אחד." : ""
+      if (drive.length) {
+        if (format === "story") {
+          handleStoryDriveImport(drive)
+          return {
+            ok: true,
+            message: `${drive.length === 1 ? "הסטורי עולה" : `${drive.length} הפריימים עולים לסטורי, לפי הסדר,`} כמו שהם, בלי תוספות. ההתקדמות בפאנל המדיה.${tail}`,
+          }
+        }
+        setDriveUrl(drive[0])
+        lastDriveRef.current = drive[0]
+        void attachDriveMedia(drive[0], format)
+        return {
+          ok: true,
+          message: `${drive.length > 1 ? "בפורמט הזה יש מקום למדיה אחת, אז עולה הראשונה. " : ""}המדיה עולה כמו שהיא, בלי תוספות. ההתקדמות בפאנל המדיה.${tail}`,
+        }
+      }
+      if (!files.length) return { ok: false, message: "אין כאן מדיה להעלות." }
+      const first = files[0]
+      if (first.type.startsWith("video/") && !acceptedMimeForFormat(format).acceptsVideo) {
+        return { ok: false, message: "בפורמט הזה אפשר להעלות מהמחשב רק תמונה. סרטון מעלים מהדרייב." }
+      }
+      void handleUpload(first)
+      return {
+        ok: true,
+        message: `${files.length > 1 ? "מהמחשב עולה קובץ אחד בכל פעם, אז עולה הראשון. " : ""}המדיה עולה כמו שהיא, בלי תוספות. ההתקדמות בפאנל המדיה.`,
+      }
+    }
+  })
+  useEffect(() => {
+    if (format !== "image_post" && format !== "story" && format !== "b_roll") return
+    registerAsIsImporter(format, (items) => asIsRef.current?.(items) ?? Promise.resolve({ ok: false, message: "" }))
+    return () => registerAsIsImporter(format, null)
+  }, [format])
+
   const handleStoryDriveImport = (rows: string[]) => {
     if (!postId) {
       toast.error("שמרו את הפוסט לפני ייבוא הסטורי", { duration: 4000 })
@@ -4102,6 +4185,15 @@ function MediaUploadFlow({
                   format="image_post"
                   pulling={drivePulling}
                   error={driveError}
+                  // One pipeline (Hani, 2026-11-06): the AI panel, Drive gallery up.
+                  onOpen={
+                    postId
+                      ? () => {
+                          requestDrivePicker("image_post")
+                          handleAiGenerate(true)
+                        }
+                      : undefined
+                  }
                   onImport={(links) => {
                     setDriveUrl(links[0])
                     lastDriveRef.current = links[0]
@@ -4352,7 +4444,19 @@ function MediaUploadFlow({
                  Row i is frame i, so dragging a row reorders the story
                  itself, not just the form. */}
           {drivePick ? (
-            <DriveFolderEntry format="story" onImport={handleStoryDriveImport} />
+            <DriveFolderEntry
+              format="story"
+              onImport={handleStoryDriveImport}
+              // One pipeline (Hani, 2026-11-06): the AI panel, Drive gallery up.
+              onOpen={
+                postId
+                  ? () => {
+                      requestDrivePicker("story")
+                      handleStoryGenerate(true)
+                    }
+                  : undefined
+              }
+            />
           ) : !showStoryDriveLinks ? (
             <Button
               variant="outline"
@@ -4625,6 +4729,15 @@ function MediaUploadFlow({
               format={format}
               pulling={drivePulling}
               error={driveError}
+              // One pipeline (Hani, 2026-11-06): the AI panel, Drive gallery up.
+              onOpen={
+                postId && format === "b_roll"
+                  ? () => {
+                      requestDrivePicker("b_roll")
+                      handleBRollGenerate(true)
+                    }
+                  : undefined
+              }
               onImport={(links) => {
                 setDriveUrl(links[0])
                 lastDriveRef.current = links[0]

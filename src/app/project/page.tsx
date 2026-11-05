@@ -2,6 +2,7 @@
 
 import { FormatLane, LaneColumn, LaneStem, TreeConnector, newestLaneCard } from "@/components/format-lanes"
 import { useAiEditRequests, type AiEditOpening } from "@/lib/ai-edit-intent"
+import { onAsIsNeedsPanel } from "@/lib/as-is-upload"
 import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
@@ -1952,6 +1953,10 @@ function ProjectPageInner() {
     setFormatPosts((prev) => ({ ...prev, [fid]: last }))
     toast("סקריפט ריק לא נשמר, אז החזרנו את הטקסט הקודם", { id: `empty-format-${fid}` })
   }
+
+  // "להעלות כמו שזה, בלי תוספות" in the AI panel runs the media panel's own
+  // import (lib/as-is-upload): open that format's media panel for it.
+  useEffect(() => onAsIsNeedsPanel((format) => setSelectedFormatCard(format)), [])
 
   const handleFormatCardClick = (fid: string) => {
     setSelectedFormatCard(selectedFormatCard === fid ? null : fid)
