@@ -20,8 +20,21 @@ export interface InfiniteCanvasHandle {
    * with a transform, so the browser's own `scrollIntoView` does nothing
    * here — anything that wants to show the user a card has to ask the canvas.
    */
-  focusOn: (el: HTMLElement) => void
+  focusOn: (el: HTMLElement, opts?: FocusOptions) => void
 }
+
+export interface FocusOptions {
+  /**
+   * "follow": for the canvas following work as it is made. Centres the card
+   * horizontally, moves vertically only as far as needed to bring it into
+   * view, and does nothing while the user is moving the canvas herself (a pan
+   * in progress, or a drag / wheel in the last moment) — it never fights her.
+   */
+  mode?: "centre" | "follow"
+}
+
+/** How long after her last drag / wheel the canvas counts as "hers". */
+const USER_IDLE_MS = 1200
 
 interface InfiniteCanvasProps {
   children: ReactNode
@@ -39,18 +52,35 @@ export function InfiniteCanvas({ children, handleRef }: InfiniteCanvasProps) {
   const [panStart, setPanStart] = useState({ x: 0, y: 0 })
   const [gliding, setGliding] = useState(false)
   const glideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const panningRef = useRef(false)
+  const lastUserMoveAt = useRef(0)
+  const markUserMove = () => { lastUserMoveAt.current = Date.now() }
 
   useImperativeHandle(handleRef, () => ({
-    focusOn: (el) => {
+    focusOn: (el, opts) => {
       const view = containerRef.current?.getBoundingClientRect()
       if (!view) return
+      const follow = opts?.mode === "follow"
+      if (follow && (panningRef.current || Date.now() - lastUserMoveAt.current < USER_IDLE_MS)) return
       const box = el.getBoundingClientRect()
       // Centre it; a card taller than the view keeps its top in sight instead.
       const dx = view.left + view.width / 2 - (box.left + box.width / 2)
-      const dy =
+      let dy =
         box.height > view.height * 0.8
           ? view.top + 80 - box.top
           : view.top + view.height / 2 - (box.top + box.height / 2)
+      if (follow) {
+        // Lanes run sideways: keep the row where it is unless the card's top
+        // is out of sight, and then bring it just inside the view.
+        // The canvas element can run taller than the window; what she sees
+        // ends at the window's bottom edge.
+        const top = Math.max(view.top, 0)
+        const bottom = Math.min(view.bottom, window.innerHeight)
+        const margin = 80
+        if (box.top >= top + margin && box.top <= bottom - margin * 2) dy = 0
+        else dy = top + margin - box.top
+        if (Math.abs(dx) < 4 && dy === 0) return
+      }
       setGliding(true)
       setOffset((o) => ({ x: o.x + dx, y: o.y + dy }))
       if (glideTimer.current) clearTimeout(glideTimer.current)
@@ -71,6 +101,8 @@ export function InfiniteCanvas({ children, handleRef }: InfiniteCanvasProps) {
         return
       }
       if (e.button === 0 || e.button === 1) {
+        panningRef.current = true
+        markUserMove()
         setIsPanning(true)
         setPanStart({ x: e.clientX - offset.x, y: e.clientY - offset.y })
       }
@@ -81,17 +113,21 @@ export function InfiniteCanvas({ children, handleRef }: InfiniteCanvasProps) {
   const handleMouseMove = useCallback(
     (e: MouseEvent) => {
       if (!isPanning) return
+      markUserMove()
       setOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y })
     },
     [isPanning, panStart]
   )
 
   const handleMouseUp = useCallback(() => {
+    if (panningRef.current) markUserMove()
+    panningRef.current = false
     setIsPanning(false)
   }, [])
 
   const handleWheel = useCallback(
     (e: WheelEvent) => {
+      markUserMove()
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault()
         const delta = e.deltaY > 0 ? -0.05 : 0.05

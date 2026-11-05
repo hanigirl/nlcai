@@ -362,15 +362,10 @@ function SettingsPageInner() {
 
   // Media tab state
   interface MediaItem { id: string; name: string; url: string; role?: "primary" | "secondary" }
-  const [coverItems, setCoverItems] = useState<MediaItem[]>([])
-  const [coverUploading, setCoverUploading] = useState<UploadingFile[]>([])
-  const [analyzingStyle, setAnalyzingStyle] = useState(false)
-  const [styleAnalyzed, setStyleAnalyzed] = useState(false)
   const [fontItems, setFontItems] = useState<MediaItem[]>([])
   const [googleFontSearch, setGoogleFontSearch] = useState("")
   const [showFontDropdown, setShowFontDropdown] = useState(false)
   const [fontUploading, setFontUploading] = useState<UploadingFile[]>([])
-  const coverInputRef = useRef<HTMLInputElement>(null)
   const fontInputRef = useRef<HTMLInputElement>(null)
 
   // Close font dropdown on outside click
@@ -388,7 +383,7 @@ function SettingsPageInner() {
       // Fire all queries in parallel; await each individually to keep their distinct Supabase types intact.
       const userRowPromise = supabase
         .from("users")
-        .select("anthropic_api_key, heygen_api_key, apify_api_key, openai_api_key, gemini_api_key, brand_style")
+        .select("anthropic_api_key, heygen_api_key, apify_api_key, openai_api_key, gemini_api_key")
         .eq("id", user.id)
         .single()
       const coreIdPromise = supabase
@@ -433,7 +428,6 @@ function SettingsPageInner() {
           openai_api_key: (row.openai_api_key as string) ?? null,
           gemini_api_key: (row.gemini_api_key as string) ?? null,
         })
-        if (row.brand_style) setStyleAnalyzed(true)
       }
 
       const coreIdData = coreIdRes.data as Record<string, string | null> | null
@@ -488,7 +482,6 @@ function SettingsPageInner() {
           }
         }
         setFontItems(mediaRows.filter((r) => r.category === "font").map(toItem))
-        setCoverItems(mediaRows.filter((r) => r.category === "cover").map(toItem))
       }
 
       setLoading(false)
@@ -605,7 +598,7 @@ function SettingsPageInner() {
   }
 
   // --- Media upload helpers ---
-  const uploadMediaFile = useCallback(async (file: File, category: "font" | "cover", metadata: Record<string, unknown> = {}) => {
+  const uploadMediaFile = useCallback(async (file: File, category: "font", metadata: Record<string, unknown> = {}) => {
     const supabase = createClient()
     const { data: { user } } = await getCurrentUser(supabase)
     if (!user) return null
@@ -652,44 +645,6 @@ function SettingsPageInner() {
     await supabase.from("user_media").delete().eq("id", item.id)
     if (storagePath) await supabase.storage.from("user-media").remove([storagePath])
   }, [])
-
-  const handleCoverUpload = async (files: FileList | File[]) => {
-    const remaining = 10 - coverItems.length
-    const newItems: MediaItem[] = []
-    for (const file of Array.from(files).slice(0, remaining)) {
-      if (!file.type.startsWith("image/")) continue
-      const fileId = crypto.randomUUID()
-      setCoverUploading((prev) => [...prev, { id: fileId, name: file.name, progress: 0, status: "uploading" }])
-      setCoverUploading((prev) => prev.map((f) => f.id === fileId ? { ...f, progress: 50 } : f))
-      const item = await uploadMediaFile(file, "cover")
-      setCoverUploading((prev) => prev.map((f) => f.id === fileId ? { ...f, progress: 100, status: "done" } : f))
-      setTimeout(() => setCoverUploading((prev) => prev.filter((f) => f.id !== fileId)), 1000)
-      if (item) {
-        newItems.push(item)
-        setCoverItems((prev) => [...prev, item])
-      }
-    }
-    // Auto-analyze brand style when 3+ covers exist
-    const totalCovers = coverItems.length + newItems.length
-    if (totalCovers >= 3 && newItems.length > 0) {
-      const allUrls = [...coverItems, ...newItems].map((c) => c.url)
-      setAnalyzingStyle(true)
-      setStyleAnalyzed(false)
-      try {
-        const res = await fetch("/api/analyze-covers", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ images: allUrls }),
-        })
-        const data = await res.json()
-        if (data.brand_style) {
-          setStyleAnalyzed(true)
-          setTimeout(() => setStyleAnalyzed(false), 10000)
-        }
-      } catch (err) { console.error("[settings][analyze-covers]", err) }
-      finally { setAnalyzingStyle(false) }
-    }
-  }
 
   const handleFontUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
@@ -1672,94 +1627,12 @@ function SettingsPageInner() {
 
                   {activeMediaSection === "drive" && <DriveFoldersSettings />}
 
-                  {/* ── Examples per format; covers keep their own upload + style analysis ── */}
+                  {/* ── Examples per format ── */}
                   {activeMediaSection === "examples" && (
                     <VisualLanguagePanel
                       view="examples"
                       examplesTab={examplesTab}
                       onExamplesTabChange={setExamplesTab}
-                      coversSection={
-                        <div className="flex flex-col gap-5">
-                          <p className="text-small text-text-neutral-default">
-                            העלו צילומי מסך של הקאברים שלכם — הסוכנים ישתמשו בהם כרפרנס
-                          </p>
-
-                          <input ref={coverInputRef} type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(e) => { if (e.target.files) handleCoverUpload(e.target.files); if (coverInputRef.current) coverInputRef.current.value = "" }} className="hidden" />
-                          <button
-                            onClick={() => coverInputRef.current?.click()}
-                            onDragOver={(e) => e.preventDefault()}
-                            onDrop={(e) => { e.preventDefault(); handleCoverUpload(e.dataTransfer.files) }}
-                            className="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-border-neutral-default p-5 hover:bg-gray-95 dark:hover:bg-gray-20 transition-all cursor-pointer"
-                          >
-                            <Upload className="size-5 text-text-neutral-default" />
-                            <span className="text-xs text-text-neutral-default">PNG, JPG (עד 10)</span>
-                          </button>
-
-                          {coverUploading.map((f) => (
-                            <div key={f.id} className="flex items-center gap-2 rounded-lg bg-bg-surface p-2">
-                              <span className="text-xs text-text-primary-default truncate flex-1">{f.name}</span>
-                              {f.status === "done" ? <Check className="size-3.5 text-green-600 dark:text-green-400" /> : <Progress value={f.progress} className="w-20 h-1.5" />}
-                            </div>
-                          ))}
-
-                          {coverItems.length > 0 && (
-                            <div className="flex gap-3 flex-wrap">
-                              {coverItems.map((item) => (
-                                <div key={item.id} className="relative size-[80px] rounded-lg overflow-hidden bg-bg-surface group">
-                                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                                  <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
-                                  <button onClick={async () => { await deleteMediaItem(item); setCoverItems((prev) => prev.filter((c) => c.id !== item.id)) }} className="absolute top-1 end-1 size-5 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <X className="size-3 text-white" />
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-
-                          {analyzingStyle && (
-                            <div className="flex items-center gap-2 text-sm text-text-neutral-default">
-                              <Loader2 className="size-4 animate-spin" />
-                              מנתח את סגנון הקאברים...
-                            </div>
-                          )}
-                          {styleAnalyzed && !analyzingStyle && (
-                            <div className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400">
-                              <Check className="size-4" />
-                              סגנון הקאברים נשמר
-                            </div>
-                          )}
-
-                          {coverItems.length >= 3 && !analyzingStyle && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={async () => {
-                                const allUrls = coverItems.map((c) => c.url)
-                                setAnalyzingStyle(true)
-                                setStyleAnalyzed(false)
-                                try {
-                                  const res = await fetch("/api/analyze-covers", {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ images: allUrls }),
-                                  })
-                                  const data = await res.json()
-                                  if (data.brand_style) {
-                                    setStyleAnalyzed(true)
-                                    setTimeout(() => setStyleAnalyzed(false), 10000)
-                                  }
-                                } catch (err) { console.error("[settings][reanalyze-covers]", err) }
-                                finally { setAnalyzingStyle(false) }
-                              }}
-                              className="w-fit gap-2"
-                            >
-                              <Sparkles className="size-4" />
-                              נתח את סגנון הקאברים מחדש
-                            </Button>
-                          )}
-
-                        </div>
-                      }
                     />
                   )}
                 </div>

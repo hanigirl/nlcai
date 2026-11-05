@@ -31,7 +31,7 @@ import {
  * Two pages over one set of inputs. "visual": brand colours, fonts (rendered
  * by the settings page), graphic elements (each with a note on what it is /
  * when it's used) and the analysis. "examples": design examples filed per
- * format (carousel / cover / story / image, plus a site link) — they feed the
+ * format (carousel / cover / story / image / b-roll, plus a site link) — they feed the
  * same analysis, which turns everything into a visual language.
  * Every AI media generator (story, image post, AI carousel, b-roll) follows
  * the result. If the inputs don't share one language, she gets a warning
@@ -63,13 +63,14 @@ interface ExampleItem {
 }
 
 /** The tabs under דוגמאות לשימוש. */
-export type ExamplesTab = "carousel" | "cover" | "story" | "image"
+export type ExamplesTab = "carousel" | "cover" | "story" | "image" | "b_roll"
 
 const EXAMPLE_TABS: { id: ExamplesTab; label: string; kind: UserExampleKind }[] = [
   { id: "carousel", label: "קרוסלה", kind: "carousel" },
   { id: "cover", label: "קאברים", kind: "cover" },
   { id: "story", label: "סטורי", kind: "story" },
   { id: "image", label: "תמונה", kind: "feed_post" },
+  { id: "b_roll", label: "בי-רול", kind: "b_roll" },
 ]
 
 interface VisualLanguagePanelProps {
@@ -78,8 +79,6 @@ interface VisualLanguagePanelProps {
   fontsSection?: ReactNode
   /** How many fonts she has, for the closed fonts row. */
   fontsCount?: number
-  /** The covers block (own uploads + style analysis), shown in the קאברים tab. */
-  coversSection?: ReactNode
   examplesTab?: ExamplesTab
   onExamplesTabChange?: (tab: ExamplesTab) => void
 }
@@ -96,7 +95,6 @@ export function VisualLanguagePanel({
   view,
   fontsSection,
   fontsCount = 0,
-  coversSection,
   examplesTab = "carousel",
   onExamplesTabChange,
 }: VisualLanguagePanelProps) {
@@ -377,11 +375,11 @@ export function VisualLanguagePanel({
     return kind ? EXAMPLE_KIND_LABELS[kind] : null
   }
   // Which tab an example lives in: her filing first, then the analysis's
-  // guess. Anything that isn't a carousel, cover or story — feed posts,
-  // banners, posters, websites, unanalysed — is an image.
+  // guess. Anything that isn't a carousel, cover, story or b-roll — feed
+  // posts, banners, posters, websites, unanalysed — is an image.
   const tabOf = (ex: ExampleItem): ExamplesTab => {
     const kind = ex.filedKind ?? visualLanguage?.example_kinds?.find((k) => k.id === ex.id)?.kind
-    if (kind === "carousel" || kind === "cover" || kind === "story") return kind
+    if (kind === "carousel" || kind === "cover" || kind === "story" || kind === "b_roll") return kind
     return "image"
   }
   // The cap is per format: six carousels don't crowd out her stories.
@@ -424,6 +422,79 @@ export function VisualLanguagePanel({
       </div>
     )
   }
+
+  // ── Analysis block ── one element for both views: after adding examples
+  // she can re-run the analysis right there and see its result (Hani,
+  // 2026-11-05). It reads every input, the examples included.
+  const analysisSection = (
+    <section className="flex flex-col gap-3" aria-label="ניתוח השפה הוויזואלית">
+
+      {visualLanguage?.status === "ok" && (
+        <div className="flex flex-col gap-3 rounded-xl bg-bg-surface p-4">
+          <p className="text-sm text-text-primary-default leading-relaxed">{visualLanguage.summary_he}</p>
+          {visualLanguage.palette.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {visualLanguage.palette.map((p, i) => (
+                <span key={i} className="flex items-center gap-1.5 text-xs text-text-neutral-default" dir="ltr">
+                  {/* The swatch shows HER colour, so it's the one place a raw value belongs. */}
+                  <span className="size-4 rounded-full border border-border-neutral-default" style={{ backgroundColor: p.hex }} />
+                  {p.hex}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {visualLanguage?.status === "inconsistent" && (
+        <div role="alert" className="flex flex-col gap-2 rounded-xl border border-red-80 bg-red-95 p-4">
+          <div className="flex items-center gap-1.5 text-sm font-semibold text-red-50">
+            <AlertTriangle className="size-4" />
+            לא מצאנו המשכיות בעיצוב שהעליתם
+          </div>
+          {visualLanguage.issues_he.length > 0 && (
+            <ul className="list-disc ps-5 text-sm text-text-primary-default flex flex-col gap-1">
+              {visualLanguage.issues_he.map((issue, i) => (
+                <li key={i}>{issue}</li>
+              ))}
+            </ul>
+          )}
+          <p className="text-sm text-text-primary-default">
+            ודאו שהצבעים, האלמנטים והדוגמאות מציגים שפה ויזואלית אחת, ספציפית וברורה, ונתחו שוב. עד אז נעצב לפי הנישה שלכם.
+          </p>
+        </div>
+      )}
+
+      {visualLanguage?.unreadable_links?.length ? (
+        <p className="text-xs text-text-neutral-default">
+          לא הצלחנו לקרוא את הקישור{visualLanguage.unreadable_links.length > 1 ? "ים" : ""}{" "}
+          <span dir="ltr">{visualLanguage.unreadable_links.join(", ")}</span>, אז הוא לא נכלל בניתוח. אפשר להעלות צילום מסך במקום.
+        </p>
+      ) : null}
+
+      {stale && !analyzing && (
+        <p className="text-xs text-text-neutral-default">שיניתם דברים מאז הניתוח האחרון. נתחו שוב כדי לעדכן את השפה.</p>
+      )}
+
+      <Button
+        onClick={analyze}
+        disabled={!hasInputs || analyzing || busy}
+        className="w-full gap-2"
+      >
+        {analyzing ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+        {analyzing
+          ? "מנתח את השפה הוויזואלית..."
+          : visualLanguage
+            ? "ניתוח מחדש של שפה ויזואלית"
+            : "ניתוח שפה ויזואלית"}
+      </Button>
+      {analyzing && (
+        <p className="text-xs text-text-neutral-default" aria-live="polite">
+          זה יכול לקחת עד דקה, במיוחד כשיש קישור לאתר.
+        </p>
+      )}
+    </section>
+  )
 
   if (view === "examples") {
     const renderExample = (ex: ExampleItem) =>
@@ -507,9 +578,7 @@ export function VisualLanguagePanel({
             const room = MAX_BRAND_EXAMPLES - items.length
             return (
               <TabsContent key={t.id} value={t.id} className="flex flex-col gap-4 pt-3">
-                {t.id === "cover" ? (
-                  coversSection
-                ) : room > 0 ? (
+                {room > 0 ? (
                   <>
                     <DropZone
                       label="PNG, JPG"
@@ -542,21 +611,15 @@ export function VisualLanguagePanel({
                 ) : (
                   <p className="text-sm text-text-neutral-default">הגעתם למקסימום {MAX_BRAND_EXAMPLES} דוגמאות בסוג הזה. מחקו אחת כדי להוסיף.</p>
                 )}
-                {t.id !== "cover" && uploadingExamples > 0 && <UploadingNote count={uploadingExamples} />}
+                {uploadingExamples > 0 && <UploadingNote count={uploadingExamples} />}
 
-                {items.length > 0 && (
-                  <div className="flex flex-col gap-2">
-                    {/* Covers that came in as general examples, listed under their own label. */}
-                    {t.id === "cover" && (
-                      <span className="text-xs text-text-neutral-default">קאברים מתוך הדוגמאות לשימוש</span>
-                    )}
-                    <div className="flex flex-wrap gap-3">{items.map(renderExample)}</div>
-                  </div>
-                )}
+                {items.length > 0 && <div className="flex flex-wrap gap-3">{items.map(renderExample)}</div>}
               </TabsContent>
             )
           })}
         </Tabs>
+
+        {analysisSection}
       </div>
     )
   }
@@ -721,74 +784,7 @@ export function VisualLanguagePanel({
       </AccordionSection>
       </div>
 
-      {/* ── Analysis (reads the examples too) ── */}
-      <section className="flex flex-col gap-3" aria-label="ניתוח השפה הוויזואלית">
-
-        {visualLanguage?.status === "ok" && (
-          <div className="flex flex-col gap-3 rounded-xl bg-bg-surface p-4">
-            <p className="text-sm text-text-primary-default leading-relaxed">{visualLanguage.summary_he}</p>
-            {visualLanguage.palette.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {visualLanguage.palette.map((p, i) => (
-                  <span key={i} className="flex items-center gap-1.5 text-xs text-text-neutral-default" dir="ltr">
-                    {/* The swatch shows HER colour, so it's the one place a raw value belongs. */}
-                    <span className="size-4 rounded-full border border-border-neutral-default" style={{ backgroundColor: p.hex }} />
-                    {p.hex}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {visualLanguage?.status === "inconsistent" && (
-          <div role="alert" className="flex flex-col gap-2 rounded-xl border border-red-80 bg-red-95 p-4">
-            <div className="flex items-center gap-1.5 text-sm font-semibold text-red-50">
-              <AlertTriangle className="size-4" />
-              לא מצאנו המשכיות בעיצוב שהעליתם
-            </div>
-            {visualLanguage.issues_he.length > 0 && (
-              <ul className="list-disc ps-5 text-sm text-text-primary-default flex flex-col gap-1">
-                {visualLanguage.issues_he.map((issue, i) => (
-                  <li key={i}>{issue}</li>
-                ))}
-              </ul>
-            )}
-            <p className="text-sm text-text-primary-default">
-              ודאו שהצבעים, האלמנטים והדוגמאות מציגים שפה ויזואלית אחת, ספציפית וברורה, ונתחו שוב. עד אז נעצב לפי הנישה שלכם.
-            </p>
-          </div>
-        )}
-
-        {visualLanguage?.unreadable_links?.length ? (
-          <p className="text-xs text-text-neutral-default">
-            לא הצלחנו לקרוא את הקישור{visualLanguage.unreadable_links.length > 1 ? "ים" : ""}{" "}
-            <span dir="ltr">{visualLanguage.unreadable_links.join(", ")}</span>, אז הוא לא נכלל בניתוח. אפשר להעלות צילום מסך במקום.
-          </p>
-        ) : null}
-
-        {stale && !analyzing && (
-          <p className="text-xs text-text-neutral-default">שיניתם דברים מאז הניתוח האחרון. נתחו שוב כדי לעדכן את השפה.</p>
-        )}
-
-        <Button
-          onClick={analyze}
-          disabled={!hasInputs || analyzing || busy}
-          className="w-full gap-2"
-        >
-          {analyzing ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-          {analyzing
-            ? "מנתח את השפה הוויזואלית..."
-            : visualLanguage
-              ? "ניתוח מחדש של שפה ויזואלית"
-              : "ניתוח שפה ויזואלית"}
-        </Button>
-        {analyzing && (
-          <p className="text-xs text-text-neutral-default" aria-live="polite">
-            זה יכול לקחת עד דקה, במיוחד כשיש קישור לאתר.
-          </p>
-        )}
-      </section>
+      {analysisSection}
     </div>
   )
 }

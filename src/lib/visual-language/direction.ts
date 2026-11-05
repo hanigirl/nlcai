@@ -5,19 +5,22 @@ import { loadImageForModels, type ModelImage } from "@/lib/visual-language/image
 import { measureElement, type FixedElement } from "@/lib/visual-language/fixed-elements"
 import sharp from "sharp"
 import { loadStyleRules, styleRuleLines } from "@/lib/style-memory"
-import type {
-  MediaStyle,
-  NicheVisualLanguage,
-  VisualFormat,
-  VisualLanguage,
+import {
+  userExampleKind,
+  type ExampleKind,
+  type MediaStyle,
+  type NicheVisualLanguage,
+  type VisualFormat,
+  type VisualLanguage,
 } from "@/lib/visual-language/types"
 
 /**
  * Which visual language an AI image follows, in priority order:
  *
  * 1. brand — the user's analysed visual language (Settings → Media), when
- *    the analysis found a clear, unified one. Her graphic elements ride along
- *    as reference images.
+ *    the analysis found a clear, unified one. Her graphic elements and her
+ *    finished examples of this format (דוגמאות לשימוש) ride along as
+ *    reference images.
  * 2. niche — no usable brand language: a language derived from her niche
  *    (cached per niche). Her brand colours, if she set any, still apply.
  * 3. niche-direct — same intent, but there's no Claude key to derive and
@@ -43,6 +46,69 @@ export interface DesignDirection {
 // Each reference image costs input tokens on every frame; four covers a
 // logo + a few recurring marks.
 const MAX_REFERENCES = 4
+
+// Her finished posts of the format being generated — the look to match.
+// Read from the DB on every generation, so a new upload applies at once,
+// before she re-runs the analysis.
+export const MAX_FORMAT_EXAMPLES = 3
+
+/**
+ * The formats whose examples ride along as image-model references here.
+ * Carousel is left out on purpose: the carousel layout engine already gets
+ * her carousel examples attached directly (carouselExamples in
+ * /api/carousel/generate-ai), and these prompt lines also reach prompts that
+ * carry no images. b_roll's background stays text-free and reference-free;
+ * its examples go to the Opus composition instead (api/b-roll/generate-media).
+ */
+const FORMAT_EXAMPLE_KIND: Partial<Record<VisualFormat, ExampleKind>> = {
+  story: "story",
+  image_post: "feed_post",
+}
+
+const FORMAT_NAMES: Record<VisualFormat, string> = {
+  story: "Instagram stories",
+  carousel: "carousel slides",
+  image_post: "single-image feed posts",
+  b_roll: "b-roll reel frames",
+}
+
+/**
+ * Up to `max` of her examples of one kind (Settings → דוגמאות לשימוש): the
+ * ones she filed under its tab first, then older unfiled ones the last
+ * analysis recognised as that kind. Links (site screenshots) never count.
+ */
+export async function loadBrandExamples(
+  supabase: SupabaseClient,
+  userId: string,
+  kind: ExampleKind,
+  exampleKinds: VisualLanguage["example_kinds"],
+  max = MAX_FORMAT_EXAMPLES,
+): Promise<ModelImage[]> {
+  const { data, error } = await supabase
+    .from("user_media")
+    .select("id, storage_path, metadata")
+    .eq("user_id", userId)
+    .eq("category", "brand_example")
+    .order("created_at", { ascending: true })
+  if (error) console.error("[visual-language][format-examples]", error)
+  const rows = ((data ?? []) as { id: string; storage_path: string; metadata: Record<string, unknown> | null }[])
+    .filter((r) => !r.storage_path.startsWith("url:") && typeof r.metadata?.url !== "string")
+  const recognised = new Set((exampleKinds ?? []).filter((k) => k.kind === kind).map((k) => k.id))
+  const filed = rows.filter((r) => userExampleKind(r.metadata) === kind)
+  const unfiled = rows.filter((r) => !userExampleKind(r.metadata) && recognised.has(r.id))
+  const picked = [...filed, ...unfiled].slice(0, max)
+  const images = await Promise.all(
+    picked.map((r) =>
+      loadImageForModels(supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl).catch(
+        (err) => {
+          console.error("[visual-language][format-example]", r.id, err)
+          return null
+        },
+      ),
+    ),
+  )
+  return images.filter((x): x is ModelImage => x !== null)
+}
 
 /**
  * Layout variety for regenerate. The language (palette, type, imagery
@@ -149,6 +215,26 @@ async function resolveBaseDirection(
         "",
         "Attached reference images are the creator's real brand elements. Reproduce each one exactly as it is (same shape, colours and proportions — never redraw or restyle it), and only where its note says it belongs; it's fine to leave one out of this image. One exception: if an element would sit on a background of similar tone and get lost (a dark mark on a dark area, a light one on a light area), render its opposite-tone version — same shape, only light↔dark flipped — so it stays clearly visible:",
         ...loaded.map((r, i) => `- Reference image ${i + 1}: ${r.note}`),
+      )
+    }
+    // Her own finished examples of this format — appended after the
+    // element references so their numbering stays put. Skipped where the
+    // caller wants no references (text-free backgrounds).
+    const exampleKind = FORMAT_EXAMPLE_KIND[opts.format]
+    const examples =
+      opts.allowReferences === false || !exampleKind
+        ? []
+        : await loadBrandExamples(supabase, userId, exampleKind, vl.example_kinds)
+    if (examples.length) {
+      const first = references.length + 1
+      references.push(...examples)
+      const range =
+        examples.length === 1
+          ? `Reference image ${first} is`
+          : `Reference images ${first}–${references.length} are`
+      lines.push(
+        "",
+        `${range} FINISHED ${FORMAT_NAMES[opts.format]} the creator made in her own style — this is exactly how her ${FORMAT_NAMES[opts.format]} should look. Design this image as the next one in that series: same palette and background treatment, same typography character and hierarchy, same layout devices, graphic elements, density and overall feel. Do NOT copy their text, photos or subject — this image has its own content.`,
       )
     }
     return { source: "brand", lines, references, fixed }

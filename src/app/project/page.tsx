@@ -1,5 +1,6 @@
 "use client"
 
+import { FormatLane, LaneColumn, LaneStem, TreeConnector, newestLaneCard } from "@/components/format-lanes"
 import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
@@ -191,8 +192,6 @@ async function savePatch(
   }
 }
 
-const CARD_WIDTH = 346
-const CARD_GAP = 24
 
 function shortenTitle(text: string, maxWords = 7): string {
   if (!text) return text
@@ -1960,6 +1959,59 @@ function ProjectPageInner() {
     },
   })
 
+  // Follow the work. Whenever a format starts generating something or
+  // something new lands in it (script, video, cover, slides, frames, b-roll,
+  // image), pan the canvas to that lane's newest card — sideways, since that's
+  // where lanes grow — so she always sees what is being made now. Through the
+  // canvas's own focusOn in "follow" mode, which stands down while she is
+  // moving the canvas herself.
+  const laneActivityKey = JSON.stringify(
+    duplicatedFormats.map((fid) => {
+      const media =
+        fid === "talking_head" ? !!thVideoUrl
+        : fid === "carousel" ? (carouselImages?.length ?? 0) > 0
+        : fid === "story" ? (storyImages?.length ?? 0) > 0 || !!storyVideoUrl
+        : fid === "image_post" ? !!imagePostUrl
+        : fid === "b_roll" ? !!bRollUrl
+        : false
+      return [
+        fid,
+        formatPosts[fid] === FORMAT_GENERATING,
+        hasFormatText(formatPosts, fid),
+        !!mediaBusy[fid],
+        media,
+        fid === "talking_head" && thCoverLoading,
+        fid === "talking_head" && !!thCoverImage,
+      ]
+    }),
+  )
+  const prevLaneActivityRef = useRef<Record<string, boolean[]> | null>(null)
+  // Not while a saved post is still loading in: media arriving from the DB
+  // isn't "being made now", and panning on page load would disorient.
+  const laneFollowArmed = !savedPostLoading && !thVideoLoading
+  useEffect(() => {
+    const current: Record<string, boolean[]> = Object.fromEntries(
+      (JSON.parse(laneActivityKey) as [string, ...boolean[]][]).map(([fid, ...flags]) => [fid, flags]),
+    )
+    const prev = prevLaneActivityRef.current
+    prevLaneActivityRef.current = current
+    if (!prev || !laneFollowArmed) return
+    // The first lane (in canvas order) where something switched on.
+    const target = Object.keys(current).find((fid) =>
+      current[fid].some((on, i) => on && !(prev[fid]?.[i] ?? false)),
+    )
+    if (!target) return
+    // Two frames: let the new card mount and lay out before measuring it.
+    let raf2 = 0
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const card = newestLaneCard(target)
+        if (card) canvasRef.current?.focusOn(card, { mode: "follow" })
+      })
+    })
+    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2) }
+  }, [laneActivityKey, laneFollowArmed])
+
   return (
     <AppShell idea={shortenTitle(idea || hookParam || (postId ? "עריכת פוסט" : ""))}>
       {/* Media Panel — sibling to InfiniteCanvas, slides from left */}
@@ -2547,10 +2599,19 @@ function ProjectPageInner() {
                     </div>
                   </div>
 
-                  {/* Vertical connector + Formats card */}
+                </div>
+              )}
+
+              {(corePost || savedPostId) && !postLoading && (
+                <>
+                  {/* Connector + Formats card — to the LEFT of the core post, on the
+                      same row. Nothing on the canvas goes downward: the
+                      formats branch out sideways into one lane each. */}
                   {showFormats && (
                     <>
-                      <div className="w-[2px] h-7 bg-gray-80" />
+                      <div className="flex items-center mt-[55px] shrink-0">
+                        <div className="h-[2px] w-7 bg-gray-80" />
+                      </div>
                       <div
                         dir="rtl"
                         className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-[567px] shrink-0"
@@ -2636,113 +2697,109 @@ function ProjectPageInner() {
                     </>
                   )}
 
-                  {/* Format result tree */}
+                  {/* Format lanes */}
                   {duplicatedFormats.length > 0 && (
-                    <div className="relative w-full">
-                      <div className="absolute top-0 left-1/2 -translate-x-1/2">
-                        <FormatTree
-                          formats={duplicatedFormats}
-                          formatPosts={formatPosts}
-                          onPostChange={(fid, text) => setFormatPosts((prev) => ({ ...prev, [fid]: text }))}
-                          onPostBlur={handleFormatBlur}
-                          onRegenerateFormat={(fid) => setPendingFormatRegen(fid)}
-                          formatSaveStatus={formatSaveStatus}
-                          activeCard={activeCard}
-                          onActiveChange={setActiveCard}
-                          selectedFormat={selectedFormatCard}
-                          onSelectFormat={handleFormatCardClick}
-                          hookText={activeHook}
-                          thVideoUrl={thVideoUrl}
-                          thVideoLoading={thVideoLoading}
-                          mediaBusy={mediaBusy}
-                          thVideoCardRef={thVideoCardRef}
-                          // Clicking the video ONLY opens the panel (Hani,
-                          // 2026-10-29: "קודם לוחצים, הפאנל נפתח, ורק אז
-                          // מחליטים"). It used to clear the recording and the
-                          // transcript here, like the old "עריכת סרטון"
-                          // button; that now happens in the panel, at the
-                          // moment a new video is actually attached.
-                          onThReRecord={() => setSelectedFormatCard("talking_head")}
-                          onThDelete={() => setPendingVideoDelete(true)}
-                          thCoverImage={thCoverImage}
-                          thCoverLoading={thCoverLoading}
-                          coverText={coverText}
-                          onCoverTextChange={setCoverText}
-                          onCoverRegenerate={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
-                          pillColor={pillColor}
-                          onPillColorChange={(next) => {
-                            pillTouchedRef.current = true
-                            setPillColor(next)
-                            // The picker leaves `livePillColor` armed when it
-                            // commits; we drop the CSS overlay only after the
-                            // regenerated PNG lands so the user never sees
-                            // the old colour flash back during the round-trip.
-                            generateCoverForPost(coverText, thVideoUrl || undefined, next)
-                              .finally(() => setLivePillColor(null))
-                          }}
-                          livePillColor={livePillColor}
-                          onLivePillPreview={setLivePillColor}
-                          coverBrandColors={coverBrand.colors}
-                          coverSwatches
-                          thVideoFrameDataUrl={thVideoFrameDataUrl}
-                          userId={userId}
-                          carouselImages={carouselImages}
-                          carouselCardRef={carouselCardRef}
-                          // The caption control lives ON the carousel's card
-                          // (Hani, 2026-08-13), so the card needs what it takes
-                          // to redraw the slides: which post they belong to,
-                          // the links they came from, and the way back.
-                          savedPostId={savedPostId}
-                          carouselDriveLinks={carouselDriveLinks}
-                          onCarouselImagesChange={setCarouselImages}
-                          // Opening the media panel must NOT throw the current
-                          // carousel away (Hani, 2026-07-28): the old handler
-                          // cleared images+slides on click, so pressing what
-                          // read as "edit" destroyed the carousel before she
-                          // had seen a single alternative. Now it just opens
-                          // the panel — same as story / image_post — where the
-                          // saved carousel is shown on its template tile and
-                          // deleting it is a separate, explicit action.
-                          onCarouselEdit={() =>
-                            setSelectedFormatCard("carousel")
-                          }
-                          imagePostUrl={imagePostUrl}
-                          imagePostCardRef={imagePostCardRef}
-                          onImagePostEdit={() =>
-                            setSelectedFormatCard("image_post")
-                          }
-                          onImagePostUrlChange={setImagePostUrl}
-                          storyImages={storyImages}
-                          storyCardRef={storyCardRef}
-                          onStoryEdit={() =>
-                            setSelectedFormatCard("story")
-                          }
-                          storyVideoUrl={storyVideoUrl}
-                          bRollUrl={bRollUrl}
-                          bRollCardRef={bRollCardRef}
-                          onBRollEdit={() => setSelectedFormatCard("b_roll")}
-                          onAiEdit={setAiChatFormat}
-                          onDeleteMedia={setPendingMediaDelete}
-                          onBRollUrlChange={setBRollUrl}
-                          copyAi={previewOn ? copyEdit.copyAi : undefined}
-                          approval={
-                            approveVariant
-                              ? {
-                                  variant: approveVariant,
-                                  statusOf: approvals.statusOf,
-                                  approve: approvals.approve,
-                                  revoke: approvals.revoke,
-                                  calendarHref: savedPostId
-                                    ? `/calendar?post_id=${savedPostId}`
-                                    : "/calendar",
-                                }
-                              : undefined
-                          }
-                        />
-                      </div>
-                    </div>
+                    <FormatTree
+                      formats={duplicatedFormats}
+                      formatPosts={formatPosts}
+                      onPostChange={(fid, text) => setFormatPosts((prev) => ({ ...prev, [fid]: text }))}
+                      onPostBlur={handleFormatBlur}
+                      onRegenerateFormat={(fid) => setPendingFormatRegen(fid)}
+                      formatSaveStatus={formatSaveStatus}
+                      activeCard={activeCard}
+                      onActiveChange={setActiveCard}
+                      selectedFormat={selectedFormatCard}
+                      onSelectFormat={handleFormatCardClick}
+                      hookText={activeHook}
+                      thVideoUrl={thVideoUrl}
+                      thVideoLoading={thVideoLoading}
+                      mediaBusy={mediaBusy}
+                      thVideoCardRef={thVideoCardRef}
+                      // Clicking the video ONLY opens the panel (Hani,
+                      // 2026-10-29: "קודם לוחצים, הפאנל נפתח, ורק אז
+                      // מחליטים"). It used to clear the recording and the
+                      // transcript here, like the old "עריכת סרטון"
+                      // button; that now happens in the panel, at the
+                      // moment a new video is actually attached.
+                      onThReRecord={() => setSelectedFormatCard("talking_head")}
+                      onThDelete={() => setPendingVideoDelete(true)}
+                      thCoverImage={thCoverImage}
+                      thCoverLoading={thCoverLoading}
+                      coverText={coverText}
+                      onCoverTextChange={setCoverText}
+                      onCoverRegenerate={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
+                      pillColor={pillColor}
+                      onPillColorChange={(next) => {
+                        pillTouchedRef.current = true
+                        setPillColor(next)
+                        // The picker leaves `livePillColor` armed when it
+                        // commits; we drop the CSS overlay only after the
+                        // regenerated PNG lands so the user never sees
+                        // the old colour flash back during the round-trip.
+                        generateCoverForPost(coverText, thVideoUrl || undefined, next)
+                          .finally(() => setLivePillColor(null))
+                      }}
+                      livePillColor={livePillColor}
+                      onLivePillPreview={setLivePillColor}
+                      coverBrandColors={coverBrand.colors}
+                      coverSwatches
+                      thVideoFrameDataUrl={thVideoFrameDataUrl}
+                      userId={userId}
+                      carouselImages={carouselImages}
+                      carouselCardRef={carouselCardRef}
+                      // The caption control lives ON the carousel's card
+                      // (Hani, 2026-08-13), so the card needs what it takes
+                      // to redraw the slides: which post they belong to,
+                      // the links they came from, and the way back.
+                      savedPostId={savedPostId}
+                      carouselDriveLinks={carouselDriveLinks}
+                      onCarouselImagesChange={setCarouselImages}
+                      // Opening the media panel must NOT throw the current
+                      // carousel away (Hani, 2026-07-28): the old handler
+                      // cleared images+slides on click, so pressing what
+                      // read as "edit" destroyed the carousel before she
+                      // had seen a single alternative. Now it just opens
+                      // the panel — same as story / image_post — where the
+                      // saved carousel is shown on its template tile and
+                      // deleting it is a separate, explicit action.
+                      onCarouselEdit={() =>
+                        setSelectedFormatCard("carousel")
+                      }
+                      imagePostUrl={imagePostUrl}
+                      imagePostCardRef={imagePostCardRef}
+                      onImagePostEdit={() =>
+                        setSelectedFormatCard("image_post")
+                      }
+                      onImagePostUrlChange={setImagePostUrl}
+                      storyImages={storyImages}
+                      storyCardRef={storyCardRef}
+                      onStoryEdit={() =>
+                        setSelectedFormatCard("story")
+                      }
+                      storyVideoUrl={storyVideoUrl}
+                      bRollUrl={bRollUrl}
+                      bRollCardRef={bRollCardRef}
+                      onBRollEdit={() => setSelectedFormatCard("b_roll")}
+                      onAiEdit={setAiChatFormat}
+                      onDeleteMedia={setPendingMediaDelete}
+                      onBRollUrlChange={setBRollUrl}
+                      copyAi={previewOn ? copyEdit.copyAi : undefined}
+                      approval={
+                        approveVariant
+                          ? {
+                              variant: approveVariant,
+                              statusOf: approvals.statusOf,
+                              approve: approvals.approve,
+                              revoke: approvals.revoke,
+                              calendarHref: savedPostId
+                                ? `/calendar?post_id=${savedPostId}`
+                                : "/calendar",
+                            }
+                          : undefined
+                      }
+                    />
                   )}
-                </div>
+                </>
               )}
             </>
           )}
@@ -3125,46 +3182,15 @@ function FormatTree({
   copyAi?: FormatCopyAiController
 }) {
   const count = formats.length
-  const totalWidth = count * CARD_WIDTH + (count - 1) * CARD_GAP
 
   return (
-    <div className="flex flex-col items-center">
-      {/* Vertical line from formats card */}
-      <div className="w-[2px] h-10 bg-gray-80" />
+    <div className="flex items-start" dir="rtl">
+      {/* Out of the formats card, left into the fork. */}
+      <LaneStem />
 
-      {/* Horizontal connector bar + branches */}
-      {count > 1 && (
-        <div className="relative" style={{ width: totalWidth }}>
-          {/* Horizontal line */}
-          <div
-            className="absolute top-0 h-[2px] bg-gray-80"
-            style={{
-              right: CARD_WIDTH / 2,
-              left: CARD_WIDTH / 2,
-            }}
-          />
-          {/* Vertical branches down from horizontal line */}
-          <div className="flex justify-between">
-            {formats.map((fid) => (
-              <div
-                key={fid}
-                className="flex justify-center"
-                style={{ width: CARD_WIDTH }}
-              >
-                <div className="w-[2px] h-10 bg-gray-80" />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Format cards — all uniform width, text-only */}
-      <div
-        className="flex items-start gap-6"
-        style={{ width: count > 1 ? totalWidth : undefined }}
-        dir="rtl"
-      >
-        {formats.map((fid) => {
+      {/* One lane per format, stacked; each lane runs right → left. */}
+      <LaneColumn>
+        {formats.map((fid, laneIndex) => {
           const format = FORMAT_MAP[fid]
           if (!format) return null
           const Icon = format.icon
@@ -3193,7 +3219,7 @@ function FormatTree({
             )
 
           return (
-            <div key={fid} className="flex flex-col items-center" style={{ width: CARD_WIDTH }}>
+            <FormatLane key={fid} fid={fid} index={laneIndex} count={count}>
               <div
                 className={`flex flex-col gap-3 rounded-[20px] border bg-white dark:bg-gray-10 pb-6 transition-all w-full ${
                   isSelected
@@ -3286,7 +3312,7 @@ function FormatTree({
                     variant="outline"
                     // For talking_head, we disable the button once a video
                     // exists — editing then happens by clicking the video on
-                    // the card below. For other formats, the
+                    // the card beside it in the lane. For other formats, the
                     // button always opens MediaPanel (MediaUploadFlow handles
                     // upload + Drive link, just like the avatar module).
                     disabled={fid === "talking_head" && !!thVideoUrl}
@@ -3314,7 +3340,7 @@ function FormatTree({
                   Same shape as the real card so the layout doesn't jump. */}
               {fid === "talking_head" && ((!thVideoUrl && thVideoLoading) || mediaBusy.talking_head) && (
                 <>
-                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <TreeConnector />
                   <div
                     dir="rtl"
                     className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
@@ -3337,11 +3363,11 @@ function FormatTree({
                 </>
               )}
 
-              {/* Video result below talking_head card */}
+              {/* Video result — next in the talking_head lane */}
               {fid === "talking_head" && thVideoUrl && !mediaBusy.talking_head && (
                 <>
                   {/* Connector line */}
-                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <TreeConnector />
 
                   {/* Video card */}
                   <div
@@ -3403,7 +3429,7 @@ function FormatTree({
                   card so the layout doesn't jump when content arrives. */}
               {fid === "talking_head" && thCoverLoading && !thCoverImage && (
                 <>
-                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <TreeConnector />
                   <div
                     dir="rtl"
                     className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
@@ -3429,10 +3455,10 @@ function FormatTree({
                 </>
               )}
 
-              {/* Cover card below video card */}
+              {/* Cover card — after the video, same lane */}
               {fid === "talking_head" && thCoverImage && (
                 <>
-                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <TreeConnector />
                   <div
                     dir="rtl"
                     className="flex flex-col gap-3 rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 pb-6 w-full"
@@ -3546,7 +3572,7 @@ function FormatTree({
                 </>
               )}
 
-              {/* Carousel result below carousel card */}
+              {/* Carousel result — next in the carousel lane */}
               {fid === "carousel" && mediaBusy.carousel && (
                 <MediaSkeletonCard title="הקרוסלה שלכם" icon={Layers} preview="w-full aspect-square" pager />
               )}
@@ -3565,7 +3591,7 @@ function FormatTree({
                 />
               )}
 
-              {/* Story result below the story card — the saved AI frame set
+              {/* Story result next to the story card — the saved AI frame set
                   (1-3 frames). Same connected-card pattern as image_post. */}
               {/* ONE story card, one ordered frame list (Hani, 2026-07-28).
                   Frames and a story video used to render as two separate
@@ -3599,7 +3625,7 @@ function FormatTree({
                 )
               })()}
 
-              {/* The generated b-roll clip, as its own card under the b-roll
+              {/* The generated b-roll clip, as its own card beside the b-roll
                   script — the same shape story and talking_head use, so every
                   format's finished media reads the same way on the canvas. */}
               {/* The b-roll's card. A b-roll starts life as a STILL — the
@@ -3617,7 +3643,7 @@ function FormatTree({
               )}
               {fid === "b_roll" && !mediaBusy.b_roll && bRollUrl && (
                 <>
-                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <TreeConnector />
                   <div
                     ref={bRollCardRef}
                     dir="rtl"
@@ -3696,7 +3722,7 @@ function FormatTree({
                 </>
               )}
 
-              {/* Image result below image_post card — appears once the user
+              {/* Image result next to the image_post card — appears once the user
                   has generated + approved (or uploaded) an image. Same
                   connected-card pattern as the talking_head video/cover
                   cards above. */}
@@ -3705,7 +3731,7 @@ function FormatTree({
               )}
               {fid === "image_post" && !mediaBusy.image_post && imagePostUrl && (
                 <>
-                  <div className="w-[2px] h-7 bg-gray-80" />
+                  <TreeConnector />
                   <div
                     ref={imagePostCardRef}
                     dir="rtl"
@@ -3780,16 +3806,16 @@ function FormatTree({
                   </div>
                 </>
               )}
-            </div>
+            </FormatLane>
           )
         })}
-      </div>
+      </LaneColumn>
     </div>
   )
 }
 
 /* ------------------------------------------------------------------ */
-/*  Carousel Result Card — shows generated slides below carousel card  */
+/*  Carousel Result Card — shows generated slides beside the carousel card*/
 /* ------------------------------------------------------------------ */
 
 /**
@@ -3915,7 +3941,7 @@ function CarouselResultCard({
 
   return (
     <>
-      <div className="w-[2px] h-7 bg-gray-80" />
+      <TreeConnector />
       <div
         ref={cardRef}
         dir="rtl"
@@ -4024,7 +4050,7 @@ function CarouselResultCard({
 }
 
 /* ------------------------------------------------------------------ */
-/*  Story Result Card — shows the saved AI frame set below story card  */
+/*  Story Result Card — shows the saved AI frame set beside the story card*/
 /* ------------------------------------------------------------------ */
 
 function StoryResultCard({
@@ -4083,7 +4109,7 @@ function StoryResultCard({
 
   return (
     <>
-      <div className="w-[2px] h-7 bg-gray-80" />
+      <TreeConnector />
       <div
         ref={cardRef}
         dir="rtl"
@@ -4159,7 +4185,7 @@ function MediaSkeletonCard({
 }) {
   return (
     <>
-      <div className="w-[2px] h-7 bg-gray-80" />
+      <TreeConnector />
       <div
         dir="rtl"
         role="status"

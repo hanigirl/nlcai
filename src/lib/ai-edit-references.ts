@@ -9,7 +9,7 @@ import type Anthropic from "@anthropic-ai/sdk"
  * They travel as data URLs (the client shrinks them to JPEG first, see
  * components/ai-edit-reference.tsx) and reach Claude as image blocks next to
  * her instruction. Nothing is stored; what lasts is the style rule
- * learnFromInstruction distils from the instruction + the image.
+ * the chat's visual memory distils from them (lib/style-memory).
  */
 
 export const MAX_REFERENCES = 3

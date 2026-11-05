@@ -10,7 +10,7 @@ import { renderComposition } from "@/lib/broll-animation/render"
 import { saveBRoll, uploadBackground } from "@/lib/broll-animation/store"
 import { generateImage } from "@/lib/openai-image"
 import { isMediaStyle } from "@/lib/visual-language/types"
-import { resolveDesignDirection } from "@/lib/visual-language/direction"
+import { loadBrandExamples, resolveDesignDirection } from "@/lib/visual-language/direction"
 
 // gpt-image-2 takes 30-120s for one image.
 export const maxDuration = 300
@@ -139,13 +139,17 @@ export async function POST(req: NextRequest) {
 
     const context = (post.body ?? variantBody ?? hook).slice(0, 600)
     const mediaStyle = isMediaStyle(style) ? style : undefined
-    const brief = await buildCompositionBrief(
-      supabase,
-      user.id,
-      { hook, rest: rest || undefined },
-      direction.lines,
-      mediaStyle,
-    )
+    const [brief, examples] = await Promise.all([
+      buildCompositionBrief(supabase, user.id, { hook, rest: rest || undefined }, direction.lines, mediaStyle),
+      // Her own finished b-roll frames (Settings → דוגמאות לשימוש → בי-רול)
+      // set how the text looks — only in her own visual language, so a
+      // niche / dark / light pick stays clear of her brand. They go to Opus
+      // only: the background stays reference-free, so no lettering from them
+      // can leak into it.
+      direction.source === "brand"
+        ? loadBrandExamples(supabase, user.id, "b_roll", undefined)
+        : Promise.resolve([]),
+    ])
 
     // Background and motion design don't depend on each other — run both.
     const [raw, template] = await Promise.all([
@@ -158,7 +162,7 @@ export async function POST(req: NextRequest) {
         ),
         { shape: "9:16", references: direction.references },
       ),
-      composeBRoll(anthropicKey, brief, Math.abs(variationIndex ?? 0)),
+      composeBRoll(anthropicKey, brief, Math.abs(variationIndex ?? 0), examples),
     ])
     const background = Buffer.from(cropToCanvas(raw), "base64")
 
