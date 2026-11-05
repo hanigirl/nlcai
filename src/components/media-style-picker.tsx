@@ -106,7 +106,7 @@ export function MediaStylePicker({
   return (
     <div className="flex w-full flex-col gap-1.5">
       <p className="text-xs text-text-neutral-default">{label}</p>
-      <div role="radiogroup" aria-label={label} aria-busy={brandLoading && !brandTemplate} className="grid grid-cols-4 gap-1.5">
+      <div role="radiogroup" aria-label={label} aria-busy={brandLoading && !brandTemplate} className="grid grid-cols-2 gap-1.5">
         {brandLoading && !brandTemplate && (
           <div className="flex flex-col gap-1 rounded-lg border border-border-neutral-default p-1" aria-hidden>
             <Skeleton className={`${aspect === "4/5" ? "aspect-[4/5]" : "aspect-[9/16]"} w-full rounded-md`} />
