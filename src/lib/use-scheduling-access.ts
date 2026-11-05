@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
-import { canUseMultinetwork, canUsePreview, canUseScheduleAllA, canUseScheduling } from "@/lib/scheduling-access"
+import { canUseFormatGap, canUseMultinetwork, canUsePreview, canUseScheduleAllA, canUseScheduling } from "@/lib/scheduling-access"
 
 /** null while the session is read, then true/false. */
 export function useSchedulingAccess(): boolean | null {
@@ -16,6 +16,11 @@ export function useScheduleAllA(): boolean | null {
 }
 
 /** YouTube + LinkedIn as networks — Hani only (see MULTINETWORK_EMAILS). */
+/** Days between formats of one core post — Hani only. */
+export function useFormatGap(): boolean | null {
+  return useEmailGate(canUseFormatGap)
+}
+
 export function useMultinetwork(): boolean | null {
   return useEmailGate(canUseMultinetwork)
 }

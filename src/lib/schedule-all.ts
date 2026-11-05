@@ -60,7 +60,7 @@ function daysApart(a: string, b: string): number {
 export function planScheduleAll(
   cards: PlanInputCard[],
   schedule: PostingSchedule,
-  occupied: { scheduledDate: string; scheduledTime?: string | null; format: FormatId }[],
+  occupied: { scheduledDate: string; scheduledTime?: string | null; format: FormatId; corePostId?: string }[],
   now: Date = new Date(),
   /** Minimum lead before a slot (Instagram refuses anything sooner). */
   minLeadMs = 10 * 60 * 1000,
@@ -86,6 +86,18 @@ export function planScheduleAll(
     return true
   }
 
+  // Formats of one core post stay `formatGapDays` apart (Hani, 2026-11-05):
+  // every date one of its formats already has, on the board or in this plan.
+  const formatGap = schedule.formatGapDays ?? 0
+  const datesByPost = new Map<string, string[]>()
+  const notePostDate = (id: string | undefined, key: string) => {
+    if (!id) return
+    datesByPost.set(id, [...(datesByPost.get(id) ?? []), key])
+  }
+  for (const o of occupied) notePostDate(o.corePostId, o.scheduledDate)
+  const clearOfSiblings = (id: string, key: string) =>
+    formatGap <= 0 || (datesByPost.get(id) ?? []).every((other) => Math.abs(daysApart(key, other)) >= formatGap)
+
   const start = new Date(now)
   start.setHours(0, 0, 0, 0)
 
@@ -99,6 +111,7 @@ export function planScheduleAll(
       const d = new Date(start)
       d.setDate(start.getDate() + i)
       if (!clearOfGap(dateKey(d))) continue
+      if (!clearOfSiblings(card.corePostId, dateKey(d))) continue
       const slots = slotsForDate(schedule, d).filter((s) => s.format === card.format)
       for (const slot of slots) {
         const [h, m] = slot.time.split(":").map((n) => parseInt(n, 10))
@@ -110,6 +123,7 @@ export function planScheduleAll(
         taken.add(key)
         placed.push({ ...card, scheduledDate: dateKey(d), scheduledTime: slot.time })
         publishDays.add(dateKey(d))
+        notePostDate(card.corePostId, dateKey(d))
         done = true
         break
       }

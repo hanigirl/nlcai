@@ -50,6 +50,11 @@ export type PostingSchedule = {
   defaultTimes: string[]
   /** Empty days required between two publishing days (0 = none). */
   gapDays: number
+  /**
+   * Minimum days between two formats of the SAME core post (0 = none), so a
+   * reel and its carousel don't go out back to back (Hani, 2026-11-05).
+   */
+  formatGapDays: number
 }
 
 export const MAX_POSTS_PER_DAY = 3
@@ -59,6 +64,15 @@ export const GAP_OPTIONS: { days: number; label: string }[] = [
   { days: 1, label: "יום אחד" },
   { days: 2, label: "יומיים" },
 ]
+
+/** Days between two formats of one core post. 10 is her default. */
+export const FORMAT_GAP_OPTIONS: { days: number; label: string }[] = [
+  { days: 0, label: "בלי רווח" },
+  { days: 7, label: "שבוע" },
+  { days: 10, label: "10 ימים" },
+  { days: 14, label: "שבועיים" },
+]
+export const DEFAULT_FORMAT_GAP_DAYS = 10
 
 export const DEFAULT_TIMES = ["09:00", "13:00", "20:00"]
 
@@ -127,6 +141,7 @@ export function defaultPostingSchedule(): PostingSchedule {
     postsPerDay: 2,
     defaultTimes: [...DEFAULT_TIMES],
     gapDays: 0,
+    formatGapDays: DEFAULT_FORMAT_GAP_DAYS,
   }
 }
 
@@ -138,6 +153,7 @@ export function cloneSchedule(s: PostingSchedule): PostingSchedule {
     postsPerDay: s.postsPerDay,
     defaultTimes: [...s.defaultTimes],
     gapDays: s.gapDays,
+    formatGapDays: s.formatGapDays,
   }
 }
 
@@ -164,6 +180,8 @@ export function normalizeSchedule(raw: Partial<PostingSchedule> & { days: Postin
         : Math.min(MAX_POSTS_PER_DAY, busiest),
     defaultTimes: DEFAULT_TIMES.map((d, i) => times[i] ?? d),
     gapDays: typeof raw.gapDays === "number" ? Math.max(0, raw.gapDays) : 0,
+    formatGapDays:
+      typeof raw.formatGapDays === "number" ? Math.max(0, raw.formatGapDays) : DEFAULT_FORMAT_GAP_DAYS,
   }
 }
 
@@ -219,6 +237,7 @@ export function clashingSlotIds(s: PostingSchedule): Set<string> {
 export function schedulesEqual(a: PostingSchedule, b: PostingSchedule): boolean {
   if (a.storyGapMinutes !== b.storyGapMinutes) return false
   if (a.postsPerDay !== b.postsPerDay || a.gapDays !== b.gapDays) return false
+  if (a.formatGapDays !== b.formatGapDays) return false
   if (a.activeDays.some((x, i) => x !== b.activeDays[i])) return false
   if (a.defaultTimes.some((x, i) => x !== b.defaultTimes[i])) return false
   return a.days.every((d, i) => {
@@ -332,11 +351,12 @@ export function withPostTime(s: PostingSchedule, day: number, index: number, tim
 
 export function withGlobal(
   s: PostingSchedule,
-  patch: Partial<Pick<PostingSchedule, "postsPerDay" | "gapDays" | "storyGapMinutes">> & { timeIndex?: number; time?: string },
+  patch: Partial<Pick<PostingSchedule, "postsPerDay" | "gapDays" | "formatGapDays" | "storyGapMinutes">> & { timeIndex?: number; time?: string },
 ): PostingSchedule {
   const c = cloneSchedule(s)
   if (patch.postsPerDay !== undefined) c.postsPerDay = patch.postsPerDay
   if (patch.gapDays !== undefined) c.gapDays = patch.gapDays
+  if (patch.formatGapDays !== undefined) c.formatGapDays = patch.formatGapDays
   if (patch.storyGapMinutes !== undefined) c.storyGapMinutes = patch.storyGapMinutes
   if (patch.timeIndex !== undefined && patch.time) c.defaultTimes[patch.timeIndex] = patch.time
   return c

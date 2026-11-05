@@ -23,7 +23,7 @@ import {
 
   unfilledSlots,
 } from "@/components/calendar-routine"
-import { defaultPostingSchedule, slotsForDate } from "@/lib/posting-schedule"
+import { defaultPostingSchedule, slotsForDate, type PostingSchedule } from "@/lib/posting-schedule"
 import { AppShell } from "@/components/app-shell"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -53,7 +53,7 @@ import {
   type PreviewSlide,
   type PublishStatus as PreviewPublishStatus,
 } from "@/components/format-preview/shared"
-import { useMultinetwork, useScheduleAllA, useSchedulingAccess, useSchedulingPreview } from "@/lib/use-scheduling-access"
+import { useFormatGap, useMultinetwork, useScheduleAllA, useSchedulingAccess, useSchedulingPreview } from "@/lib/use-scheduling-access"
 import {
   hasAnySlot,
   planScheduleAll,
@@ -601,6 +601,9 @@ export default function CalendarPage() {
   // YouTube + LinkedIn (lib/scheduling-access → MULTINETWORK_EMAILS). Off:
   // Instagram only, the pill above the board and the preview exactly as before.
   const multinetwork = useMultinetwork() === true
+  // Off the gate the planner ignores the core-post format gap, as before.
+  const formatGapOn = useFormatGap() === true
+  const withFormatGap = (s: PostingSchedule): PostingSchedule => (formatGapOn ? s : { ...s, formatGapDays: 0 })
   const livePlatforms: SocialPlatform[] = multinetwork ? PUBLISH_PLATFORMS : ["instagram"]
 
   /** Is any network she may use, and that takes this format, connected? */
@@ -783,7 +786,7 @@ export default function CalendarPage() {
       // No settings on the board: her saved routine, or the default one.
       const plan = planScheduleAll(
         railCards,
-        hasAnySlot(routine.saved) ? routine.saved : defaultPostingSchedule(),
+        withFormatGap(hasAnySlot(routine.saved) ? routine.saved : defaultPostingSchedule()),
         scheduled,
       )
       if (plan.placed.length === 0) {
@@ -804,7 +807,7 @@ export default function CalendarPage() {
       setNoSettingsOpen(true)
       return
     }
-    const plan = planScheduleAll(railCards, routine.saved, scheduled)
+    const plan = planScheduleAll(railCards, withFormatGap(routine.saved), scheduled)
     if (plan.placed.length === 0) {
       toast("לפורמטים שנשארו אין משבצת פנויה בלו״ז", {
         action: { label: "התאמת הלו״ז", onClick: () => startRoutineEdit() },

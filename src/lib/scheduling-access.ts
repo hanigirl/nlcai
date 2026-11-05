@@ -42,6 +42,13 @@ export function canUsePreview(email: string | null | undefined): boolean {
  * Everyone else — Nataliya included — keeps Instagram-only scheduling exactly
  * as before; the server enforces it too (connect/accounts routes, the bridge).
  */
+/** Days between formats of one core post (2026-11-05) — Hani only, for now. */
+export const FORMAT_GAP_EMAILS = ["hanigirl@gmail.com"]
+
+export function canUseFormatGap(email: string | null | undefined): boolean {
+  return !!email && FORMAT_GAP_EMAILS.includes(email.toLowerCase())
+}
+
 export const MULTINETWORK_EMAILS = ["hanigirl@gmail.com"]
 
 export function canUseMultinetwork(email: string | null | undefined): boolean {

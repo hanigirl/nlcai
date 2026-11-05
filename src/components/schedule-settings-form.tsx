@@ -21,9 +21,11 @@ import { Check, Plus, Trash2 } from "lucide-react"
 import { Chip } from "@/components/ui/chip"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Select } from "@/components/ui/select"
+import { useFormatGap } from "@/lib/use-scheduling-access"
 import { getFormatChipIcon, getFormatChipLabel } from "@/components/format-status-chip"
 import {
   GAP_OPTIONS,
+  FORMAT_GAP_OPTIONS,
   MAX_POSTS_PER_DAY,
   SCHEDULE_FORMATS,
   SCHEDULE_HOURS,
@@ -83,6 +85,7 @@ const PER_DAY_OPTIONS = Array.from({ length: MAX_POSTS_PER_DAY }, (_, i) => ({
   label: String(i + 1),
 }))
 const GAP_CHOICES = GAP_OPTIONS.map((o) => ({ value: o.days, label: o.label }))
+const FORMAT_GAP_CHOICES = FORMAT_GAP_OPTIONS.map((o) => ({ value: o.days, label: o.label }))
 
 function HourSelect({
   value,
@@ -278,6 +281,7 @@ function RuleRow({ label, hint, children }: { label: string; hint?: string; chil
 }
 
 export function ScheduleSettingsForm({ draft, onChange }: Edit) {
+  const formatGapOn = useFormatGap() === true
   const days = [0, 1, 2, 3, 4, 5, 6]
   const active = days.filter((d) => draft.activeDays[d])
   const rows = Array.from({ length: draft.postsPerDay }, (_, i) => i)
@@ -317,6 +321,17 @@ export function ScheduleSettingsForm({ draft, onChange }: Edit) {
           onChange={(v) => onChange(withGlobal(draft, { gapDays: v }))}
         />
       </RuleRow>
+
+      {formatGapOn && (
+        <RuleRow label="כמה ימים בין פורמטים של אותו פוסט ליבה?" hint="למשל רילס וקרוסלה של אותו רעיון">
+          <ChoiceChips
+            label="ימים בין פורמטים של אותו פוסט ליבה"
+            value={draft.formatGapDays}
+            options={FORMAT_GAP_CHOICES}
+            onChange={(v) => onChange(withGlobal(draft, { formatGapDays: v }))}
+          />
+        </RuleRow>
+      )}
 
       <RuleRow label="באיזו שעה מפרסמים?" hint="לכל הלוח">
         <div className="flex flex-wrap items-center gap-2">
