@@ -110,7 +110,10 @@ function DialogBody({
   const [slide, setSlide] = useState(0)
   const networks = networkSwitch ? (data.networks ?? []) : []
   const [selectedNetwork, setSelectedNetwork] = useState<SocialPlatform>(
-    (networks.find((n) => n.included && n.connection === "connected") ?? networks[0])?.platform ?? "instagram",
+    // Open on the network that needs her, if one does; else the first live one.
+    (networks.find((n) => n.included && n.publish.kind === "failed") ??
+      networks.find((n) => n.included && n.connection === "connected") ??
+      networks[0])?.platform ?? "instagram",
   )
   const current = networks.find((n) => n.platform === selectedNetwork) ?? null
   // Draft slot — "תזמון פוסט" in the footer commits it to the board.
