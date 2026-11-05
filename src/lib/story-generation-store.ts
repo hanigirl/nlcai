@@ -149,6 +149,8 @@ export function startStoryGeneration(
       const data = (await res.json().catch(() => ({}))) as {
         images?: string[]
         frameCount?: number
+        /** The route saved the set to the post itself — `images` are its stored URLs. */
+        saved?: boolean
         error?: string
         message?: string
       }
@@ -156,15 +158,20 @@ export function startStoryGeneration(
         return fail(data.message ?? data.error ?? "יצירת הסטורי נכשלה")
       }
       const set = data.images
-      const saveRes = await fetch(`/api/core-posts/${postId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storyImages: set }),
-      }).catch(() => null)
-      if (!saveRes?.ok) {
-        // Keep it as a candidate so it can still be saved from the panel.
-        update(postId, (s) => ({ ...s, sets: [...s.sets, set] }))
-        return fail("הסטורי נוצר אבל לא נשמר — פתחו את הפאנל כדי לשמור")
+      // The route saves the set on the server (a browser save of heavy frames
+      // was over the host's request limit). Only an older server answers
+      // with raw frames — then the browser saves them as before.
+      if (!data.saved) {
+        const saveRes = await fetch(`/api/core-posts/${postId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ storyImages: set }),
+        }).catch(() => null)
+        if (!saveRes?.ok) {
+          // Kept as a version in the story's media panel, where it can be saved.
+          update(postId, (s) => ({ ...s, sets: [...s.sets, set] }))
+          return fail("הסטורי נוצר אבל לא נשמר בפוסט. כדי לשמור אותו: בפאנל המדיה של הסטורי פתחו את הגרסה החדשה ולחצו ״שמירה כסטורי״. אם זה לא עובד, צרו אותו שוב.")
+        }
       }
       update(postId, (s) => ({ ...s, saved: set }))
       const count = set.length

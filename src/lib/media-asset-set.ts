@@ -139,3 +139,21 @@ export async function replaceImageAssetSet(
 
   return { ok: true, changed: true }
 }
+
+/** The format's stored image URLs, in set order — what a route sends back after saving. */
+export async function storedImageUrls(supabase: ServerSupabase, postId: string, format: string): Promise<string[]> {
+  const { data: variant } = await supabase
+    .from("format_variants")
+    .select("id")
+    .eq("core_post_id", postId)
+    .eq("format", format)
+    .maybeSingle()
+  if (!variant) return []
+  const { data: rows } = await supabase
+    .from("media_assets")
+    .select("url")
+    .eq("format_variant_id", (variant as { id: string }).id)
+    .eq("asset_type", "image")
+    .order("created_at", { ascending: true })
+  return ((rows ?? []) as { url: string | null }[]).map((r) => r.url).filter((u): u is string => !!u)
+}

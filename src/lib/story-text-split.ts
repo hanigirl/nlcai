@@ -243,3 +243,109 @@ export function frameCaption(
     body: rest.length > 0 ? rest.join("\n\n") : undefined,
   }
 }
+
+const HEBREW_COUNTS: Record<string, number> = {
+  אחד: 1, אחת: 1, שני: 2, שתי: 2, שניים: 2, שתיים: 2, שלוש: 3, שלושה: 3, ארבע: 4, ארבעה: 4, חמש: 5, חמישה: 5, שש: 6, שישה: 6,
+}
+
+/**
+ * A frame count she asked for in her own words for this piece — "לפצל ל-2
+ * סטוריז", "שני פריימים", "ב-3 חלקים" (Hani, 2026-11-05: "split into 2
+ * stories" came back as the script's 3). Null when she didn't say.
+ */
+export function requestedFrameCount(text: string | null | undefined): number | null {
+  if (!text) return null
+  const m = /(?:^|[\s\-־"'(לבו])(\d+|אחד|אחת|שני|שתי|שניים|שתיים|שלוש|שלושה|ארבע|ארבעה|חמש|חמישה|שש|שישה)\s*(?:סטורי(?:ז|ס|יז)?|סטוריז|פריימ(?:ים)?|פריים|חלקים|פרקים|stories|frames)/i.exec(
+    text,
+  )
+  if (!m) return null
+  const n = /^\d+$/.test(m[1]) ? Number(m[1]) : HEBREW_COUNTS[m[1]]
+  return n >= 1 && n <= MAX_SCRIPT_FRAMES ? n : null
+}
+
+/**
+ * Split into `frameCount` frames of roughly EQUAL text, for a count she asked
+ * for herself (requestedFrameCount). Hani, 2026-11-05: "split into 2" must
+ * not mean the hook alone and everything else on the last frame — balance by
+ * length; the hook may share a frame with what follows.
+ *
+ * Sentences stay whole (a line of her script counts as one). Among the splits
+ * that balance best, a break at a paragraph boundary is preferred over one
+ * inside a paragraph. Marked frames ("פריים 1:") are hers and are not used
+ * here — the caller only comes here when she named a count.
+ */
+export function splitScriptBalanced(body: string, frameCount: number): string[] {
+  const paragraphs = scriptUnits(body)
+  if (paragraphs.length === 0) return []
+  if (frameCount <= 1) return [paragraphs.join("\n\n")]
+
+  // Sentences, each remembering whether it ends its line / its paragraph.
+  // A sentence break inside a quote isn't one ("מה קורה לך? מה חסר לך?").
+  const units: { text: string; endsLine: boolean; endsParagraph: boolean }[] = []
+  for (const p of paragraphs) {
+    const lines = p.split(/\n+/).map((l) => l.trim()).filter(Boolean)
+    lines.forEach((line, li) => {
+      const sentences: string[] = []
+      for (const piece of line.split(/(?<=[.!?…])\s+/)) {
+        const prev = sentences[sentences.length - 1]
+        const openQuote = prev !== undefined && ((prev.match(/["״“”]/g) ?? []).length % 2 === 1)
+        if (openQuote) sentences[sentences.length - 1] = `${prev} ${piece}`
+        else sentences.push(piece)
+      }
+      sentences.forEach((text, si) => {
+        const endsLine = si === sentences.length - 1
+        units.push({ text, endsLine, endsParagraph: endsLine && li === lines.length - 1 })
+      })
+    })
+  }
+  const k = Math.min(frameCount, units.length)
+  if (k <= 1) return [paragraphs.join("\n\n")]
+
+  const total = units.reduce((n, u) => n + u.text.length, 0)
+  const target = total / k
+  // Where a frame may end, cheapest first: a paragraph boundary (free), a
+  // line boundary (as much as being 8% off the target), between sentences
+  // of one line (30%) — a question and its answer on one line stay together.
+  const breakPenalty = (u: { endsLine: boolean; endsParagraph: boolean }) =>
+    u.endsParagraph ? 0 : u.endsLine ? (0.08 * target) ** 2 : (0.3 * target) ** 2
+  const prefix = [0]
+  for (const u of units) prefix.push(prefix[prefix.length - 1] + u.text.length)
+  const groupCost = (from: number, to: number) => (prefix[to] - prefix[from] - target) ** 2
+
+  // best[g][i]: cheapest way to put units[0..i) into g frames.
+  const n = units.length
+  const best: number[][] = Array.from({ length: k + 1 }, () => new Array(n + 1).fill(Infinity))
+  const cut: number[][] = Array.from({ length: k + 1 }, () => new Array(n + 1).fill(-1))
+  best[0][0] = 0
+  for (let g = 1; g <= k; g++) {
+    for (let i = g; i <= n; i++) {
+      for (let j = g - 1; j < i; j++) {
+        if (best[g - 1][j] === Infinity) continue
+        const breakCost = j > 0 ? breakPenalty(units[j - 1]) : 0
+        const c = best[g - 1][j] + groupCost(j, i) + breakCost
+        if (c < best[g][i]) {
+          best[g][i] = c
+          cut[g][i] = j
+        }
+      }
+    }
+  }
+
+  const bounds: number[] = []
+  for (let g = k, i = n; g > 0; g--) {
+    bounds.unshift(i)
+    i = cut[g][i]
+  }
+  const frames: string[] = []
+  let start = 0
+  for (const end of bounds) {
+    // Her own layout inside a frame: same line, line break, blank line.
+    let text = ""
+    for (let u = start; u < end; u++) {
+      text += units[u].text + (u === end - 1 ? "" : units[u].endsParagraph ? "\n\n" : units[u].endsLine ? "\n" : " ")
+    }
+    frames.push(text.trim())
+    start = end
+  }
+  return frames
+}

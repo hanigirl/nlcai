@@ -3254,8 +3254,14 @@ function MediaUploadFlow({
    */
   const handleStorySave = async (set: string[]) => {
     if (!postId || set.length === 0) return
-    // Already-saved URLs → nothing to persist.
+    // Stored URLs (generation now saves on the server): the post's current
+    // set → nothing to do; an earlier version → re-point the post at it
+    // (small request — the files are already stored).
     if (set.every((f) => f.startsWith("http"))) {
+      if (set !== savedStorySet) {
+        await persistStorySet(set)
+        removeStoryGenerationSet(postId, set)
+      }
       setStoryLightbox(null)
       return
     }

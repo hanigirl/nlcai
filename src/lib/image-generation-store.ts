@@ -234,7 +234,7 @@ export function startImageGeneration(
           body: JSON.stringify({ format: "image_post", url: entry, assetType: "image" }),
         }).catch(() => null)
         if (!saveRes?.ok) {
-          return fail("התמונה נוצרה אבל לא נשמרה — פתחו את הפאנל כדי לבחור אותה")
+          return fail("התמונה נוצרה אבל לא נשמרה בפוסט. כדי לשמור אותה: בפאנל המדיה של התמונה פתחו את הגרסה החדשה ולחצו ״שמירה כתמונת הפוסט״. אם זה לא עובד, צרו אותה שוב.")
         }
         update(postId, (s) => ({ ...s, saved: entry }))
       }

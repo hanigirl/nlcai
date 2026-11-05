@@ -8,9 +8,12 @@ import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import {
   desiredFrameCount,
+  requestedFrameCount,
+  splitScriptBalanced,
   splitScriptIntoFrames,
 } from "@/lib/story-text-split"
 import { getAuthUser } from "@/lib/auth-user"
+import { replaceImageAssetSet, storedImageUrls } from "@/lib/media-asset-set"
 import { generateImage, KEEP_INSIDE_FRAME_RULE } from "@/lib/openai-image"
 import {
   applyFixedElements,
@@ -59,8 +62,10 @@ const CONCURRENCY = 3
  * that decision, whereas the import path is told the count by how many links
  * the user pasted.
  */
-function splitStoryIntoFrames(body: string): string[] {
-  return splitScriptIntoFrames(body, desiredFrameCount(body))
+/** `asked`: a frame count she named in her brief ("לפצל ל-2 סטוריז") wins over the script's own. */
+function splitStoryIntoFrames(body: string, asked?: number | null): string[] {
+  // A count she asked for is balanced by length (lib/story-text-split).
+  return asked ? splitScriptBalanced(body, asked) : splitScriptIntoFrames(body, desiredFrameCount(body))
 }
 
 
@@ -212,7 +217,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const frames = splitStoryIntoFrames(variant.body)
+    const frames = splitStoryIntoFrames(variant.body, requestedFrameCount(normalizeMediaBrief(brief)))
     if (frames.length === 0) {
       return NextResponse.json(
         {
@@ -310,7 +315,23 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ images, frameCount: total })
+    // Saved to the post HERE, and the stored URLs sent back. Frames in her
+    // visual language (fine grain) are 2–3MB each; as base64 two of them are
+    // past the 4.5MB a request may carry on our host, so the browser's save
+    // never arrived and the chat said "נוצר אבל לא נשמר" (Hani, 2026-11-05).
+    // Generating is choosing — the set is the post's.
+    const saved = await replaceImageAssetSet(supabase, user.id, postId, "story", images)
+    if (!saved.ok) {
+      console.error("[story/generate-media] save to post", saved.error)
+      return NextResponse.json(
+        { error: "save_failed", message: "הסטורי נוצר אבל השמירה בפוסט נכשלה. נסו ליצור אותו שוב." },
+        { status: 500 },
+      )
+    }
+    const urls = await storedImageUrls(supabase, postId, "story")
+    return NextResponse.json(
+      urls.length === total ? { images: urls, frameCount: total, saved: true } : { images, frameCount: total },
+    )
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("[story/generate-media]", msg)
