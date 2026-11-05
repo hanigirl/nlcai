@@ -70,6 +70,7 @@ import type { SlideData, TemplateConfig } from "@/lib/carousel-templates"
 import { flushPendingSaves } from "@/lib/pending-saves"
 import { BLANK_TEMPLATE, BLANK_TEMPLATE_ID, BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import { openingId, requestAiEdit } from "@/lib/ai-edit-intent"
+import { registerAsIsImporter, requestDrivePicker, type AsIsItem, type AsIsOptions, type AsIsResult } from "@/lib/as-is-upload"
 import { AiHoverEditButton } from "@/components/ai-hover-edit"
 import { useRefPlace } from "@/lib/use-scheduling-access"
 import type { MediaStyle } from "@/lib/visual-language/types"
@@ -315,7 +316,8 @@ export function MediaPanel({
   const isOpen = formatId !== null
   const meta = formatId ? FORMAT_META[formatId] : null
   const Icon = meta?.icon
-  // "מדיה משלכם מ Google Drive" swaps the panel for the folder's gallery.
+  // "מדיה מוכנה מ Google Drive" swaps the panel for the folder's gallery (talking head; the
+  // other formats open the AI panel with Drive up — lib/as-is-upload).
   const drivePick = useDrivePickVariant()
   const drivePickStore = useDrivePickStore()
   const drivePickerOpen = !!drivePick && !!formatId && drivePickStore.pickerFor === formatId
@@ -2057,6 +2059,34 @@ function CarouselFlow({
    * Import entry point. Asks first when there is already a carousel to lose;
    * a first import has nothing to overwrite and goes straight through.
    */
+  /** "להעלות כמו שזה" (lib/as-is-upload): her Drive files become the slides, in order. */
+  const asIsRef = useRef<((items: AsIsItem[]) => Promise<AsIsResult>) | null>(null)
+  useEffect(() => {
+    asIsRef.current = async (items) => {
+      // Every slide here is a picture: a video is refused before anything starts.
+      if (items.some((it) => it.kind === "video")) {
+        return {
+          ok: false,
+          message: "בקרוסלה כאן כל שקופית היא תמונה, אז סרטון לא יכול להיכנס לשקופית. בחרו תמונות.",
+        }
+      }
+      const drive = items.flatMap((it) => (it.drive ? [it.drive] : []))
+      if (!drive.length) {
+        return { ok: false, message: "קרוסלה עולה כמו שהיא רק מהדרייב. צרפו את השקופיות מהתיקייה בדרייב." }
+      }
+      requestDriveImport(drive)
+      const skipped = items.length - drive.length
+      return {
+        ok: true,
+        message: `${drive.length === 1 ? "השקופית עולה" : `${drive.length} השקופיות עולות, לפי הסדר,`} כמו שהן, בלי תוספות. ההתקדמות בפאנל המדיה.${skipped ? " הקבצים מהמחשב לא נכללו." : ""}`,
+      }
+    }
+  })
+  useEffect(() => {
+    registerAsIsImporter("carousel", (items) => asIsRef.current?.(items) ?? Promise.resolve({ ok: false, message: "" }))
+    return () => registerAsIsImporter("carousel", null)
+  }, [])
+
   const requestDriveImport = (rows: string[]) => {
     if (images?.length) {
       setPendingDriveReimport(rows)
@@ -2443,7 +2473,24 @@ function CarouselFlow({
             images), so a single Canva/folder link is intentionally NOT the
             mechanism here. */}
       {drivePick ? (
-        <DriveFolderEntry format="carousel" onImport={requestDriveImport} />
+        <DriveFolderEntry
+          format="carousel"
+          onImport={requestDriveImport}
+          // The import's progress and failure, where she picked (live bug,
+          // 2026-11-06: a video picked for a carousel failed as "not an
+          // image", the skeleton came and went, and nothing was said).
+          pulling={driveImporting}
+          error={driveImportError}
+          // One pipeline (Hani, 2026-11-06): the AI panel, Drive gallery up.
+          onOpen={
+            postId
+              ? () => {
+                  requestDrivePicker("carousel")
+                  requestGenerate(true)
+                }
+              : undefined
+          }
+        />
       ) : (
       <div className="flex flex-col gap-2">
         <DriveMediaLinks
@@ -2998,10 +3045,15 @@ function MediaUploadFlow({
    * consistent across the file means the user sees the same progress
    * toast UI regardless of which format they're uploading to.
    */
-  const handleUpload = async (file: File) => {
+  /** Resolves true once the file is stored and saved to the post. */
+  const handleUpload = async (
+    file: File,
+    /** A b-roll clip from her computer, via the AI panel (lib/as-is-upload). */
+    allowVideo = false,
+  ): Promise<boolean> => {
     if (!postId) {
       toast.error("שמרו קודם את הפוסט כדי להעלות מדיה", { duration: 4000 })
-      return
+      return false
     }
 
     const sizeMb = file.size / 1024 / 1024
@@ -3010,13 +3062,13 @@ function MediaUploadFlow({
         `הקובץ גדול מדי (${sizeMb.toFixed(1)}MB). מקסימום ${MAX_FILE_MB}MB.`,
         { duration: 6000 },
       )
-      return
+      return false
     }
 
     const isVideo = file.type.startsWith("video/")
-    if (isVideo && !accepted.acceptsVideo) {
+    if (isVideo && !accepted.acceptsVideo && !(allowVideo && format === "b_roll")) {
       toast.error("הפורמט הזה תומך רק בתמונות", { duration: 4000 })
-      return
+      return false
     }
 
     // Local preview — instant feedback. The blob URL gets replaced with
@@ -3066,7 +3118,7 @@ function MediaUploadFlow({
         setPreviewUrl(null)
         setPreviewKind(null)
         setUploading(false)
-        return
+        return false
       }
 
       const ext = file.name.split(".").pop()?.toLowerCase() || "bin"
@@ -3127,7 +3179,7 @@ function MediaUploadFlow({
         setPreviewUrl(null)
         setPreviewKind(null)
         setUploading(false)
-        return
+        return false
       }
 
       const publicUrl = supabase.storage
@@ -3153,7 +3205,7 @@ function MediaUploadFlow({
         setPreviewUrl(null)
         setPreviewKind(null)
         setUploading(false)
-        return
+        return false
       }
 
       // Replace the blob preview with the persistent URL — keeps the same
@@ -3167,6 +3219,9 @@ function MediaUploadFlow({
       if (format === "image_post" && !isVideo) {
         onImagePostUrlChange?.(publicUrl)
       }
+      // Her clip on the card at once, as the Drive path does (2026-11-06).
+      if (isVideo && format === "b_roll") onBRollUrlChange?.(publicUrl)
+      if (isVideo && format === "story") onStoryVideoUrlChange?.(publicUrl)
       // Same rule as the Drive path: an image that lands here gets the
       // post's caption laid over it. Where the file came from is not a
       // reason for the result to look different.
@@ -3174,6 +3229,7 @@ function MediaUploadFlow({
         runImageCaption(publicUrl)
       }
       toast.success("מדיה נשמרה", { id: uploadToast, duration: 3000 })
+      return true
     } catch (err) {
       console.error("[media-upload-flow] unexpected error:", err)
       toast.error(
@@ -3185,7 +3241,9 @@ function MediaUploadFlow({
       setPreviewKind(null)
       setUploading(false)
     }
+    return false
   }
+
 
   // Image post / story / b-roll style: her visual language, the niche
   // language, or its dark / light version — picked in the AI card, like the
@@ -3597,6 +3655,68 @@ function MediaUploadFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [format, aiPreviews])
 
+  /**
+   * "להעלות כמו שזה, בלי תוספות" from the AI panel (Hani, 2026-11-06 —
+   * lib/as-is-upload): her attachments become this format's media through
+   * the imports this panel already has — the Drive pull (a video stays the
+   * video) and the computer upload. No generation, no style.
+   */
+  const asIsRef = useRef<((items: AsIsItem[], opts?: AsIsOptions) => Promise<AsIsResult>) | null>(null)
+  useEffect(() => {
+    asIsRef.current = async (items, opts) => {
+      if (!postId) return { ok: false, message: "שמרו קודם את הפוסט, ואז אפשר להעלות מדיה." }
+      // Her video, imported so the own-video AI edit can work on it: one clip,
+      // saved before we answer, without the import's automatic caption.
+      if (opts?.forEdit) {
+        const video = items.find((it) => it.kind === "video")
+        if (!video) return { ok: false, message: "אין כאן סרטון לערוך." }
+        const saved = video.drive
+          ? await attachDriveMedia(video.drive, format, true)
+          : video.file
+            ? await handleUpload(video.file, true)
+            : false
+        return saved
+          ? { ok: true, message: "הסרטון עלה." }
+          : { ok: false, message: "לא הצלחתי להעלות את הסרטון, אז לא ערכתי כלום. נסו שוב, או העלו אותו מהדרייב." }
+      }
+      const drive = items.flatMap((it) => (it.drive ? [it.drive] : []))
+      const files = items.flatMap((it) => (it.file ? [it.file] : []))
+      const skippedFiles = drive.length > 0 && files.length > 0
+      const tail = skippedFiles ? " הקבצים מהמחשב לא נכללו — מעלים פעם אחת מקור אחד." : ""
+      if (drive.length) {
+        if (format === "story") {
+          handleStoryDriveImport(drive)
+          return {
+            ok: true,
+            message: `${drive.length === 1 ? "הסטורי עולה" : `${drive.length} הפריימים עולים לסטורי, לפי הסדר,`} כמו שהם, בלי תוספות. ההתקדמות בפאנל המדיה.${tail}`,
+          }
+        }
+        setDriveUrl(drive[0])
+        lastDriveRef.current = drive[0]
+        void attachDriveMedia(drive[0], format)
+        return {
+          ok: true,
+          message: `${drive.length > 1 ? "בפורמט הזה יש מקום למדיה אחת, אז עולה הראשונה. " : ""}המדיה עולה כמו שהיא, בלי תוספות. ההתקדמות בפאנל המדיה.${tail}`,
+        }
+      }
+      if (!files.length) return { ok: false, message: "אין כאן מדיה להעלות." }
+      const first = files[0]
+      if (first.type.startsWith("video/") && !acceptedMimeForFormat(format).acceptsVideo && format !== "b_roll") {
+        return { ok: false, message: "בפורמט הזה אי אפשר להעלות סרטון. בחרו תמונה." }
+      }
+      void handleUpload(first, true)
+      return {
+        ok: true,
+        message: `${files.length > 1 ? "מהמחשב עולה קובץ אחד בכל פעם, אז עולה הראשון. " : ""}המדיה עולה כמו שהיא, בלי תוספות. ההתקדמות בפאנל המדיה.`,
+      }
+    }
+  })
+  useEffect(() => {
+    if (format !== "image_post" && format !== "story" && format !== "b_roll") return
+    registerAsIsImporter(format, (items, opts) => asIsRef.current?.(items, opts) ?? Promise.resolve({ ok: false, message: "" }))
+    return () => registerAsIsImporter(format, null)
+  }, [format])
+
   const handleStoryDriveImport = (rows: string[]) => {
     if (!postId) {
       toast.error("שמרו את הפוסט לפני ייבוא הסטורי", { duration: 4000 })
@@ -3809,10 +3929,12 @@ function MediaUploadFlow({
      * video slipped past it entirely.
      */
     targetFormat: string = format,
-  ) => {
+    /** Imported for an AI edit that will caption it (lib/as-is-upload): no auto burn. */
+    skipAutoCaption = false,
+  ): Promise<boolean> => {
     const link = rawLink.trim()
-    if (!postId || !link) return
-    if (!isDriveUrl(link)) return
+    if (!postId || !link) return false
+    if (!isDriveUrl(link)) return false
     // Only paint into the panel when it is still showing the format this call
     // belongs to. Persistence always uses `targetFormat` and is unconditional —
     // the user's action should complete even if they navigated away.
@@ -3849,7 +3971,7 @@ function MediaUploadFlow({
             errorMessages[info.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.",
           )
         }
-        return
+        return false
       }
 
       const kind: "image" | "video" = info.kind === "video" ? "video" : "image"
@@ -3860,7 +3982,7 @@ function MediaUploadFlow({
       // protect the format being WRITTEN TO.
       if (targetFormat === "image_post" && kind === "video") {
         if (isCurrent()) setDriveError("פוסט תמונה תומך רק בתמונות")
-        return
+        return false
       }
 
       // Video keeps the link; an image is copied into our bucket first.
@@ -3878,7 +4000,7 @@ function MediaUploadFlow({
               errorMessages[data.error] ?? "טעינת המדיה מהדרייב נכשלה. נסו שוב.",
             )
           }
-          return
+          return false
         }
         mediaUrl = data.url
       }
@@ -3895,7 +4017,7 @@ function MediaUploadFlow({
         if (isCurrent()) {
           setDriveError(`לא הצלחנו לשמור את המדיה: ${err.error ?? "שגיאה"}`)
         }
-        return
+        return false
       }
 
       // Lift the result to the parent regardless of which format is on screen —
@@ -3908,7 +4030,7 @@ function MediaUploadFlow({
       if (targetFormat === "b_roll") {
         onBRollDriveLinksChange?.([link])
       }
-      if (targetFormat === "b_roll" && kind === "video") {
+      if (targetFormat === "b_roll" && kind === "video" && !skipAutoCaption) {
         void handleBurnText()
       }
       // ...and a b-roll STILL gets the same treatment from the image
@@ -3981,7 +4103,9 @@ function MediaUploadFlow({
       // redundant second pull.
       if (!attached) lastDriveRef.current = ""
     }
+    return attached
   }
+
 
   /**
    * Debounced auto-attach: fires as soon as the field holds a full Drive
@@ -4102,6 +4226,15 @@ function MediaUploadFlow({
                   format="image_post"
                   pulling={drivePulling}
                   error={driveError}
+                  // One pipeline (Hani, 2026-11-06): the AI panel, Drive gallery up.
+                  onOpen={
+                    postId
+                      ? () => {
+                          requestDrivePicker("image_post")
+                          handleAiGenerate(true)
+                        }
+                      : undefined
+                  }
                   onImport={(links) => {
                     setDriveUrl(links[0])
                     lastDriveRef.current = links[0]
@@ -4352,7 +4485,19 @@ function MediaUploadFlow({
                  Row i is frame i, so dragging a row reorders the story
                  itself, not just the form. */}
           {drivePick ? (
-            <DriveFolderEntry format="story" onImport={handleStoryDriveImport} />
+            <DriveFolderEntry
+              format="story"
+              onImport={handleStoryDriveImport}
+              // One pipeline (Hani, 2026-11-06): the AI panel, Drive gallery up.
+              onOpen={
+                postId
+                  ? () => {
+                      requestDrivePicker("story")
+                      handleStoryGenerate(true)
+                    }
+                  : undefined
+              }
+            />
           ) : !showStoryDriveLinks ? (
             <Button
               variant="outline"
@@ -4625,6 +4770,15 @@ function MediaUploadFlow({
               format={format}
               pulling={drivePulling}
               error={driveError}
+              // One pipeline (Hani, 2026-11-06): the AI panel, Drive gallery up.
+              onOpen={
+                postId && format === "b_roll"
+                  ? () => {
+                      requestDrivePicker("b_roll")
+                      handleBRollGenerate(true)
+                    }
+                  : undefined
+              }
               onImport={(links) => {
                 setDriveUrl(links[0])
                 lastDriveRef.current = links[0]

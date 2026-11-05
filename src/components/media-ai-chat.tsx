@@ -37,6 +37,7 @@ import {
 } from "@/components/ai-edit-reference"
 import { LinkReferenceRows, useLinkReferences } from "@/components/ai-edit-link-reference"
 import { ReferenceAddMenu } from "@/components/ai-edit-drive-reference"
+import { requestAsIsUpload, type AsIsItem } from "@/lib/as-is-upload"
 import type { MediaStyle } from "@/lib/visual-language/types"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
@@ -216,6 +217,16 @@ const LOOK_NOTE = "תמונה מקישור משמשת רק כהשראה למרא
 const PLACE_ONLY_INSTRUCTION = "להכניס את התמונה שצירפתי"
 /** Her way out of the conversation — generate in the picked style as is. */
 const GEN_SKIP = "ליצור בלי תוספות"
+/** A video can't be a still format's media — said at once, nothing starts. */
+const STILL_FORMAT_VIDEO: Record<"image_post" | "carousel", string> = {
+  carousel:
+    "בקרוסלה כאן כל שקופית היא תמונה, אז סרטון לא יכול להיכנס לשקופית. צרפו במקומו תמונה, או צילום מסך של הרגע שאתם רוצים מתוך הסרטון.",
+  image_post:
+    "פוסט תמונה הוא תמונה, אז סרטון לא יכול להיות המדיה שלו. צרפו במקומו תמונה, או צילום מסך של הרגע שאתם רוצים מתוך הסרטון.",
+}
+/** Her attachment becomes the media as it is — lib/as-is-upload. */
+const AS_IS = "להעלות כמו שזה, בלי תוספות"
+const AS_IS_BUSY = "מעלים את המדיה כמו שהיא..."
 const GEN_STALE = "הבקשה הזאת כבר לא פעילה. לחצו שוב על כפתור היצירה בפאנל המדיה."
 
 /**
@@ -372,11 +383,11 @@ export function MediaAiChat({
   useWatchChat(chatKey)
   // Screenshots waiting to go with the next message; another conversation starts clean.
   const refs = useReferenceImages()
-  // Videos from Drive come in as one frame each — said under the attachments.
-  const [driveFrames, setDriveFrames] = useState(0)
-  useEffect(() => {
-    if (!refs.refs.length) setDriveFrames(0)
-  }, [refs.refs.length])
+  /**
+   * The originals of the attachments she just sent with a message — "להעלות
+   * כמו שזה" stays offered under that message once the AI has answered.
+   */
+  const [sentAsIs, setSentAsIs] = useState<{ index: number; items: AsIsItem[] } | null>(null)
   const { clear: clearRefs, restore: restoreRefs } = refs
   // A link in her words becomes a reference too — while the panel asks how to start.
   const links = useLinkReferences(session.input, refs, session.extra.gen?.phase === "brief")
@@ -482,6 +493,111 @@ export function MediaAiChat({
     revealChatReply(key, result.ok ? away.done : away.failed)
   }
 
+  /**
+   * "להעלות כמו שזה, בלי תוספות": her attachments become the format's media
+   * as they are, through the media panel's own import — no generation, no
+   * style (lib/as-is-upload). A generation waiting on its question is dropped.
+   */
+  const uploadAsIs = async (items: AsIsItem[], images: string[]) => {
+    const key = chatKey
+    const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, fresh, fn)
+    if (getChat<ChatMessage, MediaChatExtra>(key)?.busy) return
+    // A still format can't take a video — at once, before anything starts.
+    if ((format === "image_post" || format === "carousel") && items.some((it) => it.kind === "video")) {
+      patchKey((s) => ({
+        ...s,
+        messages: [...s.messages, { role: "assistant", content: STILL_FORMAT_VIDEO[format], error: true }],
+      }))
+      return
+    }
+    refs.clear()
+    links.reset()
+    setSentAsIs(null)
+    patchKey((s) => ({
+      ...s,
+      input: "",
+      busy: true,
+      extra: { ...s.extra, progress: AS_IS_BUSY, gen: null },
+      messages: [...s.messages, { role: "user", content: AS_IS, ...(images.length ? { images } : {}) }],
+    }))
+    const result = await requestAsIsUpload(format, items)
+    patchKey((s) => ({
+      ...s,
+      busy: false,
+      extra: { ...s.extra, progress: "" },
+      messages: [
+        ...s.messages,
+        result.ok
+          ? { role: "assistant", content: result.message, done: true, noStyle: true }
+          : { role: "assistant", content: result.message, error: true },
+      ],
+    }))
+  }
+  /**
+   * "אם העלתי סרטון תעשה סרטון" (Hani, 2026-11-06): a video she attached with
+   * an instruction makes a VIDEO — never a frame. Story / b-roll: the clip is
+   * imported as the format's media (the as-is import, no automatic caption),
+   * then the own-video AI edit (runOwnMediaEdit) adds the text and animation
+   * her words ask for, her footage untouched. Image post / carousel can't hold
+   * a video: she's told so at once, and nothing starts.
+   * Returns true when it handled the message.
+   */
+  const sendWithVideo = async (text: string, attached: string[]): Promise<boolean> => {
+    const originals = refs.originals(attached)
+    const video = originals.find((o) => o.kind === "video")
+    if (!video) return false
+    const key = chatKey
+    const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, fresh, fn)
+    if (format === "image_post" || format === "carousel") {
+      patchKey((s) => ({
+        ...s,
+        messages: [...s.messages, { role: "assistant", content: STILL_FORMAT_VIDEO[format], error: true }],
+      }))
+      return true
+    }
+    const extra = originals.length > 1 ? " עבדתי עם הסרטון הראשון; שאר הקבצים לא נכללו." : ""
+    refs.clear()
+    links.reset()
+    setSentAsIs(null)
+    patchKey((s) => ({
+      ...s,
+      input: "",
+      busy: true,
+      extra: { ...s.extra, progress: "מעלים את הסרטון שלכם...", gen: null },
+      messages: [...s.messages, { role: "user", content: text, ...(attached.length ? { images: attached } : {}) }],
+    }))
+    const imported = await requestAsIsUpload(format, [video], { forEdit: true })
+    if (!imported.ok) {
+      patchKey((s) => ({
+        ...s,
+        busy: false,
+        extra: { ...s.extra, progress: "" },
+        messages: [...s.messages, { role: "assistant", content: imported.message, error: true }],
+      }))
+      return true
+    }
+    patchKey((s) => ({ ...s, extra: { ...s.extra, progress: "הסרטון עלה. עכשיו מוסיפים את מה שביקשתם..." } }))
+    const r = await runOwnMediaEdit({
+      postId,
+      format,
+      instruction: text,
+      currentUrls: [],
+      onProgress: (p) => patchKey((s) => ({ ...s, extra: { ...s.extra, progress: p } })),
+    })
+    if (r.ok && r.changed) onUpdated?.(format, r.urls, { driveLinks: r.driveLinks })
+    const reply: ChatMessage = !r.ok
+      ? { role: "assistant", content: `הסרטון עלה כמו שהוא. ${aiErrorMessage(r.message || "העריכה לא הצליחה. נסו שוב.")}`, error: true }
+      : !r.changed
+        ? { role: "assistant", content: `הסרטון עלה כמו שהוא. ${r.message}${extra}` }
+        : { role: "assistant", content: `${r.message || "הסרטון שלכם עלה, ועליו מה שביקשתם."}${extra}`, done: true, noStyle: !r.styleChange }
+    patchKey((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" }, messages: [...s.messages, reply] }))
+    return true
+  }
+  const asIsAttached = refs.originals(refs.refs)
+  // A still format can't take a video as is — no chip for it (the note says why).
+  const stillWithVideo = (format === "image_post" || format === "carousel") && asIsAttached.some((o) => o.kind === "video")
+  const asIsNow = stillWithVideo ? [] : asIsAttached
+
   const send = async (preset?: string) => {
     // The reply belongs to this conversation even if the panel closes or
     // switches format before it lands.
@@ -502,6 +618,10 @@ export function MediaAiChat({
       const typed = (preset ?? cur.input).trim()
       const brief = typed || (placing ? PLACE_ONLY_INSTRUCTION : attached.length ? REFERENCE_ONLY_INSTRUCTION : "")
       if (!brief || links.busy) return
+      // A video makes a video (never a frame).
+      if (await sendWithVideo(typed || brief, attached)) return
+      const originals = refs.originals(attached)
+      setSentAsIs(originals.length ? { index: cur.messages.length, items: originals } : null)
       refs.clear()
       links.reset()
       void generate(brief, attached, undefined, looks)
@@ -511,6 +631,9 @@ export function MediaAiChat({
     const attached = refs.refs
     if (!text && attached.length) text = REFERENCE_ONLY_INSTRUCTION
     if (!text) return
+    if (await sendWithVideo(text, attached)) return
+    const originals = refs.originals(attached)
+    setSentAsIs(originals.length ? { index: cur.messages.length, items: originals } : null)
     refs.clear()
     const previousInstruction = [...cur.messages].reverse().find((m) => m.role === "user")?.content
     patchKey((s) => ({
@@ -764,7 +887,8 @@ export function MediaAiChat({
                 ))}
               </div>
             )}
-            {/* Generate in the picked style as is — under the question. */}
+            {/* Generate in the picked style as is — under the question; and
+                beside it, while she has media attached, upload it as it is. */}
             {canSkip && i === messages.length - 1 && !loading && (
               <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
                 <Chip
@@ -776,8 +900,18 @@ export function MediaAiChat({
                 >
                   {GEN_SKIP}
                 </Chip>
+                {asIsNow.length > 0 && (
+                  <Chip onClick={() => void uploadAsIs(asIsNow, refs.split(refs.refs).place)}>{AS_IS}</Chip>
+                )}
               </div>
             )}
+            {/* The message she just sent with media: upload it as it is instead. */}
+            {sentAsIs && sentAsIs.index === i && m.role === "user" && !loading &&
+              !messages.slice(i + 1).some((x) => x.role === "user") && (
+                <div className="flex max-w-[85%] flex-wrap justify-start gap-1.5">
+                  <Chip onClick={() => void uploadAsIs(sentAsIs.items, m.images ?? [])}>{AS_IS}</Chip>
+                </div>
+              )}
             {m.done && (
               <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
                 <Check className="size-3.5 text-green-success-50" />
@@ -819,15 +953,24 @@ export function MediaAiChat({
           />
         )}
         <LinkReferenceRows l={links} />
-        <ReferenceTray r={refs} />
-        {driveFrames > 0 && refs.refs.length > 0 && (
-          <p className="mb-2 text-xs-body text-text-neutral-default">
-            {driveFrames === 1
-              ? "מהסרטון שבחרתם צורפה תמונה אחת ממנו (פריים), לא הסרטון עצמו."
-              : `מ-${driveFrames} הסרטונים שבחרתם צורפה תמונה אחת מכל אחד (פריים), לא הסרטונים עצמם.`}
-          </p>
+        {asIsNow.length > 0 && !canSkip && !loading && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            <Chip onClick={() => void uploadAsIs(asIsNow, refs.split(refs.refs).place)}>{AS_IS}</Chip>
+          </div>
         )}
-        {gen?.phase === "brief" && gen.placeRefs && refs.refs.length > 0 && (() => {
+        <ReferenceTray r={refs} />
+        {/* A video attached: said right away what happens with it. */}
+        {asIsAttached.some((o) => o.kind === "video") ? (
+          format === "image_post" || format === "carousel" ? (
+            <p role="alert" className="mb-2 text-xs-body text-button-destructive-default">
+              {STILL_FORMAT_VIDEO[format]}
+            </p>
+          ) : (
+            <p className="mb-2 text-xs-body text-text-neutral-default">
+              הסרטון שצירפתם הוא שיעלה, ועליו הטקסט והאנימציה שתבקשו. מה שצילמתם לא משתנה.
+            </p>
+          )
+        ) : gen?.phase === "brief" && gen.placeRefs && refs.refs.length > 0 && (() => {
           const { place, looks } = refs.split(refs.refs)
           return (
             <p className="mb-2 text-xs-body text-text-neutral-default">
@@ -859,7 +1002,7 @@ export function MediaAiChat({
             className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent px-1 py-2 text-small shadow-none focus-visible:ring-0"
           />
           {/* "מהמחשב" / "מגוגל דרייב" — the folder linked to this format (Hani, 2026-11-06). */}
-          <ReferenceAddMenu r={refs} format={format} disabled={loading} onFrames={setDriveFrames} />
+          <ReferenceAddMenu r={refs} format={format} disabled={loading} />
           <Button
             size="icon-sm"
             onClick={() => void send()}

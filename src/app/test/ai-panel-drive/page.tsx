@@ -13,6 +13,16 @@
  *   ?format=story | b_roll     (story: pictures · b_roll: videos)
  *   &state=ready | nofolder | noaccess | empty
  *
+ * Then "להעלות כמו שזה, בלי תוספות" hands the ORIGINALS (a Drive video stays the
+ * video) to the media panel's own import — shown by the stand-in card.
+ * A video with an instruction (story / b-roll) makes a VIDEO: the clip is
+ * imported, then the own-video AI edit runs on it. Here the edit's route is
+ * switched off, so the panel shows the honest failure ("הסרטון עלה כמו שהוא,
+ * אבל העריכה לא הצליחה"). In a carousel (or image post) a video is refused at
+ * once, before anything starts.
+ * `&open=drive` = the media panel's "מדיה מוכנה מ Google Drive": the panel
+ * opens with the Drive gallery already up.
+ *
  * The folder is sample data and `fetch` is stubbed (the Drive download answers
  * with a sample picture) — no Drive calls, no credits, nothing saved.
  */
@@ -24,6 +34,7 @@ import { MediaAiChat, mediaChatKey, type AiEditFormat } from "@/components/media
 import { setDrivePreviewState, type DrivePreviewState } from "@/components/drive-folder-review"
 import { clearChat } from "@/lib/ai-chat-session-store"
 import { openingId, type AiEditOpening } from "@/lib/ai-edit-intent"
+import { registerAsIsImporter, requestDrivePicker, type AsIsItem } from "@/lib/as-is-upload"
 
 const POST_ID = "preview-ai-panel-drive"
 const SAMPLE = "/images/carousel-templates/ai-dark.png"
@@ -31,6 +42,7 @@ const SAMPLE = "/images/carousel-templates/ai-dark.png"
 const FORMATS: { id: AiEditFormat; label: string }[] = [
   { id: "story", label: "סטורי (תמונות)" },
   { id: "b_roll", label: "בי-רול (סרטונים)" },
+  { id: "carousel", label: "קרוסלה (סרטון לא נכנס)" },
 ]
 const STATES: { id: DrivePreviewState; label: string }[] = [
   { id: "ready", label: "תיקייה עם קבצים" },
@@ -78,13 +90,32 @@ function Preview() {
   const params = useSearchParams()
   const format: AiEditFormat = FORMATS.find((f) => f.id === params.get("format"))?.id ?? "story"
   const state = (STATES.find((s) => s.id === params.get("state"))?.id ?? "ready") as DrivePreviewState
-  return <Stage key={`${format}-${state}`} format={format} state={state} />
+  // shortcut: the media panel's "מדיה מוכנה מ Google Drive" — the AI panel opens with Drive up.
+  const shortcut = params.get("open") === "drive"
+  return <Stage key={`${format}-${state}-${shortcut}`} format={format} state={state} shortcut={shortcut} />
 }
 
-function Stage({ format, state }: { format: AiEditFormat; state: DrivePreviewState }) {
+function Stage({ format, state, shortcut }: { format: AiEditFormat; state: DrivePreviewState; shortcut: boolean }) {
+  // What "להעלות כמו שזה" handed to the media panel's import (the stand-in below).
+  const [imported, setImported] = useState<AsIsItem[] | null>(null)
+  useEffect(() => {
+    registerAsIsImporter(format, async (items, opts) => {
+      setImported(items)
+      return opts?.forEdit
+        ? { ok: true, message: "הסרטון עלה." }
+        : { ok: true, message: "המדיה עולה כמו שהיא, בלי תוספות. ההתקדמות בפאנל המדיה." }
+    })
+    return () => registerAsIsImporter(format, null)
+  }, [format])
   // A clean conversation before the panel mounts, then its first question.
   const [opening] = useState<AiEditOpening>(() => {
+    // Before anything mounts: sample folder, network off, clean conversation.
+    if (typeof window !== "undefined") {
+      stubFetch()
+      setDrivePreviewState(state)
+    }
     clearChat(mediaChatKey(POST_ID, format))
+    if (shortcut) requestDrivePicker(format)
     return {
     id: openingId(),
     kind: "generate",
@@ -121,7 +152,26 @@ function Stage({ format, state }: { format: AiEditFormat; state: DrivePreviewSta
             {s.label}
           </Link>
         ))}
-        <span className="text-text-neutral-default">· לחצו על אייקון התמונה בשורת הכתיבה בפאנל</span>
+        <Link href={`${href(format, state)}&open=drive`} className={pill(shortcut)}>
+          ״מדיה מוכנה מ Google Drive״ — פותח ישר את הדרייב
+        </Link>
+        <span className="text-text-neutral-default">· או לחצו על אייקון התמונה בשורת הכתיבה בפאנל</span>
+      </div>
+
+      {/* Stand-in for the media panel's own import (lib/as-is-upload). */}
+      <div className="w-[352px] rounded-[18px] border border-border-neutral-default bg-white p-4 text-xs-body text-text-neutral-default dark:bg-gray-10">
+        <p className="mb-2 font-medium text-text-primary-default">פאנל המדיה · הייבוא הקיים</p>
+        {imported ? (
+          <ol className="list-inside list-decimal">
+            {imported.map((it, i) => (
+              <li key={i}>
+                {it.drive ? "מהדרייב" : "מהמחשב"} · {it.kind === "video" ? "סרטון, כמו שהוא" : "תמונה, כמו שהיא"}
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p>עוד לא נשלח כלום. צרפו מדיה בפאנל ה-AI ולחצו ״להעלות כמו שזה, בלי תוספות״.</p>
+        )}
       </div>
       <MediaAiChat postId={POST_ID} format={format} open opening={opening} onOpenChange={() => {}} />
     </div>

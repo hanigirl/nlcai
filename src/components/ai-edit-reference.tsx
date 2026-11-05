@@ -5,6 +5,7 @@ import { ImagePlus, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { TooltipLabel } from "@/components/ui/tooltip"
 import { MAX_REFERENCES } from "@/lib/ai-edit-references"
+import type { AsIsItem } from "@/lib/as-is-upload"
 import { cn } from "@/lib/utils"
 
 /**
@@ -82,27 +83,57 @@ export function useReferenceImages() {
    * 2026-11-05: "התמונה תכנס ביצירה הראשונה אם שמתי אותה כרפרנס").
    */
   const [looks, setLooks] = useState<string[]>([])
+  /**
+   * Where each of her attachments came from, by its preview — so "להעלות כמו
+   * שזה, בלי תוספות" (lib/as-is-upload) can make the ORIGINAL the media: the
+   * file from her computer (a video stays a video), or the Drive file.
+   */
+  const [origins, setOrigins] = useState<Record<string, AsIsItem>>({})
   const [dragging, setDragging] = useState(false)
   const refsRef = useRef(refs)
   useEffect(() => {
     refsRef.current = refs
   })
 
-  const add = useCallback(async (files: File[], opts: { look?: boolean } = {}) => {
-    const room = MAX_REFERENCES - refsRef.current.length
-    if (room <= 0 || !files.length) return
-    const shrunk = (await Promise.all(files.slice(0, room).map((f) => shrink(f).catch(() => null)))).filter(
-      (s): s is string => !!s,
-    )
-    setRefs((prev) => [...prev, ...shrunk].slice(0, MAX_REFERENCES))
-    if (opts.look) setLooks((prev) => [...prev, ...shrunk])
-  }, [])
+  const add = useCallback(
+    async (
+      files: File[],
+      opts: {
+        look?: boolean
+        /** Per file (same order): what it stands for, when not the picture itself. */
+        origins?: (AsIsItem | undefined)[]
+      } = {},
+    ) => {
+      const room = MAX_REFERENCES - refsRef.current.length
+      if (room <= 0 || !files.length) return
+      const taken = files.slice(0, room)
+      const results = await Promise.all(taken.map((f) => shrink(f).catch(() => null)))
+      const shrunk = results.filter((s): s is string => !!s)
+      setRefs((prev) => [...prev, ...shrunk].slice(0, MAX_REFERENCES))
+      if (opts.look) setLooks((prev) => [...prev, ...shrunk])
+      else
+        setOrigins((prev) => {
+          const next = { ...prev }
+          results.forEach((src, i) => {
+            if (src) next[src] = opts.origins?.[i] ?? { kind: "image", file: taken[i] }
+          })
+          return next
+        })
+    },
+    [],
+  )
 
   const remove = useCallback((i: number) => setRefs((prev) => prev.filter((_, j) => j !== i)), [])
   const clear = useCallback(() => {
     setRefs([])
     setLooks([])
   }, [])
+  /** Her own attachments in `list`, as their originals (looks from a link are not hers). */
+  const originals = useCallback(
+    (list: string[]): AsIsItem[] =>
+      list.filter((r) => !looks.includes(r)).flatMap((r) => (origins[r] ? [origins[r]] : [])),
+    [looks, origins],
+  )
   /** Put sent references back in the tray (a generation that failed). */
   const restore = useCallback((list: string[], lookList: string[] = []) => {
     setRefs(list.slice(0, MAX_REFERENCES))
@@ -144,7 +175,7 @@ export function useReferenceImages() {
     },
   }
 
-  return { refs, add, remove, clear, restore, split, onPaste, dropProps, dragging, full: refs.length >= MAX_REFERENCES }
+  return { refs, add, remove, clear, restore, split, originals, onPaste, dropProps, dragging, full: refs.length >= MAX_REFERENCES }
 }
 
 export type ReferenceImages = ReturnType<typeof useReferenceImages>
