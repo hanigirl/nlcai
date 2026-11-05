@@ -22,13 +22,36 @@ import {
 } from "@/lib/visual-language/current-brief"
 import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
 import { changedArea, editPrompt, IMAGE_MISSING, planImageEdit } from "@/lib/ai-edit-plan"
-import { loadImageForModels } from "@/lib/visual-language/image-input"
+import { loadImageForModels, normaliseImage } from "@/lib/visual-language/image-input"
+import { picturesPlaced } from "@/lib/placed-check"
+import { canBlendBRoll } from "@/lib/feature-access"
 
 /**
  * Words that may be about the background PICTURE rather than the text —
  * only then is the request read by the planner (one more model call).
  */
 const PICTURE_WORDS = /תמונ|דמות|צילום|אישה|גבר|ילד|ילדה|פרצוף|פנים|רקע|לוגו|חיה|כלב|חתול|אובייקט|מוצר|photo|image|picture|background/i
+
+/** She said to use her picture exactly as it is: "בדיוק כמו שהיא", "אחד לאחד", "בלי לשנות", "as is". */
+function wantsAsIs(instruction: string): boolean {
+  return /כמו\s*שה(?:יא|וא)|אחד\s*ל\s*-?\s*אחד|1\s*[:/]\s*1|בלי\s*לשנות\s*(?:אותה|אותו|את\s*התמונה)?|כמות\s*שה(?:יא|וא)|as[\s-]is|exactly\s+as/i.test(instruction)
+}
+
+/** Her picture worked INTO the existing background, in its look. */
+function blendPrompt(edit: string): string {
+  return [
+    "Edit the FIRST input image (the background of an animated social video — it has no text). The second input image is the creator's own picture. Work its subject INTO this scene:",
+    edit,
+    "",
+    "Blend it into the scene: same lighting, colour grade, palette, grain and style as the first image, so it looks designed together with it. The subject stays recognisably the SAME — the same person (face, hair, features), character, product or logo, with the same details — never a different or re-imagined one.",
+    "Keep everything else of the first image as it is. No text, letters or numbers. No person, character, animal or object that isn't in either input. Nothing touches or crosses the image edge.",
+  ].join("\n")
+}
+
+const BLEND_FAILED = {
+  error: "blend_failed",
+  message: "לא הצלחתי לשלב את התמונה ששלחתם ברקע הפעם, אז השארתי את הבי-רול כמו שהיה. נסו שוב, ואם תרצו אותה בדיוק כמו שהיא, כתבו ״כמו שהיא״.",
+}
 
 const PICTURE_FAILED = {
   error: "picture_failed",
@@ -163,8 +186,13 @@ export async function POST(req: NextRequest) {
       refs.length || PICTURE_WORDS.test(text) ? await planImageEdit(anthropicKey, "b_roll", 1, ask!, refs) : null
     if (planned?.needsImage) return NextResponse.json(IMAGE_MISSING, { status: 400 })
     const placed = planned?.place.length ? refs[planned.place[0] - 1] : null
-    if (placed) {
-      // Her picture becomes the background — whole, as it is.
+    // Off the blend gate (lib/feature-access): her photo as is, as before.
+    // On it: her picture as is only when she says so, or when
+    // the background is already her own picture (never repainted). Otherwise
+    // it is BLENDED into the existing background — the design already holds
+    // her visual language (Hani, 2026-11-05: "שתשתלב בעיצוב שהוא עשה ... לא
+    // כמו שהיא אחד לאחד אלא אם ציינתי זאת במפורש").
+    if (placed && (!canBlendBRoll(user.email) || wantsAsIs(text) || ownBackground)) {
       backgroundUrl = await uploadBackground(supabase, user.id, stamp, await pictureAsBackground(referenceBuffer(placed)))
       ownBackground = true
       brief = { ...brief, styleSpec: brief.styleSpec.includes(OWN_BACKGROUND_LINE) ? brief.styleSpec : `${brief.styleSpec}\n\n${OWN_BACKGROUND_LINE}` }
@@ -174,6 +202,25 @@ export async function POST(req: NextRequest) {
         composition.template,
         `${text}\n\n(Done for you: the background is now the creator's own picture. Adjust only the text so it reads well over it.${restyle ? `\n\n${MOTION_RESTYLE_NOTE_OWN_PICTURE}` : ""})`,
       )
+    } else if (placed) {
+      const her = await normaliseImage(referenceBuffer(placed))
+      const source = await loadImageForModels(composition.backgroundUrl)
+      const out = await editImage(await openai(), blendPrompt(planned!.edit), source, "9:16", [her])
+      const next = cropToCanvas(out)
+      // The picture must visibly change AND show her subject — not a
+      // look-alike, not nothing. Either way it isn't saved, and she's told.
+      if ((await changedArea(composition.backgroundUrl, next)) < 0.03) {
+        return NextResponse.json(BLEND_FAILED, { status: 422 })
+      }
+      if ((await picturesPlaced(anthropicKey, [her], next)) === false) {
+        return NextResponse.json(BLEND_FAILED, { status: 422 })
+      }
+      backgroundUrl = await uploadBackground(supabase, user.id, stamp, Buffer.from(next, "base64"))
+      // The scene is still the AI's design (now with her subject in it): a
+      // later restyle may redraw it — her subject goes along as before.
+      template = restyle
+        ? await reviseBRoll(anthropicKey, brief, composition.template, `${text}\n\n${MOTION_RESTYLE_NOTE_OWN_PICTURE}`)
+        : composition.template
     } else if (planned?.picture) {
       // Her own picture is never repainted.
       if (ownBackground) return NextResponse.json(OWN_PICTURE_KEPT, { status: 400 })
