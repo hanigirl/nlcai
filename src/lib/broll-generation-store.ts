@@ -193,7 +193,8 @@ export function startBRollEdit(
   instruction: string,
   /** The chat panel reports progress itself — no toasts then. */
   /** references: screenshots she attached (lib/ai-edit-references). */
-  opts: { quiet?: boolean; references?: string[] } = {},
+  /** earlierReferences: her last message's images, when this one has none. */
+  opts: { quiet?: boolean; references?: string[]; earlierReferences?: string[] } = {},
 ): Promise<{ ok: true; url: string; unchanged?: string } | { ok: false; message: string }> {
   if (!postId || !instruction.trim()) return Promise.resolve({ ok: false, message: "" })
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
@@ -210,6 +211,7 @@ export function startBRollEdit(
           postId,
           instruction,
           ...(opts.references?.length ? { references: opts.references } : {}),
+          ...(opts.earlierReferences?.length ? { earlierReferences: opts.earlierReferences } : {}),
         }),
       })
       const data = (await res.json().catch(() => ({}))) as {

@@ -17,6 +17,9 @@ import type { MediaStyle } from "@/lib/visual-language/types"
 
 const PIECE_HEADER = "THE CREATOR'S OWN DIRECTION FOR THIS PIECE"
 const RULES_HEADER = "STANDING PREFERENCES"
+/** A b-roll built on her own picture (lib/broll-animation/background) — about the piece, kept. */
+const OWN_PICTURE_HEADER = "THE BACKGROUND IS THE CREATOR'S OWN PICTURE"
+const isPieceLine = (l: string) => l.startsWith(PIECE_HEADER) || l.startsWith(OWN_PICTURE_HEADER)
 
 /**
  * She asks to (re)apply her own visual language / brand to the piece:
@@ -38,9 +41,13 @@ export function styleOfLines(lines: string[]): MediaStyle {
   return "niche"
 }
 
-/** Her own direction for this piece (lib/media-brief) — always at the end, kept across a refresh. */
+/**
+ * What belongs to this piece, not to her language — her direction for it
+ * (lib/media-brief) and "the background is her own picture" — always at the
+ * end, kept across a refresh.
+ */
 export function pieceLines(lines: string[]): string[] {
-  const at = lines.findIndex((l) => l.startsWith(PIECE_HEADER))
+  const at = lines.findIndex(isPieceLine)
   return at < 0 ? [] : ["", ...lines.slice(at)]
 }
 
@@ -50,7 +57,7 @@ export function pieceLines(lines: string[]): string[] {
  * direction.
  */
 export function languageLines(lines: string[]): string[] {
-  const end = lines.findIndex((l) => l.startsWith(RULES_HEADER) || l.startsWith(PIECE_HEADER))
+  const end = lines.findIndex((l) => l.startsWith(RULES_HEADER) || isPieceLine(l))
   const base = end < 0 ? lines : lines.slice(0, end)
   return base.map((l) => l.trim()).filter(Boolean)
 }
@@ -63,3 +70,7 @@ export function languageKey(parts: unknown): string {
 /** Added to a b-roll / animated-frame edit when its look is rebuilt in her current language. */
 export const MOTION_RESTYLE_NOTE =
   "RESTYLE — the fonts, colours and visual language in the brief are the creator's CURRENT visual language. This composition was designed in an earlier look she has replaced (or drifted from it). Rebuild its whole look in the current language — type treatment, colours, shapes and accents — as if designed from this brief today; nothing of the earlier look may remain. Keep the words exactly. The background image has already been redrawn in the current language."
+
+/** The restyle note for a b-roll / frame whose background is her own picture — that picture stays. */
+export const MOTION_RESTYLE_NOTE_OWN_PICTURE =
+  "RESTYLE — the fonts, colours and visual language in the brief are the creator's CURRENT visual language. This composition was designed in an earlier look she has replaced (or drifted from it). Rebuild the text's whole look in the current language — type treatment, colours, shapes and accents; nothing of the earlier look may remain. Keep the words exactly. The background is the creator's own picture and stays exactly as it is."
