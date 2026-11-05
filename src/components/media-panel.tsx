@@ -66,7 +66,7 @@ import {
   startStoryGeneration,
   removeStoryGenerationSet,
 } from "@/lib/story-generation-store"
-import type { SlideData } from "@/lib/carousel-templates"
+import type { SlideData, TemplateConfig } from "@/lib/carousel-templates"
 import { flushPendingSaves } from "@/lib/pending-saves"
 import { BLANK_TEMPLATE, BLANK_TEMPLATE_ID, BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import { openingId, requestAiEdit } from "@/lib/ai-edit-intent"
@@ -2215,80 +2215,19 @@ function CarouselFlow({
             יצירת קרוסלה). */}
       <div className="flex flex-col gap-2">
         <p className="text-small-bold text-text-primary-default">בחרו טמפלט</p>
-        <div
-          role="radiogroup"
-          aria-label="בחירת טמפלט לקרוסלה"
-          className="grid grid-cols-3 gap-2 group/ai"
-        >
-          {templates.map((t) => {
-            const isSelected = selectedTemplate === t.id
-            // A set actually generated for THIS post beats the live cover
-            // render, which beats the static sample.
-            const generatedCover = generatedByTemplate[t.id]?.[0]
-            const livePreview = generatedCover ?? tilePreviews[t.id]
-            const tileAspect = t.size
-              ? `${t.size.width} / ${t.size.height}`
-              : "1 / 1"
-            // Which tile made what the post is actually using. Still one tile
-            // and one selection ring (Hani 2026-07-09) — the badge only names
-            // the current one so "which media is chosen right now" is
-            // readable at a glance instead of inferred from the ring.
-            const isPostCarousel =
-              !!images && images.length > 0 && generatedByTemplate[t.id] === images
-            return (
-              // The picked tile carries "עריכה עם AI" (Hani, 2026-11-05) —
-              // the same sparkle as on finished media: before there is a
-              // carousel it asks first, then generates in this template.
-              <div key={t.id} className="relative">
-              <button
-                type="button"
-                role="radio"
-                aria-checked={isSelected}
-                onClick={() => {
-                  setSelectedTemplate(t.id)
-                  // A design that was already generated opens straight in
-                  // the preview dialog; otherwise just select it.
-                  if (generatedByTemplate[t.id]) openDialog(t.id)
-                }}
-                className={`relative flex flex-col gap-1 rounded-xl border p-1 pb-1.5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
-                  isSelected
-                    ? "border-yellow-50 ring-1 ring-yellow-50"
-                    : "border-border-neutral-default hover:border-gray-80"
-                }`}
-              >
-                {t.id === BLANK_TEMPLATE_ID && !livePreview ? (
-                  <BlankTileThumb className="w-full rounded-lg" style={{ aspectRatio: tileAspect }} />
-                ) : livePreview || t.thumbnailUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={
-                      livePreview
-                        ? imageSrc(livePreview)
-                        : t.thumbnailUrl
-                    }
-                    alt={`שקופית לדוגמה בטמפלט ${t.name}`}
-                    className="w-full rounded-lg object-cover"
-                    style={{ aspectRatio: tileAspect, backgroundColor: t.preview.bg }}
-                  />
-                ) : (
-                  <TemplateMiniMock preview={t.preview} aspect={tileAspect} />
-                )}
-                {isPostCarousel && (
-                  <span className="absolute top-2 start-2 rounded-md bg-bg-surface-primary-default px-1.5 py-0.5 text-xs text-text-primary-default">
-                    נוכחית
-                  </span>
-                )}
-                <span className="w-full line-clamp-2 text-center text-xs text-text-primary-default">
-                  {t.name}
-                </span>
-              </button>
-              {isSelected && canTalkFirst && postId && (
-                <AiHoverEditButton target="media" className="bottom-7" onClick={() => requestGenerate(true)} />
-              )}
-              </div>
-            )
-          })}
-        </div>
+        <CarouselTemplateGrid
+          templates={templates}
+          selected={selectedTemplate}
+          onSelect={(id) => {
+            setSelectedTemplate(id)
+            // A design that was already generated opens straight in
+            // the preview dialog; otherwise just select it.
+            if (generatedByTemplate[id]) openDialog(id)
+          }}
+          previewOf={(id) => generatedByTemplate[id]?.[0] ?? tilePreviews[id]}
+          isCurrent={(id) => !!images && images.length > 0 && generatedByTemplate[id] === images}
+          onAiEdit={canTalkFirst && postId ? () => requestGenerate(true) : undefined}
+        />
 
       </div>
 
@@ -4987,6 +4926,90 @@ function MediaUploadFlow({
  * sample image yet (the per-user "השפה הוויזואלית שלך" tile before she
  * generates anything and without a carousel example of her own).
  */
+/**
+ * The carousel's template tiles — the same 2×2 grid as the media style
+ * picker (Hani, 2026-11-05): identical 4:5 tiles, labels aligned. Every tile
+ * shows a real sample slide (a static PNG); a set generated for THIS post, or
+ * a live render of her cover, replaces it. The picked tile carries
+ * "עריכה עם AI" (always shown): before there is a carousel it asks first,
+ * then generates in that template.
+ */
+export function CarouselTemplateGrid({
+  templates,
+  selected,
+  onSelect,
+  previewOf,
+  isCurrent,
+  onAiEdit,
+}: {
+  templates: TemplateConfig[]
+  selected: string
+  onSelect: (id: string) => void
+  /** A generated or live cover for the tile (base64 / URL), else its sample. */
+  previewOf: (id: string) => string | undefined
+  /** The tile that made the post's current carousel ("נוכחית"). */
+  isCurrent: (id: string) => boolean
+  /** Present = the picked tile can ask first (AI templates and "חדש לגמרי"). */
+  onAiEdit?: () => void
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="בחירת טמפלט לקרוסלה"
+      className="grid grid-cols-2 gap-1.5"
+    >
+      {templates.map((t) => {
+        const isSelected = selected === t.id
+        const livePreview = previewOf(t.id)
+        return (
+          <div key={t.id} className="relative">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={isSelected}
+              onClick={() => onSelect(t.id)}
+              className={`relative flex w-full flex-col gap-1 rounded-lg border p-1 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+                isSelected
+                  ? "border-yellow-50 ring-1 ring-yellow-50"
+                  : "border-border-neutral-default hover:border-gray-80"
+              }`}
+            >
+              <div className="aspect-[4/5] w-full overflow-hidden rounded-md">
+                {t.id === BLANK_TEMPLATE_ID && !livePreview ? (
+                  <BlankTileThumb className="size-full" />
+                ) : livePreview || t.thumbnailUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={livePreview ? imageSrc(livePreview) : t.thumbnailUrl}
+                    alt={`שקופית לדוגמה בטמפלט ${t.name}`}
+                    className="size-full object-cover"
+                    style={{ backgroundColor: t.preview.bg }}
+                  />
+                ) : (
+                  <TemplateMiniMock preview={t.preview} aspect="4 / 5" />
+                )}
+              </div>
+              {isCurrent(t.id) && (
+                <span className="absolute top-2 start-2 rounded-md bg-bg-surface-primary-default px-1.5 py-0.5 text-xs text-text-primary-default">
+                  נוכחית
+                </span>
+              )}
+              <span className="line-clamp-3 text-center text-[11px] leading-tight text-text-primary-default">
+                {t.name}
+              </span>
+            </button>
+            {/* Always shown on the picked tile — not hover-only (Hani,
+                2026-11-05: she looked for it and didn't find it). */}
+            {isSelected && onAiEdit && (
+              <AiHoverEditButton target="media" className="bottom-7" visible onClick={onAiEdit} />
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function TemplateMiniMock({
   preview,
   aspect,

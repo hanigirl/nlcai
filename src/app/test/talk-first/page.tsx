@@ -283,7 +283,6 @@ function Preview() {
             brandTemplate={BRAND}
             aspect={format === "image_post" ? "4/5" : "9/16"}
             onAiEdit={() => pressAiEdit()}
-            aiVisible={state === "tiles"}
           />
           <Button variant="default" onClick={() => pressGenerate()} disabled={busy && !open} className="w-full gap-1.5">
             {busy && !open && <Loader2 className="size-3.5 animate-spin" />}
