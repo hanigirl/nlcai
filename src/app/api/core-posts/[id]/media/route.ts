@@ -1,3 +1,4 @@
+import { isMediaStyle } from "@/lib/visual-language/types"
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { FORMAT_TYPES, type FormatType } from "@/lib/supabase/types"
@@ -81,10 +82,12 @@ export async function POST(
     }
     const post = postRow as unknown as { id: string; hook_text: string | null }
 
-    const { format, url, assetType } = (await req.json()) as {
+    const { format, url, assetType, style } = (await req.json()) as {
       format?: string
       url?: string
       assetType?: string
+      /** The style the AI made it in (lib/visual-language/types MediaStyle) — the panel reopens on it. */
+      style?: unknown
     }
 
     // Validation surface — explicit messages so the client toast can
@@ -193,6 +196,7 @@ export async function POST(
         asset_type: assetType,
         url,
         status: "completed",
+        ...(isMediaStyle(style) ? { metadata: { style } } : {}),
       } as never)
 
     if (insertAssetErr) {

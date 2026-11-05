@@ -67,7 +67,8 @@ import { logLearningEdit } from "@/lib/learning-capture"
 import { BROLL_SCRIPT_CTA } from "@/lib/broll-copy"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { handleGeminiQuotaFrame } from "@/lib/gemini-quota-toasts"
-import { mediaSignature } from "@/lib/timing-storage"
+import { mediaSignature, setFormatMeta } from "@/lib/timing-storage"
+import { isMediaStyle } from "@/lib/visual-language/types"
 import { useFormatApprovals, type ApprovalStatus } from "@/components/format-approval/use-format-approvals"
 import {
   ApprovalHeaderTag,
@@ -956,6 +957,14 @@ function ProjectPageInner() {
             setStoryVideoUrl(fm.story)
           } else if (isPostSwitch) {
             setStoryVideoUrl(null)
+          }
+
+          // The style each format's saved media was made in — the media
+          // panel opens on it, not on her visual language by default.
+          if (data.post.mediaStyles && typeof data.post.mediaStyles === "object") {
+            for (const [fmt, st] of Object.entries(data.post.mediaStyles as Record<string, unknown>)) {
+              if (isMediaStyle(st)) setFormatMeta(postId, fmt, { mediaStyle: st })
+            }
           }
 
           // Restore saved carousel slides. They're stored as public URLs,

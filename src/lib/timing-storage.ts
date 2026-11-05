@@ -49,6 +49,7 @@
 
 import { toast } from "sonner"
 import type { PublishState } from "@/lib/social/publish-state"
+import type { MediaStyle } from "@/lib/visual-language/types"
 
 export type FormatId = "talking_head" | "carousel" | "image_post" | string
 
@@ -161,6 +162,19 @@ export type CorePostFormatMeta = {
    * matches and the approval no longer holds — see `revokeFormatApproval`.
    */
   approvedMediaSig?: string
+  /**
+   * The style picked for this format's AI media ("חדש לגמרי", her language,
+   * dark / light…): the one its saved media was made in (from the server),
+   * or her pick since. The media panel opens on it (Hani, 2026-11-06 — a
+   * blank-made story reopened on "השפה הוויזואלית שלך").
+   */
+  mediaStyle?: MediaStyle
+  /**
+   * Carousel: the template tile she last tapped, kept while she hasn't
+   * generated from it yet — a remount of the panel doesn't reset it.
+   * (`templateId` is the saved carousel's template; this is only her pick.)
+   */
+  pickedTemplateId?: string
 }
 
 /** Per-post optional metadata captured in the Sheet (task #B). */
@@ -864,6 +878,8 @@ export function getFormatMeta(
     bakedText: slice.bakedText,
     approvedAt: slice.approvedAt,
     approvedMediaSig: slice.approvedMediaSig,
+    mediaStyle: slice.mediaStyle,
+    pickedTemplateId: slice.pickedTemplateId,
   }
 }
 
