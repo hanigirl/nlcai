@@ -1,4 +1,3 @@
-import { rememberAiStyle } from "@/lib/ai-style-provenance"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import { toast } from "sonner"
 import { longWaitDone, startLongWait } from "@/lib/long-wait"
@@ -158,7 +157,6 @@ export function startBRollGeneration(
         return
       }
       update(postId, (s) => ({ ...s, url: data.url as string }))
-      if (style) rememberAiStyle(postId, "b_roll", style, data.url)
       longWaitDone(toastId, "הבי-רול נוצר", { postId })
     } catch (err) {
       toast.error(
@@ -186,10 +184,9 @@ export function startBRollEdit(
   postId: string,
   instruction: string,
   /** The chat panel reports progress itself — no toasts then. */
-  /** learn: false — the instruction was already learned (her 👎 feedback). */
   /** references: screenshots she attached (lib/ai-edit-references). */
-  opts: { quiet?: boolean; learn?: boolean; references?: string[] } = {},
-): Promise<{ ok: true; url: string; remembered?: string | null } | { ok: false; message: string }> {
+  opts: { quiet?: boolean; references?: string[] } = {},
+): Promise<{ ok: true; url: string } | { ok: false; message: string }> {
   if (!postId || !instruction.trim()) return Promise.resolve({ ok: false, message: "" })
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   const toastId = `broll-edit-${++toastSeq}`
@@ -204,7 +201,6 @@ export function startBRollEdit(
         body: JSON.stringify({
           postId,
           instruction,
-          ...(opts.learn === false ? { learn: false } : {}),
           ...(opts.references?.length ? { references: opts.references } : {}),
         }),
       })
@@ -212,7 +208,6 @@ export function startBRollEdit(
         url?: string
         error?: string
         message?: string
-        remembered?: string | null
       }
       if (!res.ok || !data.url) {
         const message = data.message ?? data.error ?? "עריכת הבי-רול נכשלה"
@@ -221,7 +216,7 @@ export function startBRollEdit(
       }
       update(postId, (s) => ({ ...s, url: data.url as string }))
       if (!opts.quiet) longWaitDone(toastId, "הבי-רול עודכן", { postId })
-      return { ok: true as const, url: data.url, remembered: data.remembered ?? null }
+      return { ok: true as const, url: data.url }
     } catch (err) {
       const message = `עריכת הבי-רול נכשלה: ${err instanceof Error ? err.message : String(err)}`
       if (!opts.quiet) toast.error(message, { id: toastId, duration: 10000 })

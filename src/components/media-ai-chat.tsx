@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react"
+import { useEffect, useMemo, useRef } from "react"
 import { AI_ERROR_BOX, aiErrorMessage } from "@/lib/ai-error-message"
 import { ArrowUp, Check, Loader2, X } from "lucide-react"
 import { AiSparkle } from "@/components/ai-refine-button"
@@ -8,13 +8,11 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { useDismissOnOutsideClick } from "@/lib/use-dismiss-on-outside-click"
 import { startBRollEdit } from "@/lib/broll-generation-store"
-import { getAiStyle, recordAiStyleVote, rememberAiStyle } from "@/lib/ai-style-provenance"
 import { LongWaitBusyRow } from "@/components/long-wait-busy-row"
 import { AWAY_COPY, trackAwayResult } from "@/lib/long-wait"
 import { SaveToVisualLanguageChip } from "@/components/save-to-visual-language-chip"
-import { dislikeInstruction, type AiEditOpening } from "@/lib/ai-edit-intent"
-import { DislikeReasonChips } from "@/components/dislike-reason-chips"
-import { DISLIKE_REASONS, type DislikeReason } from "@/lib/visual-language/types"
+import { VisualMemoryNote } from "@/components/visual-memory-note"
+import { memoryHeadline, triageMessage, type MemoryOutcome, type TriageResult } from "@/lib/visual-memory"
 import { usePreviewAccess } from "@/lib/use-scheduling-access"
 import { Chip } from "@/components/ui/chip"
 import { runOwnMediaEdit } from "@/lib/own-media-edit"
@@ -51,30 +49,23 @@ export interface ChatMessage {
   /** Assistant turn that landed a new clip. */
   done?: boolean
   error?: boolean
-  /** A lasting preference distilled from her instruction (Hebrew) — shown by the save chip. */
-  remembered?: string | null
+  /**
+   * Assistant turns: what the visual memory made of her message (saved, goes
+   * to the settings, contradicts an earlier preference…) — lib/visual-memory.
+   */
+  memory?: MemoryOutcome
+  /** No edit ran — the bubble IS the memory answer (its headline). */
+  memoryOnly?: boolean
   /** Own media: the edit changed only content (words, slides), nothing to save as a style. */
   noStyle?: boolean
 }
 
 /** Panel state kept with the conversation (lib/ai-chat-session-store). */
 interface MediaChatExtra {
-  /** 👎 asked at this turn; the reason chips show under it until she answers. */
-  asking: { id: string; index: number } | null
-  reasons: DislikeReason[]
   /** Own media: the step it is on, under the busy row. */
   progress: string
-  /** The last 👎 this conversation took in — reopening doesn't ask again. */
-  openingId: string | null
 }
 type MediaChat = AiChatSession<ChatMessage, MediaChatExtra>
-
-/**
- * Her 👎 answer goes to the style-feedback route through the card's callback.
- * Functions don't go to storage, so this lives in memory: after a reload the
- * question stays in the thread and she answers it as a normal edit.
- */
-const feedbackById = new Map<string, AiEditOpening["onFeedback"]>()
 
 /** The conversation of one post + format (+ own media) in lib/ai-chat-session-store. */
 export const mediaChatKey = (postId: string, format: AiEditFormat, own = false) =>
@@ -83,30 +74,12 @@ export const mediaChatKey = (postId: string, format: AiEditFormat, own = false) 
 /** Distinct ids for the leave-screen toast of each own-media edit. */
 let ownEditSeq = 0
 
-/** The first turn when 👎 opened the panel (lib/ai-edit-intent). */
-const DISLIKE_ASK = "מה לא אהבתם? ספרו לנו, ואעדכן את זה עכשיו. מה שתכתבו נשמר גם לשפה הוויזואלית שלכם, לפעמים הבאות."
-
-/**
- * After an edit the card shows new media — move this format's AI provenance
- * to it, so the 👍 / 👎 strip appears for the edited version and her verdict
- * teaches the style (the strip only shows on media the AI made).
- */
-function markAiMade(postId: string, format: AiEditFormat, mediaKey: string) {
-  if (format === "carousel") {
-    // The carousel's provenance is its template; just clear the old verdict.
-    recordAiStyleVote(postId, "carousel", null)
-    return
-  }
-  const prev = getAiStyle(postId, format)
-  rememberAiStyle(postId, format, prev?.style && prev.style !== "niche" ? prev.style : "brand", mediaKey)
-}
-
 /** The newest edit that landed, with the instruction that asked for it. */
 function lastLandedEdit(messages: ChatMessage[]) {
   for (let i = messages.length - 1; i > 0; i--) {
     if (messages[i].done) {
       const ask = messages.slice(0, i).reverse().find((m) => m.role === "user")
-      return ask ? { index: i, instruction: ask.content, remembered: messages[i].remembered ?? null } : null
+      return ask ? { index: i, instruction: ask.content, memory: messages[i].memory } : null
     }
   }
   return null
@@ -213,7 +186,6 @@ export function MediaAiChat({
   open,
   onOpenChange,
   onUpdated,
-  opening,
   own = false,
   currentUrls = [],
   currentFrame,
@@ -242,12 +214,10 @@ export function MediaAiChat({
    * format). `driveLinks`: an own carousel's per-slide links, re-ordered with it.
    */
   onUpdated?: (format: AiEditFormat, urls: string[], extra?: { driveLinks?: string[] | null }) => void
-  /** Opened by 👎 on the card: ask what she didn't like, with the reasons. */
-  opening?: AiEditOpening | null
 }) {
   const copy = own ? { ...COPY[format], ...OWN_COPY[format] } : COPY[format]
-  // Today's batch (2026-10-29), Hani only: z-50 + outside-click close, the
-  // leave-screen note, the save chip, 👎 opening. Off (or loading) = as before.
+  // Today's batch (2026-10-29), Hani only: z-50 + outside-click close and the
+  // leave-screen note. Off (or loading) = as before.
   const preview = usePreviewAccess() === true
   // One conversation per post + format (+ own media), kept outside the panel
   // (lib/ai-chat-session-store): closing it or leaving the screen keeps the
@@ -258,35 +228,15 @@ export function MediaAiChat({
       messages: initialMessages ?? [{ role: "assistant", content: copy.intro }],
       input: "",
       busy: false,
-      extra: { asking: null, reasons: [], progress: "", openingId: null },
+      extra: { progress: "" },
     }),
     [initialMessages, copy.intro],
   )
   const empty = useMemo(() => fresh(), [fresh])
   const session = useAiChat<ChatMessage, MediaChatExtra>(chatKey) ?? empty
   const { messages, input, busy: loading } = session
-  const { reasons, progress } = session.extra
+  const { progress } = session.extra
   const patch = (fn: (s: MediaChat) => MediaChat) => updateChat(chatKey, fresh, fn)
-  // Until her first answer to 👎: the reason chips, and that answer teaches the style.
-  const asking =
-    session.extra.asking && feedbackById.has(session.extra.asking.id) ? session.extra.asking : null
-
-  // A fresh 👎 asks what she didn't like — as a new turn of the same
-  // conversation, or as its first turn if nothing was said yet.
-  useLayoutEffect(() => {
-    if (!opening) return
-    feedbackById.set(opening.id, opening.onFeedback)
-    if (getChat<ChatMessage, MediaChatExtra>(chatKey)?.extra.openingId === opening.id) return
-    updateChat(chatKey, fresh, (s) => {
-      const ask: ChatMessage = { role: "assistant", content: DISLIKE_ASK }
-      const next = s.messages.some((m) => m.role === "user") ? [...s.messages, ask] : [ask]
-      return {
-        ...s,
-        messages: next,
-        extra: { ...s.extra, openingId: opening.id, asking: { id: opening.id, index: next.length - 1 }, reasons: [] },
-      }
-    })
-  }, [chatKey, opening, fresh])
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
   // "Watching" = a panel shows this conversation when the reply lands — the
@@ -335,40 +285,62 @@ export function MediaAiChat({
     const cur = getChat<ChatMessage, MediaChatExtra>(key) ?? init()
     if (cur.busy) return
     let text = (preset ?? cur.input).trim()
-    // Her 👎 answer: the style-feedback route learns from it, so the edit
-    // doesn't learn it a second time (learn: false).
-    const fromFeedback = !!asking
-    if (asking) {
-      if (!text && !reasons.length) return
-      feedbackById.get(asking.id)?.(reasons, text)
-      text = dislikeInstruction(reasons.map((r) => DISLIKE_REASONS[r]), text)
-    }
     const attached = refs.refs
     if (!text && attached.length) text = REFERENCE_ONLY_INSTRUCTION
     if (!text) return
     refs.clear()
+    const previousInstruction = [...cur.messages].reverse().find((m) => m.role === "user")?.content
     patchKey((s) => ({
       ...s,
       input: "",
       busy: true,
+      extra: { ...s.extra, progress: "בודקים את הבקשה מול ההעדפות שלכם..." },
       messages: [...s.messages, { role: "user", content: text, ...(attached.length ? { images: attached } : {}) }],
-      extra: { ...s.extra, asking: null, reasons: [] },
     }))
-    // An edit that came from 👎 is learned by the feedback route, not here.
-    const learn = !fromFeedback
+
+    // First the visual memory (lib/visual-memory): her settings, her saved
+    // preferences, and whether the message asks for an edit at all ("תשמרו
+    // את זה" doesn't). A failed check never blocks the edit — it says so.
+    let triage: TriageResult
+    try {
+      triage = await triageMessage({ instruction: text, format, previousInstruction, references: attached })
+    } catch (err) {
+      console.error("[media-ai-chat][visual-memory]", err)
+      triage = {
+        edit: true,
+        editInstruction: text,
+        memory: { kind: "error", message: err instanceof Error ? err.message : String(err) },
+      }
+    }
+    const memory = triage.memory.kind === "none" && !triage.memory.explicit ? undefined : triage.memory
+    patchKey((s) => ({ ...s, extra: { ...s.extra, progress: "" } }))
+    if (!triage.edit) {
+      patchKey((s) => ({
+        ...s,
+        busy: false,
+        messages: [
+          ...s.messages,
+          {
+            role: "assistant",
+            content: memoryHeadline(triage.memory) ?? "לא מצאתי כאן שינוי לעשות או העדפה לשמור. כתבו מה לשנות.",
+            memory,
+            memoryOnly: true,
+          },
+        ],
+      }))
+      return
+    }
+    const editText = triage.editInstruction.trim() || text
     if (own) {
-      await sendOwn(text, cur.messages, patchKey, isWatching)
+      await sendOwn(editText, cur.messages, patchKey, isWatching, memory)
       return
     }
     // If she leaves before it lands, the result arrives as a toast (the
     // server has saved it either way) — see lib/long-wait.
     const run =
       format === "b_roll"
-        ? startBRollEdit(postId, text, { quiet: true, learn, references: attached }).then((r) => {
-            if (r.ok) markAiMade(postId, "b_roll", r.url)
-            return r
-          })
-        : editImages(text, learn, attached)
+        ? startBRollEdit(postId, editText, { quiet: true, references: attached })
+        : editImages(editText, attached)
     const result = preview
       ? await trackAwayResult(`ai-edit-${postId}-${format}-${Date.now()}`, run, isWatching, AWAY_COPY[format], postId)
       : await run
@@ -378,8 +350,14 @@ export function MediaAiChat({
       messages: [
         ...s.messages,
         result.ok
-          ? { role: "assistant", content: copy.done, done: true, remembered: result.remembered }
-          : { role: "assistant", content: aiErrorMessage(result.message || "העריכה לא הצליחה. נסו שוב."), error: true },
+          ? { role: "assistant", content: copy.done, done: true, memory }
+          : {
+              role: "assistant",
+              content: aiErrorMessage(result.message || "העריכה לא הצליחה. נסו שוב."),
+              error: true,
+              // A saved preference stays saved even when the edit failed.
+              ...(memory && memory.kind !== "error" ? { memory } : {}),
+            },
       ],
     }))
     revealChatReply(key, result.ok ? AWAY_COPY[format].done : AWAY_COPY[format].failed)
@@ -391,6 +369,7 @@ export function MediaAiChat({
     before: ChatMessage[],
     patchKey: (fn: (s: MediaChat) => MediaChat) => void,
     isWatching: () => boolean,
+    memory?: MemoryOutcome,
   ) {
     const history = before
       .filter((m, i) => i > 0 && !m.error)
@@ -407,7 +386,7 @@ export function MediaAiChat({
     }).then((r) => {
       full = r
       if (r.ok && r.changed) onUpdated?.(format, r.urls, { driveLinks: r.driveLinks })
-      return r.ok ? { ok: true as const, remembered: null } : { ok: false as const, message: r.message }
+      return r.ok ? { ok: true as const } : { ok: false as const, message: r.message }
     })
     // If she leaves before it lands, the result arrives as a toast.
     const result = preview
@@ -416,19 +395,23 @@ export function MediaAiChat({
     const r = full as Awaited<ReturnType<typeof runOwnMediaEdit>> | null
     const reply: ChatMessage =
       !result.ok || !r || !r.ok
-        ? { role: "assistant", content: aiErrorMessage((r && r.message) || "העריכה לא הצליחה. נסו שוב."), error: true }
+        ? {
+            role: "assistant",
+            content: aiErrorMessage((r && r.message) || "העריכה לא הצליחה. נסו שוב."),
+            error: true,
+            ...(memory && memory.kind !== "error" ? { memory } : {}),
+          }
         : !r.changed
-          ? { role: "assistant", content: r.message }
-          : { role: "assistant", content: r.message || copy.done, done: true, remembered: null, noStyle: !r.styleChange }
+          ? { role: "assistant", content: r.message, memory }
+          : { role: "assistant", content: r.message || copy.done, done: true, memory, noStyle: !r.styleChange }
     patchKey((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" }, messages: [...s.messages, reply] }))
     revealChatReply(mediaChatKey(postId, format, own), reply.error ? AWAY_COPY[format].failed : AWAY_COPY[format].done)
   }
 
   async function editImages(
     text: string,
-    learn = true,
     references: string[] = [],
-  ): Promise<{ ok: true; remembered?: string | null } | { ok: false; message: string }> {
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
     try {
       const res = await fetch("/api/media/ai-edit", {
         method: "POST",
@@ -437,7 +420,6 @@ export function MediaAiChat({
           postId,
           format,
           instruction: text,
-          ...(learn ? {} : { learn: false }),
           ...(references.length ? { references } : {}),
         }),
       })
@@ -445,18 +427,25 @@ export function MediaAiChat({
         urls?: string[]
         message?: string
         error?: string
-        remembered?: string | null
       }
       if (!res.ok || !data.urls) return { ok: false, message: data.message ?? data.error ?? "העריכה לא הצליחה" }
-      if (data.urls[0]) markAiMade(postId, format, data.urls[0])
       onUpdated?.(format, data.urls)
-      return { ok: true, remembered: data.remembered ?? null }
+      return { ok: true }
     } catch (err) {
       return { ok: false, message: err instanceof Error ? err.message : String(err) }
     }
   }
 
   const lastEdit = lastLandedEdit(messages)
+
+  /** Her answer in a memory note (undo, across the board…) — kept with the thread. */
+  const setMemory = (index: number, next: MemoryOutcome) =>
+    patch((s) => ({
+      ...s,
+      messages: s.messages.map((x, j) =>
+        j === index ? { ...x, memory: next, ...(x.memoryOnly ? { content: memoryHeadline(next) ?? x.content } : {}) } : x,
+      ),
+    }))
 
   if (!open) return null
 
@@ -505,15 +494,8 @@ export function MediaAiChat({
               {m.content}
               <ReferenceThumbs images={m.images} className="mt-1.5" />
             </div>
-            {asking && i === asking.index && (
-              <DislikeReasonChips
-                value={reasons}
-                onChange={(next) => patch((s) => ({ ...s, extra: { ...s.extra, reasons: next } }))}
-                className="max-w-[85%] justify-end"
-              />
-            )}
             {/* Own media: what it can do, one tap away — until her first ask. */}
-            {own && !asking && i === 0 && messages.length === 1 && !loading && (
+            {own && i === 0 && messages.length === 1 && !loading && (
               <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5" role="group" aria-label="הצעות לעריכה">
                 {OWN_COPY[format].suggestions.map((sg) => (
                   <Chip
@@ -537,12 +519,19 @@ export function MediaAiChat({
                 ))}
               </div>
             )}
-            {/* The save-to-visual-language chip is open to everyone (Hani, 2026-10-29). */}
             {m.done && (
               <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
                 <Check className="size-3.5 text-green-success-50" />
                 הוחל.
               </span>
+            )}
+            {m.memory && (
+              <VisualMemoryNote
+                memory={m.memory}
+                showHeadline={!m.memoryOnly}
+                onChange={(next) => setMemory(i, next)}
+                className="max-w-[85%]"
+              />
             )}
           </div>
         ))}
@@ -560,12 +549,14 @@ export function MediaAiChat({
 
       {/* Composer */}
       <div className="border-t border-border-neutral-default p-3">
-        {lastEdit && !loading && !messages[lastEdit.index].noStyle && (
+        {/* The save chip is open to everyone (Hani, 2026-10-29) — for an edit
+            the memory didn't keep on its own. */}
+        {lastEdit && !loading && !messages[lastEdit.index].noStyle && (!lastEdit.memory || lastEdit.memory.kind === "error") && (
           <SaveToVisualLanguageChip
             key={`${chatKey}:${lastEdit.index}`}
             instruction={lastEdit.instruction}
             format={format}
-            remembered={lastEdit.remembered}
+            onOutcome={(next) => setMemory(lastEdit.index, next)}
           />
         )}
         <ReferenceTray r={refs} />
@@ -580,7 +571,7 @@ export function MediaAiChat({
                 void send()
               }
             }}
-            placeholder={asking ? "מה לא אהבתם? ספרו לנו" : "מה תרצו לשנות?"}
+            placeholder="מה תרצו לשנות?"
             ref={inputRef}
             rows={1}
             autoFocus
@@ -590,7 +581,7 @@ export function MediaAiChat({
           <Button
             size="icon-sm"
             onClick={() => void send()}
-            disabled={(!input.trim() && !(asking && reasons.length) && !refs.refs.length) || loading}
+            disabled={(!input.trim() && !refs.refs.length) || loading}
             aria-label="שליחה"
             className="shrink-0 rounded-full"
           >

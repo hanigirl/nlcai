@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
-import { Loader2, Link2, Unlink, Plus, Trash2, Upload, X, Sparkles, Check, Type, Image as ImageIcon, Search, Download, AlertCircle, AlertTriangle, FolderOpen } from "lucide-react"
+import { Loader2, Link2, Unlink, Plus, Trash2, Upload, X, Sparkles, Check, Type, Image as ImageIcon, Search, Download, AlertCircle, AlertTriangle, FolderOpen, SlidersHorizontal } from "lucide-react"
 import { AppShell } from "@/components/app-shell"
 import { VisualLanguagePanel, type ExamplesTab } from "@/components/visual-language-panel"
 import { Input } from "@/components/ui/input"
@@ -16,6 +16,7 @@ import { CreatorsList } from "@/components/creators-list"
 import { ProductsList, type ProductEntry } from "@/components/products-list"
 import { BusinessSourcesPanel } from "@/components/business-sources-panel"
 import { LearnedInsightsPanel } from "@/components/learned-insights-panel"
+import { VisualPreferencesPanel } from "@/components/visual-preferences-panel"
 import { InstagramConnect } from "@/components/instagram-connect"
 import { toast } from "sonner"
 import { validateIdentityFile } from "@/lib/validate-identity-file"
@@ -197,7 +198,7 @@ interface UploadingFile {
   status: "uploading" | "done" | "error"
 }
 
-type MediaSection = "visual" | "examples" | "drive"
+type MediaSection = "visual" | "examples" | "preferences" | "drive"
 
 // Sub-sections per main tab. Module scope, not component scope, because the
 // initial state has to resolve `?sub=...` against it before the first render —
@@ -235,6 +236,8 @@ const SUB_SECTIONS: Record<SettingsTab, { id: string; label: string; icon: typeo
     // reads both.
     { id: "visual", label: "שפה ויזואלית", icon: Sparkles },
     { id: "examples", label: "דוגמאות לשימוש", icon: ImageIcon },
+    // What the AI-edit chat saved to her visual memory, per format (lib/visual-memory).
+    { id: "preferences", label: "העדפות ויזואליות", icon: SlidersHorizontal },
   ],
 }
 
@@ -1511,6 +1514,8 @@ function SettingsPageInner() {
                 <SubNav sections={mediaSections} active={activeMediaSection} onChange={(id) => { setActiveMediaSection(id as MediaSection); setActiveSubSection(id) }} />
 
                 <div className="flex-1 min-w-0 max-w-lg">
+                  {activeMediaSection === "preferences" && <VisualPreferencesPanel />}
+
                   {/* ── Visual language: colours, fonts, graphic elements + the analysis ── */}
                   {activeMediaSection === "visual" && (
                     <VisualLanguagePanel

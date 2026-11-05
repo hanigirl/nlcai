@@ -1,4 +1,3 @@
-import { rememberAiStyle } from "@/lib/ai-style-provenance"
 import { toast } from "sonner"
 import { longWaitDone, startLongWait } from "@/lib/long-wait"
 import type { MediaStyle } from "@/lib/visual-language/types"
@@ -215,7 +214,6 @@ export function startImageGeneration(postId: string, style?: MediaStyle): void {
           return
         }
         update(postId, (s) => ({ ...s, saved: entry }))
-        if (style) rememberAiStyle(postId, "image_post", style, entry)
       }
       longWaitDone(toastId, "התמונה מוכנה ונשמרה", { postId })
     } catch (err) {
