@@ -1,5 +1,6 @@
-import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
-import { parseReferences } from "@/lib/ai-edit-references"
+import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
+import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
+import sharp from "sharp"
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { Resvg } from "@resvg/resvg-js"
@@ -118,13 +119,15 @@ function cropToCanvas(imageBase64: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { slides, templateId, postId, brief: mediaBrief, references } = (await req.json().catch(() => ({}))) as {
+    const { slides, templateId, postId, brief: mediaBrief, references, place } = (await req.json().catch(() => ({}))) as {
       slides?: SlideData[]
       templateId?: string
       /** Her own direction for this carousel (lib/media-brief). */
       brief?: unknown
-      /** Reference images she attached with the brief (lib/ai-edit-references). */
+      /** Look references (a picture pulled from a link) — lib/ai-edit-references. */
       references?: unknown
+      /** Pictures she attached to put INTO the carousel as they are (lib/carousel-composition). */
+      place?: unknown
       /** Lets "עריכה עם AI" find this carousel's layout later. */
       postId?: string
     }
@@ -267,6 +270,9 @@ export async function POST(req: NextRequest) {
     // later edits aren't told about images they don't have.
     const refs = parseReferences(references)
     const refDirection = withMediaReferences(direction, refs)
+    // Her own pictures (Hani, 2026-11-05): placed as her exact files by the
+    // layout engine — the only path that can. Without it, say so plainly.
+    const placeRefs = parseReferences(place)
     const refImages = refDirection.references.slice(direction.references.length)
 
     // Laid out in code when she has a Claude key (lib/carousel-composition):
@@ -274,6 +280,12 @@ export async function POST(req: NextRequest) {
     // every slide — the model only draws illustrations. Without a Claude key
     // the slides are drawn whole by the image model, as before.
     const anthropicKey = await getUserApiKey(supabase, "anthropic_api_key").catch(() => null)
+    if (placeRefs.length && !anthropicKey) {
+      return NextResponse.json(
+        { error: "place_needs_claude", message: "כדי להכניס את התמונה שלכם לקרוסלה צריך לחבר מפתח Claude בהגדרות. לא יצרתי כלום ולא שמתי תמונה אחרת במקומה." },
+        { status: 400 },
+      )
+    }
     // If the new engine fails early (e.g. the headless browser can't start on
     // this server), the slides are drawn the old way instead of failing her.
     if (anthropicKey) {
@@ -297,9 +309,35 @@ export async function POST(req: NextRequest) {
 
         // Layout first: Opus decides which slides get an illustration at all
         // (type-led examples → none), then only those are drawn.
-        const layout = await composeCarousel(anthropicKey, brief, refs)
+        const layout = await composeCarousel(anthropicKey, brief, refs, placeRefs)
         const illustrations: string[] = new Array(total).fill("")
-        const wanted = layout.illustrations.map((idea, i) => ({ idea: idea.trim(), i })).filter((x) => x.idea)
+        const ownArt: boolean[] = new Array(total).fill(false)
+        // Her pictures: each must have landed on a slide, as her exact file.
+        const placedOn = placeRefs.length
+          ? layout.attached.map((n, i) => ({ n, i })).filter((x) => x.n >= 1 && x.n <= placeRefs.length)
+          : []
+        if (placeRefs.length) {
+          const covered = new Set(placedOn.map((x) => x.n))
+          if (placeRefs.some((_, j) => !covered.has(j + 1))) {
+            return NextResponse.json(PLACE_FAILED_GEN, { status: 422 })
+          }
+          await Promise.all(
+            placedOn.map(async ({ n, i }) => {
+              const file = referenceBuffer(placeRefs[n - 1])
+              const png = await sharp(file)
+                .rotate()
+                .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
+                .png()
+                .toBuffer()
+              illustrations[i] = await uploadIllustration(supabase, user!.id, png)
+              ownArt[i] = true
+            }),
+          )
+        }
+        const isPlaced = (i: number) => placedOn.some((x) => x.i === i)
+        const wanted = layout.illustrations
+          .map((idea, i) => ({ idea: idea.trim(), i }))
+          .filter((x) => x.idea && !isPlaced(x.i))
         let nextArt = 0
         async function artWorker() {
           while (nextArt < wanted.length) {
@@ -325,12 +363,15 @@ export async function POST(req: NextRequest) {
             brief,
             illustrations,
             edits: [],
+            ownArt,
             slideHashes: images.map((b64) => slideHash(Buffer.from(b64, "base64"))),
           }).catch((err) => console.error("[carousel/generate-ai] save composition", err))
         }
         return respond(images)
       } catch (err) {
         console.error("[carousel/generate-ai] layout engine failed", err)
+        // The image-model fallback can't put her exact picture in: no stand-in.
+        if (placeRefs.length) return NextResponse.json(PLACE_FAILED_GEN, { status: 422 })
         if (Date.now() - started > 90_000) throw err
         images.fill(undefined as unknown as string)
       }

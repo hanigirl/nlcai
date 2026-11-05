@@ -47,6 +47,13 @@ interface Options {
    * it (in preview, PNG/WebP only).
    */
   background?: "transparent"
+  /**
+   * The references include HER OWN pictures to place (Hani, 2026-11-05:
+   * "התמונה תכנס ביצירה הראשונה"). Then a failed edits call throws instead of
+   * falling back to a plain generation — that would come back without her
+   * picture, or with a look-alike.
+   */
+  strict?: boolean
 }
 
 /**
@@ -136,13 +143,13 @@ async function attempt(
   apiKey: string,
   prompt: string,
   size: string,
-  { quality, references, background }: Omit<Options, "shape">,
+  { quality, references, background, strict }: Omit<Options, "shape">,
 ): Promise<string> {
   if (references?.length) {
     try {
       return await edit(apiKey, prompt, references, size, quality, background)
     } catch (err) {
-      if (err instanceof BillingError || err instanceof SizeRejectedError) throw err
+      if (strict || err instanceof BillingError || err instanceof SizeRejectedError) throw err
       console.error("[openai-image] edits with brand elements failed, generating without them:", err)
     }
   }

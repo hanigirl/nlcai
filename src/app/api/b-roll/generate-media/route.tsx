@@ -11,6 +11,8 @@ import { composeBRoll, finalizeHtml } from "@/lib/broll-animation/compose"
 import { renderComposition } from "@/lib/broll-animation/render"
 import { saveBRoll, uploadBackground } from "@/lib/broll-animation/store"
 import { generateImage } from "@/lib/openai-image"
+import sharp from "sharp"
+import { CAPTION_CANVAS_HEIGHT, CAPTION_CANVAS_WIDTH } from "@/lib/caption-overlay"
 import { isMediaStyle } from "@/lib/visual-language/types"
 import { loadBrandExamples, resolveDesignDirection } from "@/lib/visual-language/direction"
 
@@ -31,17 +33,35 @@ export const maxDuration = 300
  * "עריכה עם AI" can revise it (api/b-roll/edit).
  */
 
+/**
+ * Her picture as the 9:16 background: the whole picture, uncropped, over a
+ * blurred fill of itself — so a landscape photo keeps its subject instead of
+ * being cut to a sliver.
+ */
+async function herPictureAsBackground(dataUrl: string): Promise<Buffer> {
+  const file = Buffer.from(dataUrl.slice(dataUrl.indexOf(",") + 1), "base64")
+  const W = CAPTION_CANVAS_WIDTH
+  const H = CAPTION_CANVAS_HEIGHT
+  const [fill, picture] = await Promise.all([
+    sharp(file).rotate().resize(W, H, { fit: "cover" }).blur(40).modulate({ brightness: 0.85 }).png().toBuffer(),
+    sharp(file).rotate().resize(W, H, { fit: "inside" }).png().toBuffer(),
+  ])
+  return sharp(fill).composite([{ input: picture, gravity: "center" }]).png().toBuffer()
+}
+
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
   try {
-    const { postId, variationIndex, style, brief: mediaBrief, references } = (await req.json().catch(() => ({}))) as {
+    const { postId, variationIndex, style, brief: mediaBrief, references, place } = (await req.json().catch(() => ({}))) as {
       postId?: string
       variationIndex?: number
       style?: unknown
       /** Her own direction for this piece (lib/media-brief). */
       brief?: unknown
-      /** Reference images she attached with the brief (lib/ai-edit-references). */
+      /** Look references (a picture pulled from a link) — lib/ai-edit-references. */
       references?: unknown
+      /** Pictures she attached to put INTO the b-roll as they are — the first one is its background. */
+      place?: unknown
     }
     if (!postId) {
       return NextResponse.json({ error: "postId is required" }, { status: 400 })
@@ -126,7 +146,12 @@ export async function POST(req: NextRequest) {
     // over it afterwards, so a logo would collide with it.
     // Her own direction (lib/media-brief) rides on the direction lines, so it
     // reaches both the background picture and the motion design.
-    const direction = withMediaBrief(
+    // Her own picture (Hani, 2026-11-05: "התמונה תכנס ביצירה הראשונה"):
+    // the b-roll is built ON it — her exact file, whole, never redrawn —
+    // instead of a generated background. A link's picture stays a look only.
+    const placed = parseReferences(place)
+    const ownBackground = placed.length ? await herPictureAsBackground(placed[0]) : null
+    const baseDirection = withMediaBrief(
       await resolveDesignDirection(supabase, user.id, {
         format: "b_roll",
         allowReferences: false,
@@ -134,6 +159,16 @@ export async function POST(req: NextRequest) {
       }),
       normalizeMediaBrief(mediaBrief),
     )
+    const direction = ownBackground
+      ? {
+          ...baseDirection,
+          lines: [
+            ...baseDirection.lines,
+            "",
+            "THE BACKGROUND IS THE CREATOR'S OWN PICTURE, used exactly as it is. Keep it visible and never cover its subject with a full-screen fill: set the text where the picture is calm, and give it a scrim, plate or shadow in the visual language wherever it needs one to stay legible.",
+          ],
+        }
+      : baseDirection
     // Her references: the background gets them as images, the motion design
     // as referenceBlocks. The saved composition brief keeps the plain lines,
     // so later edits aren't told about images they don't have.
@@ -172,18 +207,20 @@ export async function POST(req: NextRequest) {
 
     // Background and motion design don't depend on each other — run both.
     const [raw, template] = await Promise.all([
-      generateImage(
-        openaiKey,
-        buildBackgroundPrompt(
-          refDirection,
-          BACKGROUND_FRAMINGS[Math.abs(variationIndex ?? 0) % BACKGROUND_FRAMINGS.length],
-          context,
-        ),
-        { shape: "9:16", references: refDirection.references },
-      ),
+      ownBackground
+        ? Promise.resolve(null)
+        : generateImage(
+            openaiKey,
+            buildBackgroundPrompt(
+              refDirection,
+              BACKGROUND_FRAMINGS[Math.abs(variationIndex ?? 0) % BACKGROUND_FRAMINGS.length],
+              context,
+            ),
+            { shape: "9:16", references: refDirection.references },
+          ),
       composeBRoll(anthropicKey, brief, Math.abs(variationIndex ?? 0), examples, refs),
     ])
-    const background = Buffer.from(cropToCanvas(raw), "base64")
+    const background = ownBackground ?? Buffer.from(cropToCanvas(raw!), "base64")
 
     const stamp = crypto.randomUUID()
     const backgroundUrl = await uploadBackground(supabase, user.id, stamp, background)

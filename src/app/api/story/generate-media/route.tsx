@@ -1,4 +1,5 @@
-import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
+import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences, withPlacedImages } from "@/lib/media-brief"
+import { picturesPlaced, placedImages } from "@/lib/placed-check"
 import { parseReferences } from "@/lib/ai-edit-references"
 import { NextRequest, NextResponse } from "next/server"
 import { Resvg } from "@resvg/resvg-js"
@@ -149,14 +150,16 @@ function cropToCanvas(imageBase64: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { postId, variationIndex, style, brief, references } = (await req.json().catch(() => ({}))) as {
+    const { postId, variationIndex, style, brief, references, place } = (await req.json().catch(() => ({}))) as {
       postId?: string
       variationIndex?: number
       style?: unknown
       /** Her own direction for this piece (lib/media-brief). */
       brief?: unknown
-      /** Reference images she attached with the brief (lib/ai-edit-references). */
+      /** Look references (a picture pulled from a link) — lib/ai-edit-references. */
       references?: unknown
+      /** Pictures she attached to put INTO the story as they are — on its first frame. */
+      place?: unknown
     }
     if (!postId) {
       return NextResponse.json({ error: "postId is required" }, { status: 400 })
@@ -240,16 +243,19 @@ export async function POST(req: NextRequest) {
     // The look: her visual language, else one derived from her niche.
     // Resolved once so every frame shares it; regenerate rotates only the
     // composition.
-    const direction = withMediaReferences(
-      withMediaBrief(
-        await resolveDesignDirection(supabase, user.id, {
-          format: "story",
-          style: isMediaStyle(style) ? style : undefined,
-        }),
-        normalizeMediaBrief(brief),
-      ),
-      parseReferences(references),
+    const base = withMediaBrief(
+      await resolveDesignDirection(supabase, user.id, {
+        format: "story",
+        style: isMediaStyle(style) ? style : undefined,
+      }),
+      normalizeMediaBrief(brief),
     )
+    const looks = parseReferences(references)
+    const direction = withMediaReferences(base, looks)
+    // Her own pictures go in as they are — on the first frame, the one that
+    // opens the story; a link's picture is a look only.
+    const placed = await placedImages(parseReferences(place))
+    const firstDirection = placed.length ? withMediaReferences(withPlacedImages(base, placed), looks) : direction
     const composition = pickComposition(variationIndex)
 
     // Theme context: title + hook carry the essence; the body is truncated
@@ -260,6 +266,7 @@ export async function POST(req: NextRequest) {
 
     const total = frames.length
     const images: string[] = new Array(total)
+    let firstRaw: string | null = null
 
     // Simple concurrency pool — kinder to OpenAI rate limits than firing
     // all frames at once, much faster than fully sequential.
@@ -267,11 +274,12 @@ export async function POST(req: NextRequest) {
     async function worker() {
       while (next < total) {
         const i = next++
+        const frameDirection = i === 0 ? firstDirection : direction
         const prompt = buildStoryPrompt(
           frames[i],
           i,
           total,
-          direction,
+          frameDirection,
           composition,
           context,
         )
@@ -280,8 +288,10 @@ export async function POST(req: NextRequest) {
           // gpt-image-2 — legible Hebrew glyphs are the whole point, so we
           // pay for "high" (same reasoning as image-post/generate-media).
           quality: "high",
-          references: direction.references,
+          references: frameDirection.references,
+          strict: i === 0 && placed.length > 0,
         })
+        if (i === 0 && placed.length) firstRaw = raw
         // Fixed brand elements go in by code — same pixels on every frame.
         images[i] = await applyFixedElements(cropToCanvas(raw), direction.fixed, frameRole(i, total))
       }
@@ -289,6 +299,13 @@ export async function POST(req: NextRequest) {
     await Promise.all(
       Array.from({ length: Math.min(CONCURRENCY, total) }, () => worker()),
     )
+    // Her picture must really be on the first frame — a look-alike or a miss is not kept.
+    if (placed.length && firstRaw) {
+      const claudeKey = await getUserApiKey(supabase, "anthropic_api_key").catch(() => null)
+      if ((await picturesPlaced(claudeKey, placed, firstRaw)) === false) {
+        return NextResponse.json(PLACE_FAILED_GEN, { status: 422 })
+      }
+    }
 
     return NextResponse.json({ images, frameCount: total })
   } catch (error) {

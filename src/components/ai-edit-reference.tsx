@@ -75,23 +75,44 @@ function imageFiles(list: FileList | DataTransferItemList | null | undefined): F
 
 export function useReferenceImages() {
   const [refs, setRefs] = useState<string[]>([])
+  /**
+   * The ones that only show a look — a picture pulled from a link
+   * (components/ai-edit-link-reference). Everything else is a picture she
+   * attached herself, which the first generation puts IN the media (Hani,
+   * 2026-11-05: "התמונה תכנס ביצירה הראשונה אם שמתי אותה כרפרנס").
+   */
+  const [looks, setLooks] = useState<string[]>([])
   const [dragging, setDragging] = useState(false)
   const refsRef = useRef(refs)
   useEffect(() => {
     refsRef.current = refs
   })
 
-  const add = useCallback(async (files: File[]) => {
+  const add = useCallback(async (files: File[], opts: { look?: boolean } = {}) => {
     const room = MAX_REFERENCES - refsRef.current.length
     if (room <= 0 || !files.length) return
-    const shrunk = await Promise.all(files.slice(0, room).map((f) => shrink(f).catch(() => null)))
-    setRefs((prev) => [...prev, ...shrunk.filter((s): s is string => !!s)].slice(0, MAX_REFERENCES))
+    const shrunk = (await Promise.all(files.slice(0, room).map((f) => shrink(f).catch(() => null)))).filter(
+      (s): s is string => !!s,
+    )
+    setRefs((prev) => [...prev, ...shrunk].slice(0, MAX_REFERENCES))
+    if (opts.look) setLooks((prev) => [...prev, ...shrunk])
   }, [])
 
   const remove = useCallback((i: number) => setRefs((prev) => prev.filter((_, j) => j !== i)), [])
-  const clear = useCallback(() => setRefs([]), [])
+  const clear = useCallback(() => {
+    setRefs([])
+    setLooks([])
+  }, [])
   /** Put sent references back in the tray (a generation that failed). */
-  const restore = useCallback((list: string[]) => setRefs(list.slice(0, MAX_REFERENCES)), [])
+  const restore = useCallback((list: string[], lookList: string[] = []) => {
+    setRefs(list.slice(0, MAX_REFERENCES))
+    setLooks(lookList)
+  }, [])
+  /** Split for a generation: her own pictures to place, and look-only ones. */
+  const split = useCallback(
+    (list: string[]) => ({ place: list.filter((r) => !looks.includes(r)), looks: list.filter((r) => looks.includes(r)) }),
+    [looks],
+  )
 
   /** On the textarea: ⌘V of a screenshot attaches it; text pastes as usual. */
   const onPaste = useCallback(
@@ -123,7 +144,7 @@ export function useReferenceImages() {
     },
   }
 
-  return { refs, add, remove, clear, restore, onPaste, dropProps, dragging, full: refs.length >= MAX_REFERENCES }
+  return { refs, add, remove, clear, restore, split, onPaste, dropProps, dragging, full: refs.length >= MAX_REFERENCES }
 }
 
 export type ReferenceImages = ReturnType<typeof useReferenceImages>

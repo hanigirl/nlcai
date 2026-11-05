@@ -191,8 +191,24 @@ function genAsk(format: AiEditFormat, style: MediaStyle = "blank"): string {
         : style === "ai-light"
           ? "בשפת הנישה שלכם, בגרסה הבהירה"
           : "בשפת הנישה שלכם"
-  return `אייצר לכם ${GEN_NOUN[format]} ${lang}.\nיש משהו שכדאי שאדע לפני? אפשר לספר מה חשוב לכם הפעם, לצרף תמונת רפרנס או להדביק קישור (פוסט באינסטגרם, אתר).`
+  return `אייצר לכם ${GEN_NOUN[format]} ${lang}.\nיש משהו שכדאי שאדע לפני? תמונות שתרצו שאכניס? אפשר גם לספר מה חשוב לכם הפעם, או להדביק קישור לפוסט שאהבתם (באינסטגרם, באתר) כהשראה.`
 }
+
+/**
+ * What she attached as images before the generation goes IN the media, as it
+ * is (Hani, 2026-11-05: "התמונה תכנס ביצירה הראשונה אם שמתי אותה כרפרנס");
+ * a picture from a link is only a look. Said under the tray, where she sees
+ * them — per format, since a b-roll is built on the picture itself.
+ */
+const PLACE_NOTE: Record<AiEditFormat, string> = {
+  image_post: "התמונה שצירפתם תיכנס לתמונה כמו שהיא.",
+  story: "התמונה שצירפתם תיכנס כמו שהיא לפריים הראשון של הסטורי.",
+  b_roll: "הבי-רול ייבנה על התמונה שצירפתם, כמו שהיא.",
+  carousel: "התמונה שצירפתם תיכנס כמו שהיא לאחת השקופיות, בדרך כלל לשער.",
+}
+const LOOK_NOTE = "תמונה מקישור משמשת רק כהשראה למראה."
+/** Only pictures, no words: what her brief says. */
+const PLACE_ONLY_INSTRUCTION = "להכניס את התמונה שצירפתי"
 /** Her way out of the conversation — generate in the picked style as is. */
 const GEN_SKIP = "ליצור בלי תוספות"
 const GEN_STALE = "הבקשה הזאת כבר לא פעילה. לחצו שוב על כפתור היצירה בפאנל המדיה."
@@ -384,7 +400,7 @@ export function MediaAiChat({
    * blank page, or on top of the style she picked. `shown`:
    * what her bubble shows when it isn't the brief itself (GEN_SKIP).
    */
-  const generate = async (brief: string, references: string[] = [], shown?: string) => {
+  const generate = async (brief: string, references: string[] = [], shown?: string, looks: string[] = []) => {
     const key = chatKey
     const init = fresh
     const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, init, fn)
@@ -393,6 +409,9 @@ export function MediaAiChat({
     if (cur.busy || !g || g.phase === "running") return
     const run = generatorById.get(g.id)
     const said: ChatMessage = { role: "user", content: shown ?? brief, ...(references.length ? { images: references } : {}) }
+    // Her own pictures go IN the media; a link's picture is a look only.
+    const place = references.filter((r) => !looks.includes(r))
+    const lookRefs = references.filter((r) => looks.includes(r))
     if (!run) {
       // A reload dropped the button's settings — the media panel starts it again.
       patchKey((s) => ({
@@ -415,8 +434,8 @@ export function MediaAiChat({
     let result: Awaited<ReturnType<typeof run>>
     try {
       result = preview
-        ? await trackAwayResult(`ai-gen-${postId}-${format}-${Date.now()}`, run(brief, references), isWatching, away, postId)
-        : await run(brief, references)
+        ? await trackAwayResult(`ai-gen-${postId}-${format}-${Date.now()}`, run(brief, lookRefs, place), isWatching, away, postId)
+        : await run(brief, lookRefs, place)
     } catch (err) {
       result = { ok: false, message: err instanceof Error ? err.message : String(err) }
     }
@@ -445,7 +464,7 @@ export function MediaAiChat({
         extra: { ...s.extra, gen: { ...g, phase: "brief", lastBrief: brief } },
       }
     })
-    if (!result.ok && references.length) restoreRefs(references)
+    if (!result.ok && references.length) restoreRefs(references, lookRefs)
     revealChatReply(key, result.ok ? away.done : away.failed)
   }
 
@@ -464,12 +483,13 @@ export function MediaAiChat({
     // for it — references alone work too, as in the AI edit.
     if (cur.extra.gen && cur.extra.gen.phase !== "running") {
       const attached = refs.refs
+      const { place, looks } = refs.split(attached)
       const typed = (preset ?? cur.input).trim()
-      const brief = typed || (attached.length ? REFERENCE_ONLY_INSTRUCTION : "")
+      const brief = typed || (place.length ? PLACE_ONLY_INSTRUCTION : looks.length ? REFERENCE_ONLY_INSTRUCTION : "")
       if (!brief || links.busy) return
       refs.clear()
       links.reset()
-      void generate(brief, attached)
+      void generate(brief, attached, undefined, looks)
       return
     }
     let text = (preset ?? cur.input).trim()
@@ -785,6 +805,14 @@ export function MediaAiChat({
         )}
         <LinkReferenceRows l={links} />
         <ReferenceTray r={refs} />
+        {gen?.phase === "brief" && refs.refs.length > 0 && (() => {
+          const { place, looks } = refs.split(refs.refs)
+          return (
+            <p className="mb-2 text-xs-body text-text-neutral-default">
+              {[place.length ? PLACE_NOTE[format] : "", looks.length ? LOOK_NOTE : ""].filter(Boolean).join(" ")}
+            </p>
+          )
+        })()}
         <div className="flex items-end gap-2 rounded-[12px] border border-border-neutral-default bg-white dark:bg-gray-10 p-2 focus-within:border-yellow-50 transition-colors">
           <Textarea
             value={input}

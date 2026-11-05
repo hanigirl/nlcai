@@ -115,10 +115,10 @@ export function startStoryGeneration(
   postId: string,
   style?: MediaStyle,
   /** brief / references / quiet — see MediaGenOptions in lib/image-generation-store. */
-  opts: { brief?: string; references?: string[]; quiet?: boolean } = {},
+  opts: { brief?: string; references?: string[]; place?: string[]; quiet?: boolean } = {},
 ): Promise<MediaGenResult> {
   if (!postId) return Promise.resolve({ ok: false, message: "" })
-  const { brief, references, quiet = false } = opts
+  const { brief, references, place, quiet = false } = opts
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   // Steers this attempt toward a palette distinct from the previous ones.
   const variationIndex = nextVariationIndex(postId)
@@ -143,6 +143,7 @@ export function startStoryGeneration(
           style,
           ...(brief ? { brief } : {}),
           ...(references?.length ? { references } : {}),
+          ...(place?.length ? { place } : {}),
         }),
       })
       const data = (await res.json().catch(() => ({}))) as {

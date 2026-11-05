@@ -166,8 +166,10 @@ export function getGenerationSnapshot(key: string): GenerationState {
  */
 export interface MediaGenOptions {
   brief?: string
-  /** Reference images she attached with the brief (lib/ai-edit-references). */
+  /** Look references — a picture pulled from a link (lib/ai-edit-references). */
   references?: string[]
+  /** Pictures she attached, put INTO the media as they are (Hani, 2026-11-05). */
+  place?: string[]
   quiet?: boolean
 }
 
@@ -177,7 +179,7 @@ export function startImageGeneration(
   opts: MediaGenOptions = {},
 ): Promise<MediaGenResult> {
   if (!postId) return Promise.resolve({ ok: false, message: "" })
-  const { brief, references, quiet = false } = opts
+  const { brief, references, place, quiet = false } = opts
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   // Steers this attempt toward a design distinct from the previous ones.
   const variationIndex = nextVariationIndex(postId)
@@ -202,6 +204,7 @@ export function startImageGeneration(
           style,
           ...(brief ? { brief } : {}),
           ...(references?.length ? { references } : {}),
+          ...(place?.length ? { place } : {}),
         }),
       })
       const data = (await res.json().catch(() => ({}))) as {

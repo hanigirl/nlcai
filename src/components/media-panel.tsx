@@ -229,7 +229,7 @@ interface MediaPanelProps {
 function openGenerateBrief(
   postId: string,
   format: AiEditFormat,
-  run: (brief: string, references: string[]) => Promise<MediaGenResult>,
+  run: (brief: string, references: string[], place: string[]) => Promise<MediaGenResult>,
   /**
    * The tile it generates in. "עריכה עם AI" on any tile (Hani, 2026-11-05)
    * asks first too; the panel then generates in that style, with her words
@@ -1749,7 +1749,7 @@ function CarouselFlow({
     openGenerateBrief(
       postId,
       "carousel",
-      (brief, references) => handleGenerate({ brief, references, fromPanel: true }),
+      (brief, references, place) => handleGenerate({ brief, references, place, fromPanel: true }),
       style,
       askFirstRef.current,
     )
@@ -1763,8 +1763,9 @@ function CarouselFlow({
     {
       brief,
       references = [],
+      place = [],
       fromPanel = false,
-    }: { brief?: string; references?: string[]; fromPanel?: boolean } = {},
+    }: { brief?: string; references?: string[]; place?: string[]; fromPanel?: boolean } = {},
   ): Promise<MediaGenResult> => {
     if (!carouselText.trim()) return { ok: false, message: "אין עדיין טקסט לקרוסלה" }
     setGenerating(true)
@@ -1826,6 +1827,7 @@ function CarouselFlow({
             postId,
             ...(brief ? { brief } : {}),
             ...(references.length ? { references } : {}),
+            ...(place.length ? { place } : {}),
           }),
         },
       )
@@ -3240,7 +3242,7 @@ function MediaUploadFlow({
       openGenerateBrief(
         postId,
         "image_post",
-        (brief, references) => startImageGeneration(postId, style, { brief, references, quiet: true }),
+        (brief, references, place) => startImageGeneration(postId, style, { brief, references, place, quiet: true }),
         style,
         askFirst,
       )
@@ -3261,7 +3263,7 @@ function MediaUploadFlow({
       openGenerateBrief(
         postId,
         "story",
-        (brief, references) => startStoryGeneration(postId, style, { brief, references, quiet: true }),
+        (brief, references, place) => startStoryGeneration(postId, style, { brief, references, place, quiet: true }),
         style,
         askFirst,
       )
@@ -3554,8 +3556,8 @@ function MediaUploadFlow({
       openGenerateBrief(
         postId,
         "b_roll",
-        (brief, references) =>
-          startBRollGeneration(postId, bRollAttemptRef.current++, style, { brief, references, quiet: true }),
+        (brief, references, place) =>
+          startBRollGeneration(postId, bRollAttemptRef.current++, style, { brief, references, place, quiet: true }),
         style,
         askFirst,
       )
