@@ -5,6 +5,7 @@ import { AccountChoiceRequired, getSocialPublisher, SocialPublishError } from "@
 import { isProviderInstalled } from "@/lib/social/highlevel-auth"
 import { cancelSlots, countQueuedForAccount, resumeAfterConnect } from "@/lib/social/bridge"
 import { isSocialPlatform } from "@/lib/social/networks"
+import { canUseMultinetwork } from "@/lib/scheduling-access"
 
 // Disconnect cancels every queued post at the provider; reconnect re-queues
 // the ones that failed for want of a connection. Both can be several calls.
@@ -49,10 +50,12 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   try {
-    const [listed, ready] = await Promise.all([
+    const [all, ready] = await Promise.all([
       getSocialPublisher(supabase).listAccounts(user.id),
       isProviderInstalled(),
     ])
+    // Instagram only unless the account is on the multinetwork gate.
+    const listed = canUseMultinetwork(user.email) ? all : all.filter((a) => a.platform === "instagram")
     // How many queued posts hang on each account — so "disconnect" can say
     // what it is about to cancel before she clicks it.
     const accounts = await Promise.all(
@@ -103,6 +106,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "unknown platform" }, { status: 400 })
   }
   const platform = isSocialPlatform(body.platform) ? body.platform : "instagram"
+  // YouTube / LinkedIn are Hani-only for now (lib/scheduling-access).
+  if (platform !== "instagram" && !canUseMultinetwork(user.email)) {
+    return NextResponse.json({ error: "unknown platform" }, { status: 400 })
+  }
 
   // Set on the second call, after she picked one of several accounts.
   const originId = typeof body.originId === "string" && body.originId.trim() ? body.originId.trim() : undefined

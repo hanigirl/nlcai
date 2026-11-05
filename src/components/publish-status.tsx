@@ -61,7 +61,9 @@ function viewFor(
     }
   }
 
-  if (!multi && !fitConnected) {
+  // No network that takes this format is connected (for everyone off the
+  // multinetwork gate that is exactly "Instagram isn't connected").
+  if (!fitConnected) {
     return {
       tone: "danger",
       label: "לא יפורסם — אינסטגרם לא מחובר",

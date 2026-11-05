@@ -60,6 +60,7 @@ import {
   type TargetPublishState,
 } from "./publish-state"
 import { slotToInstant } from "./slot-time"
+import { canUseMultinetwork } from "@/lib/scheduling-access"
 import { SocialPublishError, type SocialPublisher } from "./types"
 
 type Db = SupabaseClient<Database>
@@ -126,7 +127,9 @@ type TargetPatch = Partial<
 >
 
 const genericFailure = (p: SocialPlatform) =>
-  `משהו השתבש מול ${NETWORK_LABEL[p]}, והפוסט לא תוזמן שם. אפשר לנסות שוב.`
+  p === "instagram"
+    ? "משהו השתבש מול אינסטגרם, והפוסט לא תוזמן. אפשר לנסות שוב."
+    : `משהו השתבש מול ${NETWORK_LABEL[p]}, והפוסט לא תוזמן שם. אפשר לנסות שוב.`
 
 export const slotKey = (corePostId: string, format: string) => `${corePostId}:${format}`
 
@@ -214,10 +217,24 @@ async function loadSlot(
 }
 
 /**
- * Her accounts, one per network: the live one, or the lapsed one when that is
- * all there is (so the caller can say "reconnect" rather than "not connected").
+ * The networks this user may publish to. Instagram for everyone; YouTube and
+ * LinkedIn only on the multinetwork gate (lib/scheduling-access). Read from her
+ * own `users` row, so every bridge entry point enforces it the same way.
+ */
+async function allowedPlatforms(db: Db, userId: string): Promise<Set<SocialPlatform>> {
+  const { data } = await db.from("users").select("email").eq("id", userId).maybeSingle()
+  const email = (data as { email: string | null } | null)?.email
+  return new Set<SocialPlatform>(canUseMultinetwork(email) ? PUBLISH_PLATFORMS : ["instagram"])
+}
+
+/**
+ * Her accounts, one per network she may publish to: the live one, or the
+ * lapsed one when that is all there is (so the caller can say "reconnect"
+ * rather than "not connected"). A network outside her gate is never returned,
+ * so no target is ever built or synced for it.
  */
 async function accountsByPlatform(db: Db, userId: string): Promise<Map<SocialPlatform, SocialAccountRow>> {
+  const allowed = await allowedPlatforms(db, userId)
   const { data, error } = await db
     .from("social_accounts")
     .select("*")
@@ -227,6 +244,7 @@ async function accountsByPlatform(db: Db, userId: string): Promise<Map<SocialPla
   if (error) throw new BridgeReadError(error.message)
   const out = new Map<SocialPlatform, SocialAccountRow>()
   for (const row of (data ?? []) as SocialAccountRow[]) {
+    if (!allowed.has(row.platform)) continue
     const have = out.get(row.platform)
     if (!have || (have.status !== "connected" && row.status === "connected")) out.set(row.platform, row)
   }
@@ -379,7 +397,10 @@ function describe(err: unknown, where: string, platform: SocialPlatform): { code
   return { code: "provider_error", message: genericFailure(platform) }
 }
 
-const lapsedMessage = (p: SocialPlatform) => `החיבור ${toNetwork(p)} פג. הפוסט לא יעלה לשם עד שתחברו מחדש.`
+const lapsedMessage = (p: SocialPlatform) =>
+  p === "instagram"
+    ? "החיבור לאינסטגרם פג. הפוסט לא יתפרסם עד שתחברו מחדש."
+    : `החיבור ${toNetwork(p)} פג. הפוסט לא יעלה לשם עד שתחברו מחדש.`
 
 /**
  * The provider said the account itself is gone. Flip the connection so the
@@ -564,12 +585,12 @@ async function syncTarget(
 ): Promise<void> {
   const p = target.platform
 
+  // No account (disconnected, or outside her gate): a planning board, exactly
+  // as before 042 — idle, no error. The card says "not connected" on its own.
   if (!account) {
-    await patchTarget(
-      db,
-      target,
-      failurePatch("not_connected", `${NETWORK_LABEL[p]} לא מחובר, ולכן הפוסט לא יעלה לשם.`),
-    )
+    if (target.publish_status !== "idle" || target.publish_error) {
+      await patchTarget(db, target, { publish_status: "idle", publish_error: null })
+    }
     return
   }
   if (account.status !== "connected") {
@@ -755,7 +776,7 @@ export async function setTargetOptOut(
   try {
     const slot = await loadSlot(db, userId, corePostId, format)
     if (!slot) return { status: "idle" }
-    if (!networkFitsFormat(platform, format)) {
+    if (!networkFitsFormat(platform, format) || !(await allowedPlatforms(db, userId)).has(platform)) {
       return (await rollupSlot(db, userId, slot.id))?.state ?? toPublishState(slot)
     }
     const accounts = await accountsByPlatform(db, userId)
@@ -835,6 +856,7 @@ export async function setYouTubePrivacy(
   try {
     const slot = await loadSlot(db, userId, corePostId, format)
     if (!slot || !networkFitsFormat("youtube", format)) return { status: "idle" }
+    if (!(await allowedPlatforms(db, userId)).has("youtube")) return toPublishState(slot)
     const accounts = await accountsByPlatform(db, userId)
     const targets = await ensureTargets(db, slot, accounts)
     const target = targets.find((t) => t.platform === "youtube")
@@ -1181,7 +1203,9 @@ export async function refreshPublishStates(
             t,
             failurePatch(
               "provider_error",
-              `הפוסט לא עלה ${inNetwork(t.platform)} במועד. אפשר לבחור מועד חדש ולנסות שוב.`,
+              t.platform === "instagram"
+                ? "אינסטגרם לא פרסמה את הפוסט במועד. אפשר לבחור מועד חדש ולנסות שוב."
+                : `הפוסט לא עלה ${inNetwork(t.platform)} במועד. אפשר לבחור מועד חדש ולנסות שוב.`,
             ),
           )
           continue

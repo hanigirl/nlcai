@@ -34,3 +34,16 @@ export const PREVIEW_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 export function canUsePreview(email: string | null | undefined): boolean {
   return !!email && PREVIEW_EMAILS.includes(email.toLowerCase())
 }
+
+/**
+ * YouTube + LinkedIn as real networks (connect in Settings, a post goes to
+ * every connected network that fits, the network tabs in the calendar preview,
+ * the connected-networks marker). Hani only while she tries it (2026-11-05).
+ * Everyone else — Nataliya included — keeps Instagram-only scheduling exactly
+ * as before; the server enforces it too (connect/accounts routes, the bridge).
+ */
+export const MULTINETWORK_EMAILS = ["hanigirl@gmail.com"]
+
+export function canUseMultinetwork(email: string | null | undefined): boolean {
+  return !!email && MULTINETWORK_EMAILS.includes(email.toLowerCase())
+}

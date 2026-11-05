@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils"
 import { isLegacyGeminiKey } from "@/lib/api-keys"
 import { useSocialConnections, type InstagramConnection } from "@/lib/instagram-connection"
 import { NETWORK_CONNECT_NOTE, InstagramConnectDialogHost } from "@/components/instagram-connect"
+import { useMultinetwork } from "@/lib/use-scheduling-access"
 
 // ---------------------------------------------------------------------------
 // keys
@@ -494,13 +495,23 @@ export function SocialNetworksPanel({
   preview?: Partial<Record<LiveNetworkId, InstagramConnection>>
 }) {
   const previews = preview ?? (instagramPreview ? { instagram: instagramPreview } : null)
-  const tiktok = SOCIAL_NETWORKS.find((n) => n.id === "tiktok")!
+  // YouTube / LinkedIn connect only for the multinetwork gate; everyone else
+  // keeps them "בקרוב", as before. The /test preview shows what it's given.
+  const multinetwork = useMultinetwork() === true
+  const live: readonly LiveNetworkId[] = previews
+    ? (Object.keys(previews) as LiveNetworkId[]).length > 1
+      ? LIVE_NETWORKS
+      : ["instagram"]
+    : multinetwork
+      ? LIVE_NETWORKS
+      : ["instagram"]
+  const soon = SOCIAL_NETWORKS.filter((n) => n.id === "tiktok" || !live.includes(n.id as LiveNetworkId))
   return (
     <div className="flex flex-col gap-4">
       <p className="text-small text-text-neutral-default">
         חיבור החשבונות מאפשר לפוסטים שתזמנתם ביומן להתפרסם לבד, בשעה שקבעתם.
       </p>
-      {LIVE_NETWORKS.map((id) => {
+      {live.map((id) => {
         if (!previews) return <LiveNetworkCard key={id} id={id} />
         const p = instagramCardState(previews[id] ?? { status: "disconnected", accounts: [], primary: null })
         return (
@@ -516,8 +527,11 @@ export function SocialNetworksPanel({
           />
         )
       })}
-      {/* No account to test it with yet — stays "בקרוב". */}
-      <SocialConnectionCard network={tiktok} state="disconnected" />
+      {/* Not open to this account yet (or no account to test it with, for
+          TikTok) — "בקרוב", in the order the page always listed them. */}
+      {soon.map((network) => (
+        <SocialConnectionCard key={network.id} network={network} state="disconnected" />
+      ))}
     </div>
   )
 }

@@ -4,6 +4,7 @@ import { getAuthUser } from "@/lib/auth-user"
 import { getSocialPublisher, SocialPublishError } from "@/lib/social"
 import { isProviderInstalled } from "@/lib/social/highlevel-auth"
 import { isSocialPlatform } from "@/lib/social/networks"
+import { canUseMultinetwork } from "@/lib/scheduling-access"
 
 /**
  * Begin connecting an account — Instagram, YouTube or LinkedIn.
@@ -48,12 +49,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
+  // YouTube / LinkedIn are Hani-only for now (lib/scheduling-access).
+  if (platform !== "instagram" && !canUseMultinetwork(user.email)) {
+    return NextResponse.json({ error: "unknown platform" }, { status: 400 })
+  }
+
   // Checked before `startConnect`, which provisions a sub-account as a side
   // effect. On a deploy where the agency install hasn't been completed yet,
   // going ahead would create a real record for her and then fail at attach.
   if (!(await isProviderInstalled())) {
     return NextResponse.json(
-      { error: "not_installed", message: "החיבור לרשתות עדיין לא זמין. נעדכן ברגע שיהיה." },
+      {
+        error: "not_installed",
+        message: canUseMultinetwork(user.email)
+          ? "החיבור לרשתות עדיין לא זמין. נעדכן ברגע שיהיה."
+          : "החיבור לאינסטגרם עדיין לא זמין. נעדכן ברגע שיהיה.",
+      },
       { status: 503 },
     )
   }

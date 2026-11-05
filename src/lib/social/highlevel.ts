@@ -141,7 +141,9 @@ async function ghlFetch<T>(path: string, opts: GhlFetchOptions): Promise<T> {
       // Nothing re-queues it for tomorrow on its own — saying so would be the
       // exact quiet lie this whole status model exists to prevent.
       throw new SocialPublishError(
-        `הגעתם למגבלת הפרסומים היומית ${inNetwork(p)}. הפוסט לא תוזמן. אפשר לבחור מועד אחר או לנסות שוב מחר.`,
+        p === "instagram"
+          ? "הגעתם למגבלת הפרסומים היומית של אינסטגרם. הפוסט לא תוזמן. אפשר לבחור מועד אחר או לנסות שוב מחר."
+          : `הגעתם למגבלת הפרסומים היומית ${inNetwork(p)}. הפוסט לא תוזמן. אפשר לבחור מועד אחר או לנסות שוב מחר.`,
         "rate_limited"
       )
     }
@@ -438,7 +440,7 @@ export class HighLevelPublisher implements SocialPublisher {
 
     const tenant = data as { external_tenant_id: string } | null
     if (!tenant) {
-      throw new SocialPublishError("עדיין לא חיברתם חשבון לפרסום.", "not_connected")
+      throw new SocialPublishError("עדיין לא חיברת חשבון אינסטגרם.", "not_connected")
     }
     return tenant.external_tenant_id
   }
@@ -591,7 +593,9 @@ export class HighLevelPublisher implements SocialPublisher {
         JSON.stringify(page).slice(0, 600),
       )
       throw new SocialPublishError(
-        "החשבון שחזר מהחיבור חסר פרטים. נסו לחבר שוב.",
+        platform === "instagram"
+          ? "החשבון שאינסטגרם החזירה חסר פרטים. נסו לחבר שוב."
+          : "החשבון שחזר מהחיבור חסר פרטים. נסו לחבר שוב.",
         "provider_error",
         false
       )
@@ -681,7 +685,7 @@ export class HighLevelPublisher implements SocialPublisher {
       .maybeSingle()
 
     if (!data) {
-      throw new SocialPublishError("החשבון לא מחובר.", "not_connected")
+      throw new SocialPublishError("חשבון האינסטגרם לא מחובר.", "not_connected")
     }
     const row = data as SocialAccountRow
     if (row.status !== "connected") {

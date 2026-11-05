@@ -1,14 +1,10 @@
 /**
- * Sample data for reviewing the network switch — REVIEW ONLY.
+ * Sample data for the network switch state preview (/test/network-switch).
  *
- * Read by `/calendar?state=…` (the preview opens straight on a
- * seeded post) and by `/test/network-switch`. No fetch, no DB write, no
- * provider call is made from anything here. Delete with the review harness
- * when a variant is picked.
+ * Read by `/test/network-switch` only. No fetch, no DB write, no provider
+ * call is made from anything here.
  */
 
-import type { InstagramConnection } from "@/lib/instagram-connection"
-import type { SocialPlatform } from "@/lib/supabase/types"
 import type { ConnectedNetwork } from "./network-switch"
 import type { FormatPreviewData, PreviewNetwork } from "./shared"
 
@@ -139,22 +135,4 @@ export function reviewConnections(state: NetworkReviewState): ConnectedNetwork[]
         c("linkedin", "connected", "נועה כהן"),
       ]
   }
-}
-
-/**
- * The connect modal's view of one network in a review state — what the
- * marker's icon opens on a review link (buttons inert there).
- */
-export function reviewConnectionFor(state: NetworkReviewState, platform: SocialPlatform): InstagramConnection {
-  const n = reviewConnections(state).find((x) => x.platform === platform)
-  if (!n || n.state === "none" || n.state === "loading") return { status: "disconnected", accounts: [], primary: null }
-  const account = {
-    id: `review-${platform}`,
-    platform,
-    handle: n.handle ?? null,
-    avatarUrl: null,
-    status: n.state === "connected" ? ("connected" as const) : ("needs_reconnect" as const),
-    queuedCount: n.state === "connected" ? 2 : 0,
-  }
-  return { status: n.state === "connected" ? "connected" : "disconnected", accounts: [account], primary: account }
 }

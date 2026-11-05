@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
-import { canUsePreview, canUseScheduleAllA, canUseScheduling } from "@/lib/scheduling-access"
+import { canUseMultinetwork, canUsePreview, canUseScheduleAllA, canUseScheduling } from "@/lib/scheduling-access"
 
 /** null while the session is read, then true/false. */
 export function useSchedulingAccess(): boolean | null {
@@ -13,6 +13,11 @@ export function useSchedulingAccess(): boolean | null {
 /** The one-row schedule-all (direction A) — Hani only for now. */
 export function useScheduleAllA(): boolean | null {
   return useEmailGate(canUseScheduleAllA)
+}
+
+/** YouTube + LinkedIn as networks — Hani only (see MULTINETWORK_EMAILS). */
+export function useMultinetwork(): boolean | null {
+  return useEmailGate(canUseMultinetwork)
 }
 
 /** The scheduling changes still in trial — Hani only (see PREVIEW_EMAILS). */

@@ -83,8 +83,11 @@ export async function assembleScheduledPost(
   const captionMax = platform === "instagram" ? MAX_CAPTION_CHARS : MAX_CAPTION_BY_NETWORK[platform]
   if (caption.length > captionMax) {
     throw new SocialPublishError(
-      `הכיתוב ארוך מ-${captionMax.toLocaleString("he-IL")} תווים (יש ${caption.length.toLocaleString("he-IL")}). ` +
-        `${NETWORK_LABEL[platform]} לא תקבל אותו כך — עדיף לקצר לפני שמתזמנים.`,
+      platform === "instagram"
+        ? `הכיתוב ארוך מ-${MAX_CAPTION_CHARS} תווים (יש ${caption.length}). ` +
+            `אינסטגרם תחתוך אותו — עדיף לקצר לפני שמתזמנים.`
+        : `הכיתוב ארוך מ-${captionMax.toLocaleString("he-IL")} תווים (יש ${caption.length.toLocaleString("he-IL")}). ` +
+            `${NETWORK_LABEL[platform]} לא תקבל אותו כך — עדיף לקצר לפני שמתזמנים.`,
       "media_rejected"
     )
   }
@@ -155,7 +158,9 @@ export async function assembleScheduledPost(
   const unfetchable = media.find((m) => !isDirectMediaUrl(m.url))
   if (unfetchable) {
     throw new SocialPublishError(
-      "אחד מקובצי המדיה הוא קישור (למשל מגוגל דרייב) או קובץ שהרשת לא מקבלת. צריך להעלות את הקובץ עצמו.",
+      platform === "instagram"
+        ? "אחד מקובצי המדיה הוא קישור (למשל מגוגל דרייב) או קובץ שאינסטגרם לא מקבלת. צריך להעלות את הקובץ עצמו."
+        : "אחד מקובצי המדיה הוא קישור (למשל מגוגל דרייב) או קובץ שהרשת לא מקבלת. צריך להעלות את הקובץ עצמו.",
       "media_rejected"
     )
   }

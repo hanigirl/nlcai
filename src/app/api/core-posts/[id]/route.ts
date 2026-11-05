@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
 import { replaceImageAssetSet } from "@/lib/media-asset-set"
 import { cancelSlots } from "@/lib/social/bridge"
+import { canUseMultinetwork } from "@/lib/scheduling-access"
 
 interface FormatVariantRow {
   format: string
@@ -737,7 +738,9 @@ export async function DELETE(
         {
           error: "cancel_failed",
           message:
-            "לא הצלחנו להוציא את הפוסט מהתור באחת הרשתות, ולכן הוא לא נמחק. אפשר לנסות שוב.",
+            canUseMultinetwork(user.email)
+              ? "לא הצלחנו להוציא את הפוסט מהתור באחת הרשתות, ולכן הוא לא נמחק. אפשר לנסות שוב."
+              : "לא הצלחנו להוציא את הפוסט מהתור באינסטגרם, ולכן הוא לא נמחק. אפשר לנסות שוב.",
         },
         { status: 502 },
       )

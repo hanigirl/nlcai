@@ -12,7 +12,7 @@ import {
 import { isSocialPlatform, isYouTubePrivacy } from "@/lib/social/networks"
 import type { SocialPlatform, YouTubePrivacy } from "@/lib/supabase/types"
 import type { PublishState } from "@/lib/social/publish-state"
-import { canUseScheduling } from "@/lib/scheduling-access"
+import { canUseMultinetwork, canUseScheduling } from "@/lib/scheduling-access"
 import type { SchedulePublishStatus } from "@/lib/supabase/types"
 
 // A board write now waits on the provider (create, read back). A batch from
@@ -298,7 +298,9 @@ export async function DELETE(req: NextRequest) {
       {
         error: "cancel_failed",
         message:
-          "לא הצלחנו להוציא את הפוסט מהתור באחת הרשתות, ולכן הוא נשאר על הלוח. אפשר לנסות להסיר שוב.",
+          canUseMultinetwork(user.email)
+            ? "לא הצלחנו להוציא את הפוסט מהתור באחת הרשתות, ולכן הוא נשאר על הלוח. אפשר לנסות להסיר שוב."
+            : "לא הצלחנו להוציא את הפוסט מהתור באינסטגרם, ולכן הוא נשאר על הלוח. אפשר לנסות להסיר שוב.",
         stuck: stuck.map((r) => ({ corePostId: r.core_post_id, format: r.format })),
       },
       { status: 502 },

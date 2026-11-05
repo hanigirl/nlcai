@@ -53,7 +53,7 @@ import {
   type PreviewSlide,
   type PublishStatus as PreviewPublishStatus,
 } from "@/components/format-preview/shared"
-import { useScheduleAllA, useSchedulingAccess, useSchedulingPreview } from "@/lib/use-scheduling-access"
+import { useMultinetwork, useScheduleAllA, useSchedulingAccess, useSchedulingPreview } from "@/lib/use-scheduling-access"
 import {
   hasAnySlot,
   planScheduleAll,
@@ -63,18 +63,11 @@ import {
 import { NoSettingsDialog, PreviewBar, ScheduleAllButton } from "@/components/schedule-all"
 import { CorePostSheet, type CorePostSheetData } from "@/components/core-post-sheet"
 import { FormatThumbnail } from "@/components/format-thumbnail"
-import { InstagramConnectDialogHost } from "@/components/instagram-connect"
+import { InstagramConnectDialogHost, InstagramConnectionControl } from "@/components/instagram-connect"
 import {
   ConnectedNetworksIndicator,
   type ConnectedNetwork,
 } from "@/components/format-preview/network-switch"
-import {
-  isNetworkReviewState,
-  reviewConnectionFor,
-  reviewConnections,
-  reviewPreviewData,
-  type NetworkReviewState,
-} from "@/components/format-preview/network-review-fixtures"
 import type { PreviewNetwork } from "@/components/format-preview/shared"
 import { networksForFormat, PUBLISH_PLATFORMS } from "@/lib/social/networks"
 import type { SocialPlatform } from "@/lib/supabase/types"
@@ -605,33 +598,20 @@ export default function CalendarPage() {
   const [networkDialog, setNetworkDialog] = useState<SocialPlatform | null>(null)
   const openNetworkDialog = (p: SocialPlatform) => (p === "instagram" ? setIgDialogOpen(true) : setNetworkDialog(p))
 
-  // --- Network review states (REVIEW ONLY — delete before shipping) --------
-  // `?state=one|three|failed|optout|mixed` opens the preview straight on a
-  // seeded post and seeds the connected-networks marker. Read after mount (no
-  // Suspense boundary needed). Without it the page is the real board.
-  const [reviewState, setReviewState] = useState<NetworkReviewState | null>(null)
-  const [reviewNetworks, setReviewNetworks] = useState<PreviewNetwork[] | null>(null)
-  // Closing the seeded preview keeps the seeded marker above the board.
-  const [reviewOpen, setReviewOpen] = useState(true)
-  useEffect(() => {
-    const st = new URLSearchParams(window.location.search).get("state")
-    if (isNetworkReviewState(st)) {
-      setReviewState(st)
-      setReviewNetworks(reviewPreviewData(st).networks ?? null)
-    }
-  }, [])
+  // YouTube + LinkedIn (lib/scheduling-access → MULTINETWORK_EMAILS). Off:
+  // Instagram only, the pill above the board and the preview exactly as before.
+  const multinetwork = useMultinetwork() === true
+  const livePlatforms: SocialPlatform[] = multinetwork ? PUBLISH_PLATFORMS : ["instagram"]
 
-  /** Is any network that takes this format connected? */
+  /** Is any network she may use, and that takes this format, connected? */
   const fitsConnected = (format: string) =>
-    networksForFormat(format).some((p) => connections[p].status === "connected")
-  const anyConnected = PUBLISH_PLATFORMS.some((p) => connections[p].status === "connected")
+    networksForFormat(format).some((p) => livePlatforms.includes(p) && connections[p].status === "connected")
+  const anyConnected = livePlatforms.some((p) => connections[p].status === "connected")
 
   // What happened in the queue since the last visit — outcomes of slots
-  // whose time passed, edits after queuing, a lapsed connection. Not on a
-  // review link: those read nothing and write nothing.
+  // whose time passed, edits after queuing, a lapsed connection.
   useEffect(() => {
-    const review = isNetworkReviewState(new URLSearchParams(window.location.search).get("state"))
-    if (schedulingOn && !review) void refreshPublishStatus()
+    if (schedulingOn) void refreshPublishStatus()
   }, [schedulingOn])
 
   /**
@@ -1184,8 +1164,7 @@ export default function CalendarPage() {
     if (st?.status === "sent" || (previewPast && (!st || st.status === "idle"))) {
       return { kind: "sent" }
     }
-    const hasTargets = !!st?.targets?.some((t) => !t.optedOut)
-    if (!hasTargets && !fitsConnected(row.format)) return { kind: "not_connected" }
+    if (!fitsConnected(row.format)) return { kind: "not_connected" }
     if (st?.status === "queued" && st.code !== "content_changed") return { kind: "scheduled" }
     if (st?.status === "failed") {
       return {
@@ -1266,7 +1245,7 @@ export default function CalendarPage() {
           : "",
         isPast: previewPast,
         publish: previewPublish(previewRow),
-        networks: previewNetworks(previewRow),
+        networks: multinetwork ? previewNetworks(previewRow) : undefined,
       }
     : null
   const previewContentState: PreviewContentState =
@@ -1294,9 +1273,11 @@ export default function CalendarPage() {
           }
           schedulePost(previewRow.corePostId, previewRow.format, date, time, {
             hook: previewData?.hook,
-            excludeNetworks: !previewRow.publish?.targets?.length ? pendingExclusions : undefined,
+            excludeNetworks: multinetwork && !previewRow.publish?.targets?.length ? pendingExclusions : undefined,
             youtubePrivacy:
-              !previewRow.publish?.targets?.length && pendingYouTubePrivacy ? pendingYouTubePrivacy : undefined,
+              multinetwork && !previewRow.publish?.targets?.length && pendingYouTubePrivacy
+                ? pendingYouTubePrivacy
+                : undefined,
           })
           reloadBoard()
           toast.success(
@@ -1349,7 +1330,7 @@ export default function CalendarPage() {
           } else {
             void retryPublish(previewRow.corePostId, previewRow.format, "retry").then((next) => {
               reloadBoard()
-              if (next?.status === "queued") toast.success("הפוסט תוזמן")
+              if (next?.status === "queued") toast.success(multinetwork ? "הפוסט תוזמן" : "הפוסט תוזמן לאינסטגרם")
               else if (next?.status === "failed" && next.message) toast.error(next.message)
             })
           }
@@ -1383,35 +1364,7 @@ export default function CalendarPage() {
       }
     : null
 
-  // Review links: the seeded post, its own handlers, nothing leaves the page.
-  const reviewData: FormatPreviewData | null =
-    reviewState && reviewNetworks && reviewOpen ? { ...reviewPreviewData(reviewState), networks: reviewNetworks } : null
-  const reviewNoop = () => toast("תצוגת סקירה — שום דבר לא נשמר")
-  const reviewHandlers = reviewData
-    ? {
-        onReschedule: reviewNoop,
-        onCaptionSave: reviewNoop,
-        onUnschedule: reviewNoop,
-        onOpenCanvas: reviewNoop,
-        onStatusAction: reviewNoop,
-        onConnectNetwork: reviewNoop,
-        onYouTubePrivacy: (privacy: "public" | "unlisted" | "private") =>
-          setReviewNetworks((list) =>
-            (list ?? []).map((n) => (n.platform === "youtube" ? { ...n, youtubePrivacy: privacy } : n)),
-          ),
-        onNetworkToggle: (platform: SocialPlatform, include: boolean) =>
-          setReviewNetworks((list) =>
-            (list ?? []).map((n) =>
-              n.platform === platform
-                ? { ...n, included: include, publish: include ? { kind: "scheduled" } : { kind: "unscheduled" } }
-                : n,
-            ),
-          ),
-      }
-    : null
-  const headerNetworks: ConnectedNetwork[] = reviewState
-    ? reviewConnections(reviewState)
-    : PUBLISH_PLATFORMS.map((p) => {
+  const headerNetworks: ConnectedNetwork[] = PUBLISH_PLATFORMS.map((p) => {
         const c = connections[p]
         return {
           platform: p,
@@ -1534,32 +1487,31 @@ export default function CalendarPage() {
                 className="w-[48px] h-[48px]"
               />
               <h2 className="text-text-primary-default">תזמון</h2>
-              {(schedulingOn || reviewState) && (
+              {schedulingOn && multinetwork ? (
                 // One marker for every network (Hani, 2026-11-05) in place of
-                // the Instagram-only pill. Same modals behind it.
+                // the Instagram-only pill. Each icon opens that network's
+                // connect window.
                 <>
                   <ConnectedNetworksIndicator
                     className="ms-auto"
                     networks={headerNetworks}
                     onOpen={openNetworkDialog}
                   />
-                  {/* On a review link the modals show the seeded connection
-                      and every button is inert — nothing connects or
-                      disconnects. */}
-                  <InstagramConnectDialogHost
-                    open={igDialogOpen}
-                    onOpenChange={setIgDialogOpen}
-                    previewConnection={reviewState ? reviewConnectionFor(reviewState, "instagram") : undefined}
-                  />
+                  <InstagramConnectDialogHost open={igDialogOpen} onOpenChange={setIgDialogOpen} />
                   <InstagramConnectDialogHost
                     open={networkDialog !== null}
                     onOpenChange={(open) => !open && setNetworkDialog(null)}
                     platform={networkDialog ?? "youtube"}
-                    previewConnection={
-                      reviewState ? reviewConnectionFor(reviewState, networkDialog ?? "youtube") : undefined
-                    }
                   />
                 </>
+              ) : (
+                schedulingOn && (
+                  <InstagramConnectionControl
+                    className="ms-auto"
+                    open={igDialogOpen}
+                    onOpenChange={setIgDialogOpen}
+                  />
+                )
               )}
             </div>
 
@@ -1860,33 +1812,20 @@ export default function CalendarPage() {
           CTA when the user is in preview mode — they're already on
           /calendar, so the schedule affordance would loop. */}
       {/* The format preview, as a modal over the board. */}
-      {reviewData && reviewHandlers ? (
+      {schedulingOn && previewHandlers && (
         <FormatPreviewDialog
-          open
+          open={!!previewData}
           onOpenChange={(open) => {
-            if (!open) setReviewOpen(false)
+            if (!open) {
+              setPreviewKey(null)
+              setPendingExclusions([])
+              setPendingYouTubePrivacy(null)
+            }
           }}
-          data={reviewData}
-          content="ready"
-          {...reviewHandlers}
+          data={previewData}
+          content={previewContentState}
+          {...previewHandlers}
         />
-      ) : (
-        schedulingOn &&
-        previewHandlers && (
-          <FormatPreviewDialog
-            open={!!previewData}
-            onOpenChange={(open) => {
-              if (!open) {
-                setPreviewKey(null)
-                setPendingExclusions([])
-                setPendingYouTubePrivacy(null)
-              }
-            }}
-            data={previewData}
-            content={previewContentState}
-              {...previewHandlers}
-          />
-        )
       )}
 
       {scheduleAllA && (
