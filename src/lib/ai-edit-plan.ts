@@ -26,6 +26,11 @@ export async function planImageEdit(
   refs: string[] = [],
   /** She asked for her visual language: its current lines, to spell out in the brief. */
   language: string[] = [],
+  /**
+   * Hani only (lib/feature-access): a change to a picture inside the design
+   * is described as a change to the picture itself — never a crop or cover.
+   */
+  pictureEdits = false,
 ): Promise<{ targets: number[]; edit: string; place: number[]; needsImage: boolean; picture: boolean }> {
   const client = new Anthropic({ apiKey })
   const msg = await client.messages.create({
@@ -62,6 +67,11 @@ export async function planImageEdit(
             : []),
           '- needs_image: true when she asks to put in, swap in or use a SPECIFIC picture (her photo, her character, "this image", a picture from her carousel or elsewhere) and that picture is not one of the attached images' + (refs.length ? " you list in place" : " (none is attached)") + ". Then nothing is edited and she is asked for it — never describe a stand-in picture. Otherwise false.",
           "- The edit never brings in a person, character, animal or object she did not ask for.",
+          ...(pictureEdits
+            ? [
+                "- If she asks to change a PICTURE inside the design (her photo, a placed picture or an illustration) — remove text, a caption, a logo or an object from it, clean it, extend it, blend it in, recolour it to fit — the edit changes that picture itself: say exactly what to remove or change and that what was behind it is rebuilt naturally. Never crop, zoom, cover, shrink or hide part of the picture instead, and keep the person or subject exactly who and what they are.",
+              ]
+            : []),
           ...(refs.length
             ? ['- place: the numbers of the attached images she wants put INTO the design as they are (her own picture, character, logo, product). Empty for images that only show a look to match.']
             : []),

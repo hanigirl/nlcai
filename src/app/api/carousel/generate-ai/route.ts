@@ -1,3 +1,5 @@
+import { canEditPictures } from "@/lib/feature-access"
+import { PICTURE_UNCHANGED, editPicture } from "@/lib/picture-edit"
 import { gatePlacement } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
 import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
@@ -312,7 +314,10 @@ export async function POST(req: NextRequest) {
 
         // Layout first: Opus decides which slides get an illustration at all
         // (type-led examples → none), then only those are drawn.
-        const layout = await composeCarousel(anthropicKey, brief, refs, placeRefs)
+        // "Put my picture in, without the caption": the picture itself is
+        // edited (lib/picture-edit) — Hani only for now (lib/feature-access).
+        const pictureEditsOn = canEditPictures(user.email)
+        const layout = await composeCarousel(anthropicKey, brief, refs, placeRefs, pictureEditsOn)
         const illustrations: string[] = new Array(total).fill("")
         const ownArt: boolean[] = new Array(total).fill(false)
         // Her pictures: each must have landed on a slide, as her exact file.
@@ -338,6 +343,16 @@ export async function POST(req: NextRequest) {
           )
         }
         const isPlaced = (i: number) => placedOn.some((x) => x.i === i)
+        // Only her placed pictures exist yet to be edited; any miss saves nothing.
+        const pictureEdits = pictureEditsOn ? layout.pictureEdits.filter((e) => isPlaced(e.slide)) : []
+        for (const { slide: i, edit } of pictureEdits) {
+          const res = await fetch(illustrations[i])
+          const out = res.ok
+            ? await editPicture(openaiKey, anthropicKey, Buffer.from(await res.arrayBuffer()), edit)
+            : ({ ok: false, message: PICTURE_UNCHANGED } as const)
+          if (!out.ok) return NextResponse.json({ error: "picture_edit_failed", message: out.message }, { status: 422 })
+          illustrations[i] = await uploadIllustration(supabase, user!.id, out.png)
+        }
         const wanted = layout.illustrations
           .map((idea, i) => ({ idea: idea.trim(), i }))
           .filter((x) => x.idea && !isPlaced(x.i))

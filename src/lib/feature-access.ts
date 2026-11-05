@@ -35,3 +35,18 @@ export const BROLL_BLEND_EMAILS = ["hanigirl@gmail.com"]
 export function canBlendBRoll(email: string | null | undefined): boolean {
   return !!email && BROLL_BLEND_EMAILS.includes(email.toLowerCase())
 }
+
+/**
+ * "כשאני מבקשת שמשהו ישתלב הוא כבר יעשה את זה כמו שצריך" (Hani, 2026-11-05):
+ * when a carousel AI edit asks to change a PICTURE on a slide itself — remove
+ * the text from it, clean it, extend it, blend it in, recolour it to fit —
+ * the picture goes through the image model (lib/picture-edit) and the result
+ * is placed back on the slide, instead of a CSS crop that hides the problem.
+ * Hani only while she tries it; enforced on the server (api/media/ai-edit,
+ * api/carousel/generate-ai). Everyone else keeps main's behaviour.
+ */
+export const PICTURE_EDIT_EMAILS = ["hanigirl@gmail.com"]
+
+export function canEditPictures(email: string | null | undefined): boolean {
+  return !!email && PICTURE_EDIT_EMAILS.includes(email.toLowerCase())
+}
