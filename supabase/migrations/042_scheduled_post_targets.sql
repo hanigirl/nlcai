@@ -111,7 +111,10 @@ select
   s.provider_post_id, s.publish_status, s.publish_error, s.publish_synced_at,
   case when s.publish_status = 'published' then s.published_at end
 from scheduled_posts s
-where s.social_account_id is not null
+where (s.social_account_id is not null
    or s.provider_post_id is not null
-   or s.publish_status <> 'idle'
-on conflict (scheduled_post_id, platform) do nothing;
+   or s.publish_status <> 'idle')
+  and not exists (
+    select 1 from scheduled_post_targets t
+    where t.scheduled_post_id = s.id and t.platform = 'instagram'
+  );

@@ -1,9 +1,9 @@
 /**
  * Sample data for reviewing the network switch — REVIEW ONLY.
  *
- * Read by `/calendar?variant=a|b&state=…` (the preview opens straight on a
+ * Read by `/calendar?state=…` (the preview opens straight on a
  * seeded post) and by `/test/network-switch`. No fetch, no DB write, no
- * provider call is made from anything here. Delete with the `?variant` gate
+ * provider call is made from anything here. Delete with the review harness
  * when a variant is picked.
  */
 

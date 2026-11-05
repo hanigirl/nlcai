@@ -1,7 +1,8 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Instagram, Linkedin, Loader2, RefreshCw, Unlink, Youtube } from "lucide-react"
+import { Instagram, Loader2, RefreshCw, Unlink } from "lucide-react"
+import { NETWORK_LOGO } from "@/components/network-logos"
 import { toast } from "sonner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -66,10 +67,11 @@ export const FACEBOOK_PAGE_NOTE =
  * Instagram modal as-is (Hani, 2026-11-05: same look, no restyling); only the
  * words and the glyph change.
  */
-export const NETWORK_ICON: Record<SocialPlatform, typeof Instagram> = {
-  instagram: Instagram,
-  youtube: Youtube,
-  linkedin: Linkedin,
+/** The networks' own logos, in brand colour (see network-logos.tsx). */
+export const NETWORK_ICON: Record<SocialPlatform, (p: { className?: string }) => React.ReactElement> = {
+  instagram: NETWORK_LOGO.instagram,
+  youtube: NETWORK_LOGO.youtube,
+  linkedin: NETWORK_LOGO.linkedin,
 }
 
 export const NETWORK_CONNECT_NOTE: Record<SocialPlatform, string> = {

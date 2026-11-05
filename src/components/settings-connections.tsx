@@ -21,16 +21,14 @@ import {
   AlertCircle,
   AlertTriangle,
   Image as ImageIcon,
-  Instagram,
   Link2,
-  Linkedin,
   Loader2,
   PenLine,
   RefreshCw,
   Share2,
   Unlink,
-  Youtube,
 } from "lucide-react"
+import { NETWORK_LOGO } from "@/components/network-logos"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -290,20 +288,11 @@ export type SocialNetworkId = "instagram" | "tiktok" | "linkedin" | "youtube"
 
 type IconComponent = ComponentType<SVGProps<SVGSVGElement> & { className?: string }>
 
-/** TikTok's note mark — lucide has no TikTok glyph. Inherits currentColor. */
-function TikTokIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
-      <path d="M16.6 5.82A4.28 4.28 0 0 1 15.54 3h-3.09v12.4a2.59 2.59 0 0 1-2.59 2.5c-1.42 0-2.6-1.16-2.6-2.6 0-1.72 1.66-3.01 3.37-2.48V9.66c-3.45-.46-6.47 2.22-6.47 5.64 0 3.33 2.76 5.7 5.69 5.7 3.14 0 5.69-2.55 5.69-5.7V9.01a7.35 7.35 0 0 0 4.3 1.38V7.3s-1.88.09-3.24-1.48Z" />
-    </svg>
-  )
-}
-
 export const SOCIAL_NETWORKS: { id: SocialNetworkId; label: string; icon: IconComponent }[] = [
-  { id: "instagram", label: "אינסטגרם", icon: Instagram },
-  { id: "tiktok", label: "TikTok", icon: TikTokIcon },
-  { id: "linkedin", label: "LinkedIn", icon: Linkedin },
-  { id: "youtube", label: "YouTube", icon: Youtube },
+  { id: "instagram", label: "אינסטגרם", icon: NETWORK_LOGO.instagram },
+  { id: "tiktok", label: "TikTok", icon: NETWORK_LOGO.tiktok },
+  { id: "linkedin", label: "LinkedIn", icon: NETWORK_LOGO.linkedin },
+  { id: "youtube", label: "YouTube", icon: NETWORK_LOGO.youtube },
 ]
 
 export type SocialConnectionState = "loading" | "connected" | "disconnected" | "expired"
@@ -345,7 +334,12 @@ export function SocialConnectionCard({
     >
       <div className="flex items-center gap-3">
         <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-bg-surface">
-          <Icon className="size-5 text-text-primary-default" aria-hidden />
+          {/* Brand colour when connected; drained and faded when not (same
+              "off" as the calendar marker). */}
+          <Icon
+            className={cn("size-5", (state === "disconnected" || comingSoon) && "opacity-45 grayscale")}
+            aria-hidden
+          />
         </span>
 
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">

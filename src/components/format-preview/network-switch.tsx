@@ -5,26 +5,19 @@
  * above the board.
  *
  * A post now goes to every connected network that fits its format (Hani,
- * 2026-11-05), so the preview has to answer two questions it never had to:
- * "how does it look THERE?" and "is it going there at all?". Two layouts
- * compete for that, gated by `?variant=a|b` on /calendar:
+ * 2026-11-05), so the preview answers two questions it never had to: "how
+ * does it look THERE?" and "is it going there at all?".
  *
- *   A — NetworkTabs: one network at a time. Tabs over the phone frame; the
- *       status box and an "עולה ל-X" checkbox follow the selected tab.
- *       Focus: look at one destination properly.
- *   B — NetworkList: every network at once. The status box becomes a list —
- *       one row per network with its own status and checkbox; picking a row
- *       swaps the frame. Overview: see all destinations, then dive in.
- *
- * Both reuse the same pieces below (glyph, status words, frames), so the
- * review compares placement and hierarchy, not two drifting copies.
+ * Hani picked direction A (2026-11-05): tabs over the phone frame, one network
+ * at a time. The status box and an "הפוסט עולה ל-X" checkbox follow the
+ * selected tab. (Direction B, one row per network, was dropped.)
  */
 
-import { AlertCircle, Check, MoreHorizontal, ThumbsUp, MessageSquare, Repeat2, Send } from "lucide-react"
+import { Check, MoreHorizontal, ThumbsUp, MessageSquare, Repeat2, Send } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { NETWORK_ICON } from "@/components/instagram-connect"
+import { NetworkLogo } from "@/components/network-logos"
 import { NETWORK_LABEL, toNetwork } from "@/lib/social/networks"
 import type { SocialPlatform } from "@/lib/supabase/types"
 import { cn } from "@/lib/utils"
@@ -36,8 +29,6 @@ import {
   type PreviewNetwork,
   type PublishStatus,
 } from "./shared"
-
-export type NetworkSwitchVariant = "a" | "b"
 
 // --- status words ------------------------------------------------------------
 
@@ -73,12 +64,6 @@ function statusShort(p: PublishStatus): { label: string; tone: Tone } {
   }
 }
 
-const TONE_TEXT: Record<Tone, string> = {
-  success: "text-green-20 dark:text-green-80",
-  danger: "text-button-destructive-default",
-  neutral: "text-text-neutral-default",
-}
-
 /**
  * A network's glyph with a corner mark — the shape Hani asked for above the
  * calendar ("the network's icon with a green checkmark"), reused on the tabs.
@@ -96,21 +81,19 @@ export function NetworkGlyph({
   mark: "ok" | "danger" | "off" | "none"
   size?: "sm" | "md"
 }) {
-  const Icon = NETWORK_ICON[platform]
   const box = size === "sm" ? "size-7" : "size-8"
+  // The mark sits on the circle's edge, not on the logo.
+  const badge = size === "sm" ? "-bottom-1 -end-1 size-3" : "-bottom-0.5 -end-0.5 size-3.5"
   return (
     <span className={cn("relative inline-flex shrink-0 items-center justify-center rounded-full", box, mark === "off" ? "bg-bg-surface" : "bg-white dark:bg-gray-10 border border-border-neutral-default")}>
-      <Icon
-        aria-hidden
-        className={cn(size === "sm" ? "size-3.5" : "size-4", mark === "off" ? "text-gray-70 dark:text-gray-40" : "text-text-primary-default")}
-      />
+      <NetworkLogo platform={platform} off={mark === "off"} className={size === "sm" ? "size-4" : "size-[18px]"} />
       {mark === "ok" && (
-        <span className="absolute -bottom-0.5 -end-0.5 flex size-3.5 items-center justify-center rounded-full bg-bg-surface-success-default ring-2 ring-white dark:ring-gray-10">
-          <Check className="size-2.5 text-white" strokeWidth={3} aria-hidden />
+        <span className={cn("absolute flex items-center justify-center rounded-full bg-bg-surface-success-default ring-2 ring-white dark:ring-gray-10", badge)}>
+          <Check className={cn("text-white", size === "sm" ? "size-2" : "size-2.5")} strokeWidth={3} aria-hidden />
         </span>
       )}
       {mark === "danger" && (
-        <span className="absolute -bottom-0.5 -end-0.5 flex size-3.5 items-center justify-center rounded-full bg-button-destructive-default ring-2 ring-white dark:ring-gray-10">
+        <span className={cn("absolute flex items-center justify-center rounded-full bg-button-destructive-default ring-2 ring-white dark:ring-gray-10", badge)}>
           <span className="text-[9px] font-bold leading-none text-white" aria-hidden>!</span>
         </span>
       )}
@@ -124,7 +107,7 @@ function markFor(n: PreviewNetwork): "ok" | "danger" | "off" {
   return tone === "danger" ? "danger" : tone === "success" ? "ok" : "off"
 }
 
-// --- variant A: tabs over the frame --------------------------------------------
+// --- tabs over the frame ---------------------------------------------------------
 
 export function NetworkTabs({
   networks,
@@ -190,104 +173,6 @@ export function IncludeNetworkRow({
       />
       הפוסט עולה {toNetwork(network.platform)}
     </label>
-  )
-}
-
-// --- variant B: every network, one row each ------------------------------------
-
-export function NetworkList({
-  networks,
-  selected,
-  onSelect,
-  onToggle,
-  readOnly,
-  onConnect,
-  onRetry,
-}: {
-  networks: PreviewNetwork[]
-  selected: SocialPlatform
-  onSelect: (p: SocialPlatform) => void
-  onToggle: (p: SocialPlatform, include: boolean) => void
-  readOnly?: boolean
-  onConnect: (p: SocialPlatform) => void
-  /** A failed network's "ניסיון חוזר" — re-sends the slot. */
-  onRetry?: () => void
-}) {
-  return (
-    <section className="flex flex-col gap-2" aria-labelledby="pv-networks">
-      <h4 id="pv-networks" className="text-small-bold text-text-primary-default">
-        לאן עולה
-      </h4>
-      <ul className="flex flex-col overflow-hidden rounded-xl border border-border-neutral-default">
-        {networks.map((n, i) => {
-          const s = networkStatusShort(n)
-          const active = n.platform === selected
-          const reason = n.included && n.publish.kind === "failed" ? n.publish.reason : null
-          const needsConnect = n.connection !== "connected"
-          return (
-            <li
-              key={n.platform}
-              className={cn(
-                "flex items-start gap-3 px-3 py-2.5",
-                i > 0 && "border-t border-border-neutral-default",
-                active && "bg-gray-95 dark:bg-gray-20",
-              )}
-            >
-              <Checkbox
-                aria-label={`הפוסט עולה ${toNetwork(n.platform)}`}
-                checked={n.included && !needsConnect}
-                disabled={readOnly || needsConnect}
-                onCheckedChange={(v) => onToggle(n.platform, v === true)}
-                className="mt-2"
-              />
-              <button
-                type="button"
-                onClick={() => onSelect(n.platform)}
-                aria-pressed={active}
-                aria-label={`תצוגה ${n.platform === "instagram" ? "באינסטגרם" : `ב-${NETWORK_LABEL[n.platform]}`}`}
-                className="flex min-w-0 flex-1 items-start gap-2.5 rounded-lg text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-              >
-                <NetworkGlyph platform={n.platform} mark={markFor(n)} size="sm" />
-                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="flex items-center gap-1.5">
-                    <span className="text-small-bold text-text-primary-default">{NETWORK_LABEL[n.platform]}</span>
-                    {n.handle && n.connection === "connected" && (
-                      <bdi className="truncate text-xs-body text-text-neutral-default">
-                        {n.platform === "instagram" ? `@${n.handle.replace(/^@/, "")}` : n.handle}
-                      </bdi>
-                    )}
-                  </span>
-                  <span className={cn("flex items-center gap-1 text-xs-body", TONE_TEXT[s.tone])}>
-                    {s.tone === "danger" && <AlertCircle className="size-3 shrink-0" aria-hidden />}
-                    {s.tone === "success" && <Check className="size-3 shrink-0" aria-hidden />}
-                    {s.label}
-                  </span>
-                  {reason && <span className="text-xs-body text-text-neutral-default">{reason}</span>}
-                </span>
-              </button>
-              {!needsConnect && reason && !readOnly && onRetry && (
-                <button
-                  type="button"
-                  onClick={onRetry}
-                  className="mt-1.5 shrink-0 rounded text-xs-body font-medium text-text-primary-default underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-                >
-                  ניסיון חוזר
-                </button>
-              )}
-              {needsConnect && !readOnly && (
-                <button
-                  type="button"
-                  onClick={() => onConnect(n.platform)}
-                  className="mt-1.5 shrink-0 rounded text-xs-body font-medium text-text-primary-default underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-                >
-                  {n.connection === "expired" ? "חיבור מחדש" : "חיבור"}
-                </button>
-              )}
-            </li>
-          )
-        })}
-      </ul>
-    </section>
   )
 }
 

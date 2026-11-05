@@ -26,14 +26,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { destinationForFormat } from "@/lib/social/media-spec"
 import { NETWORK_LABEL, toNetwork, youtubeTitleFromHook } from "@/lib/social/networks"
 import type { SocialPlatform } from "@/lib/supabase/types"
-import {
-  IncludeNetworkRow,
-  LinkedInFrame,
-  NetworkList,
-  NetworkTabs,
-  YouTubeFrame,
-  type NetworkSwitchVariant,
-} from "./network-switch"
+import { IncludeNetworkRow, LinkedInFrame, NetworkTabs, YouTubeFrame } from "./network-switch"
 import {
   CaptionCounter,
   CaptionTooLong,
@@ -54,11 +47,6 @@ export type FormatPreviewHandlers = {
   onUnschedule: () => void
   onOpenCanvas: () => void
   onStatusAction: (action: "connect" | "reconnect" | "retry" | "fix_media" | "open_post") => void
-  /**
-   * The network switch (`?variant=a|b` on /calendar). Unset: the preview is
-   * exactly the Instagram-only one that shipped.
-   */
-  networkSwitch?: NetworkSwitchVariant
   /** Take a network off this post, or put it back. */
   onNetworkToggle?: (platform: SocialPlatform, include: boolean) => void
   /** Open a network's connect modal. */
@@ -99,7 +87,6 @@ function DialogBody({
   onUnschedule,
   onOpenCanvas,
   onStatusAction,
-  networkSwitch,
   onNetworkToggle,
   onConnectNetwork,
 }: {
@@ -108,7 +95,8 @@ function DialogBody({
   onClose: () => void
 } & FormatPreviewHandlers) {
   const [slide, setSlide] = useState(0)
-  const networks = networkSwitch ? (data.networks ?? []) : []
+  // The network switch shows whenever the caller says where the post goes.
+  const networks = data.networks ?? []
   const [selectedNetwork, setSelectedNetwork] = useState<SocialPlatform>(
     // Open on the network that needs her, if one does; else the first live one.
     (networks.find((n) => n.included && n.publish.kind === "failed") ??
@@ -163,9 +151,7 @@ function DialogBody({
     <div className="grid max-h-[calc(100vh-3rem)] grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
       {/* Start side (right in RTL) — the post as Instagram will show it. */}
       <div className="flex flex-col items-center gap-3 overflow-y-auto bg-bg-surface px-6 py-6 scrollbar-subtle">
-        {networkSwitch === "a" && (
-          <NetworkTabs networks={networks} selected={selectedNetwork} onSelect={setSelectedNetwork} />
-        )}
+        <NetworkTabs networks={networks} selected={selectedNetwork} onSelect={setSelectedNetwork} />
         {current?.platform === "youtube" ? (
           <YouTubeFrame data={data} content={content} handle={current.handle} title={youtubeTitleFromHook(data.hook)} />
         ) : current?.platform === "linkedin" ? (
@@ -197,7 +183,7 @@ function DialogBody({
               {data.hook}
             </DialogTitle>
             <DialogDescription className="sr-only">
-              {networkSwitch
+              {networks.length > 0
                 ? "תצוגה מקדימה של הפורמט כפי שיעלה לכל רשת"
                 : "תצוגה מקדימה של הפורמט כפי שיעלה לאינסטגרם"}
             </DialogDescription>
@@ -210,19 +196,8 @@ function DialogBody({
         <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-5 scrollbar-subtle">
           {loading ? (
             <Skeleton className="h-14 w-full rounded-xl" />
-          ) : networkSwitch === "b" && networks.length > 0 ? (
-            // B — every network, one row each; the row picks the frame.
-            <NetworkList
-              networks={networks}
-              selected={selectedNetwork}
-              onSelect={setSelectedNetwork}
-              onToggle={(p, include) => onNetworkToggle?.(p, include)}
-              readOnly={isPublished}
-              onConnect={(p) => onConnectNetwork?.(p)}
-              onRetry={() => onStatusAction("retry")}
-            />
-          ) : networkSwitch === "a" && current ? (
-            // A — the selected tab's status, and whether it goes there.
+          ) : current ? (
+            // The selected tab's status, and whether the post goes there.
             <div className="flex flex-col gap-2.5">
               {current.included || current.connection !== "connected" ? (
                 <PublishStatusSlot

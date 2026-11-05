@@ -63,11 +63,10 @@ import {
 import { NoSettingsDialog, PreviewBar, ScheduleAllButton } from "@/components/schedule-all"
 import { CorePostSheet, type CorePostSheetData } from "@/components/core-post-sheet"
 import { FormatThumbnail } from "@/components/format-thumbnail"
-import { InstagramConnectDialogHost, InstagramConnectionControl } from "@/components/instagram-connect"
+import { InstagramConnectDialogHost } from "@/components/instagram-connect"
 import {
   ConnectedNetworksIndicator,
   type ConnectedNetwork,
-  type NetworkSwitchVariant,
 } from "@/components/format-preview/network-switch"
 import {
   isNetworkReviewState,
@@ -604,22 +603,16 @@ export default function CalendarPage() {
   const [networkDialog, setNetworkDialog] = useState<SocialPlatform | null>(null)
   const openNetworkDialog = (p: SocialPlatform) => (p === "instagram" ? setIgDialogOpen(true) : setNetworkDialog(p))
 
-  // --- Network switch review (REVIEW ONLY — delete with the pick) ----------
-  // `?variant=a|b` turns on the preview's network switch and the connected-
-  // networks marker; `&state=…` opens the preview straight on a seeded post.
-  // Read after mount (no Suspense boundary needed). With no param the page is
-  // exactly production.
-  const [networkVariant, setNetworkVariant] = useState<NetworkSwitchVariant | null>(null)
+  // --- Network review states (REVIEW ONLY — delete before shipping) --------
+  // `?state=one|three|failed|optout|mixed` opens the preview straight on a
+  // seeded post and seeds the connected-networks marker. Read after mount (no
+  // Suspense boundary needed). Without it the page is the real board.
   const [reviewState, setReviewState] = useState<NetworkReviewState | null>(null)
   const [reviewNetworks, setReviewNetworks] = useState<PreviewNetwork[] | null>(null)
   // Closing the seeded preview keeps the seeded marker above the board.
   const [reviewOpen, setReviewOpen] = useState(true)
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const v = params.get("variant")
-    if (v !== "a" && v !== "b") return
-    setNetworkVariant(v)
-    const st = params.get("state")
+    const st = new URLSearchParams(window.location.search).get("state")
     if (isNetworkReviewState(st)) {
       setReviewState(st)
       setReviewNetworks(reviewPreviewData(st).networks ?? null)
@@ -635,8 +628,8 @@ export default function CalendarPage() {
   // whose time passed, edits after queuing, a lapsed connection. Not on a
   // review link: those read nothing and write nothing.
   useEffect(() => {
-    const review = new URLSearchParams(window.location.search).get("variant")
-    if (schedulingOn && review !== "a" && review !== "b") void refreshPublishStatus()
+    const review = isNetworkReviewState(new URLSearchParams(window.location.search).get("state"))
+    if (schedulingOn && !review) void refreshPublishStatus()
   }, [schedulingOn])
 
   /**
@@ -1266,7 +1259,7 @@ export default function CalendarPage() {
           : "",
         isPast: previewPast,
         publish: previewPublish(previewRow),
-        networks: networkVariant ? previewNetworks(previewRow) : undefined,
+        networks: previewNetworks(previewRow),
       }
     : null
   const previewContentState: PreviewContentState =
@@ -1294,7 +1287,7 @@ export default function CalendarPage() {
           }
           schedulePost(previewRow.corePostId, previewRow.format, date, time, {
             hook: previewData?.hook,
-            excludeNetworks: networkVariant && !previewRow.publish?.targets?.length ? pendingExclusions : undefined,
+            excludeNetworks: !previewRow.publish?.targets?.length ? pendingExclusions : undefined,
           })
           reloadBoard()
           toast.success(
@@ -1347,7 +1340,7 @@ export default function CalendarPage() {
           } else {
             void retryPublish(previewRow.corePostId, previewRow.format, "retry").then((next) => {
               reloadBoard()
-              if (next?.status === "queued") toast.success(networkVariant ? "הפוסט תוזמן" : "הפוסט תוזמן לאינסטגרם")
+              if (next?.status === "queued") toast.success("הפוסט תוזמן")
               else if (next?.status === "failed" && next.message) toast.error(next.message)
             })
           }
@@ -1516,9 +1509,9 @@ export default function CalendarPage() {
                 className="w-[48px] h-[48px]"
               />
               <h2 className="text-text-primary-default">תזמון</h2>
-              {networkVariant ? (
-                // Review: one marker for every network (Hani, 2026-11-05) in
-                // place of the Instagram-only pill. Same modals behind it.
+              {(schedulingOn || reviewState) && (
+                // One marker for every network (Hani, 2026-11-05) in place of
+                // the Instagram-only pill. Same modals behind it.
                 <>
                   <ConnectedNetworksIndicator
                     className="ms-auto"
@@ -1532,14 +1525,6 @@ export default function CalendarPage() {
                     platform={networkDialog ?? "youtube"}
                   />
                 </>
-              ) : (
-                schedulingOn && (
-                  <InstagramConnectionControl
-                    className="ms-auto"
-                    open={igDialogOpen}
-                    onOpenChange={setIgDialogOpen}
-                  />
-                )
               )}
             </div>
 
@@ -1848,7 +1833,6 @@ export default function CalendarPage() {
           }}
           data={reviewData}
           content="ready"
-          networkSwitch={networkVariant ?? undefined}
           {...reviewHandlers}
         />
       ) : (
@@ -1864,8 +1848,7 @@ export default function CalendarPage() {
             }}
             data={previewData}
             content={previewContentState}
-            networkSwitch={networkVariant ?? undefined}
-            {...previewHandlers}
+              {...previewHandlers}
           />
         )
       )}

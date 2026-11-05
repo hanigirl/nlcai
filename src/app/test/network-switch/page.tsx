@@ -1,20 +1,19 @@
 "use client"
 
 /**
- * State preview for the calendar's network switch — REVIEW ONLY.
+ * State preview for the calendar's network switch (Hani's pick, direction A:
+ * tabs over the phone frame) and the connected-networks marker.
  *
  * Route: /test/network-switch — /calendar needs a login, so this page renders
  * the same preview modal and the same connected-networks marker from sample
  * data. No fetches, no DB writes, no provider calls; toggles change local
  * state only.
  *
- *   ?variant=a|b             — which network switch (A: tabs over the frame,
- *                              B: one row per network). Default a.
- *   &state=one               — story, Instagram only
- *   &state=three             — reel to Instagram + YouTube + LinkedIn, all scheduled
- *   &state=failed            — LinkedIn refused the video, the others scheduled
- *   &state=optout            — YouTube taken off this post
- *   &state=mixed             — LinkedIn not connected (marker + preview)
+ *   ?state=one               — story, Instagram only
+ *   ?state=three             — reel to Instagram + YouTube + LinkedIn, all scheduled
+ *   ?state=failed            — LinkedIn refused the video, the others scheduled
+ *   ?state=optout            — YouTube taken off this post
+ *   ?state=mixed             — LinkedIn not connected (marker + preview)
  *   (no state)               — the marker in every connection mix, and links
  */
 
@@ -82,7 +81,7 @@ function Header({ networks }: { networks: ConnectedNetwork[] }) {
   )
 }
 
-function StateView({ state, variant }: { state: NetworkReviewState; variant: "a" | "b" }) {
+function StateView({ state }: { state: NetworkReviewState }) {
   const [networks, setNetworks] = useState<PreviewNetwork[]>(reviewPreviewData(state).networks ?? [])
   const [open, setOpen] = useState(true)
   const noop = () => toast("תצוגת סקירה — שום דבר לא נשמר")
@@ -99,7 +98,6 @@ function StateView({ state, variant }: { state: NetworkReviewState; variant: "a"
         onOpenChange={setOpen}
         data={{ ...reviewPreviewData(state), networks }}
         content="ready"
-        networkSwitch={variant}
         onReschedule={noop}
         onCaptionSave={noop}
         onUnschedule={noop}
@@ -122,9 +120,8 @@ function StateView({ state, variant }: { state: NetworkReviewState; variant: "a"
 
 function Page() {
   const params = useSearchParams()
-  const variant = params.get("variant") === "b" ? "b" : "a"
   const state = params.get("state")
-  if (isNetworkReviewState(state)) return <StateView key={`${state}-${variant}`} state={state} variant={variant} />
+  if (isNetworkReviewState(state)) return <StateView key={state} state={state} />
 
   return (
     <div dir="rtl" className="mx-auto flex w-full max-w-[1200px] flex-col gap-10 p-8">
@@ -139,20 +136,15 @@ function Page() {
       </section>
       <section className="flex flex-col gap-3">
         <h3 className="text-p-bold text-text-primary-default">התצוגה המקדימה</h3>
-        {(["a", "b"] as const).map((v) => (
-          <div key={v} className="flex flex-col gap-1">
-            <span className="text-small-bold text-text-primary-default">אופציה {v.toUpperCase()}</span>
-            <ul className="flex flex-col gap-1">
-              {NETWORK_REVIEW_STATES.map((s) => (
-                <li key={s.id}>
-                  <Link className="text-small text-text-primary-default underline" href={`/test/network-switch?variant=${v}&state=${s.id}`}>
-                    {s.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
+        <ul className="flex flex-col gap-1">
+          {NETWORK_REVIEW_STATES.map((s) => (
+            <li key={s.id}>
+              <Link className="text-small text-text-primary-default underline" href={`/test/network-switch?state=${s.id}`}>
+                {s.label}
+              </Link>
+            </li>
+          ))}
+        </ul>
       </section>
     </div>
   )
