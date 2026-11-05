@@ -339,6 +339,20 @@ function ProjectPageInner() {
   useAiEditRequests((req) => {
     if (req.postId !== savedPostId) return
     setAiChatFormat(req.format)
+    // "עריכה עם AI" on a style tile (Hani, 2026-11-05): before there is media
+    // it asks first and generates in that style; once the format has media
+    // it is the plain edit, as on the result card.
+    const hasMedia = {
+      image_post: !!imagePostUrl,
+      story: (storyImages?.length ?? 0) > 0 || !!storyVideoUrl,
+      b_roll: !!bRollUrl,
+      carousel: (carouselImages?.length ?? 0) > 0,
+    }[req.format]
+    if (req.opening.kind === "generate" && req.opening.fromEdit && hasMedia) {
+      setAiChatOpening(null)
+      setSelectedFormatCard(null)
+      return
+    }
     setAiChatOpening(req.opening)
     // A generate button asks first, in the AI panel (Hani, 2026-11-05): the
     // media panel steps aside so brief → generate → refine is one place.

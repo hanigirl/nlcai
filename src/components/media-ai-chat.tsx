@@ -36,6 +36,8 @@ import {
   ReferenceTray,
   useReferenceImages,
 } from "@/components/ai-edit-reference"
+import { LinkReferenceRows, useLinkReferences } from "@/components/ai-edit-link-reference"
+import type { MediaStyle } from "@/lib/visual-language/types"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
@@ -83,6 +85,8 @@ interface GenStep {
   phase: "brief" | "running"
   /** Her last brief — put back in the composer if the generation failed. */
   lastBrief: string
+  /** The tile it generates in — "blank" when absent (see AiEditGenerateOpening). */
+  style?: MediaStyle
 }
 type MediaChat = AiChatSession<ChatMessage, MediaChatExtra>
 
@@ -164,8 +168,33 @@ const GEN_COPY: Record<AiEditFormat, { title: string; busy: string; done: string
   },
 }
 
-/** The one question "חדש לגמרי" asks before generating. */
-const GEN_ASK = "איך תרצו להתחיל?\nספרו לי מה אתם רואים בראש: צבעים, אווירה, מה יופיע ומה ממש לא. מתחילים מדף חלק, בלי השפה הוויזואלית."
+/**
+ * The one question the panel asks before generating. "חדש לגמרי" needs her
+ * words. "עריכה עם AI" on any other tile before there is media (Hani,
+ * 2026-11-05: "אני אייצר לך מדיה בשפה ויזואלית שלך, יש דברים שאני צריך לדעת
+ * לפני?") — her words are an addition, and she can skip them (GEN_SKIP).
+ */
+const GEN_NOUN: Record<AiEditFormat, string> = {
+  image_post: "את התמונה",
+  story: "את הסטורי",
+  b_roll: "את הבי-רול",
+  carousel: "את הקרוסלה",
+}
+function genAsk(format: AiEditFormat, style: MediaStyle = "blank"): string {
+  if (style === "blank")
+    return "איך תרצו להתחיל?\nספרו לי מה אתם רואים בראש: צבעים, אווירה, מה יופיע ומה ממש לא. מתחילים מדף חלק, בלי השפה הוויזואלית."
+  const lang =
+    style === "brand"
+      ? "בשפה הוויזואלית שלכם"
+      : style === "ai-dark"
+        ? "בשפת הנישה שלכם, בגרסה הכהה"
+        : style === "ai-light"
+          ? "בשפת הנישה שלכם, בגרסה הבהירה"
+          : "בשפת הנישה שלכם"
+  return `אייצר לכם ${GEN_NOUN[format]} ${lang}.\nיש משהו שכדאי שאדע לפני? אפשר לספר מה חשוב לכם הפעם, לצרף תמונת רפרנס או להדביק קישור (פוסט באינסטגרם, אתר).`
+}
+/** Her way out of the conversation — generate in the picked style as is. */
+const GEN_SKIP = "ליצור בלי תוספות"
 const GEN_STALE = "הבקשה הזאת כבר לא פעילה. לחצו שוב על כפתור היצירה בפאנל המדיה."
 
 /**
@@ -302,11 +331,15 @@ export function MediaAiChat({
     if (cur?.extra.gen?.id === opening.id || cur?.busy) return
     generatorById.set(opening.id, opening.run)
     updateChat(chatKey, fresh, (s): MediaChat => {
-      const ask: ChatMessage = { role: "assistant", content: GEN_ASK }
+      const ask: ChatMessage = { role: "assistant", content: genAsk(format, opening.style) }
       const next = s.messages.some((m) => m.role === "user") ? [...s.messages, ask] : [ask]
-      return { ...s, messages: next, extra: { ...s.extra, gen: { id: opening.id, phase: "brief", lastBrief: "" } } }
+      return {
+        ...s,
+        messages: next,
+        extra: { ...s.extra, gen: { id: opening.id, phase: "brief", lastBrief: "", style: opening.style } },
+      }
     })
-  }, [chatKey, opening, fresh])
+  }, [chatKey, opening, fresh, format])
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
   // "Watching" = a panel shows this conversation when the reply lands — the
@@ -316,6 +349,8 @@ export function MediaAiChat({
   // Screenshots waiting to go with the next message; another conversation starts clean.
   const refs = useReferenceImages()
   const { clear: clearRefs, restore: restoreRefs } = refs
+  // A link in her words becomes a reference too — while the panel asks how to start.
+  const links = useLinkReferences(session.input, refs, session.extra.gen?.phase === "brief")
   useEffect(() => {
     clearRefs()
   }, [chatKey, clearRefs])
@@ -346,9 +381,10 @@ export function MediaAiChat({
 
   /**
    * Run the generation from her brief (+ any references she attached) — a
-   * blank page, no visual language.
+   * blank page, or on top of the style she picked. `shown`:
+   * what her bubble shows when it isn't the brief itself (GEN_SKIP).
    */
-  const generate = async (brief: string, references: string[] = []) => {
+  const generate = async (brief: string, references: string[] = [], shown?: string) => {
     const key = chatKey
     const init = fresh
     const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, init, fn)
@@ -356,7 +392,7 @@ export function MediaAiChat({
     const g = cur.extra.gen
     if (cur.busy || !g || g.phase === "running") return
     const run = generatorById.get(g.id)
-    const said: ChatMessage = { role: "user", content: brief, ...(references.length ? { images: references } : {}) }
+    const said: ChatMessage = { role: "user", content: shown ?? brief, ...(references.length ? { images: references } : {}) }
     if (!run) {
       // A reload dropped the button's settings — the media panel starts it again.
       patchKey((s) => ({
@@ -430,8 +466,9 @@ export function MediaAiChat({
       const attached = refs.refs
       const typed = (preset ?? cur.input).trim()
       const brief = typed || (attached.length ? REFERENCE_ONLY_INSTRUCTION : "")
-      if (!brief) return
+      if (!brief || links.busy) return
       refs.clear()
+      links.reset()
       void generate(brief, attached)
       return
     }
@@ -608,6 +645,8 @@ export function MediaAiChat({
 
   const lastEdit = lastLandedEdit(messages)
   const title = gen ? GEN_COPY[format].title : copy.title
+  /** A style picked (not "חדש לגמרי"): she may skip the words. */
+  const canSkip = gen?.phase === "brief" && !!gen.style && gen.style !== "blank"
   const busyText = progress || (gen?.phase === "running" ? GEN_COPY[format].busy : copy.busy)
 
   /** Her answer in a memory note (undo, across the board…) — kept with the thread. */
@@ -691,6 +730,20 @@ export function MediaAiChat({
                 ))}
               </div>
             )}
+            {/* Generate in the picked style as is — under the question. */}
+            {canSkip && i === messages.length - 1 && !loading && (
+              <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
+                <Chip
+                  onClick={() => {
+                    refs.clear()
+                    links.reset()
+                    void generate("", [], GEN_SKIP)
+                  }}
+                >
+                  {GEN_SKIP}
+                </Chip>
+              </div>
+            )}
             {m.done && (
               <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
                 <Check className="size-3.5 text-green-success-50" />
@@ -731,6 +784,7 @@ export function MediaAiChat({
             onOutcome={(next) => setMemory(lastEdit.index, next)}
           />
         )}
+        <LinkReferenceRows l={links} />
         <ReferenceTray r={refs} />
         <div className="flex items-end gap-2 rounded-[12px] border border-border-neutral-default bg-white dark:bg-gray-10 p-2 focus-within:border-yellow-50 transition-colors">
           <Textarea
@@ -745,7 +799,9 @@ export function MediaAiChat({
             }}
             placeholder={
               gen?.phase === "brief"
-                ? "למשל: רקע לבן ונקי, הרבה אוויר, בלי איורים"
+                ? canSkip
+                  ? "למשל: הפעם יותר אוויר, או הדביקו קישור לפוסט שאהבתם"
+                  : "למשל: רקע לבן ונקי, הרבה אוויר, בלי איורים"
                 : "מה תרצו לשנות?"
             }
             ref={inputRef}
@@ -757,7 +813,7 @@ export function MediaAiChat({
           <Button
             size="icon-sm"
             onClick={() => void send()}
-            disabled={(!input.trim() && !refs.refs.length) || loading}
+            disabled={(!input.trim() && !refs.refs.length) || loading || links.busy}
             aria-label={gen && gen.phase !== "running" ? "יצירה" : "שליחה"}
             className="shrink-0 rounded-full"
           >

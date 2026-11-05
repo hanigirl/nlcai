@@ -70,6 +70,8 @@ import type { SlideData } from "@/lib/carousel-templates"
 import { flushPendingSaves } from "@/lib/pending-saves"
 import { BLANK_TEMPLATE, BLANK_TEMPLATE_ID, BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import { openingId, requestAiEdit } from "@/lib/ai-edit-intent"
+import { AiHoverEditButton } from "@/components/ai-hover-edit"
+import type { MediaStyle } from "@/lib/visual-language/types"
 import type { AiEditFormat } from "@/components/media-ai-chat"
 import type { MediaGenResult } from "@/lib/media-brief"
 import { useBrandCarouselTemplate } from "@/hooks/use-brand-carousel-template"
@@ -228,8 +230,16 @@ function openGenerateBrief(
   postId: string,
   format: AiEditFormat,
   run: (brief: string, references: string[]) => Promise<MediaGenResult>,
+  /**
+   * The tile it generates in. "עריכה עם AI" on any tile (Hani, 2026-11-05)
+   * asks first too; the panel then generates in that style, with her words
+   * and references on top.
+   */
+  style: MediaStyle = "blank",
+  /** Came from "עריכה עם AI" — with media already there it is a plain edit. */
+  fromEdit = false,
 ) {
-  requestAiEdit({ postId, format, opening: { id: openingId(), kind: "generate", run } })
+  requestAiEdit({ postId, format, opening: { id: openingId(), kind: "generate", run, style, fromEdit } })
 }
 
 function useReportBusy(
@@ -1690,6 +1700,11 @@ function CarouselFlow({
     !!images?.length && !savedTemplateId && (driveLinks?.length ?? 0) > 0
 
   const [pendingGenerate, setPendingGenerate] = useState(false)
+  // "עריכה עם AI" on the picked tile (Hani, 2026-11-05): only AI templates
+  // (and "חדש לגמרי") take her words — the code-drawn ones can't.
+  const canTalkFirst = isAiTemplate || selectedTemplate === BLANK_TEMPLATE_ID
+  // Carried across the "replace your own slides?" confirm to startGenerate.
+  const askFirstRef = useRef(false)
 
   /**
    * Generate entry point. Asks first when there is an imported carousel to
@@ -1701,7 +1716,8 @@ function CarouselFlow({
    * first also means an AI template does not spend her OpenAI credits on a
    * carousel she is about to be told will overwrite her own slides.
    */
-  const requestGenerate = () => {
+  const requestGenerate = (askFirst = false) => {
+    askFirstRef.current = askFirst
     if (carouselIsHerOwn) {
       setPendingGenerate(true)
       return
@@ -1715,12 +1731,27 @@ function CarouselFlow({
    * her language, the AI looks, the code-drawn ones — generates straight away.
    */
   const startGenerate = () => {
-    if (selectedTemplate !== BLANK_TEMPLATE_ID || !postId) {
+    const blank = selectedTemplate === BLANK_TEMPLATE_ID
+    if ((!blank && !askFirstRef.current) || !postId) {
       void handleGenerate()
       return
     }
-    openGenerateBrief(postId, "carousel", (brief, references) =>
-      handleGenerate({ brief, references, fromPanel: true }),
+    // "עריכה עם AI" on an AI template asks first too (Hani, 2026-11-05). The
+    // carousel's style is the template itself, so the panel only needs to
+    // know which language it speaks for its question.
+    const style: MediaStyle = blank
+      ? "blank"
+      : selectedTemplate === BRAND_TEMPLATE_ID
+        ? "brand"
+        : selectedTemplate === "ai-dark" || selectedTemplate === "ai-light"
+          ? selectedTemplate
+          : "niche"
+    openGenerateBrief(
+      postId,
+      "carousel",
+      (brief, references) => handleGenerate({ brief, references, fromPanel: true }),
+      style,
+      askFirstRef.current,
     )
   }
 
@@ -2166,7 +2197,7 @@ function CarouselFlow({
         <div
           role="radiogroup"
           aria-label="בחירת טמפלט לקרוסלה"
-          className="grid grid-cols-3 gap-2"
+          className="grid grid-cols-3 gap-2 group/ai"
         >
           {templates.map((t) => {
             const isSelected = selectedTemplate === t.id
@@ -2184,8 +2215,11 @@ function CarouselFlow({
             const isPostCarousel =
               !!images && images.length > 0 && generatedByTemplate[t.id] === images
             return (
+              // The picked tile carries "עריכה עם AI" (Hani, 2026-11-05) —
+              // the same sparkle as on finished media: before there is a
+              // carousel it asks first, then generates in this template.
+              <div key={t.id} className="relative">
               <button
-                key={t.id}
                 type="button"
                 role="radio"
                 aria-checked={isSelected}
@@ -2227,6 +2261,10 @@ function CarouselFlow({
                   {t.name}
                 </span>
               </button>
+              {isSelected && canTalkFirst && postId && (
+                <AiHoverEditButton target="media" className="bottom-7" onClick={() => requestGenerate(true)} />
+              )}
+              </div>
             )
           })}
         </div>
@@ -2241,7 +2279,7 @@ function CarouselFlow({
         <MediaCreditsCard />
       ) : (
         <Button
-          onClick={requestGenerate}
+          onClick={() => requestGenerate()}
           disabled={generating || !carouselText.trim()}
           className="w-full gap-2"
         >
@@ -3189,16 +3227,22 @@ function MediaUploadFlow({
    * in parallel. The server reads the image_post text straight from the DB
    * (server-authoritative), so no payload is needed beyond postId.
    */
-  const handleAiGenerate = () => {
+  /** `askFirst`: "עריכה עם AI" on the picked tile — ask first, then generate in it. */
+  const handleAiGenerate = (askFirst = false) => {
     if (!postId) {
       toast.error("שמרו קודם את הפוסט כדי לייצר תמונה", { duration: 4000 })
       return
     }
     const style = mediaStyle.style
-    // "חדש לגמרי" asks how to start first; every other style generates now.
-    if (style === "blank") {
-      openGenerateBrief(postId, "image_post", (brief, references) =>
-        startImageGeneration(postId, "blank", { brief, references, quiet: true }),
+    // "חדש לגמרי" asks how to start first; so does any style she chose to
+    // "עריכה עם AI" on the picked tile. Otherwise the style generates now.
+    if (style === "blank" || askFirst) {
+      openGenerateBrief(
+        postId,
+        "image_post",
+        (brief, references) => startImageGeneration(postId, style, { brief, references, quiet: true }),
+        style,
+        askFirst,
       )
       return
     }
@@ -3206,15 +3250,20 @@ function MediaUploadFlow({
   }
 
   /** Fire an AI story generation (produces a 1-3 frame set). */
-  const handleStoryGenerate = () => {
+  /** `askFirst`: "עריכה עם AI" on the picked tile — ask first, then generate in it. */
+  const handleStoryGenerate = (askFirst = false) => {
     if (!postId) {
       toast.error("שמרו קודם את הפוסט כדי לייצר סטורי", { duration: 4000 })
       return
     }
     const style = mediaStyle.style
-    if (style === "blank") {
-      openGenerateBrief(postId, "story", (brief, references) =>
-        startStoryGeneration(postId, "blank", { brief, references, quiet: true }),
+    if (style === "blank" || askFirst) {
+      openGenerateBrief(
+        postId,
+        "story",
+        (brief, references) => startStoryGeneration(postId, style, { brief, references, quiet: true }),
+        style,
+        askFirst,
       )
       return
     }
@@ -3492,7 +3541,8 @@ function MediaUploadFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [format, burned])
 
-  const handleBRollGenerate = () => {
+  /** `askFirst`: "עריכה עם AI" on the picked tile — ask first, then generate in it. */
+  const handleBRollGenerate = (askFirst = false) => {
     if (!postId) {
       toast.error("שמרו קודם את הפוסט", { duration: 4000 })
       return
@@ -3500,9 +3550,14 @@ function MediaUploadFlow({
     // Bumped per press so a retry varies the palette instead of returning a
     // near-identical picture.
     const style = mediaStyle.style
-    if (style === "blank") {
-      openGenerateBrief(postId, "b_roll", (brief, references) =>
-        startBRollGeneration(postId, bRollAttemptRef.current++, "blank", { brief, references, quiet: true }),
+    if (style === "blank" || askFirst) {
+      openGenerateBrief(
+        postId,
+        "b_roll",
+        (brief, references) =>
+          startBRollGeneration(postId, bRollAttemptRef.current++, style, { brief, references, quiet: true }),
+        style,
+        askFirst,
       )
       return
     }
@@ -4032,10 +4087,11 @@ function MediaUploadFlow({
                 brandTemplate={mediaStyle.brandTemplate}
                 brandLoading={mediaStyle.brandLoading}
                 aspect="4/5"
+                onAiEdit={postId ? () => handleAiGenerate(true) : undefined}
               />
               <Button
                 variant="default"
-                onClick={handleAiGenerate}
+                onClick={() => handleAiGenerate()}
                 disabled={!postId || mediaStyle.brandLoading}
                 className="w-full gap-1.5"
               >
@@ -4259,10 +4315,11 @@ function MediaUploadFlow({
                 onChange={mediaStyle.setStyle}
                 brandTemplate={mediaStyle.brandTemplate}
                 brandLoading={mediaStyle.brandLoading}
+                onAiEdit={postId ? () => handleStoryGenerate(true) : undefined}
               />
               <Button
                 variant="default"
-                onClick={handleStoryGenerate}
+                onClick={() => handleStoryGenerate()}
                 disabled={!postId || mediaStyle.brandLoading}
                 className="w-full gap-1.5"
               >
@@ -4456,10 +4513,11 @@ function MediaUploadFlow({
                   onChange={mediaStyle.setStyle}
                   brandTemplate={mediaStyle.brandTemplate}
                   brandLoading={mediaStyle.brandLoading}
+                  onAiEdit={postId && !bRollGenerating ? () => handleBRollGenerate(true) : undefined}
                 />
                 <Button
                   variant="default"
-                  onClick={handleBRollGenerate}
+                  onClick={() => handleBRollGenerate()}
                   disabled={!postId || bRollGenerating || mediaStyle.brandLoading}
                   className="w-full gap-1.5"
                 >
