@@ -8,6 +8,7 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { BLANK_TEMPLATE_ID, BRAND_TEMPLATE_ID, getTemplate } from "@/lib/carousel-templates"
 import type { SlideData } from "@/lib/carousel-templates"
 import { getAuthUser } from "@/lib/auth-user"
+import { replaceImageAssetSet } from "@/lib/media-asset-set"
 import { assertFeedSafeAspect } from "@/lib/social/media-spec"
 import { generateImage, KEEP_INSIDE_FRAME_RULE } from "@/lib/openai-image"
 import {
@@ -185,6 +186,52 @@ export async function POST(req: NextRequest) {
     const total = slides.length
     const images: string[] = new Array(total)
 
+    /**
+     * Saved to the post HERE, and the stored URLs sent back. Slides in her
+     * current language (fine film grain) weigh 1–1.6MB each; six of them as
+     * base64 are ~8MB, past the 4.5MB a request may carry on our host — so
+     * the page's save of a fresh set never arrived, the card showed slides
+     * the post didn't have, and the AI edit then found "no saved images"
+     * (Hani, 2026-11-05). Generating is choosing, so the set is the post's.
+     */
+    async function respond(set: string[]) {
+      if (!postId) return NextResponse.json({ images: set })
+      const { data: post } = await supabase
+        .from("core_posts")
+        .select("id")
+        .eq("id", postId)
+        .eq("user_id", user!.id)
+        .maybeSingle()
+      if (!post) return NextResponse.json({ images: set })
+      const saved = await replaceImageAssetSet(supabase, user!.id, postId, "carousel", set, {
+        source: "ai",
+        ...(templateId ? { templateId } : {}),
+      })
+      if (!saved.ok) {
+        console.error("[carousel/generate-ai] save to post", saved.error)
+        return NextResponse.json(
+          { error: "save_failed", message: "הקרוסלה נוצרה אבל לא נשמרה בפוסט. נסו ליצור שוב." },
+          { status: 500 },
+        )
+      }
+      const { data: variant } = await supabase
+        .from("format_variants")
+        .select("id")
+        .eq("core_post_id", postId)
+        .eq("format", "carousel")
+        .maybeSingle()
+      const { data: rows } = variant
+        ? await supabase
+            .from("media_assets")
+            .select("url")
+            .eq("format_variant_id", (variant as { id: string }).id)
+            .eq("asset_type", "image")
+            .order("created_at", { ascending: true })
+        : { data: [] }
+      const urls = ((rows ?? []) as { url: string | null }[]).map((r) => r.url).filter((u): u is string => !!u)
+      return NextResponse.json({ images: urls.length === set.length ? urls : set, saved: urls.length === set.length })
+    }
+
     // The carousel's topic anchors every slide's imagery to the content.
     const topic = slides[0]?.title ?? ""
 
@@ -281,7 +328,7 @@ export async function POST(req: NextRequest) {
             slideHashes: images.map((b64) => slideHash(Buffer.from(b64, "base64"))),
           }).catch((err) => console.error("[carousel/generate-ai] save composition", err))
         }
-        return NextResponse.json({ images })
+        return respond(images)
       } catch (err) {
         console.error("[carousel/generate-ai] layout engine failed", err)
         if (Date.now() - started > 90_000) throw err
@@ -310,7 +357,7 @@ export async function POST(req: NextRequest) {
       Array.from({ length: Math.min(CONCURRENCY, total) }, () => worker()),
     )
 
-    return NextResponse.json({ images })
+    return respond(images)
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("[carousel/generate-ai]", msg)

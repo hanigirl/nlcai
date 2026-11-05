@@ -22,7 +22,14 @@ import {
 } from "@/lib/carousel-composition"
 import { isOwnMediaUrl } from "@/lib/own-media"
 import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
-import { planImageEdit as plan, type EditableFormat } from "@/lib/ai-edit-plan"
+import {
+  changedArea,
+  editPrompt,
+  IMAGE_MISSING,
+  PLACE_FAILED,
+  planImageEdit as plan,
+  type EditableFormat,
+} from "@/lib/ai-edit-plan"
 import { currentCarouselBrief } from "@/lib/carousel-brief"
 import { wantsOwnLanguage } from "@/lib/visual-language/current-brief"
 import type { ModelImage } from "@/lib/visual-language/image-input"
@@ -31,32 +38,6 @@ import type { ModelImage } from "@/lib/visual-language/image-input"
  * The edit ran and the slides came out exactly as they were: nothing is
  * saved, and the chat says so instead of "עדכנתי" (Hani, 2026-11-05).
  */
-const IMAGE_MISSING = {
-  error: "image_missing",
-  message:
-    "לא קיבלתי את התמונה שביקשתם לשים, אז לא שיניתי כלום ולא המצאתי תמונה אחרת. צרפו אותה כאן בהודעה (כפתור התמונה ליד השליחה) ונסו שוב.",
-}
-const PLACE_FAILED = {
-  error: "place_failed",
-  message: "לא הצלחתי לשים את התמונה ששלחתם הפעם, אז השארתי את המדיה כמו שהייתה. נסו שוב, ואפשר לכתוב איפה בדיוק לשים אותה.",
-}
-
-/**
- * Share of the image that visibly changed (0..1): both scaled to a coarse
- * grid, a cell counts when its brightness moved by more than ~10%. An
- * editor that "placed" nothing comes back under 0.5%; a placed picture is
- * well over 10% (measured on her image post, 2026-11-05).
- */
-async function changedArea(beforeUrl: string, afterBase64: string): Promise<number> {
-  const grid = async (input: Buffer) =>
-    sharp(input).greyscale().resize(54, 68, { fit: "fill" }).raw().toBuffer()
-  const before = await loadImageForModels(beforeUrl)
-  const [a, b] = await Promise.all([grid(Buffer.from(before.base64, "base64")), grid(Buffer.from(afterBase64, "base64"))])
-  let moved = 0
-  for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 24) moved++
-  return moved / a.length
-}
-
 const UNCHANGED_MESSAGE =
   "הבקשה לא שינתה כלום בשקופיות, אז השארתי אותן כמו שהיו. נסו לכתוב מה בדיוק לשנות, למשל צבע הרקע, מיקום הכותרת או גודל התמונה."
 
@@ -99,31 +80,6 @@ function toCanvas(base64: string, [w, h]: [number, number]): string {
     `<image href="data:image/png;base64,${base64}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice"/>` +
     `</svg>`
   return Buffer.from(new Resvg(svg).render().asPng()).toString("base64")
-}
-
-function editPrompt(edit: string, placing: number, restyle = false, brandRefs = 0): string {
-  if (restyle) {
-    return [
-      "Restyle this design into the creator's visual language. Apply the following:",
-      edit,
-      ...(brandRefs
-        ? [
-            "",
-            `The other input image${brandRefs > 1 ? "s are" : " is"} the creator's brand references (her graphic elements and finished posts in her style): match their look. Never copy their text, photos or subject.`,
-          ]
-        : []),
-      "",
-      "Keep exactly: every piece of Hebrew text (same words, same spelling, right-to-left, same reading order) and any photo of a person or logo. Everything of the previous look that the visual language doesn't have goes. Do not add new text. Nothing may touch or cross the image edge.",
-    ].join("\n")
-  }
-  return [
-    placing
-      ? `Edit the FIRST input image. The other input image${placing > 1 ? "s are the creator's own pictures" : " is the creator's own picture"} to place into it — reproduce ${placing > 1 ? "each one" : "it"} exactly as it is (the same character, photo or logo: same shape, colours, details and proportions; never redraw, restyle or replace it). Apply ONLY the following change:`
-      : "Edit this image. Apply ONLY the following change:",
-    edit,
-    "",
-    "Keep everything else exactly as it is: the layout, every piece of Hebrew text (same words, same spelling, right-to-left), the fonts, colours, illustrations and any logo. Do not add new text, and no person, character, animal or object the change above doesn't name. Nothing may touch or cross the image edge.",
-  ].join("\n")
 }
 
 export async function POST(req: NextRequest) {
@@ -182,8 +138,17 @@ export async function POST(req: NextRequest) {
       .map((a) => a.url)
       .filter((u): u is string => !!u && /^https?:\/\//.test(u))
     if (urls.length === 0) {
+      // A carousel was laid out for this post but its slides never reached
+      // the post (the save of a heavy set was rejected before 2026-11-05):
+      // what the card shows isn't stored. Say exactly that.
+      const unsaved = format === "carousel" && !!(await loadCarousel(supabase, user.id, postId))
       return NextResponse.json(
-        { error: "no_media", message: "אין כאן תמונות שמורות לערוך. צרו או העלו מדיה ואז ערכו אותה." },
+        {
+          error: "no_media",
+          message: unsaved
+            ? "השקופיות שמופיעות בכרטיס לא נשמרו בפוסט, אז אין לי מה לערוך. צרו את הקרוסלה שוב (עכשיו היא נשמרת מיד), ואז ערכו אותה."
+            : "אין כאן תמונות שמורות לערוך. צרו או העלו מדיה ואז ערכו אותה.",
+        },
         { status: 400 },
       )
     }
