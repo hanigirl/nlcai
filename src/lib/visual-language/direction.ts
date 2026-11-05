@@ -50,14 +50,15 @@ const MAX_REFERENCES = 4
 // Her finished posts of the format being generated — the look to match.
 // Read from the DB on every generation, so a new upload applies at once,
 // before she re-runs the analysis.
-const MAX_FORMAT_EXAMPLES = 3
+export const MAX_FORMAT_EXAMPLES = 3
 
 /**
- * The formats whose examples ride along here. Carousel is left out on
- * purpose: the carousel layout engine already gets her carousel examples
- * attached directly (carouselExamples in /api/carousel/generate-ai), and
- * these prompt lines also reach prompts that carry no images. b_roll has
- * no examples tab, and its background is text-free.
+ * The formats whose examples ride along as image-model references here.
+ * Carousel is left out on purpose: the carousel layout engine already gets
+ * her carousel examples attached directly (carouselExamples in
+ * /api/carousel/generate-ai), and these prompt lines also reach prompts that
+ * carry no images. b_roll's background stays text-free and reference-free;
+ * its examples go to the Opus composition instead (api/b-roll/generate-media).
  */
 const FORMAT_EXAMPLE_KIND: Partial<Record<VisualFormat, ExampleKind>> = {
   story: "story",
@@ -72,18 +73,17 @@ const FORMAT_NAMES: Record<VisualFormat, string> = {
 }
 
 /**
- * Up to MAX_FORMAT_EXAMPLES of her examples of this format: the ones she
- * filed under its tab first, then older unfiled ones the last analysis
- * recognised as this format. Links (site screenshots) never count.
+ * Up to `max` of her examples of one kind (Settings → דוגמאות לשימוש): the
+ * ones she filed under its tab first, then older unfiled ones the last
+ * analysis recognised as that kind. Links (site screenshots) never count.
  */
-async function loadFormatExamples(
+export async function loadBrandExamples(
   supabase: SupabaseClient,
   userId: string,
-  vl: VisualLanguage,
-  format: VisualFormat,
+  kind: ExampleKind,
+  exampleKinds: VisualLanguage["example_kinds"],
+  max = MAX_FORMAT_EXAMPLES,
 ): Promise<ModelImage[]> {
-  const kind = FORMAT_EXAMPLE_KIND[format]
-  if (!kind) return []
   const { data, error } = await supabase
     .from("user_media")
     .select("id, storage_path, metadata")
@@ -93,10 +93,10 @@ async function loadFormatExamples(
   if (error) console.error("[visual-language][format-examples]", error)
   const rows = ((data ?? []) as { id: string; storage_path: string; metadata: Record<string, unknown> | null }[])
     .filter((r) => !r.storage_path.startsWith("url:") && typeof r.metadata?.url !== "string")
-  const recognised = new Set((vl.example_kinds ?? []).filter((k) => k.kind === kind).map((k) => k.id))
+  const recognised = new Set((exampleKinds ?? []).filter((k) => k.kind === kind).map((k) => k.id))
   const filed = rows.filter((r) => userExampleKind(r.metadata) === kind)
   const unfiled = rows.filter((r) => !userExampleKind(r.metadata) && recognised.has(r.id))
-  const picked = [...filed, ...unfiled].slice(0, MAX_FORMAT_EXAMPLES)
+  const picked = [...filed, ...unfiled].slice(0, max)
   const images = await Promise.all(
     picked.map((r) =>
       loadImageForModels(supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl).catch(
@@ -229,8 +229,11 @@ async function resolveBaseDirection(
     // Her own finished examples of this format — appended after the
     // element references so their numbering stays put. Skipped where the
     // caller wants no references (text-free backgrounds).
+    const exampleKind = FORMAT_EXAMPLE_KIND[opts.format]
     const examples =
-      opts.allowReferences === false ? [] : await loadFormatExamples(supabase, userId, vl, opts.format)
+      opts.allowReferences === false || !exampleKind
+        ? []
+        : await loadBrandExamples(supabase, userId, exampleKind, vl.example_kinds)
     if (examples.length) {
       const first = references.length + 1
       references.push(...examples)

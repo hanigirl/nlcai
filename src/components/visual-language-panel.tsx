@@ -31,7 +31,7 @@ import {
  * Two pages over one set of inputs. "visual": brand colours, fonts (rendered
  * by the settings page), graphic elements (each with a note on what it is /
  * when it's used) and the analysis. "examples": design examples filed per
- * format (carousel / cover / story / image, plus a site link) — they feed the
+ * format (carousel / cover / story / image / b-roll, plus a site link) — they feed the
  * same analysis, which turns everything into a visual language.
  * Every AI media generator (story, image post, AI carousel, b-roll) follows
  * the result. If the inputs don't share one language, she gets a warning
@@ -63,13 +63,14 @@ interface ExampleItem {
 }
 
 /** The tabs under דוגמאות לשימוש. */
-export type ExamplesTab = "carousel" | "cover" | "story" | "image"
+export type ExamplesTab = "carousel" | "cover" | "story" | "image" | "b_roll"
 
 const EXAMPLE_TABS: { id: ExamplesTab; label: string; kind: UserExampleKind }[] = [
   { id: "carousel", label: "קרוסלה", kind: "carousel" },
   { id: "cover", label: "קאברים", kind: "cover" },
   { id: "story", label: "סטורי", kind: "story" },
   { id: "image", label: "תמונה", kind: "feed_post" },
+  { id: "b_roll", label: "בי-רול", kind: "b_roll" },
 ]
 
 interface VisualLanguagePanelProps {
@@ -78,8 +79,6 @@ interface VisualLanguagePanelProps {
   fontsSection?: ReactNode
   /** How many fonts she has, for the closed fonts row. */
   fontsCount?: number
-  /** The covers block (own uploads + style analysis), shown in the קאברים tab. */
-  coversSection?: ReactNode
   examplesTab?: ExamplesTab
   onExamplesTabChange?: (tab: ExamplesTab) => void
 }
@@ -96,7 +95,6 @@ export function VisualLanguagePanel({
   view,
   fontsSection,
   fontsCount = 0,
-  coversSection,
   examplesTab = "carousel",
   onExamplesTabChange,
 }: VisualLanguagePanelProps) {
@@ -377,11 +375,11 @@ export function VisualLanguagePanel({
     return kind ? EXAMPLE_KIND_LABELS[kind] : null
   }
   // Which tab an example lives in: her filing first, then the analysis's
-  // guess. Anything that isn't a carousel, cover or story — feed posts,
-  // banners, posters, websites, unanalysed — is an image.
+  // guess. Anything that isn't a carousel, cover, story or b-roll — feed
+  // posts, banners, posters, websites, unanalysed — is an image.
   const tabOf = (ex: ExampleItem): ExamplesTab => {
     const kind = ex.filedKind ?? visualLanguage?.example_kinds?.find((k) => k.id === ex.id)?.kind
-    if (kind === "carousel" || kind === "cover" || kind === "story") return kind
+    if (kind === "carousel" || kind === "cover" || kind === "story" || kind === "b_roll") return kind
     return "image"
   }
   // The cap is per format: six carousels don't crowd out her stories.
@@ -507,9 +505,7 @@ export function VisualLanguagePanel({
             const room = MAX_BRAND_EXAMPLES - items.length
             return (
               <TabsContent key={t.id} value={t.id} className="flex flex-col gap-4 pt-3">
-                {t.id === "cover" ? (
-                  coversSection
-                ) : room > 0 ? (
+                {room > 0 ? (
                   <>
                     <DropZone
                       label="PNG, JPG"
@@ -542,17 +538,9 @@ export function VisualLanguagePanel({
                 ) : (
                   <p className="text-sm text-text-neutral-default">הגעתם למקסימום {MAX_BRAND_EXAMPLES} דוגמאות בסוג הזה. מחקו אחת כדי להוסיף.</p>
                 )}
-                {t.id !== "cover" && uploadingExamples > 0 && <UploadingNote count={uploadingExamples} />}
+                {uploadingExamples > 0 && <UploadingNote count={uploadingExamples} />}
 
-                {items.length > 0 && (
-                  <div className="flex flex-col gap-2">
-                    {/* Covers that came in as general examples, listed under their own label. */}
-                    {t.id === "cover" && (
-                      <span className="text-xs text-text-neutral-default">קאברים מתוך הדוגמאות לשימוש</span>
-                    )}
-                    <div className="flex flex-wrap gap-3">{items.map(renderExample)}</div>
-                  </div>
-                )}
+                {items.length > 0 && <div className="flex flex-wrap gap-3">{items.map(renderExample)}</div>}
               </TabsContent>
             )
           })}

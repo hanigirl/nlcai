@@ -56,7 +56,7 @@ When consistent:
   - carousel: Instagram 4:5 multi-slide series — how the cover slide differs from content slides and the closing slide, slide numbering / swipe cues, how continuity carries across slides.
   - story: 9:16 vertical with the top ~14% and bottom ~24% kept clear — how text and imagery stack, how multi-frame stories connect.
   - image_post: single 4:5 feed image — headline / sub-headline / closing line hierarchy and layout.
-  - b_roll: a TEXT-FREE 9:16 video background — imagery, texture and tone only; a white caption is added later in the lower-middle band.
+  - b_roll: a TEXT-FREE 9:16 video background — imagery, texture and tone only; a white caption is added later in the lower-middle band. Examples labelled "she filed this as: b_roll" are frames of her finished b-roll reels with their caption on: describe their background imagery, texture and tone here, never the caption.
   When examples of a format exist, describe what THOSE examples actually do (layout, recurring devices, density). When none exist, extrapolate thoughtfully from the language and say so in one short clause. Websites, posters and banners inform the language, not slide structure.
 - elements: for EVERY element provided, its id, a short Hebrew name, and an English instruction for the image model on when and how to use it, derived from her note (e.g. "small, bottom corner of closing frames only"). If her note is empty, infer the use from the image.
   Then decide whether the element has a FIXED position:

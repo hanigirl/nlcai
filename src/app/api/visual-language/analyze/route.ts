@@ -19,7 +19,7 @@ import {
   type VisualLanguage,
 } from "@/lib/visual-language/types"
 
-// Website screenshots + an Opus vision call over up to 32 images (8 elements + 6 examples per format).
+// Website screenshots + an Opus vision call over up to 38 images (8 elements + 6 examples per format, 5 formats).
 export const maxDuration = 300
 
 /**
