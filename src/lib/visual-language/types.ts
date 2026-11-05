@@ -17,10 +17,15 @@ export const MAX_BRAND_EXAMPLES = 6
  * her analysed visual language, the niche-derived one, or a fixed
  * template (the same dark / light pair the AI carousel offers).
  */
-export type MediaStyle = "brand" | "niche" | "ai-dark" | "ai-light"
+/**
+ * "blank" = "חדש לגמרי" (Hani, 2026-11-05): no visual language at all — the
+ * piece is designed from her brief alone (lib/media-brief). The routes refuse
+ * it without a brief.
+ */
+export type MediaStyle = "brand" | "niche" | "ai-dark" | "ai-light" | "blank"
 
 export function isMediaStyle(v: unknown): v is MediaStyle {
-  return v === "brand" || v === "niche" || v === "ai-dark" || v === "ai-light"
+  return v === "brand" || v === "niche" || v === "ai-dark" || v === "ai-light" || v === "blank"
 }
 
 /** The media formats a visual language is adapted to. */

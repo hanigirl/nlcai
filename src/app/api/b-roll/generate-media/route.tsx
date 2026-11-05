@@ -1,4 +1,4 @@
-import { normalizeMediaBrief, withMediaBrief } from "@/lib/media-brief"
+import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief } from "@/lib/media-brief"
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { createClient } from "@/lib/supabase/server"
@@ -42,6 +42,9 @@ export async function POST(req: NextRequest) {
     }
     if (!postId) {
       return NextResponse.json({ error: "postId is required" }, { status: 400 })
+    }
+    if (style === "blank" && !normalizeMediaBrief(mediaBrief)) {
+      return NextResponse.json(BLANK_NEEDS_BRIEF, { status: 400 })
     }
 
     const supabase = await createClient()

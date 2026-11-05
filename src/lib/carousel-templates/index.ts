@@ -77,6 +77,20 @@ export function getTemplate(id: string): TemplateConfig | undefined {
  */
 export const BRAND_TEMPLATE_ID = "brand-visual-language"
 
+/**
+ * "חדש לגמרי" (Hani, 2026-11-05) — an AI tile with no style at all: generate
+ * asks how to start, and the carousel is designed from her brief alone
+ * (style "blank" in lib/visual-language/direction). Leads the grid.
+ */
+export const BLANK_TEMPLATE_ID = "blank"
+export const BLANK_TEMPLATE: TemplateConfig = {
+  id: BLANK_TEMPLATE_ID,
+  name: "חדש לגמרי",
+  kind: "ai",
+  size: { width: 1080, height: 1350 },
+  preview: { bg: "#FFFFFF", accent: "#111111", titleColor: "#111111", bodyColor: "#444444" },
+}
+
 export function buildBrandTemplate(opts: {
   preview?: TemplatePreview
   /** One of her own carousel examples, when the analysis found one. */

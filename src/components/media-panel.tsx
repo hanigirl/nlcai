@@ -68,13 +68,12 @@ import {
 } from "@/lib/story-generation-store"
 import type { SlideData } from "@/lib/carousel-templates"
 import { flushPendingSaves } from "@/lib/pending-saves"
-import { BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES, getTemplate } from "@/lib/carousel-templates"
+import { BLANK_TEMPLATE, BLANK_TEMPLATE_ID, BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import { openingId, requestAiEdit } from "@/lib/ai-edit-intent"
 import type { AiEditFormat } from "@/components/media-ai-chat"
 import type { MediaGenResult } from "@/lib/media-brief"
-import type { MediaStyle } from "@/lib/visual-language/types"
 import { useBrandCarouselTemplate } from "@/hooks/use-brand-carousel-template"
-import { MediaStylePicker, useMediaStyle } from "@/components/media-style-picker"
+import { BlankTileThumb, MediaStylePicker, useMediaStyle } from "@/components/media-style-picker"
 import { parseTextToSlides } from "@/lib/carousel-slides"
 import {
   carouselBareSlides,
@@ -217,25 +216,19 @@ interface MediaPanelProps {
  * after the panel closes would wait for a card that never comes.
  */
 /**
- * "Think first, then generate" (Hani, 2026-11-05): a generate button opens the
- * AI panel on the question "your visual language, or a direction of your
- * own?" — the generation runs from there (`run`), and the panel stays open
- * for edits once it lands. The project page closes this media panel when it
- * opens, so brief → generate → refine happens in one place.
+ * "חדש לגמרי" (Hani, 2026-11-05): with that tile picked, generate opens the
+ * AI panel on "איך תרצו להתחיל?" — the generation runs from her answer
+ * (`run`), from a blank page, and the panel stays open for edits once it
+ * lands. The project page closes this media panel when it opens, so brief →
+ * generate → refine happens in one place. Every other tile generates
+ * straight away.
  */
 function openGenerateBrief(
   postId: string,
   format: AiEditFormat,
-  style: { styleName: string; isVisualLanguage: boolean },
-  run: (brief?: string) => Promise<MediaGenResult>,
+  run: (brief: string) => Promise<MediaGenResult>,
 ) {
-  requestAiEdit({ postId, format, opening: { id: openingId(), kind: "generate", ...style, run } })
-}
-
-/** How the AI panel names the style picked in the media panel. */
-function mediaStyleLabel(style: MediaStyle): { styleName: string; isVisualLanguage: boolean } {
-  if (style === "brand") return { styleName: "השפה הוויזואלית שלכם", isVisualLanguage: true }
-  return { styleName: getTemplate(style)?.name ?? style, isVisualLanguage: false }
+  requestAiEdit({ postId, format, opening: { id: openingId(), kind: "generate", run } })
 }
 
 function useReportBusy(
@@ -1559,7 +1552,7 @@ function CarouselFlow({
   const [savedTemplateId, setSavedTemplateId] = useState<string | undefined>(() => {
     if (!postId || typeof window === "undefined") return undefined
     const tid = getFormatMeta(postId, "carousel").templateId
-    return tid && (tid === BRAND_TEMPLATE_ID || CAROUSEL_TEMPLATES.some((t) => t.id === tid))
+    return tid && (tid === BRAND_TEMPLATE_ID || tid === BLANK_TEMPLATE_ID || CAROUSEL_TEMPLATES.some((t) => t.id === tid))
       ? tid
       : undefined
   })
@@ -1568,7 +1561,8 @@ function CarouselFlow({
   // language; it leads the grid when present.
   const brandTemplate = useBrandCarouselTemplate()
   const templates = useMemo(
-    () => (brandTemplate ? [brandTemplate, ...CAROUSEL_TEMPLATES] : CAROUSEL_TEMPLATES),
+    // "חדש לגמרי" leads the grid, then her language, then the fixed templates.
+    () => [BLANK_TEMPLATE, ...(brandTemplate ? [brandTemplate] : []), ...CAROUSEL_TEMPLATES],
     [brandTemplate],
   )
 
@@ -1715,23 +1709,16 @@ function CarouselFlow({
   }
 
   /**
-   * AI templates ask first (Hani, 2026-11-05): the AI panel offers her visual
-   * language or a direction of her own, and runs the generation from there.
-   * The code-drawn templates have nothing to brief — they render straight away.
+   * "חדש לגמרי" asks first (Hani, 2026-11-05): the AI panel asks how to
+   * start and runs the generation from her answer. Every other template —
+   * her language, the AI looks, the code-drawn ones — generates straight away.
    */
   const startGenerate = () => {
-    if (!isAiTemplate || !postId) {
+    if (selectedTemplate !== BLANK_TEMPLATE_ID || !postId) {
       void handleGenerate()
       return
     }
-    openGenerateBrief(
-      postId,
-      "carousel",
-      selectedTemplate === BRAND_TEMPLATE_ID
-        ? { styleName: "השפה הוויזואלית שלכם", isVisualLanguage: true }
-        : { styleName: selectedConfig?.name ?? "", isVisualLanguage: false },
-      (brief) => handleGenerate({ brief, fromPanel: true }),
-    )
+    openGenerateBrief(postId, "carousel", (brief) => handleGenerate({ brief, fromPanel: true }))
   }
 
   /**
@@ -2206,7 +2193,9 @@ function CarouselFlow({
                     : "border-border-neutral-default hover:border-gray-80"
                 }`}
               >
-                {livePreview || t.thumbnailUrl ? (
+                {t.id === BLANK_TEMPLATE_ID && !livePreview ? (
+                  <BlankTileThumb className="w-full rounded-lg" style={{ aspectRatio: tileAspect }} />
+                ) : livePreview || t.thumbnailUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={
@@ -3171,9 +3160,14 @@ function MediaUploadFlow({
       return
     }
     const style = mediaStyle.style
-    openGenerateBrief(postId, "image_post", mediaStyleLabel(style), (brief) =>
-      startImageGeneration(postId, style, { brief, quiet: true }),
-    )
+    // "חדש לגמרי" asks how to start first; every other style generates now.
+    if (style === "blank") {
+      openGenerateBrief(postId, "image_post", (brief) =>
+        startImageGeneration(postId, "blank", { brief, quiet: true }),
+      )
+      return
+    }
+    void startImageGeneration(postId, style)
   }
 
   /** Fire an AI story generation (produces a 1-3 frame set). */
@@ -3183,9 +3177,13 @@ function MediaUploadFlow({
       return
     }
     const style = mediaStyle.style
-    openGenerateBrief(postId, "story", mediaStyleLabel(style), (brief) =>
-      startStoryGeneration(postId, style, { brief, quiet: true }),
-    )
+    if (style === "blank") {
+      openGenerateBrief(postId, "story", (brief) =>
+        startStoryGeneration(postId, "blank", { brief, quiet: true }),
+      )
+      return
+    }
+    void startStoryGeneration(postId, style)
   }
 
   /**
@@ -3467,9 +3465,13 @@ function MediaUploadFlow({
     // Bumped per press so a retry varies the palette instead of returning a
     // near-identical picture.
     const style = mediaStyle.style
-    openGenerateBrief(postId, "b_roll", mediaStyleLabel(style), (brief) =>
-      startBRollGeneration(postId, bRollAttemptRef.current++, style, { brief, quiet: true }),
-    )
+    if (style === "blank") {
+      openGenerateBrief(postId, "b_roll", (brief) =>
+        startBRollGeneration(postId, bRollAttemptRef.current++, "blank", { brief, quiet: true }),
+      )
+      return
+    }
+    void startBRollGeneration(postId, bRollAttemptRef.current++, style)
   }
 
   // Save what the AI just made, without waiting to be asked (Hani,

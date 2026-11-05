@@ -51,6 +51,17 @@ export async function buildCompositionBrief(
   styleLines: string[],
   style: MediaStyle | undefined,
 ): Promise<CompositionBrief> {
+  // "חדש לגמרי": none of her brand — default fonts, a palette from the brief.
+  if (style === "blank") {
+    return {
+      hook: text.hook,
+      rest: text.rest,
+      cta: hasDescriptionCta(text.hook, text.rest) ? null : BROLL_VIDEO_CTA,
+      palette: [],
+      fonts: [],
+      styleSpec: styleLines.join("\n"),
+    }
+  }
   const [fonts, { data: userRow }] = await Promise.all([
     loadBrandFonts(supabase, userId),
     supabase.from("users").select("brand_colors, visual_language").eq("id", userId).single(),

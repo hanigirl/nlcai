@@ -1,10 +1,10 @@
-import { normalizeMediaBrief, withMediaBrief } from "@/lib/media-brief"
+import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief } from "@/lib/media-brief"
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
-import { BRAND_TEMPLATE_ID, getTemplate } from "@/lib/carousel-templates"
+import { BLANK_TEMPLATE_ID, BRAND_TEMPLATE_ID, getTemplate } from "@/lib/carousel-templates"
 import type { SlideData } from "@/lib/carousel-templates"
 import { getAuthUser } from "@/lib/auth-user"
 import { assertFeedSafeAspect } from "@/lib/social/media-spec"
@@ -171,8 +171,13 @@ export async function POST(req: NextRequest) {
     }
 
     const isBrandTemplate = templateId === BRAND_TEMPLATE_ID
-    const template = templateId && !isBrandTemplate ? getTemplate(templateId) : undefined
-    if (!isBrandTemplate && (!template || template.kind !== "ai" || !template.aiStyleSpec)) {
+    // "חדש לגמרי": designed from her brief alone — none of her brand.
+    const isBlankTemplate = templateId === BLANK_TEMPLATE_ID
+    if (isBlankTemplate && !normalizeMediaBrief(mediaBrief)) {
+      return NextResponse.json(BLANK_NEEDS_BRIEF, { status: 400 })
+    }
+    const template = templateId && !isBrandTemplate && !isBlankTemplate ? getTemplate(templateId) : undefined
+    if (!isBrandTemplate && !isBlankTemplate && (!template || template.kind !== "ai" || !template.aiStyleSpec)) {
       return NextResponse.json(
         { error: `Template "${templateId}" is not an AI template` },
         { status: 400 },
@@ -213,7 +218,9 @@ export async function POST(req: NextRequest) {
     // "בהיר" are her NICHE's language on a dark / light canvas — never the
     // old glass-3D neon look (Hani, 2026-10-07).
     let direction: DesignDirection
-    if (isBrandTemplate) {
+    if (isBlankTemplate) {
+      direction = await resolveDesignDirection(supabase, user.id, { format: "carousel", style: "blank" })
+    } else if (isBrandTemplate) {
       direction = await resolveDesignDirection(supabase, user.id, { format: "carousel" })
       if (direction.source !== "brand") {
         return NextResponse.json(
@@ -246,12 +253,14 @@ export async function POST(req: NextRequest) {
       const started = Date.now()
       try {
         const [fonts, { data: userRow }] = await Promise.all([
-          loadBrandFonts(supabase, user.id),
+          // "חדש לגמרי": default fonts and a palette from her brief.
+          isBlankTemplate ? Promise.resolve([]) : loadBrandFonts(supabase, user.id),
           supabase.from("users").select("brand_colors, visual_language").eq("id", user.id).single(),
         ])
         const row = userRow as { brand_colors?: string[] | null; visual_language?: VisualLanguage | null } | null
-        const palette =
-          isBrandTemplate && row?.visual_language?.palette?.length
+        const palette = isBlankTemplate
+          ? []
+          : isBrandTemplate && row?.visual_language?.palette?.length
             ? row.visual_language.palette
             : (row?.brand_colors ?? []).map((hex, i) => ({ hex, role: i === 0 ? "primary brand colour" : "brand colour" }))
         const brief: CarouselBrief = {
