@@ -142,16 +142,18 @@ function briefText(b: CarouselBrief): string {
 function parse(
   text: string,
   count: number,
-): { html: string; illustrations: string[]; cutouts: number[] } {
+): { html: string; illustrations: string[]; cutouts: number[]; attached: number[] } {
   const json = /```json\s*([\s\S]*?)```/i.exec(text)
   const html = /```html\s*([\s\S]*?)```/i.exec(text)
   if (!html || !/class=["'][^"']*\bslide\b/.test(html[1])) throw new Error("composition_invalid")
   let illustrations: string[] = []
   let cutouts: number[] = []
+  let attached: number[] = []
   try {
-    const parsed = JSON.parse(json?.[1] ?? "{}") as { illustrations?: string[]; cutouts?: unknown }
+    const parsed = JSON.parse(json?.[1] ?? "{}") as { illustrations?: string[]; cutouts?: unknown; attached?: unknown }
     illustrations = parsed.illustrations ?? []
     cutouts = Array.isArray(parsed.cutouts) ? parsed.cutouts.map(Number) : []
+    attached = Array.isArray(parsed.attached) ? parsed.attached.map(Number) : []
   } catch {
     illustrations = []
   }
@@ -160,14 +162,23 @@ function parse(
     illustrations: Array.from({ length: count }, (_, i) => illustrations[i] ?? ""),
     // Slide numbers (1-based) → indices, deduped, in range.
     cutouts: Array.from(new Set(cutouts.filter((n) => Number.isInteger(n) && n >= 1 && n <= count).map((n) => n - 1))),
+    // Per slide: which attached image (1-based) is placed as its illustration; 0 = none.
+    attached: Array.from({ length: count }, (_, i) => (Number.isInteger(attached[i]) && attached[i] > 0 ? attached[i] : 0)),
   }
 }
 
-async function ask(apiKey: string, user: string, count: number, examples: string[] = [], refs: string[] = []) {
+async function ask(
+  apiKey: string,
+  user: string,
+  count: number,
+  examples: string[] = [],
+  refs: string[] = [],
+  placeable = false,
+) {
   const client = new Anthropic({ apiKey })
   const content: Anthropic.ContentBlockParam[] = [
     ...examples.map((url): Anthropic.ContentBlockParam => ({ type: "image", source: { type: "url", url } })),
-    ...referenceBlocks(refs),
+    ...referenceBlocks(refs, { placeable }),
     { type: "text", text: user },
   ]
   const message = await client.messages
@@ -184,7 +195,9 @@ export function composeCarousel(apiKey: string, brief: CarouselBrief, refs: stri
 /**
  * Her instruction applied to the layout. Returns the revised HTML and, for
  * slides whose ILLUSTRATION she asked to change, a new prompt (empty string =
- * keep the current illustration).
+ * keep the current illustration); `attached` = slides that get one of the
+ * images she attached, as her exact file; `cutouts` = slides whose
+ * illustration loses its background.
  */
 export function reviseCarousel(apiKey: string, stored: StoredCarousel, instruction: string, refs: string[] = []) {
   return ask(
@@ -203,12 +216,18 @@ export function reviseCarousel(apiKey: string, stored: StoredCarousel, instructi
       "",
       'In the json block, "illustrations" has one entry per slide: a NEW prompt only for slides whose illustration she asked to change, otherwise an empty string.',
       'If she asks to remove an illustration\'s background (e.g. "להוריד רקע", "בלי רקע", "לגזור"), also put "cutouts": [slide numbers] in the json block. The illustration image itself is then cut out for you — the same picture, with a truly transparent background — so it sits directly on the slide\'s background. Removing a background is NOT a reason to redraw: leave its "illustrations" entry empty unless she also asked for a different picture. Never imitate a removed background in CSS: no mix-blend-mode, filter, opacity, mask, overlay or background colour on or around the illustration.',
+      ...(refs.length
+        ? [
+            `She attached ${refs.length === 1 ? "an image" : `${refs.length} images`} (see "Attached image N" above). If she wants one placed in the carousel, put "attached": [one entry per slide: the attached image number to place on that slide, or 0] in the json block, leave that slide's "illustrations" entry empty, and make sure the slide shows it with <img class="art" src="__SLIDE_IMAGE_N__"> (N = the slide number) styled object-fit: contain, so her picture is never cropped, stretched or distorted. We put her exact file there — never describe it as a new illustration prompt. An attached image that only shows the look she wants is a reference: apply the look, and do not list it in "attached". To place it without its background, also list the slide in "cutouts".`,
+          ]
+        : []),
       "Change nothing she did not ask about — no new overlays, opacity, filters, blend modes or colour shifts on any slide or element.",
       "Return the full revised HTML.",
     ].join("\n"),
     stored.brief.slides.length,
     stored.brief.examples,
     refs,
+    refs.length > 0,
   )
 }
 

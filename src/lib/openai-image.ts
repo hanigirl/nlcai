@@ -174,12 +174,15 @@ export async function editImage(
   prompt: string,
   image: ModelImage,
   shape: ImageShape,
+  /** Her own pictures to place into the design, sent after the image being edited. */
+  place: ModelImage[] = [],
 ): Promise<string> {
+  const inputs = [image, ...place]
   try {
-    return await edit(apiKey, prompt, [image], SHAPE_SIZE[shape])
+    return await edit(apiKey, prompt, inputs, SHAPE_SIZE[shape])
   } catch (err) {
     if (!(err instanceof SizeRejectedError)) throw err
-    return edit(apiKey, prompt, [image], FALLBACK_SIZE)
+    return edit(apiKey, prompt, inputs, FALLBACK_SIZE)
   }
 }
 
@@ -209,8 +212,10 @@ async function transparentShare(png: Buffer): Promise<number> {
  * preview feature on gpt-image-2) — an opaque square must never be saved as
  * if the background had been removed.
  */
-export async function cutoutImage(apiKey: string, image: ModelImage, shape: ImageShape = "1:1"): Promise<string> {
-  const out = await edit(apiKey, CUTOUT_PROMPT, [image], SHAPE_SIZE[shape], undefined, "transparent")
+export async function cutoutImage(apiKey: string, image: ModelImage): Promise<string> {
+  // "auto": the output keeps the input's own proportions — an attached photo
+  // isn't always square, and gpt-image-1.5 has no custom sizes.
+  const out = await edit(apiKey, CUTOUT_PROMPT, [image], "auto", undefined, "transparent")
   // A subject usually leaves well over a quarter of a square frame empty; 5%
   // only rules out "no transparency at all" (or just a few clear corners).
   if ((await transparentShare(Buffer.from(out, "base64"))) < 0.05) {

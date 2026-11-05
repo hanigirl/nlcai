@@ -31,13 +31,39 @@ export function parseReferences(raw: unknown): string[] {
     .slice(0, MAX_REFERENCES)
 }
 
-/** Claude content blocks: the images, then a line saying what they are. */
-export function referenceBlocks(refs: string[]): Anthropic.ContentBlockParam[] {
+function imageBlock(r: string): Anthropic.ContentBlockParam {
+  const [, mediaType, data] = r.match(DATA_URL)!
+  return { type: "image", source: { type: "base64", media_type: mediaType as MediaType, data } }
+}
+
+/** The attached image's own bytes — for placing HER file as-is, never a redraw. */
+export function referenceBuffer(r: string): Buffer {
+  return Buffer.from(r.match(DATA_URL)![2], "base64")
+}
+
+/**
+ * Claude content blocks: the images, then a line saying what they are.
+ *
+ * `placeable`: the edit can put an attached image INTO the design (Hani,
+ * 2026-11-05 — "לשלב את התמונה הזו בקאבר" got her character redrawn from a
+ * description instead of using her file). The images are then numbered, and
+ * Claude decides per image whether it is content to place or a look to match.
+ */
+export function referenceBlocks(refs: string[], opts: { placeable?: boolean } = {}): Anthropic.ContentBlockParam[] {
   if (!refs.length) return []
-  const images = refs.map((r): Anthropic.ContentBlockParam => {
-    const [, mediaType, data] = r.match(DATA_URL)!
-    return { type: "image", source: { type: "base64", media_type: mediaType as MediaType, data } }
-  })
+  if (opts.placeable) {
+    return [
+      ...refs.flatMap((r, i): Anthropic.ContentBlockParam[] => [
+        { type: "text", text: `Attached image ${i + 1}:` },
+        imageBlock(r),
+      ]),
+      {
+        type: "text",
+        text: `Above ${refs.length === 1 ? "is 1 image" : `are ${refs.length} images`} she attached to this request (numbered "Attached image 1..${refs.length}"). Each one is EITHER her own content to put into the design as it is — her character, photo, illustration, logo or product, when she says to place / add / use / integrate it (e.g. "תשימי את התמונה הזו", "לשלב את התמונה", "תוסיפי את הדמות הזו") — OR a reference for the look she wants (e.g. "שיהיה כמו זה", "בסגנון הזה"). Decide from her words. Content she wants placed is used as her exact file — never redrawn, re-imagined or described into a new picture.`,
+      },
+    ]
+  }
+  const images = refs.map(imageBlock)
   return [
     ...images,
     {
