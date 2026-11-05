@@ -41,6 +41,7 @@ export type DrivePickVariant = "a" | "b"
 
 export type FolderKey = "broll" | "talking" | "images" | "story" | "carousel"
 
+export type DriveMediaItem = MediaItem
 type MediaItem = {
   id: string
   name: string
@@ -205,7 +206,7 @@ let loadedOnce: Promise<void> | null = null
  * referrer (Google refuses some thumbnails when our page is the referrer).
  * If every URL fails it shows a quiet placeholder instead of a broken image.
  */
-function DriveThumb({
+export function DriveThumb({
   item,
   className,
   ...img
