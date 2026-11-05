@@ -54,7 +54,6 @@ export function MediaStylePicker({
   label = "סגנון",
   aspect = "9/16",
   onAiEdit,
-  aiVisible = false,
 }: {
   value: MediaStyle
   onChange: (s: MediaStyle) => void
@@ -68,10 +67,9 @@ export function MediaStylePicker({
    * "עריכה עם AI" on the picked tile (Hani, 2026-11-05): the same sparkle as
    * on finished media. Before there is media it means "talk first, then
    * generate in this style" — the AI panel opens on a question about it.
+   * Always shown on the picked tile, not only on hover.
    */
   onAiEdit?: () => void
-  /** Keep the sparkle shown without hover (state previews). */
-  aiVisible?: boolean
 }) {
   const dark = getTemplate("ai-dark")
   const light = getTemplate("ai-light")
@@ -146,7 +144,7 @@ export function MediaStylePicker({
             </button>
             {selected && onAiEdit && (
               // Above the tile's name.
-              <AiHoverEditButton target="media" className="bottom-7" visible={aiVisible} onClick={onAiEdit} />
+              <AiHoverEditButton target="media" className="bottom-7" visible onClick={onAiEdit} />
             )}
             </div>
           )
