@@ -36,6 +36,7 @@ function notes(format: "story" | "b_roll"): string[] {
     "- You cannot see the footage, so assume it is busy and changes: every line needs its own contrast — a solid or semi-solid plate / pill behind it in the brand colours, or a strong shadow — never text straight on the video.",
     "- It reads like a premium caption, not a poster: the words take about a third of the frame at most, and the footage stays the hero.",
     "- Motion: per-word (or per-line) entrances with a clear rhythm, one emphasis on the most important word or phrase (her accent colour, a highlight, a scale pop). EVERYTHING has arrived and is still by 2.5s — only the first 3 seconds are rendered and the last frame then holds for the rest of her clip (we fade it out at the very end).",
+    "- Keep the text clear of where a face or the speaker's head usually is in a talking video (the upper and middle part of the frame, around the centre): prefer the lower third of the safe area, unless her own instruction places it elsewhere.",
     format === "story"
       ? "- INSTAGRAM STORY safe zone: keep all text between 270px from the top and 460px from the bottom, ≥80px from the sides."
       : "- INSTAGRAM REELS safe zone: keep all text between 220px from the top and 420px from the bottom, ≥80px from the sides (the right side also holds the like / comment buttons — keep text off the right 160px below the middle).",
