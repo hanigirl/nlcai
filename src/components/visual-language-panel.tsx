@@ -423,6 +423,79 @@ export function VisualLanguagePanel({
     )
   }
 
+  // ── Analysis block ── one element for both views: after adding examples
+  // she can re-run the analysis right there and see its result (Hani,
+  // 2026-11-05). It reads every input, the examples included.
+  const analysisSection = (
+    <section className="flex flex-col gap-3" aria-label="ניתוח השפה הוויזואלית">
+
+      {visualLanguage?.status === "ok" && (
+        <div className="flex flex-col gap-3 rounded-xl bg-bg-surface p-4">
+          <p className="text-sm text-text-primary-default leading-relaxed">{visualLanguage.summary_he}</p>
+          {visualLanguage.palette.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {visualLanguage.palette.map((p, i) => (
+                <span key={i} className="flex items-center gap-1.5 text-xs text-text-neutral-default" dir="ltr">
+                  {/* The swatch shows HER colour, so it's the one place a raw value belongs. */}
+                  <span className="size-4 rounded-full border border-border-neutral-default" style={{ backgroundColor: p.hex }} />
+                  {p.hex}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {visualLanguage?.status === "inconsistent" && (
+        <div role="alert" className="flex flex-col gap-2 rounded-xl border border-red-80 bg-red-95 p-4">
+          <div className="flex items-center gap-1.5 text-sm font-semibold text-red-50">
+            <AlertTriangle className="size-4" />
+            לא מצאנו המשכיות בעיצוב שהעליתם
+          </div>
+          {visualLanguage.issues_he.length > 0 && (
+            <ul className="list-disc ps-5 text-sm text-text-primary-default flex flex-col gap-1">
+              {visualLanguage.issues_he.map((issue, i) => (
+                <li key={i}>{issue}</li>
+              ))}
+            </ul>
+          )}
+          <p className="text-sm text-text-primary-default">
+            ודאו שהצבעים, האלמנטים והדוגמאות מציגים שפה ויזואלית אחת, ספציפית וברורה, ונתחו שוב. עד אז נעצב לפי הנישה שלכם.
+          </p>
+        </div>
+      )}
+
+      {visualLanguage?.unreadable_links?.length ? (
+        <p className="text-xs text-text-neutral-default">
+          לא הצלחנו לקרוא את הקישור{visualLanguage.unreadable_links.length > 1 ? "ים" : ""}{" "}
+          <span dir="ltr">{visualLanguage.unreadable_links.join(", ")}</span>, אז הוא לא נכלל בניתוח. אפשר להעלות צילום מסך במקום.
+        </p>
+      ) : null}
+
+      {stale && !analyzing && (
+        <p className="text-xs text-text-neutral-default">שיניתם דברים מאז הניתוח האחרון. נתחו שוב כדי לעדכן את השפה.</p>
+      )}
+
+      <Button
+        onClick={analyze}
+        disabled={!hasInputs || analyzing || busy}
+        className="w-full gap-2"
+      >
+        {analyzing ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+        {analyzing
+          ? "מנתח את השפה הוויזואלית..."
+          : visualLanguage
+            ? "ניתוח מחדש של שפה ויזואלית"
+            : "ניתוח שפה ויזואלית"}
+      </Button>
+      {analyzing && (
+        <p className="text-xs text-text-neutral-default" aria-live="polite">
+          זה יכול לקחת עד דקה, במיוחד כשיש קישור לאתר.
+        </p>
+      )}
+    </section>
+  )
+
   if (view === "examples") {
     const renderExample = (ex: ExampleItem) =>
       ex.isLink ? (
@@ -545,6 +618,8 @@ export function VisualLanguagePanel({
             )
           })}
         </Tabs>
+
+        {analysisSection}
       </div>
     )
   }
@@ -709,74 +784,7 @@ export function VisualLanguagePanel({
       </AccordionSection>
       </div>
 
-      {/* ── Analysis (reads the examples too) ── */}
-      <section className="flex flex-col gap-3" aria-label="ניתוח השפה הוויזואלית">
-
-        {visualLanguage?.status === "ok" && (
-          <div className="flex flex-col gap-3 rounded-xl bg-bg-surface p-4">
-            <p className="text-sm text-text-primary-default leading-relaxed">{visualLanguage.summary_he}</p>
-            {visualLanguage.palette.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {visualLanguage.palette.map((p, i) => (
-                  <span key={i} className="flex items-center gap-1.5 text-xs text-text-neutral-default" dir="ltr">
-                    {/* The swatch shows HER colour, so it's the one place a raw value belongs. */}
-                    <span className="size-4 rounded-full border border-border-neutral-default" style={{ backgroundColor: p.hex }} />
-                    {p.hex}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {visualLanguage?.status === "inconsistent" && (
-          <div role="alert" className="flex flex-col gap-2 rounded-xl border border-red-80 bg-red-95 p-4">
-            <div className="flex items-center gap-1.5 text-sm font-semibold text-red-50">
-              <AlertTriangle className="size-4" />
-              לא מצאנו המשכיות בעיצוב שהעליתם
-            </div>
-            {visualLanguage.issues_he.length > 0 && (
-              <ul className="list-disc ps-5 text-sm text-text-primary-default flex flex-col gap-1">
-                {visualLanguage.issues_he.map((issue, i) => (
-                  <li key={i}>{issue}</li>
-                ))}
-              </ul>
-            )}
-            <p className="text-sm text-text-primary-default">
-              ודאו שהצבעים, האלמנטים והדוגמאות מציגים שפה ויזואלית אחת, ספציפית וברורה, ונתחו שוב. עד אז נעצב לפי הנישה שלכם.
-            </p>
-          </div>
-        )}
-
-        {visualLanguage?.unreadable_links?.length ? (
-          <p className="text-xs text-text-neutral-default">
-            לא הצלחנו לקרוא את הקישור{visualLanguage.unreadable_links.length > 1 ? "ים" : ""}{" "}
-            <span dir="ltr">{visualLanguage.unreadable_links.join(", ")}</span>, אז הוא לא נכלל בניתוח. אפשר להעלות צילום מסך במקום.
-          </p>
-        ) : null}
-
-        {stale && !analyzing && (
-          <p className="text-xs text-text-neutral-default">שיניתם דברים מאז הניתוח האחרון. נתחו שוב כדי לעדכן את השפה.</p>
-        )}
-
-        <Button
-          onClick={analyze}
-          disabled={!hasInputs || analyzing || busy}
-          className="w-full gap-2"
-        >
-          {analyzing ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-          {analyzing
-            ? "מנתח את השפה הוויזואלית..."
-            : visualLanguage
-              ? "ניתוח מחדש של שפה ויזואלית"
-              : "ניתוח שפה ויזואלית"}
-        </Button>
-        {analyzing && (
-          <p className="text-xs text-text-neutral-default" aria-live="polite">
-            זה יכול לקחת עד דקה, במיוחד כשיש קישור לאתר.
-          </p>
-        )}
-      </section>
+      {analysisSection}
     </div>
   )
 }
