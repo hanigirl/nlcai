@@ -101,10 +101,13 @@ export async function loadStyleRules(supabase: SupabaseClient, userId: string): 
 async function loadForWrite(supabase: SupabaseClient, userId: string): Promise<StyleRule[]> {
   const { data: listed, error: listError } = await supabase.storage.from(BUCKET).list(userId, { search: FILE })
   if (listError) throw new Error(`style-memory list: ${listError.message}`)
-  if (!listed?.some((f) => f.name === FILE)) return []
+  const listedFile = !!listed?.some((f) => f.name === FILE)
   const { data, error } = await supabase.storage.from(BUCKET).download(path(userId))
-  if (error || !data) throw new Error(`style-memory read: ${error?.message ?? "empty"}`)
-  return parseRules(await data.text())
+  if (data) return parseRules(await data.text())
+  // Not listed and not downloadable: she has no preferences yet. Listed but
+  // unreadable: stop, rather than save over a file we couldn't read.
+  if (!listedFile) return []
+  throw new Error(`style-memory read: ${error?.message ?? "empty"}`)
 }
 
 async function saveStyleRules(supabase: SupabaseClient, userId: string, rules: StyleRule[]): Promise<void> {
