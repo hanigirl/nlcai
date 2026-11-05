@@ -494,7 +494,13 @@ export function MediaAiChat({
     const run = (
       format === "b_roll"
         ? startBRollEdit(postId, editText, { quiet: true, references: attached })
-        : editImages(editText, attached)
+        : editImages(
+            editText,
+            attached,
+            // No image this time: the ones from her last message that had any
+            // ("שימי את התמונה!" after a try that missed means those).
+            attached.length ? [] : ([...cur.messages].reverse().find((m) => m.role === "user" && m.images?.length)?.images ?? []),
+          )
     ).then((r) => {
       if (r.ok && r.unchanged) unchanged = r.unchanged
       return r
@@ -571,6 +577,7 @@ export function MediaAiChat({
   async function editImages(
     text: string,
     references: string[] = [],
+    earlierReferences: string[] = [],
   ): Promise<{ ok: true; unchanged?: string } | { ok: false; message: string }> {
     try {
       const res = await fetch("/api/media/ai-edit", {
@@ -581,6 +588,7 @@ export function MediaAiChat({
           format,
           instruction: text,
           ...(references.length ? { references } : {}),
+          ...(earlierReferences.length ? { earlierReferences } : {}),
         }),
       })
       const data = (await res.json().catch(() => ({}))) as {

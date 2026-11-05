@@ -154,16 +154,23 @@ function briefText(b: CarouselBrief): string {
 function parse(
   text: string,
   count: number,
-): { html: string; illustrations: string[]; cutouts: number[]; attached: number[] } {
+): { html: string; illustrations: string[]; cutouts: number[]; attached: number[]; needsImage: boolean } {
   const json = /```json\s*([\s\S]*?)```/i.exec(text)
   const html = /```html\s*([\s\S]*?)```/i.exec(text)
   if (!html || !/class=["'][^"']*\bslide\b/.test(html[1])) throw new Error("composition_invalid")
   let illustrations: string[] = []
   let cutouts: number[] = []
   let attached: number[] = []
+  let needsImage = false
   try {
-    const parsed = JSON.parse(json?.[1] ?? "{}") as { illustrations?: string[]; cutouts?: unknown; attached?: unknown }
+    const parsed = JSON.parse(json?.[1] ?? "{}") as {
+      illustrations?: string[]
+      cutouts?: unknown
+      attached?: unknown
+      needs_image?: unknown
+    }
     illustrations = parsed.illustrations ?? []
+    needsImage = parsed.needs_image === true
     cutouts = Array.isArray(parsed.cutouts) ? parsed.cutouts.map(Number) : []
     attached = Array.isArray(parsed.attached) ? parsed.attached.map(Number) : []
   } catch {
@@ -176,6 +183,7 @@ function parse(
     cutouts: Array.from(new Set(cutouts.filter((n) => Number.isInteger(n) && n >= 1 && n <= count).map((n) => n - 1))),
     // Per slide: which attached image (1-based) is placed as its illustration; 0 = none.
     attached: Array.from({ length: count }, (_, i) => (Number.isInteger(attached[i]) && attached[i] > 0 ? attached[i] : 0)),
+    needsImage,
   }
 }
 
@@ -256,6 +264,7 @@ export function reviseCarousel(
             `She attached ${refs.length === 1 ? "an image" : `${refs.length} images`} (see "Attached image N" above). If she wants one placed in the carousel, put "attached": [one entry per slide: the attached image number to place on that slide, or 0] in the json block, leave that slide's "illustrations" entry empty, and make sure the slide shows it with <img class="art" src="__SLIDE_IMAGE_N__"> (N = the slide number) styled object-fit: contain, so her picture is never cropped, stretched or distorted. We put her exact file there — never describe it as a new illustration prompt. An attached image that only shows the look she wants is a reference: apply the look, and do not list it in "attached". To place it without its background, also list the slide in "cutouts".`,
           ]
         : []),
+      'If she asks to put in, swap in or use a SPECIFIC picture (her photo, her character, "this image", a picture from somewhere else) and that picture is not among the attached images, do NOT invent one: return the HTML unchanged and put "needs_image": true in the json block. Never add a person, character or object she did not ask for.',
       ...(restyle
         ? []
         : ["Change nothing she did not ask about — no new overlays, opacity, filters, blend modes or colour shifts on any slide or element."]),

@@ -7,7 +7,11 @@
  *   ?state=applied    — the edit changed the slides: "עדכנתי…" + "הוחל."
  *   ?state=unchanged  — the edit ran but the slides came out the same: the
  *                       panel says so, nothing is saved, no "הוחל."
- *   (no param)        — both, side by side.
+ *   ?state=image-missing — she asked to put in a picture that wasn't attached:
+ *                       nothing is edited, nothing invented, she's asked for it.
+ *   ?state=place-failed  — the picture was attached but didn't make it in:
+ *                       nothing is saved, the panel says so.
+ *   (no param)        — all of them, side by side.
  *
  * The real panel (MediaAiChat) opened on a finished conversation. Nothing is
  * sent: no fetch, no AI credits, no DB writes.
@@ -22,7 +26,7 @@ const ASK = "תערוך את הקרוסלה הזו לפי שפת המותג המ
 const INTRO = "מה לשנות בקרוסלה? אפשר לבקש על כל השקופיות או על שקופית מסוימת, למשל ״בשקופית 3 הכותרת בצבע המותג״."
 
 // The exact copy the server and panel use for each state.
-const STATES: { id: "applied" | "unchanged"; title: string; messages: ChatMessage[] }[] = [
+const STATES: { id: "applied" | "unchanged" | "image-missing" | "place-failed"; title: string; messages: ChatMessage[] }[] = [
   {
     id: "applied",
     title: "העריכה שינתה את השקופיות",
@@ -42,6 +46,33 @@ const STATES: { id: "applied" | "unchanged"; title: string; messages: ChatMessag
         role: "assistant",
         content:
           "הבקשה לא שינתה כלום בשקופיות, אז השארתי אותן כמו שהיו. נסו לכתוב מה בדיוק לשנות, למשל צבע הרקע, מיקום הכותרת או גודל התמונה.",
+      },
+    ],
+  },
+  {
+    id: "image-missing",
+    title: "ביקשה לשים תמונה שלא צורפה",
+    messages: [
+      { role: "assistant", content: INTRO },
+      { role: "user", content: "תחליף את התמונה של האישה בדמות שלי מהקרוסלה" },
+      {
+        role: "assistant",
+        error: true,
+        content:
+          "לא קיבלתי את התמונה שביקשתם לשים, אז לא שיניתי כלום ולא המצאתי תמונה אחרת. צרפו אותה כאן בהודעה (כפתור התמונה ליד השליחה) ונסו שוב.",
+      },
+    ],
+  },
+  {
+    id: "place-failed",
+    title: "התמונה צורפה, אבל לא נכנסה",
+    messages: [
+      { role: "assistant", content: INTRO },
+      { role: "user", content: "תחליף את האישה בתמונה הזו", images: ["/images/paper-plane-celebrate.png"] },
+      {
+        role: "assistant",
+        error: true,
+        content: "לא הצלחתי לשים את התמונה ששלחתם הפעם, אז השארתי את המדיה כמו שהייתה. נסו שוב, ואפשר לכתוב איפה בדיוק לשים אותה.",
       },
     ],
   },

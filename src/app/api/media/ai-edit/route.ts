@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
-import Anthropic from "@anthropic-ai/sdk"
 import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
@@ -22,7 +21,8 @@ import {
   uploadIllustration,
 } from "@/lib/carousel-composition"
 import { isOwnMediaUrl } from "@/lib/own-media"
-import { parseReferences, referenceBlocks, referenceBuffer } from "@/lib/ai-edit-references"
+import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
+import { planImageEdit as plan, type EditableFormat } from "@/lib/ai-edit-plan"
 import { currentCarouselBrief } from "@/lib/carousel-brief"
 import { wantsOwnLanguage } from "@/lib/visual-language/current-brief"
 import type { ModelImage } from "@/lib/visual-language/image-input"
@@ -31,6 +31,32 @@ import type { ModelImage } from "@/lib/visual-language/image-input"
  * The edit ran and the slides came out exactly as they were: nothing is
  * saved, and the chat says so instead of "עדכנתי" (Hani, 2026-11-05).
  */
+const IMAGE_MISSING = {
+  error: "image_missing",
+  message:
+    "לא קיבלתי את התמונה שביקשתם לשים, אז לא שיניתי כלום ולא המצאתי תמונה אחרת. צרפו אותה כאן בהודעה (כפתור התמונה ליד השליחה) ונסו שוב.",
+}
+const PLACE_FAILED = {
+  error: "place_failed",
+  message: "לא הצלחתי לשים את התמונה ששלחתם הפעם, אז השארתי את המדיה כמו שהייתה. נסו שוב, ואפשר לכתוב איפה בדיוק לשים אותה.",
+}
+
+/**
+ * Share of the image that visibly changed (0..1): both scaled to a coarse
+ * grid, a cell counts when its brightness moved by more than ~10%. An
+ * editor that "placed" nothing comes back under 0.5%; a placed picture is
+ * well over 10% (measured on her image post, 2026-11-05).
+ */
+async function changedArea(beforeUrl: string, afterBase64: string): Promise<number> {
+  const grid = async (input: Buffer) =>
+    sharp(input).greyscale().resize(54, 68, { fit: "fill" }).raw().toBuffer()
+  const before = await loadImageForModels(beforeUrl)
+  const [a, b] = await Promise.all([grid(Buffer.from(before.base64, "base64")), grid(Buffer.from(afterBase64, "base64"))])
+  let moved = 0
+  for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 24) moved++
+  return moved / a.length
+}
+
 const UNCHANGED_MESSAGE =
   "הבקשה לא שינתה כלום בשקופיות, אז השארתי אותן כמו שהיו. נסו לכתוב מה בדיוק לשנות, למשל צבע הרקע, מיקום הכותרת או גודל התמונה."
 
@@ -52,8 +78,6 @@ export const maxDuration = 300
  * POST { postId, format, instruction } → { urls, edited: number[] }
  */
 
-type EditableFormat = "carousel" | "story" | "image_post"
-
 const SHAPE: Record<EditableFormat, ImageShape> = {
   carousel: "4:5",
   image_post: "4:5",
@@ -63,11 +87,6 @@ const CANVAS: Record<EditableFormat, [number, number]> = {
   carousel: [1080, 1350],
   image_post: [1080, 1350],
   story: [1080, 1920],
-}
-const NOUN: Record<EditableFormat, string> = {
-  carousel: "carousel slide",
-  image_post: "single image post",
-  story: "Instagram story frame",
 }
 
 function isEditableFormat(v: unknown): v is EditableFormat {
@@ -80,70 +99,6 @@ function toCanvas(base64: string, [w, h]: [number, number]): string {
     `<image href="data:image/png;base64,${base64}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice"/>` +
     `</svg>`
   return Buffer.from(new Resvg(svg).render().asPng()).toString("base64")
-}
-
-/** Opus: which items, and the exact edit to make. */
-async function plan(
-  apiKey: string,
-  format: EditableFormat,
-  count: number,
-  instruction: string,
-  refs: string[] = [],
-  /** She asked for her visual language: its current lines, to spell out in the brief. */
-  language: string[] = [],
-): Promise<{ targets: number[]; edit: string; place: number[] }> {
-  const client = new Anthropic({ apiKey })
-  const msg = await client.messages.create({
-    model: "claude-opus-5-5",
-    max_tokens: 1500,
-    system:
-      "You turn a Hebrew-speaking creator's edit request for her designed social media images into an exact brief for an image-editing model. Reply with JSON only.",
-    messages: [
-      {
-        role: "user",
-        content: [
-          ...referenceBlocks(refs, { placeable: true }),
-          { type: "text", text: [
-          `Format: ${NOUN[format]}${count > 1 ? `, a set of ${count} (numbered 1..${count} in order)` : ""}.`,
-          `Her request (Hebrew): ${JSON.stringify(instruction)}`,
-          "",
-          `Return {"targets": [numbers] , "edit": "..."${refs.length ? ', "place": [numbers]' : ""}}.`,
-          `- targets: which items the request is about. If she names items (e.g. "שקופית 2", "הפריים האחרון", "הראשונה") use those; if it's about the look in general or doesn't say, all of 1..${count}.`,
-          "- edit: one precise English instruction for an image-editing model describing ONLY the change she asked for (colours, sizes, positions, elements, mood…). If she asks to change wording, quote the new Hebrew text exactly. If she asks to remove an illustration's or picture's background, say: keep the subject exactly as it is, and replace its backdrop (box, colour, glow, shadow) with the design's own background continuing seamlessly around it. Do not invent changes she didn't ask for." +
-            (refs.length
-              ? ' The image editor will NOT see her reference images, so spell out in words exactly what to take from them. Images she wants PLACED are different: the editor receives those files themselves, as "input image 2", "input image 3"… in the order you list them in "place" — so say where and how big to place each one, and that it is reproduced exactly as it is (same character / photo / logo, never redrawn).'
-              : ""),
-          ...(language.length
-            ? [
-                "",
-                "She asks to apply HER VISUAL LANGUAGE. The image editor cannot see it, so the edit must restyle the whole design into it, spelled out concretely: background treatment, palette (with hex codes), type styling (weight, colour, emphasis), graphic devices and decoration — and say to remove whatever of the current look the language doesn't have. Keep every piece of Hebrew text exactly, and keep any photo of a person and her logo. Her current visual language:",
-                ...language,
-              ]
-            : []),
-          ...(refs.length
-            ? ['- place: the numbers of the attached images she wants put INTO the design as they are (her own picture, character, logo, product). Empty for images that only show a look to match.']
-            : []),
-        ].join("\n") },
-        ],
-      },
-    ],
-  })
-  const text = msg.content.map((c) => (c.type === "text" ? c.text : "")).join("")
-  const json = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)) as {
-    targets?: number[]
-    edit?: string
-    place?: number[]
-  }
-  const targets = (json.targets ?? [])
-    .map((n) => Math.round(n))
-    .filter((n) => n >= 1 && n <= count)
-  return {
-    targets: targets.length ? Array.from(new Set(targets)) : Array.from({ length: count }, (_, i) => i + 1),
-    edit: (json.edit ?? "").trim() || instruction,
-    place: Array.from(
-      new Set((json.place ?? []).map((n) => Math.round(n)).filter((n) => n >= 1 && n <= refs.length)),
-    ),
-  }
 }
 
 function editPrompt(edit: string, placing: number, restyle = false, brandRefs = 0): string {
@@ -167,21 +122,32 @@ function editPrompt(edit: string, placing: number, restyle = false, brandRefs = 
       : "Edit this image. Apply ONLY the following change:",
     edit,
     "",
-    "Keep everything else exactly as it is: the layout, every piece of Hebrew text (same words, same spelling, right-to-left), the fonts, colours, illustrations and any logo. Do not add new text. Nothing may touch or cross the image edge.",
+    "Keep everything else exactly as it is: the layout, every piece of Hebrew text (same words, same spelling, right-to-left), the fonts, colours, illustrations and any logo. Do not add new text, and no person, character, animal or object the change above doesn't name. Nothing may touch or cross the image edge.",
   ].join("\n")
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { postId, format, instruction, references } = (await req.json().catch(() => ({}))) as {
+    const { postId, format, instruction, references, earlierReferences } = (await req.json().catch(() => ({}))) as {
       postId?: string
       format?: unknown
       instruction?: string
       /** Screenshots she attached (lib/ai-edit-references). */
       references?: unknown
+      /**
+       * The images of her last message that had some, when this one has none
+       * — "שימי את התמונה!" after a try that missed refers to them.
+       */
+      earlierReferences?: unknown
     }
     const text = instruction?.trim()
-    const refs = parseReferences(references)
+    const current = parseReferences(references)
+    const refs = current.length ? current : parseReferences(earlierReferences)
+    // What the models read: says where the images came from when they weren't attached now.
+    const ask =
+      text && !current.length && refs.length
+        ? `${text}\n(The attached image${refs.length > 1 ? "s" : ""} came with her earlier message in this chat.)`
+        : text
     if (!postId || !text || !isEditableFormat(format)) {
       return NextResponse.json({ error: "postId, format and instruction are required" }, { status: 400 })
     }
@@ -264,7 +230,9 @@ export async function POST(req: NextRequest) {
       const current = await currentCarouselBrief(supabase, user.id, saved0.brief, { ownLanguage })
       const restyle = current.changed || ownLanguage
       const stored = { ...saved0, brief: current.brief }
-      const revised = await reviseCarousel(anthropicKey, stored, text, refs, restyle)
+      const revised = await reviseCarousel(anthropicKey, stored, ask!, refs, restyle)
+      // She named a picture we don't have: ask for it — never a stand-in.
+      if (revised.needsImage) return NextResponse.json(IMAGE_MISSING, { status: 400 })
       const illustrations = [...stored.illustrations]
       const ownArt = stored.illustrations.map((_, i) => stored.ownArt?.[i] ?? false)
       const cutouts = new Set(revised.cutouts)
@@ -350,7 +318,10 @@ export async function POST(req: NextRequest) {
     // gets her CURRENT language to spell out, and the image model her brand
     // references — without them it only ever saw the old design.
     const language = ownLanguage ? await resolveDesignDirection(supabase, user.id, { format }) : null
-    const { targets, edit, place } = await plan(anthropicKey, format, urls.length, text, refs, language?.lines ?? [])
+    const { targets, edit, place, needsImage } = await plan(anthropicKey, format, urls.length, ask!, refs, language?.lines ?? [])
+    // She asked for a specific picture that isn't here: say so, edit nothing.
+    // Sending the editor words instead is how an astronaut came back (Hani, 2026-11-05).
+    if (needsImage) return NextResponse.json(IMAGE_MISSING, { status: 400 })
     // Pictures she asked to place go to the image model as files, not words.
     const placeImages = await Promise.all(place.map((n) => normaliseImage(referenceBuffer(refs[n - 1]))))
     // Her placed pictures first (the prompt numbers them), then up to two brand references.
@@ -366,6 +337,15 @@ export async function POST(req: NextRequest) {
       }),
     )
 
+    // Placing her picture or restyling changes a real area of the image. If
+    // none of the edited images visibly changed, it didn't happen: save
+    // nothing and say so — never "עדכנתי".
+    if (place.length || language) {
+      const changed = await Promise.all(targets.map((n) => changedArea(urls[n - 1], next[n - 1])))
+      if (Math.max(...changed) < (place.length ? 0.03 : 0.05)) {
+        return NextResponse.json(place.length ? PLACE_FAILED : { urls, edited: [], unchanged: true, message: UNCHANGED_MESSAGE })
+      }
+    }
     const saved = await replaceImageAssetSet(supabase, user.id, postId, format, next)
     if (!saved.ok) return NextResponse.json({ error: saved.error }, { status: 500 })
 
