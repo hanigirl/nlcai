@@ -11,6 +11,8 @@
  *   ?state=media             — מדיה (OpenAI connected, HeyGen not)
  *   ?state=social-connected  — רשתות חברתיות, Instagram connected
  *   ?state=social-expired    — רשתות חברתיות, Instagram lapsed
+ *   ?state=social-networks   — רשתות חברתיות, Instagram + YouTube connected,
+ *                              LinkedIn not connected
  *   ?state=empty             — nothing connected anywhere
  *   (no param)               — all of the above, one under the other
  *
@@ -32,7 +34,7 @@ import {
 } from "@/components/settings-connections"
 import type { InstagramConnection } from "@/lib/instagram-connection"
 
-type StateId = "writing" | "media" | "social-connected" | "social-expired" | "empty"
+type StateId = "writing" | "media" | "social-connected" | "social-expired" | "social-networks" | "empty"
 
 const NO_KEYS: Record<KeyName, string | null> = {
   anthropic_api_key: null,
@@ -61,6 +63,11 @@ const IG_EXPIRED: InstagramConnection = {
   primary: { id: "sample", handle: "noa.cohen.consulting", avatarUrl: null, status: "needs_reconnect" },
 }
 const IG_NONE: InstagramConnection = { status: "disconnected", accounts: [], primary: null }
+const YT_CONNECTED: InstagramConnection = {
+  status: "connected",
+  accounts: [],
+  primary: { id: "sample-yt", platform: "youtube", handle: "Noa Cohen Consulting", avatarUrl: null, status: "connected" },
+}
 
 const STATES: {
   id: StateId
@@ -68,11 +75,20 @@ const STATES: {
   category: ConnectionCategory
   keys: Record<KeyName, string | null>
   instagram: InstagramConnection
+  networks?: { instagram: InstagramConnection; youtube: InstagramConnection; linkedin: InstagramConnection }
 }[] = [
   { id: "writing", title: "כתיבה", category: "writing", keys: SOME_KEYS, instagram: IG_CONNECTED },
   { id: "media", title: "מדיה", category: "media", keys: SOME_KEYS, instagram: IG_CONNECTED },
   { id: "social-connected", title: "רשתות חברתיות · אינסטגרם מחובר", category: "social", keys: SOME_KEYS, instagram: IG_CONNECTED },
   { id: "social-expired", title: "רשתות חברתיות · החיבור לאינסטגרם פג", category: "social", keys: SOME_KEYS, instagram: IG_EXPIRED },
+  {
+    id: "social-networks",
+    title: "רשתות חברתיות · אינסטגרם ו-YouTube מחוברים, LinkedIn לא",
+    category: "social",
+    keys: SOME_KEYS,
+    instagram: IG_CONNECTED,
+    networks: { instagram: IG_CONNECTED, youtube: YT_CONNECTED, linkedin: IG_NONE },
+  },
   { id: "empty", title: "שום דבר לא מחובר", category: "writing", keys: NO_KEYS, instagram: IG_NONE },
 ]
 
@@ -114,7 +130,7 @@ function SettingsFrame({ state }: { state: (typeof STATES)[number] }) {
         />
         <div className="flex-1 min-w-0 max-w-lg flex flex-col gap-4">
           {category === "social" ? (
-            <SocialNetworksPanel instagramPreview={state.instagram} />
+            <SocialNetworksPanel preview={state.networks ?? { instagram: state.instagram }} />
           ) : (
             CATEGORY_KEYS[category].map((keyName) => {
               const cfg = KEYS.find((k) => k.key === keyName)!

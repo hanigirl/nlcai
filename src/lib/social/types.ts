@@ -59,8 +59,15 @@ export interface SchedulePostInput {
   userId: string
   /** Our `social_accounts.id` — resolved to the vendor's id inside the adapter. */
   socialAccountId: string
-  /** The caption. Instagram allows 2,200 characters on posts and reels, 0 on stories. */
+  /** Which network this copy of the post goes to (042: one input per target). */
+  platform: SocialPlatform
+  /**
+   * The caption. Instagram allows 2,200 characters on posts and reels, 0 on
+   * stories; LinkedIn 3,000; YouTube uses it as the video description (5,000).
+   */
   caption: string
+  /** YouTube only: the video title — the hook, at most 100 characters. */
+  title?: string
   media: SocialMedia[]
   /**
    * When it goes live, as an absolute instant.
@@ -134,11 +141,13 @@ export interface ConnectHandoff {
  * out. Anything marked `userActionable` is something worth interrupting her
  * for — everything else is ours to fix.
  */
-/** One Instagram account a Facebook grant exposes — what the picker lists. */
+/** One account a grant exposes — what the picker lists. */
 export interface ConnectOption {
   originId: string
   name: string
   avatar: string | null
+  /** LinkedIn: a personal profile or a company page. */
+  kind?: "profile" | "page"
 }
 
 /**
@@ -198,7 +207,7 @@ export interface SocialPublisher {
    */
   ensureTenant(userId: string): Promise<void>
 
-  /** Begin connecting an Instagram account. Returns where to open the flow. */
+  /** Begin connecting an account on `platform`. Returns where to open the flow. */
   startConnect(userId: string, platform: SocialPlatform): Promise<ConnectHandoff>
 
   /**

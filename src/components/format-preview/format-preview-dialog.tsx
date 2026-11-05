@@ -24,6 +24,16 @@ import { checkSlot, ScheduleDateTimeField } from "@/components/schedule-date-tim
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { destinationForFormat } from "@/lib/social/media-spec"
+import { NETWORK_LABEL, toNetwork, youtubeTitleFromHook } from "@/lib/social/networks"
+import type { SocialPlatform } from "@/lib/supabase/types"
+import {
+  IncludeNetworkRow,
+  LinkedInFrame,
+  NetworkList,
+  NetworkTabs,
+  YouTubeFrame,
+  type NetworkSwitchVariant,
+} from "./network-switch"
 import {
   CaptionCounter,
   CaptionTooLong,
@@ -44,6 +54,15 @@ export type FormatPreviewHandlers = {
   onUnschedule: () => void
   onOpenCanvas: () => void
   onStatusAction: (action: "connect" | "reconnect" | "retry" | "fix_media" | "open_post") => void
+  /**
+   * The network switch (`?variant=a|b` on /calendar). Unset: the preview is
+   * exactly the Instagram-only one that shipped.
+   */
+  networkSwitch?: NetworkSwitchVariant
+  /** Take a network off this post, or put it back. */
+  onNetworkToggle?: (platform: SocialPlatform, include: boolean) => void
+  /** Open a network's connect modal. */
+  onConnectNetwork?: (platform: SocialPlatform) => void
 }
 
 export function FormatPreviewDialog({
@@ -80,12 +99,20 @@ function DialogBody({
   onUnschedule,
   onOpenCanvas,
   onStatusAction,
+  networkSwitch,
+  onNetworkToggle,
+  onConnectNetwork,
 }: {
   data: FormatPreviewData
   content: PreviewContentState
   onClose: () => void
 } & FormatPreviewHandlers) {
   const [slide, setSlide] = useState(0)
+  const networks = networkSwitch ? (data.networks ?? []) : []
+  const [selectedNetwork, setSelectedNetwork] = useState<SocialPlatform>(
+    (networks.find((n) => n.included && n.connection === "connected") ?? networks[0])?.platform ?? "instagram",
+  )
+  const current = networks.find((n) => n.platform === selectedNetwork) ?? null
   // Draft slot — "תזמון פוסט" in the footer commits it to the board.
   const [draftDate, setDraftDate] = useState(data.scheduledDate)
   const [draftTime, setDraftTime] = useState(data.scheduledTime)
@@ -133,7 +160,21 @@ function DialogBody({
     <div className="grid max-h-[calc(100vh-3rem)] grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
       {/* Start side (right in RTL) — the post as Instagram will show it. */}
       <div className="flex flex-col items-center gap-3 overflow-y-auto bg-bg-surface px-6 py-6 scrollbar-subtle">
-        <PhoneFrame data={data} content={content} slide={slide} onSlide={setSlide} />
+        {networkSwitch === "a" && (
+          <NetworkTabs networks={networks} selected={selectedNetwork} onSelect={setSelectedNetwork} />
+        )}
+        {current?.platform === "youtube" ? (
+          <YouTubeFrame data={data} content={content} handle={current.handle} title={youtubeTitleFromHook(data.hook)} />
+        ) : current?.platform === "linkedin" ? (
+          <LinkedInFrame data={data} content={content} handle={current.handle} slide={slide} onSlide={setSlide} />
+        ) : (
+          <PhoneFrame
+            data={current?.handle ? { ...data, handle: current.handle } : data}
+            content={content}
+            slide={slide}
+            onSlide={setSlide}
+          />
+        )}
         {content === "ready" && data.slides.length > 1 && (
           <div className="flex w-full max-w-[300px] flex-col gap-1.5">
             <span className="text-xs-body text-text-neutral-default">
@@ -153,7 +194,9 @@ function DialogBody({
               {data.hook}
             </DialogTitle>
             <DialogDescription className="sr-only">
-              תצוגה מקדימה של הפורמט כפי שיעלה לאינסטגרם
+              {networkSwitch
+                ? "תצוגה מקדימה של הפורמט כפי שיעלה לכל רשת"
+                : "תצוגה מקדימה של הפורמט כפי שיעלה לאינסטגרם"}
             </DialogDescription>
           </div>
           <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="סגירה">
@@ -164,6 +207,49 @@ function DialogBody({
         <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-5 scrollbar-subtle">
           {loading ? (
             <Skeleton className="h-14 w-full rounded-xl" />
+          ) : networkSwitch === "b" && networks.length > 0 ? (
+            // B — every network, one row each; the row picks the frame.
+            <NetworkList
+              networks={networks}
+              selected={selectedNetwork}
+              onSelect={setSelectedNetwork}
+              onToggle={(p, include) => onNetworkToggle?.(p, include)}
+              readOnly={isPublished}
+              onConnect={(p) => onConnectNetwork?.(p)}
+              onRetry={() => onStatusAction("retry")}
+            />
+          ) : networkSwitch === "a" && current ? (
+            // A — the selected tab's status, and whether it goes there.
+            <div className="flex flex-col gap-2.5">
+              {current.included || current.connection !== "connected" ? (
+                <PublishStatusSlot
+                  status={current.connection === "connected" ? current.publish : { kind: "not_connected" }}
+                  date={data.scheduledDate}
+                  time={data.scheduledTime}
+                  platform={current.platform}
+                  onAction={(a) =>
+                    a === "connect" || a === "reconnect" ? onConnectNetwork?.(current.platform) : onStatusAction(a)
+                  }
+                />
+              ) : (
+                <p role="status" className="rounded-xl border border-border-neutral-default bg-bg-surface px-3 py-2.5 text-small text-text-neutral-default">
+                  הפוסט הזה לא עולה {toNetwork(current.platform)}.
+                </p>
+              )}
+              {current.connection === "connected" && !isPublished && (
+                <IncludeNetworkRow
+                  network={current}
+                  onToggle={(include) => onNetworkToggle?.(current.platform, include)}
+                />
+              )}
+              {networks.length === 1 && (
+                <span className="text-xs-body text-text-neutral-default">
+                  {data.format === "story"
+                    ? "סטורי עולה רק לאינסטגרם."
+                    : `רק ${NETWORK_LABEL[current.platform]} מקבלת את הפורמט הזה.`}
+                </span>
+              )}
+            </div>
           ) : (
             <PublishStatusSlot
               status={data.publish}

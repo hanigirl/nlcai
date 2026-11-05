@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
-import { refreshPublishStates, slotKey, syncSlot } from "@/lib/social/bridge"
+import { refreshPublishStates, setTargetOptOut, slotKey, syncSlot } from "@/lib/social/bridge"
+import { isSocialPlatform } from "@/lib/social/networks"
 import { canUseScheduling } from "@/lib/scheduling-access"
 
 /**
@@ -20,6 +21,10 @@ import { canUseScheduling } from "@/lib/scheduling-access"
  *   The card's "לעדכן": replace the provider's stale copy with the current
  *   caption and media.
  *
+ * POST { action: "network", corePostId, format, platform, include }
+ *   The preview's per-post network choice: take one network off this post
+ *   (cancelled at the provider first) or put it back / add it.
+ *
  * Answers `{ publish: { "<corePostId>:<format>": PublishState } }`.
  */
 
@@ -34,7 +39,13 @@ export async function POST(req: NextRequest) {
   // Part of the scheduling release (lib/scheduling-access).
   if (!canUseScheduling(user.email)) return NextResponse.json({ publish: {} })
 
-  let body: { action?: unknown; corePostId?: unknown; format?: unknown }
+  let body: {
+    action?: unknown
+    corePostId?: unknown
+    format?: unknown
+    platform?: unknown
+    include?: unknown
+  }
   try {
     body = await req.json()
   } catch {
@@ -58,8 +69,16 @@ export async function POST(req: NextRequest) {
       user.id,
       corePostId,
       format,
-      body.action === "update" ? "update" : "sync",
+      { mode: body.action === "update" ? "update" : "sync" },
     )
+    return NextResponse.json({ publish: { [slotKey(corePostId, format)]: state } })
+  }
+
+  if (body.action === "network") {
+    if (!isSocialPlatform(body.platform) || typeof body.include !== "boolean") {
+      return NextResponse.json({ error: "platform and include are required" }, { status: 400 })
+    }
+    const state = await setTargetOptOut(supabase, user.id, corePostId, format, body.platform, !body.include)
     return NextResponse.json({ publish: { [slotKey(corePostId, format)]: state } })
   }
 

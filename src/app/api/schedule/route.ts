@@ -4,10 +4,13 @@ import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
 import {
   cancelSlots,
+  loadTargetStates,
   slotKey,
   syncSlot,
   toPublishState,
 } from "@/lib/social/bridge"
+import { isSocialPlatform } from "@/lib/social/networks"
+import type { SocialPlatform } from "@/lib/supabase/types"
 import type { PublishState } from "@/lib/social/publish-state"
 import { canUseScheduling } from "@/lib/scheduling-access"
 import type { SchedulePublishStatus } from "@/lib/supabase/types"
@@ -31,6 +34,7 @@ export const maxDuration = 60
  */
 
 type Row = {
+  id?: string
   core_post_id: string
   format: string
   scheduled_date: string
@@ -49,11 +53,17 @@ type WireRow = {
   publishedAt: string | null
   hook?: string
   /**
-   * Where this slot stands with Instagram. Read-only from the client's side:
-   * the server computes it, a PUT never sets it. Any surface showing publish
-   * status (calendar card, canvas card, format preview) reads this field.
+   * Where this slot stands with its networks. Read-only from the client's
+   * side: the server computes it, a PUT never sets it. Any surface showing
+   * publish status (calendar card, canvas card, format preview) reads this
+   * field; `publish.targets` carries each network on its own.
    */
   publish?: PublishState
+  /**
+   * PUT only: networks taken off this post before it was first sent (the
+   * preview of a not-yet-scheduled post). Ignored once the slot has targets.
+   */
+  excludeNetworks?: SocialPlatform[]
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -87,8 +97,11 @@ function parseWire(input: unknown): WireRow | null {
   const scheduledTime = TIME_RE.test(rawTime) ? rawTime : "09:00"
   const publishedAt = typeof r.publishedAt === "string" ? r.publishedAt : null
   const hook = typeof r.hook === "string" ? r.hook : undefined
+  const excludeNetworks = Array.isArray(r.excludeNetworks)
+    ? r.excludeNetworks.filter(isSocialPlatform)
+    : undefined
 
-  return { corePostId, format, scheduledDate, scheduledTime, publishedAt, hook }
+  return { corePostId, format, scheduledDate, scheduledTime, publishedAt, hook, excludeNetworks }
 }
 
 // GET — the whole board for the signed-in user.
@@ -102,7 +115,7 @@ export async function GET() {
   const { data, error } = await supabase
     .from("scheduled_posts")
     .select(
-      "core_post_id, format, scheduled_date, scheduled_time, published_at, hook, publish_status, publish_error",
+      "id, core_post_id, format, scheduled_date, scheduled_time, published_at, hook, publish_status, publish_error",
     )
     .eq("user_id", user.id)
     .order("scheduled_date", { ascending: true })
@@ -111,7 +124,22 @@ export async function GET() {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  return NextResponse.json({ scheduled: (data as Row[]).map(toWire) })
+  const rows = data as Row[]
+  // Per-network detail rides along with the roll-up. Empty (never an error)
+  // before migration 042 is applied.
+  const targets = await loadTargetStates(
+    supabase,
+    user.id,
+    rows.map((r) => r.id).filter((x): x is string => !!x),
+  )
+  return NextResponse.json({
+    scheduled: rows.map((r) => {
+      const wire = toWire(r)
+      const t = r.id ? targets.get(r.id) : undefined
+      if (t && wire.publish) wire.publish = { ...wire.publish, targets: t }
+      return wire
+    }),
+  })
 }
 
 /**
@@ -187,10 +215,10 @@ export async function PUT(req: NextRequest) {
   }
 
   // The bridge. The board's date + hour is what goes to the provider — this
-  // is the only path by which a slot reaches Instagram, so whatever moved the
-  // row (a drag, a date pick, schedule-all) is what moves the post.
+  // is the only path by which a slot reaches her networks, so whatever moved
+  // the row (a drag, a date pick, schedule-all) is what moves the posts.
   const publish: Record<string, PublishState> = {}
-  // Sending to Instagram is part of the scheduling release — the listed
+  // Sending to the networks is part of the scheduling release — the listed
   // accounts only (lib/scheduling-access). Everyone else's board just saves.
   if (!isBackfill && canUseScheduling(user.email)) {
     for (const r of parsed) {
@@ -203,7 +231,9 @@ export async function PUT(req: NextRequest) {
       // A failed slot re-saved in place is a retry; an untouched queued one
       // is not news.
       if (!moved && prev.publish_status !== "failed") continue
-      publish[key] = await syncSlot(supabase, user.id, r.corePostId, r.format)
+      publish[key] = await syncSlot(supabase, user.id, r.corePostId, r.format, {
+        exclude: r.excludeNetworks,
+      })
     }
   }
 
@@ -263,7 +293,7 @@ export async function DELETE(req: NextRequest) {
       {
         error: "cancel_failed",
         message:
-          "לא הצלחנו להוציא את הפוסט מהתור באינסטגרם, ולכן הוא נשאר על הלוח. אפשר לנסות להסיר שוב.",
+          "לא הצלחנו להוציא את הפוסט מהתור באחת הרשתות, ולכן הוא נשאר על הלוח. אפשר לנסות להסיר שוב.",
         stuck: stuck.map((r) => ({ corePostId: r.core_post_id, format: r.format })),
       },
       { status: 502 },

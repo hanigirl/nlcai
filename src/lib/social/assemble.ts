@@ -20,7 +20,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js"
-import type { Database } from "@/lib/supabase/types"
+import type { Database, SocialPlatform } from "@/lib/supabase/types"
 import {
   MAX_CAPTION_CHARS,
   MAX_CAROUSEL_ITEMS,
@@ -28,6 +28,7 @@ import {
 } from "./media-spec"
 import { SocialPublishError, type SchedulePostInput, type SocialMedia } from "./types"
 import { slotToInstant } from "./slot-time"
+import { MAX_CAPTION_BY_NETWORK, NETWORK_LABEL, youtubeTitleFromHook } from "./networks"
 
 export { slotToInstant } from "./slot-time"
 
@@ -37,6 +38,8 @@ type AssembleArgs = {
   corePostId: string
   format: string
   socialAccountId: string
+  /** Which network this copy goes to. Defaults to Instagram (pre-042 callers). */
+  platform?: SocialPlatform
   /** "YYYY-MM-DD" from the calendar. */
   scheduledDate: string
   /** "HH:00" from the calendar. */
@@ -47,6 +50,7 @@ export async function assembleScheduledPost(
   args: AssembleArgs
 ): Promise<SchedulePostInput> {
   const { db, userId, corePostId, format, socialAccountId } = args
+  const platform: SocialPlatform = args.platform ?? "instagram"
   const kind = destinationForFormat(format)
 
   // ---- the format's own body: the caption, in full ----
@@ -74,12 +78,37 @@ export async function assembleScheduledPost(
   // rule cannot apply, and it is a platform fact rather than a choice.
   const caption = kind === "story" ? "" : body
 
-  if (caption.length > MAX_CAPTION_CHARS) {
+  const captionMax = platform === "instagram" ? MAX_CAPTION_CHARS : MAX_CAPTION_BY_NETWORK[platform]
+  if (caption.length > captionMax) {
     throw new SocialPublishError(
-      `הכיתוב ארוך מ-${MAX_CAPTION_CHARS} תווים (יש ${caption.length}). ` +
-        `אינסטגרם תחתוך אותו — עדיף לקצר לפני שמתזמנים.`,
+      `הכיתוב ארוך מ-${captionMax.toLocaleString("he-IL")} תווים (יש ${caption.length.toLocaleString("he-IL")}). ` +
+        `${NETWORK_LABEL[platform]} לא תקבל אותו כך — עדיף לקצר לפני שמתזמנים.`,
       "media_rejected"
     )
+  }
+
+  // YouTube needs a title, and the title is the hook (Hani, 2026-11-05).
+  let title: string | undefined
+  if (platform === "youtube") {
+    const { data: postRow } = await db
+      .from("core_posts")
+      .select("hook_text")
+      .eq("id", corePostId)
+      .maybeSingle()
+    let hook = ((postRow as { hook_text: string | null } | null)?.hook_text ?? "").trim()
+    if (!hook) {
+      const { data: slotRow } = await db
+        .from("scheduled_posts")
+        .select("hook")
+        .eq("core_post_id", corePostId)
+        .eq("format", format)
+        .maybeSingle()
+      hook = ((slotRow as { hook: string | null } | null)?.hook ?? "").trim()
+    }
+    if (!hook) {
+      throw new SocialPublishError("ל-YouTube צריך כותרת, ולפוסט הזה אין הוק.", "media_rejected")
+    }
+    title = youtubeTitleFromHook(hook)
   }
 
   // ---- media: content assets in slide order, cover kept apart ----
@@ -124,7 +153,7 @@ export async function assembleScheduledPost(
   const unfetchable = media.find((m) => !isDirectMediaUrl(m.url))
   if (unfetchable) {
     throw new SocialPublishError(
-      "אחד מקובצי המדיה הוא קישור (למשל מגוגל דרייב) או קובץ שאינסטגרם לא מקבלת. צריך להעלות את הקובץ עצמו.",
+      "אחד מקובצי המדיה הוא קישור (למשל מגוגל דרייב) או קובץ שהרשת לא מקבלת. צריך להעלות את הקובץ עצמו.",
       "media_rejected"
     )
   }
@@ -150,6 +179,8 @@ export async function assembleScheduledPost(
   return {
     userId,
     socialAccountId,
+    platform,
+    title,
     caption,
     media,
     coverUrl,

@@ -63,9 +63,23 @@ import {
 import { NoSettingsDialog, PreviewBar, ScheduleAllButton } from "@/components/schedule-all"
 import { CorePostSheet, type CorePostSheetData } from "@/components/core-post-sheet"
 import { FormatThumbnail } from "@/components/format-thumbnail"
-import { InstagramConnectionControl } from "@/components/instagram-connect"
+import { InstagramConnectDialogHost, InstagramConnectionControl } from "@/components/instagram-connect"
+import {
+  ConnectedNetworksIndicator,
+  type ConnectedNetwork,
+  type NetworkSwitchVariant,
+} from "@/components/format-preview/network-switch"
+import {
+  isNetworkReviewState,
+  reviewConnections,
+  reviewPreviewData,
+  type NetworkReviewState,
+} from "@/components/format-preview/network-review-fixtures"
+import type { PreviewNetwork } from "@/components/format-preview/shared"
+import { networksForFormat, PUBLISH_PLATFORMS } from "@/lib/social/networks"
+import type { SocialPlatform } from "@/lib/supabase/types"
 import { PublishStatusLine } from "@/components/publish-status"
-import { useInstagramConnection, type InstagramConnection } from "@/lib/instagram-connection"
+import { useSocialConnections, type InstagramConnection } from "@/lib/instagram-connection"
 import { isSlotTooSoon } from "@/lib/social/slot-time"
 import {
   FormatStatusChip,
@@ -81,6 +95,7 @@ import {
   retryPublish,
   refreshPublishStatus,
   schedulePost,
+  setPublishNetwork,
   toDateKey,
   unmarkPublished,
   unschedulePost,
@@ -582,13 +597,46 @@ export default function CalendarPage() {
   // Instagram: one shared connection state for the pill above the board and
   // every card's status line; one modal, opened from either.
   const router = useRouter()
-  const connection = useInstagramConnection()
+  const connections = useSocialConnections()
+  const connection = connections.instagram
   const [igDialogOpen, setIgDialogOpen] = useState(false)
+  // YouTube / LinkedIn connect modal — the Instagram one, with their words.
+  const [networkDialog, setNetworkDialog] = useState<SocialPlatform | null>(null)
+  const openNetworkDialog = (p: SocialPlatform) => (p === "instagram" ? setIgDialogOpen(true) : setNetworkDialog(p))
+
+  // --- Network switch review (REVIEW ONLY — delete with the pick) ----------
+  // `?variant=a|b` turns on the preview's network switch and the connected-
+  // networks marker; `&state=…` opens the preview straight on a seeded post.
+  // Read after mount (no Suspense boundary needed). With no param the page is
+  // exactly production.
+  const [networkVariant, setNetworkVariant] = useState<NetworkSwitchVariant | null>(null)
+  const [reviewState, setReviewState] = useState<NetworkReviewState | null>(null)
+  const [reviewNetworks, setReviewNetworks] = useState<PreviewNetwork[] | null>(null)
+  // Closing the seeded preview keeps the seeded marker above the board.
+  const [reviewOpen, setReviewOpen] = useState(true)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const v = params.get("variant")
+    if (v !== "a" && v !== "b") return
+    setNetworkVariant(v)
+    const st = params.get("state")
+    if (isNetworkReviewState(st)) {
+      setReviewState(st)
+      setReviewNetworks(reviewPreviewData(st).networks ?? null)
+    }
+  }, [])
+
+  /** Is any network that takes this format connected? */
+  const fitsConnected = (format: string) =>
+    networksForFormat(format).some((p) => connections[p].status === "connected")
+  const anyConnected = PUBLISH_PLATFORMS.some((p) => connections[p].status === "connected")
 
   // What happened in the queue since the last visit — outcomes of slots
-  // whose time passed, edits after queuing, a lapsed connection.
+  // whose time passed, edits after queuing, a lapsed connection. Not on a
+  // review link: those read nothing and write nothing.
   useEffect(() => {
-    if (schedulingOn) void refreshPublishStatus()
+    const review = new URLSearchParams(window.location.search).get("variant")
+    if (schedulingOn && review !== "a" && review !== "b") void refreshPublishStatus()
   }, [schedulingOn])
 
   /**
@@ -598,7 +646,7 @@ export default function CalendarPage() {
    * board-only user (no connection) plans freely, as before.
    */
   const blockedAsTooSoon = (dateKey: string, time: string): boolean => {
-    if (!schedulingOn || connection.status !== "connected") return false
+    if (!schedulingOn || !anyConnected) return false
     if (!isSlotTooSoon(dateKey, time)) return false
     toast.error(`השעה ${time} כבר עברה או קרובה מדי, ולכן הפוסט לא יוכל לצאת בזמן. בחרו יום אחר.`)
     return true
@@ -1050,6 +1098,9 @@ export default function CalendarPage() {
   // caption, the slot, and the Instagram status. The caption and the slot
   // are saved by its one "תזמון פוסט" button.
   const [previewKey, setPreviewKey] = useState<string | null>(null)
+  // Networks unticked in the preview of a post that isn't on the board yet;
+  // sent with the "תזמון פוסט" that puts it there.
+  const [pendingExclusions, setPendingExclusions] = useState<SocialPlatform[]>([])
   const [previewDetail, setPreviewDetail] = useState<{
     key: string
     caption: string
@@ -1136,7 +1187,8 @@ export default function CalendarPage() {
     if (st?.status === "sent" || (previewPast && (!st || st.status === "idle"))) {
       return { kind: "sent" }
     }
-    if (connection.status !== "connected") return { kind: "not_connected" }
+    const hasTargets = !!st?.targets?.some((t) => !t.optedOut)
+    if (!hasTargets && !fitsConnected(row.format)) return { kind: "not_connected" }
     if (st?.status === "queued" && st.code !== "content_changed") return { kind: "scheduled" }
     if (st?.status === "failed") {
       return {
@@ -1151,6 +1203,51 @@ export default function CalendarPage() {
       }
     }
     return { kind: "pending" }
+  }
+  /** Each network this format can go to, and where it stands (network switch only). */
+  function previewNetworks(row: ScheduledPost): PreviewNetwork[] {
+    const targets = row.publish?.targets ?? []
+    const base = previewPublish(row)
+    return networksForFormat(row.format).map((platform) => {
+      const conn = connections[platform]
+      const connection: PreviewNetwork["connection"] =
+        conn.status === "connected" ? "connected" : conn.primary?.status === "needs_reconnect" ? "expired" : "none"
+      const t = targets.find((x) => x.platform === platform)
+      // No targets yet (not sent, or a draft): every connected network that
+      // fits goes, minus what she unticked here before scheduling.
+      const included = t
+        ? !t.optedOut
+        : connection === "connected" && !pendingExclusions.includes(platform)
+      let publish: PreviewPublishStatus = base
+      if (t && !t.optedOut && base.kind !== "draft" && base.kind !== "unscheduled") {
+        publish =
+          t.status === "published"
+            ? { kind: "published", permalink: t.permalink ?? undefined }
+            : t.status === "queued" && t.code !== "content_changed"
+              ? { kind: "scheduled" }
+              : t.status === "sent"
+                ? { kind: "sent" }
+                : t.status === "failed"
+                  ? {
+                      kind: "failed",
+                      reason: t.message || "הפוסט לא תוזמן.",
+                      action:
+                        t.code === "needs_reconnect" || t.code === "not_connected"
+                          ? "reconnect"
+                          : t.code === "media_rejected"
+                            ? "fix_media"
+                            : "retry",
+                    }
+                  : { kind: "pending" }
+      }
+      return {
+        platform,
+        included,
+        connection,
+        handle: t?.handle ?? conn.primary?.handle ?? null,
+        publish,
+      }
+    })
   }
   const previewData: FormatPreviewData | null = previewRow
     ? {
@@ -1169,6 +1266,7 @@ export default function CalendarPage() {
           : "",
         isPast: previewPast,
         publish: previewPublish(previewRow),
+        networks: networkVariant ? previewNetworks(previewRow) : undefined,
       }
     : null
   const previewContentState: PreviewContentState =
@@ -1196,6 +1294,7 @@ export default function CalendarPage() {
           }
           schedulePost(previewRow.corePostId, previewRow.format, date, time, {
             hook: previewData?.hook,
+            excludeNetworks: networkVariant && !previewRow.publish?.targets?.length ? pendingExclusions : undefined,
           })
           reloadBoard()
           toast.success(
@@ -1248,13 +1347,67 @@ export default function CalendarPage() {
           } else {
             void retryPublish(previewRow.corePostId, previewRow.format, "retry").then((next) => {
               reloadBoard()
-              if (next?.status === "queued") toast.success("הפוסט תוזמן לאינסטגרם")
+              if (next?.status === "queued") toast.success(networkVariant ? "הפוסט תוזמן" : "הפוסט תוזמן לאינסטגרם")
               else if (next?.status === "failed" && next.message) toast.error(next.message)
             })
           }
         },
+        onConnectNetwork: openNetworkDialog,
+        onNetworkToggle: (platform: SocialPlatform, include: boolean) => {
+          // Not sent yet: remember it for the schedule write.
+          if (!previewRow.scheduledDate || !previewRow.publish?.targets?.length) {
+            setPendingExclusions((list) =>
+              include ? list.filter((p) => p !== platform) : [...new Set([...list, platform])],
+            )
+            if (!previewRow.scheduledDate || previewData?.publish.kind === "draft") return
+          }
+          void setPublishNetwork(previewRow.corePostId, previewRow.format, platform, include).then((next) => {
+            reloadBoard()
+            if (next?.status === "failed" && next.message) toast.error(next.message)
+          })
+        },
       }
     : null
+
+  // Review links: the seeded post, its own handlers, nothing leaves the page.
+  const reviewData: FormatPreviewData | null =
+    reviewState && reviewNetworks && reviewOpen ? { ...reviewPreviewData(reviewState), networks: reviewNetworks } : null
+  const reviewNoop = () => toast("תצוגת סקירה — שום דבר לא נשמר")
+  const reviewHandlers = reviewData
+    ? {
+        onReschedule: reviewNoop,
+        onCaptionSave: reviewNoop,
+        onUnschedule: reviewNoop,
+        onOpenCanvas: reviewNoop,
+        onStatusAction: reviewNoop,
+        onConnectNetwork: reviewNoop,
+        onNetworkToggle: (platform: SocialPlatform, include: boolean) =>
+          setReviewNetworks((list) =>
+            (list ?? []).map((n) =>
+              n.platform === platform
+                ? { ...n, included: include, publish: include ? { kind: "scheduled" } : { kind: "unscheduled" } }
+                : n,
+            ),
+          ),
+      }
+    : null
+  const headerNetworks: ConnectedNetwork[] = reviewState
+    ? reviewConnections(reviewState)
+    : PUBLISH_PLATFORMS.map((p) => {
+        const c = connections[p]
+        return {
+          platform: p,
+          state:
+            c.status === "loading"
+              ? "loading"
+              : c.status === "connected"
+                ? "connected"
+                : c.primary?.status === "needs_reconnect"
+                  ? "expired"
+                  : "none",
+          handle: c.primary?.handle ?? null,
+        }
+      })
 
   // One board card — shared by the day-column board and the hour-rows board.
   const renderCard = (post: ScheduledPost) => {
@@ -1363,12 +1516,30 @@ export default function CalendarPage() {
                 className="w-[48px] h-[48px]"
               />
               <h2 className="text-text-primary-default">תזמון</h2>
-              {schedulingOn && (
-                <InstagramConnectionControl
-                  className="ms-auto"
-                  open={igDialogOpen}
-                  onOpenChange={setIgDialogOpen}
-                />
+              {networkVariant ? (
+                // Review: one marker for every network (Hani, 2026-11-05) in
+                // place of the Instagram-only pill. Same modals behind it.
+                <>
+                  <ConnectedNetworksIndicator
+                    className="ms-auto"
+                    networks={headerNetworks}
+                    onOpen={reviewState ? reviewNoop : openNetworkDialog}
+                  />
+                  <InstagramConnectDialogHost open={igDialogOpen} onOpenChange={setIgDialogOpen} />
+                  <InstagramConnectDialogHost
+                    open={networkDialog !== null}
+                    onOpenChange={(open) => !open && setNetworkDialog(null)}
+                    platform={networkDialog ?? "youtube"}
+                  />
+                </>
+              ) : (
+                schedulingOn && (
+                  <InstagramConnectionControl
+                    className="ms-auto"
+                    open={igDialogOpen}
+                    onOpenChange={setIgDialogOpen}
+                  />
+                )
               )}
             </div>
 
@@ -1669,16 +1840,34 @@ export default function CalendarPage() {
           CTA when the user is in preview mode — they're already on
           /calendar, so the schedule affordance would loop. */}
       {/* The format preview, as a modal over the board. */}
-      {schedulingOn && previewHandlers && (
+      {reviewData && reviewHandlers ? (
         <FormatPreviewDialog
-          open={!!previewData}
+          open
           onOpenChange={(open) => {
-            if (!open) setPreviewKey(null)
+            if (!open) setReviewOpen(false)
           }}
-          data={previewData}
-          content={previewContentState}
-          {...previewHandlers}
+          data={reviewData}
+          content="ready"
+          networkSwitch={networkVariant ?? undefined}
+          {...reviewHandlers}
         />
+      ) : (
+        schedulingOn &&
+        previewHandlers && (
+          <FormatPreviewDialog
+            open={!!previewData}
+            onOpenChange={(open) => {
+              if (!open) {
+                setPreviewKey(null)
+                setPendingExclusions([])
+              }
+            }}
+            data={previewData}
+            content={previewContentState}
+            networkSwitch={networkVariant ?? undefined}
+            {...previewHandlers}
+          />
+        )
       )}
 
       {scheduleAllA && (

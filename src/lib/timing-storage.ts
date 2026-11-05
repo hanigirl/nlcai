@@ -345,9 +345,14 @@ function forWire(row: ScheduledPost): Omit<ScheduledPost, "publish"> {
  * the Instagram queue and replies with where it landed, which is merged back
  * into the cache so the card can say "תוזמן" — or why not.
  */
-function mirrorUpsert(rows: ScheduledPost[], opts?: { backfill?: boolean }): void {
+function mirrorUpsert(
+  rows: ScheduledPost[],
+  opts?: { backfill?: boolean; excludeNetworks?: string[] },
+): void {
   if (typeof window === "undefined" || rows.length === 0) return
-  const wire = rows.map(forWire)
+  const wire = rows.map((r) =>
+    opts?.excludeNetworks ? { ...forWire(r), excludeNetworks: opts.excludeNetworks } : forWire(r),
+  )
   const body =
     rows.length === 1 && !opts?.backfill
       ? wire[0]
@@ -485,6 +490,36 @@ export async function retryPublish(
   }
   applyPublishStates({ [slotKeyOf(corePostId, format)]: failed })
   return failed
+}
+
+/**
+ * Take one network off a scheduled post, or put it back (042). The server
+ * cancels at the provider first and answers the slot's new state, which is
+ * merged into the cache like any other publish answer.
+ */
+export async function setPublishNetwork(
+  corePostId: string,
+  format: FormatId,
+  platform: "instagram" | "youtube" | "linkedin",
+  include: boolean,
+): Promise<PublishState | undefined> {
+  try {
+    const res = await fetch(`${SCHEDULE_API}/publish`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "network", corePostId, format, platform, include }),
+    })
+    const json = (await res.json().catch(() => null)) as {
+      publish?: Record<string, PublishState>
+    } | null
+    if (json?.publish) {
+      applyPublishStates(json.publish)
+      return json.publish[slotKeyOf(corePostId, format)]
+    }
+  } catch (err) {
+    mirrorFailed("publish-network", err)
+  }
+  return undefined
 }
 
 /**
@@ -675,7 +710,14 @@ export function schedulePost(
   format: FormatId,
   date: string,
   time: string = DEFAULT_SCHEDULED_TIME,
-  cached?: { hook?: string },
+  cached?: {
+    hook?: string
+    /**
+     * Networks she took off this post in the preview before it was first
+     * scheduled. Sent with this one write; the server keeps it from then on.
+     */
+    excludeNetworks?: ("instagram" | "youtube" | "linkedin")[]
+  },
 ): void {
   const scheduled = getScheduledPosts()
   const existing = scheduled.find(
@@ -702,7 +744,7 @@ export function schedulePost(
     (p) => !(p.corePostId === corePostId && p.format === format),
   )
   writeArray(SCHEDULED_KEY, [...others, next])
-  mirrorUpsert([next])
+  mirrorUpsert([next], cached?.excludeNetworks?.length ? { excludeNetworks: cached.excludeNetworks } : undefined)
 }
 
 /**

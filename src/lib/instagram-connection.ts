@@ -11,12 +11,20 @@
  *
  * A lapsed (`needs_reconnect`) or revoked connection counts as NOT connected.
  * A connection that has expired is not a connection (Hani, 2026-10-15).
+ *
+ * Since 2026-11-05 the same store holds YouTube and LinkedIn too: one fetch,
+ * one answer per network. `useInstagramConnection` keeps its old meaning
+ * (Instagram only) so a connected YouTube never turns the Instagram badge
+ * green; `useSocialConnections` answers for every network.
  */
 
 import { useEffect, useSyncExternalStore } from "react"
+import type { SocialPlatform } from "@/lib/supabase/types"
 
 export type InstagramAccount = {
   id: string
+  /** Which network. Missing on a pre-042 server answer — read as Instagram. */
+  platform?: SocialPlatform
   handle: string | null
   avatarUrl: string | null
   status: "connected" | "needs_reconnect" | "revoked"
@@ -37,12 +45,19 @@ export type InstagramConnection = {
   primary: InstagramAccount | null
 }
 
-let state: InstagramConnection = { status: "loading", accounts: [], primary: null }
+/** Same shape for every network. */
+export type SocialConnection = InstagramConnection
+export type SocialConnections = Record<SocialPlatform, SocialConnection>
+
+const LOADING: InstagramConnection = { status: "loading", accounts: [], primary: null }
+const ALL_LOADING: SocialConnections = { instagram: LOADING, youtube: LOADING, linkedin: LOADING }
+
+let state: SocialConnections = ALL_LOADING
 const listeners = new Set<() => void>()
 let inflight: Promise<void> | null = null
 let loadedOnce = false
 
-function emit(next: InstagramConnection) {
+function emit(next: SocialConnections) {
   state = next
   for (const l of listeners) l()
 }
@@ -63,7 +78,14 @@ export function refreshInstagramConnection(): Promise<void> {
       const res = await fetch("/api/social/accounts", { cache: "no-store" })
       if (!res.ok) return
       const json = (await res.json()) as { accounts?: InstagramAccount[]; ready?: boolean }
-      emit(derive(json.accounts ?? [], json.ready !== false))
+      const all = json.accounts ?? []
+      const ready = json.ready !== false
+      const of = (p: SocialPlatform) => all.filter((a) => (a.platform ?? "instagram") === p)
+      emit({
+        instagram: derive(of("instagram"), ready),
+        youtube: derive(of("youtube"), ready),
+        linkedin: derive(of("linkedin"), ready),
+      })
     } catch {
       // Leave the last known answer in place; the next action retries.
     } finally {
@@ -79,17 +101,23 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener)
 }
 
-const SERVER_SNAPSHOT: InstagramConnection = { status: "loading", accounts: [], primary: null }
-
-/** The shared connection state. Loads on first use. */
-export function useInstagramConnection(): InstagramConnection {
+/** Every network's connection. Loads on first use. */
+export function useSocialConnections(): SocialConnections {
   const snapshot = useSyncExternalStore(
     subscribe,
     () => state,
-    () => SERVER_SNAPSHOT,
+    () => ALL_LOADING,
   )
   useEffect(() => {
     if (!loadedOnce) void refreshInstagramConnection()
   }, [])
   return snapshot
 }
+
+/** Instagram's connection — the store's original meaning, unchanged. */
+export function useInstagramConnection(): InstagramConnection {
+  return useSocialConnections().instagram
+}
+
+/** Alias that reads right at call sites that aren't about Instagram. */
+export const refreshSocialConnections = refreshInstagramConnection

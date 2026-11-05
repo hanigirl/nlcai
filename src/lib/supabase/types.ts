@@ -376,8 +376,11 @@ export type ScheduledPostUpdate = Partial<
  */
 export type SocialProvider = "highlevel" | "meta";
 
-/** Only Instagram today; the column is text so a new destination ships without a migration. */
-export type SocialPlatform = "instagram";
+/**
+ * Where a post can go. The column is text so a new destination ships without a
+ * migration; TikTok joins this union the day it can be tested end to end.
+ */
+export type SocialPlatform = "instagram" | "youtube" | "linkedin";
 
 /**
  * `needs_reconnect` is the one to design for. Instagram tokens lapse after
@@ -411,6 +414,12 @@ export interface SocialAccountRow {
   /** HighLevel accountId today; the Instagram user id if we go direct. */
   external_account_id: string;
   external_tenant_id: string | null;
+  /**
+   * The provider's id for the one account attached from the grant (042). A
+   * LinkedIn login exposes a profile and pages under one grant id, so the
+   * grant alone can't say which was attached. Null on pre-042 rows.
+   */
+  external_origin_id: string | null;
   handle: string | null;
   avatar_url: string | null;
   status: SocialAccountStatus;
@@ -422,7 +431,49 @@ export type SocialAccountInsert = Pick<
   SocialAccountRow,
   "user_id" | "provider" | "platform" | "external_account_id"
 > &
-  Partial<Pick<SocialAccountRow, "external_tenant_id" | "handle" | "avatar_url" | "status">>;
+  Partial<Pick<SocialAccountRow, "external_tenant_id" | "external_origin_id" | "handle" | "avatar_url" | "status">>;
+
+// ---- scheduled_post_targets (042) ----
+
+/**
+ * One network one slot goes to. The slot's own publish columns are the
+ * roll-up of these rows; each row carries its own provider id and status.
+ */
+export interface ScheduledPostTargetRow {
+  id: string;
+  user_id: string;
+  scheduled_post_id: string;
+  platform: SocialPlatform;
+  social_account_id: string | null;
+  /** The per-post opt-out: this network was taken off this one post. */
+  opted_out: boolean;
+  provider_post_id: string | null;
+  publish_status: SchedulePublishStatus;
+  publish_error: string | null;
+  publish_synced_at: string | null;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ScheduledPostTargetInsert = Pick<
+  ScheduledPostTargetRow,
+  "user_id" | "scheduled_post_id" | "platform"
+> &
+  Partial<
+    Pick<
+      ScheduledPostTargetRow,
+      | "social_account_id"
+      | "opted_out"
+      | "provider_post_id"
+      | "publish_status"
+      | "publish_error"
+      | "publish_synced_at"
+      | "published_at"
+    >
+  >;
+
+export type ScheduledPostTargetUpdate = Partial<Omit<ScheduledPostTargetInsert, "user_id" | "scheduled_post_id">>;
 
 export type SocialAccountUpdate = Partial<
   Pick<SocialAccountRow, "handle" | "avatar_url" | "status" | "external_tenant_id">
@@ -512,6 +563,11 @@ export interface Database {
         Row: SocialTenantRow;
         Insert: SocialTenantInsert;
         Update: never;
+      };
+      scheduled_post_targets: {
+        Row: ScheduledPostTargetRow;
+        Insert: ScheduledPostTargetInsert;
+        Update: ScheduledPostTargetUpdate;
       };
       social_accounts: {
         Row: SocialAccountRow;

@@ -41,6 +41,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Skeleton } from "@/components/ui/skeleton"
 import { destinationForFormat, MAX_CAPTION_CHARS } from "@/lib/social/media-spec"
 import type { FormatId } from "@/lib/timing-storage"
+import { NETWORK_LABEL, inNetwork, toNetwork } from "@/lib/social/networks"
+import type { SocialPlatform } from "@/lib/supabase/types"
 
 // --- data --------------------------------------------------------------------
 
@@ -93,6 +95,24 @@ export type FormatPreviewData = {
   publish: PublishStatus
   /** The slot's time has passed — the preview is read-only. */
   isPast?: boolean
+  /**
+   * Every network this format can go to, with where each one stands (042).
+   * Only read when the preview's network switch is on (`?variant=a|b`).
+   */
+  networks?: PreviewNetwork[]
+}
+
+/** One network in the preview's switch. */
+export type PreviewNetwork = {
+  platform: SocialPlatform
+  /** Goes to this network with this post. Off = she took it off (per-post opt-out). */
+  included: boolean
+  /** Her account on this network. */
+  connection: "connected" | "expired" | "none"
+  /** Channel / profile name for the frame. */
+  handle: string | null
+  /** This network's own publish status. */
+  publish: PublishStatus
 }
 
 export type PreviewContentState = "ready" | "loading" | "no-media"
@@ -143,10 +163,13 @@ export function PublishStatusSlot({
   date,
   time,
   onAction,
+  platform = "instagram",
 }: {
   status: PublishStatus
   date: string
   time: string
+  /** Which network the status is about — only changes the words. */
+  platform?: SocialPlatform
   /** Fired by the status's own action (connect / retry / open canvas). */
   onAction: (action: "connect" | "reconnect" | "retry" | "fix_media" | "open_post") => void
 }) {
@@ -174,14 +197,20 @@ export function PublishStatusSlot({
       break
     case "not_connected":
       icon = <Unplug className="size-4 text-text-neutral-default" aria-hidden />
-      title = "לא יפורסם — אינסטגרם לא מחובר"
-      body = "הפוסט נשאר על הלוח כתכנון. כדי שיעלה לבד, חברו את חשבון האינסטגרם."
-      action = { label: "חיבור אינסטגרם", id: "connect" }
+      title = `לא יפורסם — ${NETWORK_LABEL[platform]} לא מחובר`
+      body =
+        platform === "instagram"
+          ? "הפוסט נשאר על הלוח כתכנון. כדי שיעלה לבד, חברו את חשבון האינסטגרם."
+          : `הפוסט נשאר על הלוח כתכנון. כדי שיעלה לבד ${toNetwork(platform)}, חברו את החשבון.`
+      action = { label: `חיבור ${NETWORK_LABEL[platform]}`, id: "connect" }
       break
     case "pending":
       icon = <Loader2 className="size-4 animate-spin text-text-neutral-default" aria-hidden />
-      title = "בתהליך — נשלח לאינסטגרם"
-      body = "עד שאינסטגרם מאשרת את התזמון, הפוסט לא מסומן כמתוזמן."
+      title = `בתהליך — נשלח ${toNetwork(platform)}`
+      body =
+        platform === "instagram"
+          ? "עד שאינסטגרם מאשרת את התזמון, הפוסט לא מסומן כמתוזמן."
+          : `עד שהתזמון מאושר ${inNetwork(platform)}, הפוסט לא מסומן כמתוזמן.`
       break
     case "scheduled":
       icon = <CalendarCheck className="size-4 text-green-50" aria-hidden />
@@ -196,12 +225,15 @@ export function PublishStatusSlot({
     case "sent":
       icon = <CalendarCheck className="size-4 text-text-neutral-default" aria-hidden />
       title = `יצא לפרסום · ${formatSlotShort(date, time)}`
-      body = "עוד לא קיבלנו מאינסטגרם אישור שהפוסט עלה."
+      body =
+        platform === "instagram"
+          ? "עוד לא קיבלנו מאינסטגרם אישור שהפוסט עלה."
+          : `עוד לא קיבלנו אישור שהפוסט עלה ${inNetwork(platform)}.`
       break
     case "published":
       icon = <CheckCircle2 className="size-4 text-green-50" aria-hidden />
       title = `פורסם · ${formatSlotShort(date, time)}`
-      if (status.permalink) action = { label: "צפייה באינסטגרם", id: "open_post", external: true }
+      if (status.permalink) action = { label: `צפייה ${inNetwork(platform)}`, id: "open_post", external: true }
       break
   }
 
