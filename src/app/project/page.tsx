@@ -342,6 +342,9 @@ function ProjectPageInner() {
     if (req.postId !== savedPostId) return
     setAiChatFormat(req.format)
     setAiChatOpening(req.opening)
+    // A generate button asks first, in the AI panel (Hani, 2026-11-05): the
+    // media panel steps aside so brief → generate → refine is one place.
+    if (req.opening.kind === "generate") setSelectedFormatCard(null)
   })
   // Format id whose script the user asked to regenerate, awaiting confirmation.
   // Regeneration overwrites text they may have hand-edited, so the card's
@@ -2815,7 +2818,11 @@ function ProjectPageInner() {
           image_post: imagePostUrl ? [imagePostUrl] : [],
           b_roll: bRollUrl ? [bRollUrl] : [],
         }
-        const own = isOwnMediaFormat(aiChatFormat, mediaOf[aiChatFormat], carouselDriveLinks)
+        // A fresh AI generation is the AI's media, even over her own slides —
+        // and the thread must not switch conversations when the result lands.
+        const own =
+          aiChatOpening?.kind !== "generate" &&
+          isOwnMediaFormat(aiChatFormat, mediaOf[aiChatFormat], carouselDriveLinks)
         return (
           <MediaAiChat
             // One panel per post + format (+ own media): switching formats

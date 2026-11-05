@@ -1,3 +1,4 @@
+import { normalizeMediaBrief, withMediaBrief } from "@/lib/media-brief"
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { Resvg } from "@resvg/resvg-js"
@@ -144,9 +145,11 @@ function cropToCanvas(imageBase64: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { slides, templateId, postId } = (await req.json().catch(() => ({}))) as {
+    const { slides, templateId, postId, brief: mediaBrief } = (await req.json().catch(() => ({}))) as {
       slides?: SlideData[]
       templateId?: string
+      /** Her own direction for this carousel (lib/media-brief). */
+      brief?: unknown
       /** Lets "עריכה עם AI" find this carousel's layout later. */
       postId?: string
     }
@@ -227,6 +230,10 @@ export async function POST(req: NextRequest) {
         style: templateId === "ai-light" ? "ai-light" : templateId === "ai-dark" ? "ai-dark" : "niche",
       })
     }
+
+    // Her own direction for this carousel wins over the language where they
+    // conflict — and is kept in the saved brief, so later AI edits honour it.
+    direction = withMediaBrief(direction, normalizeMediaBrief(mediaBrief))
 
     // Laid out in code when she has a Claude key (lib/carousel-composition):
     // one stylesheet, her fonts, one type scale, identical grid and number on

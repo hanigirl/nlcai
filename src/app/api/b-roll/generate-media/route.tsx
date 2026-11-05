@@ -1,3 +1,4 @@
+import { normalizeMediaBrief, withMediaBrief } from "@/lib/media-brief"
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { createClient } from "@/lib/supabase/server"
@@ -32,10 +33,12 @@ export const maxDuration = 300
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
   try {
-    const { postId, variationIndex, style } = (await req.json().catch(() => ({}))) as {
+    const { postId, variationIndex, style, brief: mediaBrief } = (await req.json().catch(() => ({}))) as {
       postId?: string
       variationIndex?: number
       style?: unknown
+      /** Her own direction for this piece (lib/media-brief). */
+      brief?: unknown
     }
     if (!postId) {
       return NextResponse.json({ error: "postId is required" }, { status: 400 })
@@ -115,11 +118,16 @@ export async function POST(req: NextRequest) {
     // Her visual language (or the niche-derived one). No reference
     // elements: this is a text-free background and the caption is laid
     // over it afterwards, so a logo would collide with it.
-    const direction = await resolveDesignDirection(supabase, user.id, {
-      format: "b_roll",
-      allowReferences: false,
-      style: isMediaStyle(style) ? style : undefined,
-    })
+    // Her own direction (lib/media-brief) rides on the direction lines, so it
+    // reaches both the background picture and the motion design.
+    const direction = withMediaBrief(
+      await resolveDesignDirection(supabase, user.id, {
+        format: "b_roll",
+        allowReferences: false,
+        style: isMediaStyle(style) ? style : undefined,
+      }),
+      normalizeMediaBrief(mediaBrief),
+    )
     let anthropicKey: string
     try {
       anthropicKey = await getUserApiKey(supabase, "anthropic_api_key")

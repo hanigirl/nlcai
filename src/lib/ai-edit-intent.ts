@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react"
 import type { AiEditFormat } from "@/components/media-ai-chat"
+import type { MediaGenResult } from "@/lib/media-brief"
 
 /**
  * "לא אהבתי" → the AI-edit panel (Hani, 2026-10-29).
@@ -11,7 +12,26 @@ import type { AiEditFormat } from "@/components/media-ai-chat"
  * panel to open on the "what didn't you like?" question, the page opens it.
  * A window event keeps it free of prop threading through four card components.
  */
-export interface AiEditOpening {
+export type AiEditOpening = AiEditDislikeOpening | AiEditGenerateOpening
+
+/**
+ * "Think first, then generate" (Hani, 2026-11-05): the media panel's generate
+ * button no longer fires straight away — it opens this panel, which asks
+ * whether to generate from her visual language or from a direction she
+ * writes for this piece, then runs the generation and stays open for edits.
+ */
+export interface AiEditGenerateOpening {
+  id: string
+  kind: "generate"
+  /** The style picked in the media panel, as she'd say it ("השפה הוויזואלית שלכם", "כהה"). */
+  styleName: string
+  /** The picked style is her own visual language (not a niche tone / template). */
+  isVisualLanguage: boolean
+  /** Starts the generation with her brief (undefined = from the style alone). */
+  run: (brief?: string) => Promise<MediaGenResult>
+}
+
+export interface AiEditDislikeOpening {
   id: string
   kind: "dislike"
   /**

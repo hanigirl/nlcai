@@ -1,3 +1,4 @@
+import type { MediaGenResult } from "@/lib/media-brief"
 import { rememberAiStyle } from "@/lib/ai-style-provenance"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import { toast } from "sonner"
@@ -111,15 +112,25 @@ export function getStoryGenerationSnapshot(key: string): StoryGenerationState {
  * repeatedly — each call runs in parallel and appends its own frame set.
  * Never throws (failures surface as a toast).
  */
-export function startStoryGeneration(postId: string, style?: MediaStyle): void {
-  if (!postId) return
+export function startStoryGeneration(
+  postId: string,
+  style?: MediaStyle,
+  /** brief / quiet — see MediaGenOptions in lib/image-generation-store. */
+  opts: { brief?: string; quiet?: boolean } = {},
+): Promise<MediaGenResult> {
+  if (!postId) return Promise.resolve({ ok: false, message: "" })
+  const { brief, quiet = false } = opts
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   // Steers this attempt toward a palette distinct from the previous ones.
   const variationIndex = nextVariationIndex(postId)
   const toastId = `story-gen-${++toastSeq}`
-  startLongWait(toastId, "מייצרים סטורי עם AI... זה יכול לקחת עד דקה")
+  if (!quiet) startLongWait(toastId, "מייצרים סטורי עם AI... זה יכול לקחת עד דקה")
+  const fail = (message: string): MediaGenResult => {
+    if (!quiet) toast.error(message, { id: toastId, duration: 10000 })
+    return { ok: false, message }
+  }
 
-  void (async () => {
+  return (async (): Promise<MediaGenResult> => {
     try {
       // The route reads the script from the DB: make sure the DB has what
       // the user sees before asking for a picture of it.
@@ -127,7 +138,7 @@ export function startStoryGeneration(postId: string, style?: MediaStyle): void {
       const res = await fetch("/api/story/generate-media", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, variationIndex, style }),
+        body: JSON.stringify({ postId, variationIndex, style, ...(brief ? { brief } : {}) }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         images?: string[]
@@ -136,11 +147,7 @@ export function startStoryGeneration(postId: string, style?: MediaStyle): void {
         message?: string
       }
       if (!res.ok || !data.images || data.images.length === 0) {
-        toast.error(data.message ?? data.error ?? "יצירת הסטורי נכשלה", {
-          id: toastId,
-          duration: 10000,
-        })
-        return
+        return fail(data.message ?? data.error ?? "יצירת הסטורי נכשלה")
       }
       const set = data.images
       const saveRes = await fetch(`/api/core-posts/${postId}`, {
@@ -151,22 +158,16 @@ export function startStoryGeneration(postId: string, style?: MediaStyle): void {
       if (!saveRes?.ok) {
         // Keep it as a candidate so it can still be saved from the panel.
         update(postId, (s) => ({ ...s, sets: [...s.sets, set] }))
-        toast.error("הסטורי נוצר אבל לא נשמר — פתחו את הפאנל כדי לשמור", {
-          id: toastId,
-          duration: 10000,
-        })
-        return
+        return fail("הסטורי נוצר אבל לא נשמר — פתחו את הפאנל כדי לשמור")
       }
       update(postId, (s) => ({ ...s, saved: set }))
       // A story set has no stable URL until reload — tracked by format only.
       if (style) rememberAiStyle(postId, "story", style, "story-set")
       const count = set.length
-      longWaitDone(toastId, count > 1 ? `הסטורי מוכן ונשמר — ${count} פריימים` : "הסטורי מוכן ונשמר", { postId })
+      if (!quiet) longWaitDone(toastId, count > 1 ? `הסטורי מוכן ונשמר — ${count} פריימים` : "הסטורי מוכן ונשמר", { postId })
+      return { ok: true }
     } catch (err) {
-      toast.error(
-        `יצירת הסטורי נכשלה: ${err instanceof Error ? err.message : String(err)}`,
-        { id: toastId, duration: 10000 },
-      )
+      return fail(`יצירת הסטורי נכשלה: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       update(postId, (s) => ({ ...s, inFlight: Math.max(0, s.inFlight - 1) }))
     }
