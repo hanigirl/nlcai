@@ -1,3 +1,4 @@
+import { stripFrameMarkers } from "@/lib/story-text-split"
 import Anthropic from "@anthropic-ai/sdk"
 import {
   canAddAnimatedFrame,
@@ -124,7 +125,8 @@ export async function planOwnMediaEdit(
     JSON.stringify({
       title: input.post.title,
       hook: input.post.hook,
-      formatText: input.post.formatBody?.slice(0, 1500) ?? null,
+      // Frame marks ("סטורי 1") are the card's, never caption text.
+      formatText: input.post.formatBody ? stripFrameMarkers(input.post.formatBody).slice(0, 1500) : null,
       coreText: input.post.formatBody ? undefined : input.post.body?.slice(0, 1500),
     }),
     "",

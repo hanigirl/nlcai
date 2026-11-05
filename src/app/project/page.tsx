@@ -24,6 +24,8 @@ import { WorkflowCard } from "@/components/workflow-card"
 import { SelectionCard } from "@/components/selection-card"
 import { Textarea } from "@/components/ui/textarea"
 import { RichBodyEditor } from "@/components/rich-body-editor"
+import { StoryFrameStrip, StoryFramesEditor, type StoryFramesVariant } from "@/components/story-frames"
+import { stripFrameMarkers } from "@/lib/story-text-split"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipLabel } from "@/components/ui/tooltip"
@@ -230,6 +232,10 @@ function ProjectPageInner() {
   const hookParam = searchParams.get("hook") ?? ""
   const hookIdParam = searchParams.get("hook_id") ?? ""
   const postId = searchParams.get("post_id") ?? ""
+  // Review gate (joey/story-frame-split): the story card shown as its stories.
+  const storySplitParam = searchParams.get("variant")
+  const storySplitVariant: StoryFramesVariant | undefined =
+    storySplitParam === "a" || storySplitParam === "b" ? storySplitParam : undefined
   // Media approval before scheduling — part of the scheduling release, live
   // for the accounts in lib/scheduling-access only. Off = page unchanged.
   const approveVariant: "a" | null = useSchedulingAccess() ? "a" : null
@@ -2810,6 +2816,7 @@ function ProjectPageInner() {
                       onDeleteMedia={setPendingMediaDelete}
                       onBRollUrlChange={setBRollUrl}
                       copyAi={previewOn ? copyEdit.copyAi : undefined}
+                      storySplit={storySplitVariant}
                       approval={
                         approveVariant
                           ? {
@@ -3149,6 +3156,7 @@ function FormatTree({
   onBRollUrlChange,
   approval,
   copyAi,
+  storySplit,
 }: {
   formats: string[]
   formatPosts: Record<string, string>
@@ -3211,6 +3219,8 @@ function FormatTree({
   approval?: FormatTreeApproval
   /** "עריכה עם AI" on the format copy — the ✨ beside "הוספת מדיה". */
   copyAi?: FormatCopyAiController
+  /** Review gate: the story card as its stories (components/story-frames). */
+  storySplit?: StoryFramesVariant
 }) {
   const count = formats.length
 
@@ -3310,6 +3320,16 @@ function FormatTree({
                 </div>
                 <div className="px-6 flex flex-col gap-3">
                   <div className={`${AI_HOVER_ZONE} group`}>
+                    {fid === "story" && storySplit === "a" && !isGenerating ? (
+                      // a: the script written in one box per story (components/story-frames).
+                      <StoryFramesEditor
+                        value={formatPosts[fid] ?? ""}
+                        onChange={(text) => onPostChange(fid, text)}
+                        onBlur={() => onPostBlur?.(fid)}
+                        onFocus={() => onActiveChange(`format-${fid}`)}
+                        editorClassName={`min-h-[64px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text ${copyAi?.isBusy(fid) ? "ai-text-shimmer pointer-events-none" : ""}`}
+                      />
+                    ) : (
                     <RichBodyEditor
                       value={formatPosts[fid] ?? ""}
                       onChange={(text) => onPostChange(fid, text)}
@@ -3323,11 +3343,17 @@ function FormatTree({
                           : "min-h-[200px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 py-2 shadow-none text-small leading-relaxed select-text"
                       }
                     />
-                    <CopyButton text={formatPosts[fid] ?? ""} />
+                    )}
+                    {/* A story's frame marks are the card's, never copied text. */}
+                    <CopyButton text={fid === "story" ? stripFrameMarkers(formatPosts[fid] ?? "") : (formatPosts[fid] ?? "")} />
                     {/* ✨ AI edit on this format's copy — the hover sparkle
                         in the text box's corner (Hani, 2026-10-29). */}
                     <FormatCopyAiHoverButton ctrl={copyAi} fid={fid} />
                   </div>
+                  {/* b: the stories this script becomes, under the text box. */}
+                  {fid === "story" && storySplit === "b" && !isGenerating && (
+                    <StoryFrameStrip value={formatPosts[fid] ?? ""} onChange={(text) => onPostChange(fid, text)} />
+                  )}
                   <FormatCopyActionRow
                     ctrl={copyAi}
                     fid={fid}

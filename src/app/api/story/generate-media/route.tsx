@@ -6,12 +6,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
-import {
-  desiredFrameCount,
-  requestedFrameCount,
-  splitScriptBalanced,
-  splitScriptIntoFrames,
-} from "@/lib/story-text-split"
+import { requestedFrameCount, storyFrames } from "@/lib/story-text-split"
 import { getAuthUser } from "@/lib/auth-user"
 import { replaceImageAssetSet, storedImageUrls } from "@/lib/media-asset-set"
 import { generateImage, KEEP_INSIDE_FRAME_RULE } from "@/lib/openai-image"
@@ -62,10 +57,14 @@ const CONCURRENCY = 3
  * that decision, whereas the import path is told the count by how many links
  * the user pasted.
  */
-/** `asked`: a frame count she named in her brief ("לפצל ל-2 סטוריז") wins over the script's own. */
+/**
+ * `asked`: a frame count she named in her brief ("לפצל ל-2 סטוריז"). The
+ * split is lib/story-text-split storyFrames — the same one the story card
+ * shows while she writes: her own marks first, then `asked` (balanced by
+ * length), then her paragraphs.
+ */
 function splitStoryIntoFrames(body: string, asked?: number | null): string[] {
-  // A count she asked for is balanced by length (lib/story-text-split).
-  return asked ? splitScriptBalanced(body, asked) : splitScriptIntoFrames(body, desiredFrameCount(body))
+  return storyFrames(body, asked)
 }
 
 
