@@ -24,8 +24,11 @@ import type { CaptionSpec } from "@/lib/own-media"
 export const OVERLAY_SECONDS = 3
 
 /** A 1×1 transparent PNG — the "background" of a layer that sits over her footage. */
+// Fully transparent (alpha 0). The placeholder used before carried alpha
+// 127 and, stretched over the frame, tinted her whole video blue — caught on
+// the first live test (2026-11-06).
 const TRANSPARENT_PNG =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg=="
 
 function notes(format: "story" | "b_roll"): string[] {
   return [
@@ -96,11 +99,14 @@ export async function renderOwnVideoCaption(
 /** At most this share of the frame may be covered by the caption layer. */
 export const MAX_COVERAGE = 0.35
 
-/** Share of the frame the layer covers (alpha over 50%). */
+/**
+ * Share of the frame the layer visibly touches (alpha over ~8%) — so a faint
+ * full-frame tint counts as covering her footage, not only solid shapes.
+ */
 export async function overlayCoverage(pngPath: string): Promise<number> {
   const sharp = (await import("sharp")).default
   const { data, info } = await sharp(pngPath).ensureAlpha().extractChannel(3).resize(108, 192, { fit: "fill" }).raw().toBuffer({ resolveWithObject: true })
   let on = 0
-  for (let i = 0; i < data.length; i++) if (data[i] > 128) on++
+  for (let i = 0; i < data.length; i++) if (data[i] > 20) on++
   return on / (info.width * info.height)
 }
