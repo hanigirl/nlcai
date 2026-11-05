@@ -2,8 +2,9 @@
  * Client-side fire-and-forget wrapper around POST /api/learning-log.
  *
  * Learning capture must never block or break the flow the user is actually in,
- * so every failure here is swallowed. Callers get a boolean back only so they
- * can avoid double-logging the same pair.
+ * so a failure never reaches the caller — but it is logged, never swallowed:
+ * a missing Claude key or a failed insight used to vanish without a trace.
+ * Callers get a boolean back only so they can avoid double-logging the same pair.
  */
 
 import { isTrivialEdit } from "@/lib/learning-diff"
@@ -50,7 +51,13 @@ export function logLearningEdit({
       outcome,
       instruction,
     }),
-  }).catch(() => {})
+  })
+    .then(async (res) => {
+      if (res.ok) return
+      const body = (await res.json().catch(() => ({}))) as { error?: string }
+      console.error("[learning-capture] not saved", res.status, body.error ?? "")
+    })
+    .catch((err) => console.error("[learning-capture] request failed", err))
 
   return true
 }

@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { Check, Loader2, RotateCcw } from "lucide-react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 
@@ -122,21 +123,36 @@ export function SaveToVisualLanguageChip({
       }
       setSummary(data.summary)
       setState("saved")
-    } catch {
+    } catch (err) {
+      console.error("[save-to-visual-language] save failed", err)
       setState("error")
     }
   }
 
+  // Optimistic, but a failed undo puts the "saved" line back: the rule is
+  // still in her memory, so the panel must not say it was taken back.
   const undo = async () => {
     const kept = summary
+    const before = state
     setState("ready")
     setSummary(null)
     if (!kept) return
-    await fetch("/api/visual-language/style-memory", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ summary: kept }),
-    }).catch(() => undefined)
+    try {
+      const res = await fetch("/api/visual-language/style-memory", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summary: kept }),
+      })
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(data.error ?? `status ${res.status}`)
+      }
+    } catch (err) {
+      console.error("[save-to-visual-language] undo failed", err)
+      setState(before)
+      setSummary(kept)
+      toast.error("לא הצלחנו לבטל את השמירה לשפה הוויזואלית. נסו שוב.")
+    }
   }
 
   return (
