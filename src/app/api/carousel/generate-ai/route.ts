@@ -1,5 +1,5 @@
 import { canEditPictures } from "@/lib/feature-access"
-import { PICTURE_UNCHANGED, editPicture } from "@/lib/picture-edit"
+import { PICTURE_UNCHANGED, adaptPictureForSlide, editPicture, wantsPictureAsIs } from "@/lib/picture-edit"
 import { gatePlacement } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
 import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
@@ -24,6 +24,7 @@ import { buildCarouselBrief } from "@/lib/carousel-brief"
 import {
   composeCarousel,
   illustrationPrompt,
+  measureArtSlots,
   renderCarousel,
   saveCarousel,
   slideHash,
@@ -329,18 +330,51 @@ export async function POST(req: NextRequest) {
           if (placeRefs.some((_, j) => !covered.has(j + 1))) {
             return NextResponse.json(PLACE_FAILED_GEN, { status: 422 })
           }
+          // Adapted to its slide through the image model first (Hani,
+          // Nataliya — lib/feature-access): re-framed to the slot, graded into
+          // her language, calm under the title. Her exact file only when her
+          // brief says "כמו שהיא".
+          const adapt = pictureEditsOn && !wantsPictureAsIs(normalizeMediaBrief(mediaBrief))
+          const slots = adapt
+            ? await measureArtSlots(
+                layout.html,
+                await Promise.all(
+                  slides!.map(async (_, i) => {
+                    const p = placedOn.find((x) => x.i === i)
+                    if (!p) return null
+                    const m = await sharp(referenceBuffer(placeRefs[p.n - 1])).rotate().metadata()
+                    return (m.width ?? 1) / Math.max(1, m.height ?? 1)
+                  }),
+                ),
+                fonts,
+              )
+            : []
+          const misses: string[] = []
           await Promise.all(
             placedOn.map(async ({ n, i }) => {
               const file = referenceBuffer(placeRefs[n - 1])
-              const png = await sharp(file)
-                .rotate()
-                .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
-                .png()
-                .toBuffer()
+              let png: Buffer
+              if (adapt && slots[i]) {
+                const claudeKey = anthropicKey
+                const out = await adaptPictureForSlide(openaiKey, claudeKey, file, slots[i]!, brief.styleLines, i + 1)
+                if (!out.ok) {
+                  misses.push(out.message)
+                  return
+                }
+                png = out.png
+              } else {
+                png = await sharp(file)
+                  .rotate()
+                  .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
+                  .png()
+                  .toBuffer()
+              }
               illustrations[i] = await uploadIllustration(supabase, user!.id, png)
               ownArt[i] = true
             }),
           )
+          // Not hers any more: nothing is made — never her raw file cropped in instead.
+          if (misses.length) return NextResponse.json({ error: "picture_adapt_failed", message: misses[0] }, { status: 422 })
         }
         const isPlaced = (i: number) => placedOn.some((x) => x.i === i)
         // Only her placed pictures exist yet to be edited; any miss saves nothing.

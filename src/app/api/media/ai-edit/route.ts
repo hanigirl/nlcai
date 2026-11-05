@@ -19,6 +19,7 @@ import {
   saveCarousel,
   slideHash,
   uploadIllustration,
+  measureArtSlots,
 } from "@/lib/carousel-composition"
 import { isOwnMediaUrl } from "@/lib/own-media"
 import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
@@ -33,7 +34,7 @@ import {
 import { currentCarouselBrief } from "@/lib/carousel-brief"
 import { wantsOwnLanguage } from "@/lib/visual-language/current-brief"
 import { canEditPictures } from "@/lib/feature-access"
-import { PICTURE_MISSING, editPicture } from "@/lib/picture-edit"
+import { PICTURE_MISSING, adaptPictureForSlide, editPicture, wantsPictureAsIs } from "@/lib/picture-edit"
 import type { ModelImage } from "@/lib/visual-language/image-input"
 
 /**
@@ -225,13 +226,46 @@ export async function POST(req: NextRequest) {
       const cutOnly = [...cutouts].filter(
         (i) => illustrations[i] && !isPlaced(i) && !isPictureEdit(i) && !redraw.some((r) => r.i === i),
       )
+      // Her picture is ADAPTED to its slide through the image model before it
+      // goes in (Hani, Nataliya — lib/feature-access): re-framed to the slot,
+      // graded into her language, calm under the title. Her exact file only
+      // when she says "כמו שהיא" — or when its background is cut out (the
+      // subject alone on the slide).
+      const adapt = pictureEditsOn && !wantsPictureAsIs(text)
+      const adaptOn = placed.filter(({ i }) => adapt && !cutouts.has(i))
+      const slots = adaptOn.length
+        ? await measureArtSlots(
+            revised.html,
+            await Promise.all(
+              stored.brief.slides.map(async (_, i) => {
+                const p = adaptOn.find((x) => x.i === i)
+                if (!p) return null
+                const m = await sharp(referenceBuffer(p.ref)).rotate().metadata()
+                return (m.width ?? 1) / Math.max(1, m.height ?? 1)
+              }),
+            ),
+            stored.brief.fonts,
+          )
+        : []
+      const adaptMisses: string[] = []
       await Promise.all([
         ...placed.map(async ({ ref, i }) => {
           const file = referenceBuffer(ref)
-          // A picture edit on this slide cuts out after the edit (below).
-          const png = cutouts.has(i) && !isPictureEdit(i)
-            ? Buffer.from(await cutoutImage(openaiKey, await normaliseImage(file)), "base64")
-            : await sharp(file).rotate().resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true }).png().toBuffer()
+          const slot = slots[i]
+          let png: Buffer
+          if (adaptOn.some((x) => x.i === i) && slot) {
+            const out = await adaptPictureForSlide(openaiKey, anthropicKey, file, slot, stored.brief.styleLines, i + 1)
+            if (!out.ok) {
+              adaptMisses.push(out.message)
+              return
+            }
+            png = out.png
+          } else if (cutouts.has(i) && !isPictureEdit(i)) {
+            // A picture edit on this slide cuts out after the edit (below).
+            png = Buffer.from(await cutoutImage(openaiKey, await normaliseImage(file)), "base64")
+          } else {
+            png = await sharp(file).rotate().resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true }).png().toBuffer()
+          }
           illustrations[i] = await uploadIllustration(supabase, user.id, png)
           ownArt[i] = true
         }),
@@ -250,6 +284,10 @@ export async function POST(req: NextRequest) {
           illustrations[i] = await uploadIllustration(supabase, user.id, Buffer.from(raw, "base64"))
         }),
       ])
+      // Her picture didn't come out as hers: nothing is saved — never her raw file cropped in instead.
+      if (adaptMisses.length) {
+        return NextResponse.json({ error: "picture_adapt_failed", message: adaptMisses[0] }, { status: 422 })
+      }
       // The picture itself changes (Hani, 2026-11-05): through the image
       // model, then back on its slide — never a crop that hides the problem.
       // Any miss saves nothing and says so.
