@@ -24,6 +24,7 @@ import { Select } from "@/components/ui/select"
 import { getFormatChipIcon, getFormatChipLabel } from "@/components/format-status-chip"
 import {
   GAP_OPTIONS,
+  FORMAT_GAP_OPTIONS,
   MAX_POSTS_PER_DAY,
   SCHEDULE_FORMATS,
   SCHEDULE_HOURS,
@@ -83,6 +84,7 @@ const PER_DAY_OPTIONS = Array.from({ length: MAX_POSTS_PER_DAY }, (_, i) => ({
   label: String(i + 1),
 }))
 const GAP_CHOICES = GAP_OPTIONS.map((o) => ({ value: o.days, label: o.label }))
+const FORMAT_GAP_CHOICES = FORMAT_GAP_OPTIONS.map((o) => ({ value: o.days, label: o.label }))
 
 function HourSelect({
   value,
@@ -315,6 +317,15 @@ export function ScheduleSettingsForm({ draft, onChange }: Edit) {
           value={draft.gapDays}
           options={GAP_CHOICES}
           onChange={(v) => onChange(withGlobal(draft, { gapDays: v }))}
+        />
+      </RuleRow>
+
+      <RuleRow label="כמה ימים בין פורמטים של אותו פוסט?" hint="למשל רילס וקרוסלה של אותו רעיון">
+        <ChoiceChips
+          label="ימים בין פורמטים של אותו פוסט"
+          value={draft.formatGapDays}
+          options={FORMAT_GAP_CHOICES}
+          onChange={(v) => onChange(withGlobal(draft, { formatGapDays: v }))}
         />
       </RuleRow>
 
