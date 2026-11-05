@@ -17,6 +17,19 @@ export interface StoredComposition {
   backgroundUrl: string
   /** Instructions applied so far, oldest first — context for the next edit. */
   edits: string[]
+  /**
+   * The background is HER picture (attached in the chat), not a generated
+   * one: no edit or restyle ever repaints or replaces it.
+   */
+  ownBackground?: boolean
+}
+
+/**
+ * Her picture is the background — the flag, or (clips built on her picture
+ * before the flag existed) the line the motion design was given about it.
+ */
+export function hasOwnBackground(c: StoredComposition): boolean {
+  return c.ownBackground === true || c.brief.styleSpec.includes("THE BACKGROUND IS THE CREATOR'S OWN PICTURE")
 }
 
 const BUCKET = "user-media"

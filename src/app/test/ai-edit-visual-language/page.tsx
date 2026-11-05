@@ -11,6 +11,9 @@
  *                       nothing is edited, nothing invented, she's asked for it.
  *   ?state=place-failed  — the picture was attached but didn't make it in:
  *                       nothing is saved, the panel says so.
+ *   ?state=unsaved-carousel — the card shows slides the post never stored.
+ *   ?state=broll-own-picture — a b-roll built on her picture: it's never repainted.
+ *   ?state=broll-picture-failed — a change to the b-roll's picture didn't land.
  *   (no param)        — all of them, side by side.
  *
  * The real panel (MediaAiChat) opened on a finished conversation. Nothing is
@@ -23,10 +26,13 @@ import { MediaAiChat, mediaChatKey, type ChatMessage } from "@/components/media-
 import { clearChat } from "@/lib/ai-chat-session-store"
 
 const ASK = "תערוך את הקרוסלה הזו לפי שפת המותג המחודשת שהגדרתי בשפה הויזואלית"
+const BROLL_INTRO = "מה לשנות בבי-רול? למשל גודל הכותרת, צבעים, איך המילים נכנסות או התזמון. אעדכן את האנימציה והסרטון יתחלף בכרטיס."
 const INTRO = "מה לשנות בקרוסלה? אפשר לבקש על כל השקופיות או על שקופית מסוימת, למשל ״בשקופית 3 הכותרת בצבע המותג״."
 
 // The exact copy the server and panel use for each state.
-const STATES: { id: "applied" | "unchanged" | "image-missing" | "place-failed"; title: string; messages: ChatMessage[] }[] = [
+type StateId = "applied" | "unchanged" | "image-missing" | "place-failed" | "unsaved-carousel" | "broll-own-picture" | "broll-picture-failed"
+
+const STATES: { id: StateId; title: string; format?: "carousel" | "b_roll"; messages: ChatMessage[] }[] = [
   {
     id: "applied",
     title: "העריכה שינתה את השקופיות",
@@ -76,6 +82,48 @@ const STATES: { id: "applied" | "unchanged" | "image-missing" | "place-failed"; 
       },
     ],
   },
+  {
+    id: "unsaved-carousel",
+    title: "השקופיות בכרטיס לא נשמרו בפוסט",
+    messages: [
+      { role: "assistant", content: INTRO },
+      { role: "user", content: "זו התמונה הנכונה בסלייד הראשון. תחליף את התמונה הקיימת", images: ["/images/paper-plane-celebrate.png"] },
+      {
+        role: "assistant",
+        error: true,
+        content:
+          "השקופיות שמופיעות בכרטיס לא נשמרו בפוסט, אז אין לי מה לערוך. צרו את הקרוסלה שוב (עכשיו היא נשמרת מיד), ואז ערכו אותה.",
+      },
+    ],
+  },
+  {
+    id: "broll-own-picture",
+    title: "בי-רול על התמונה שלה: ביקשה לצייר אותה מחדש",
+    format: "b_roll",
+    messages: [
+      { role: "assistant", content: BROLL_INTRO },
+      { role: "user", content: "שהאישה ברקע תחייך" },
+      {
+        role: "assistant",
+        error: true,
+        content: "התמונה שברקע היא שלכם, ואותה אני לא מצייר מחדש. אפשר לשנות את הטקסט והתנועה, או לצרף תמונה אחרת שתחליף אותה.",
+      },
+    ],
+  },
+  {
+    id: "broll-picture-failed",
+    title: "בי-רול: שינוי בתמונה שלא נכנס",
+    format: "b_roll",
+    messages: [
+      { role: "assistant", content: BROLL_INTRO },
+      { role: "user", content: "שהאישה ברקע תחייך" },
+      {
+        role: "assistant",
+        error: true,
+        content: "לא הצלחתי לשנות את התמונה שברקע הפעם, אז השארתי את הבי-רול כמו שהיה. נסו שוב, ואפשר לכתוב בדיוק מה לשנות בה.",
+      },
+    ],
+  },
 ]
 
 function Preview() {
@@ -84,13 +132,13 @@ function Preview() {
   // A fresh thread on every load — never one left in the session store.
   const [ready, setReady] = useState(false)
   useEffect(() => {
-    STATES.forEach((s) => clearChat(mediaChatKey(`preview-vl-${s.id}`, "carousel")))
+    STATES.forEach((s) => clearChat(mediaChatKey(`preview-vl-${s.id}`, s.format ?? "carousel")))
     setReady(true)
   }, [])
 
   return (
     <main dir="rtl" className="min-h-screen bg-bg-surface p-6">
-      <h1 className="mb-6 text-p-bold text-text-primary-default">עריכת קרוסלה עם AI — אחרי עריכה</h1>
+      <h1 className="mb-6 text-p-bold text-text-primary-default">עריכה עם AI — אחרי עריכה</h1>
       <div className="flex flex-wrap gap-6">
         {shown.map((s) => (
           <section key={s.id} className="flex flex-col gap-2">
@@ -100,7 +148,7 @@ function Preview() {
               {ready && (
                 <MediaAiChat
                   postId={`preview-vl-${s.id}`}
-                  format="carousel"
+                  format={s.format ?? "carousel"}
                   initialMessages={s.messages}
                   open
                   onOpenChange={() => undefined}

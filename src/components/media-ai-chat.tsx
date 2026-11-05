@@ -528,16 +528,15 @@ export function MediaAiChat({
     // The edit ran but changed nothing (the server saved nothing): the reply
     // says so instead of "עדכנתי" (Hani, 2026-11-05).
     let unchanged: string | null = null
+    // No image this time: the ones from her last message that had any
+    // ("שימי את התמונה!" after a try that missed means those).
+    const earlier = attached.length
+      ? []
+      : ([...cur.messages].reverse().find((m) => m.role === "user" && m.images?.length)?.images ?? [])
     const run = (
       format === "b_roll"
-        ? startBRollEdit(postId, editText, { quiet: true, references: attached })
-        : editImages(
-            editText,
-            attached,
-            // No image this time: the ones from her last message that had any
-            // ("שימי את התמונה!" after a try that missed means those).
-            attached.length ? [] : ([...cur.messages].reverse().find((m) => m.role === "user" && m.images?.length)?.images ?? []),
-          )
+        ? startBRollEdit(postId, editText, { quiet: true, references: attached, earlierReferences: earlier })
+        : editImages(editText, attached, earlier)
     ).then((r) => {
       if (r.ok && r.unchanged) unchanged = r.unchanged
       return r

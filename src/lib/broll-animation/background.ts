@@ -73,3 +73,23 @@ export function cropToCanvas(imageBase64: string): string {
     `</svg>`
   return Buffer.from(new Resvg(svg).render().asPng()).toString("base64")
 }
+
+/**
+ * Her picture as the 9:16 background: the whole picture, uncropped, over a
+ * blurred fill of itself — so a landscape photo keeps its subject instead of
+ * being cut to a sliver. Her exact file; nothing is redrawn.
+ */
+export async function pictureAsBackground(file: Buffer): Promise<Buffer> {
+  const sharp = (await import("sharp")).default
+  const W = CAPTION_CANVAS_WIDTH
+  const H = CAPTION_CANVAS_HEIGHT
+  const [fill, picture] = await Promise.all([
+    sharp(file).rotate().resize(W, H, { fit: "cover" }).blur(40).modulate({ brightness: 0.85 }).png().toBuffer(),
+    sharp(file).rotate().resize(W, H, { fit: "inside" }).png().toBuffer(),
+  ])
+  return sharp(fill).composite([{ input: picture, gravity: "center" }]).png().toBuffer()
+}
+
+/** What the motion design is told when the background is her own picture. */
+export const OWN_BACKGROUND_LINE =
+  "THE BACKGROUND IS THE CREATOR'S OWN PICTURE, used exactly as it is. Keep it visible and never cover its subject with a full-screen fill: set the text where the picture is calm, and give it a scrim, plate or shadow in the visual language wherever it needs one to stay legible."
