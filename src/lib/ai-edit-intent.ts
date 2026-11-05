@@ -34,6 +34,11 @@ export interface AiEditGenerateOpening {
    * already has media, the page opens the plain edit instead — as before.
    */
   fromEdit?: boolean
+  /**
+   * Images she attaches here go INTO the first generation (lib/feature-access
+   * — Hani only for now). Off: they are look references, as before.
+   */
+  placeRefs?: boolean
   /** Starts the from-zero generation with her brief and the references she attached. */
   /**
    * `references`: looks only (a picture from a link). `place`: pictures she

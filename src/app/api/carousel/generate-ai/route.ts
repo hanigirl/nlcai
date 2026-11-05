@@ -1,3 +1,4 @@
+import { gatePlacement } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
 import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
 import sharp from "sharp"
@@ -268,11 +269,13 @@ export async function POST(req: NextRequest) {
     // Her references: the layout step gets them as referenceBlocks, the image
     // model as reference images. The saved brief keeps the plain lines, so
     // later edits aren't told about images they don't have.
-    const refs = parseReferences(references)
+    // Placing is Hani-only for now (lib/feature-access); off it, all are looks.
+    const gated = gatePlacement(user.email, parseReferences(place), parseReferences(references))
+    const refs = gated.looks
     const refDirection = withMediaReferences(direction, refs)
     // Her own pictures (Hani, 2026-11-05): placed as her exact files by the
     // layout engine — the only path that can. Without it, say so plainly.
-    const placeRefs = parseReferences(place)
+    const placeRefs = gated.place
     const refImages = refDirection.references.slice(direction.references.length)
 
     // Laid out in code when she has a Claude key (lib/carousel-composition):

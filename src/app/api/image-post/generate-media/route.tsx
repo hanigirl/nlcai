@@ -1,4 +1,5 @@
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences, withPlacedImages } from "@/lib/media-brief"
+import { gatePlacement } from "@/lib/feature-access"
 import { picturesPlaced, placedImages } from "@/lib/placed-check"
 import { parseReferences } from "@/lib/ai-edit-references"
 import { NextRequest, NextResponse } from "next/server"
@@ -200,7 +201,9 @@ export async function POST(req: NextRequest) {
       .filter(Boolean)
       .join("\n")
     // Her own pictures go in as they are; a link's picture is a look only.
-    const placed = await placedImages(parseReferences(place))
+    // Placing is Hani-only for now (lib/feature-access); off it, all are looks.
+    const gated = gatePlacement(user.email, parseReferences(place), parseReferences(references))
+    const placed = await placedImages(gated.place)
     const direction = withMediaReferences(
       withPlacedImages(
         withMediaBrief(
@@ -212,7 +215,7 @@ export async function POST(req: NextRequest) {
         ),
         placed,
       ),
-      parseReferences(references),
+      gated.looks,
     )
     const generatedBase64 = await generateImage(
       openaiKey,

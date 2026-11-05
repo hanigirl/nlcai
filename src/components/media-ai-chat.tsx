@@ -87,6 +87,8 @@ interface GenStep {
   lastBrief: string
   /** The tile it generates in — "blank" when absent (see AiEditGenerateOpening). */
   style?: MediaStyle
+  /** Attached images are placed in the media (lib/feature-access). */
+  placeRefs?: boolean
 }
 type MediaChat = AiChatSession<ChatMessage, MediaChatExtra>
 
@@ -180,7 +182,7 @@ const GEN_NOUN: Record<AiEditFormat, string> = {
   b_roll: "את הבי-רול",
   carousel: "את הקרוסלה",
 }
-function genAsk(format: AiEditFormat, style: MediaStyle = "blank"): string {
+function genAsk(format: AiEditFormat, style: MediaStyle = "blank", placeRefs = false): string {
   if (style === "blank")
     return "איך תרצו להתחיל?\nספרו לי מה אתם רואים בראש: צבעים, אווירה, מה יופיע ומה ממש לא. מתחילים מדף חלק, בלי השפה הוויזואלית."
   const lang =
@@ -191,7 +193,10 @@ function genAsk(format: AiEditFormat, style: MediaStyle = "blank"): string {
         : style === "ai-light"
           ? "בשפת הנישה שלכם, בגרסה הבהירה"
           : "בשפת הנישה שלכם"
-  return `אייצר לכם ${GEN_NOUN[format]} ${lang}.\nיש משהו שכדאי שאדע לפני? תמונות שתרצו שאכניס? אפשר גם לספר מה חשוב לכם הפעם, או להדביק קישור לפוסט שאהבתם (באינסטגרם, באתר) כהשראה.`
+  // Placing her pictures is Hani-only for now (lib/feature-access).
+  return placeRefs
+    ? `אייצר לכם ${GEN_NOUN[format]} ${lang}.\nיש משהו שכדאי שאדע לפני? תמונות שתרצו שאכניס? אפשר גם לספר מה חשוב לכם הפעם, או להדביק קישור לפוסט שאהבתם (באינסטגרם, באתר) כהשראה.`
+    : `אייצר לכם ${GEN_NOUN[format]} ${lang}.\nיש משהו שכדאי שאדע לפני? אפשר לספר מה חשוב לכם הפעם, לצרף תמונת רפרנס או להדביק קישור (פוסט באינסטגרם, אתר).`
 }
 
 /**
@@ -347,12 +352,15 @@ export function MediaAiChat({
     if (cur?.extra.gen?.id === opening.id || cur?.busy) return
     generatorById.set(opening.id, opening.run)
     updateChat(chatKey, fresh, (s): MediaChat => {
-      const ask: ChatMessage = { role: "assistant", content: genAsk(format, opening.style) }
+      const ask: ChatMessage = { role: "assistant", content: genAsk(format, opening.style, opening.placeRefs) }
       const next = s.messages.some((m) => m.role === "user") ? [...s.messages, ask] : [ask]
       return {
         ...s,
         messages: next,
-        extra: { ...s.extra, gen: { id: opening.id, phase: "brief", lastBrief: "", style: opening.style } },
+        extra: {
+          ...s.extra,
+          gen: { id: opening.id, phase: "brief", lastBrief: "", style: opening.style, placeRefs: opening.placeRefs },
+        },
       }
     })
   }, [chatKey, opening, fresh, format])
@@ -410,8 +418,9 @@ export function MediaAiChat({
     const run = generatorById.get(g.id)
     const said: ChatMessage = { role: "user", content: shown ?? brief, ...(references.length ? { images: references } : {}) }
     // Her own pictures go IN the media; a link's picture is a look only.
-    const place = references.filter((r) => !looks.includes(r))
-    const lookRefs = references.filter((r) => looks.includes(r))
+    // Off the gate (lib/feature-access) every image is a look, as before.
+    const place = g?.placeRefs ? references.filter((r) => !looks.includes(r)) : []
+    const lookRefs = g?.placeRefs ? references.filter((r) => looks.includes(r)) : references
     if (!run) {
       // A reload dropped the button's settings — the media panel starts it again.
       patchKey((s) => ({
@@ -484,8 +493,9 @@ export function MediaAiChat({
     if (cur.extra.gen && cur.extra.gen.phase !== "running") {
       const attached = refs.refs
       const { place, looks } = refs.split(attached)
+      const placing = !!cur.extra.gen.placeRefs && place.length > 0
       const typed = (preset ?? cur.input).trim()
-      const brief = typed || (place.length ? PLACE_ONLY_INSTRUCTION : looks.length ? REFERENCE_ONLY_INSTRUCTION : "")
+      const brief = typed || (placing ? PLACE_ONLY_INSTRUCTION : attached.length ? REFERENCE_ONLY_INSTRUCTION : "")
       if (!brief || links.busy) return
       refs.clear()
       links.reset()
@@ -805,7 +815,7 @@ export function MediaAiChat({
         )}
         <LinkReferenceRows l={links} />
         <ReferenceTray r={refs} />
-        {gen?.phase === "brief" && refs.refs.length > 0 && (() => {
+        {gen?.phase === "brief" && gen.placeRefs && refs.refs.length > 0 && (() => {
           const { place, looks } = refs.split(refs.refs)
           return (
             <p className="mb-2 text-xs-body text-text-neutral-default">

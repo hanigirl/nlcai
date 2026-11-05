@@ -1,18 +1,17 @@
+import { gatePlacement } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
-import { parseReferences } from "@/lib/ai-edit-references"
+import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
-import { BACKGROUND_FRAMINGS, buildBackgroundPrompt, cropToCanvas } from "@/lib/broll-animation/background"
+import { BACKGROUND_FRAMINGS, OWN_BACKGROUND_LINE, buildBackgroundPrompt, cropToCanvas, pictureAsBackground } from "@/lib/broll-animation/background"
 import { buildCompositionBrief } from "@/lib/broll-animation/brief"
 import { composeBRoll, finalizeHtml } from "@/lib/broll-animation/compose"
 import { renderComposition } from "@/lib/broll-animation/render"
 import { saveBRoll, uploadBackground } from "@/lib/broll-animation/store"
 import { generateImage } from "@/lib/openai-image"
-import sharp from "sharp"
-import { CAPTION_CANVAS_HEIGHT, CAPTION_CANVAS_WIDTH } from "@/lib/caption-overlay"
 import { isMediaStyle } from "@/lib/visual-language/types"
 import { loadBrandExamples, resolveDesignDirection } from "@/lib/visual-language/direction"
 
@@ -32,22 +31,6 @@ export const maxDuration = 300
  * (lib/broll-animation/render). The HTML is stored next to the clip so
  * "עריכה עם AI" can revise it (api/b-roll/edit).
  */
-
-/**
- * Her picture as the 9:16 background: the whole picture, uncropped, over a
- * blurred fill of itself — so a landscape photo keeps its subject instead of
- * being cut to a sliver.
- */
-async function herPictureAsBackground(dataUrl: string): Promise<Buffer> {
-  const file = Buffer.from(dataUrl.slice(dataUrl.indexOf(",") + 1), "base64")
-  const W = CAPTION_CANVAS_WIDTH
-  const H = CAPTION_CANVAS_HEIGHT
-  const [fill, picture] = await Promise.all([
-    sharp(file).rotate().resize(W, H, { fit: "cover" }).blur(40).modulate({ brightness: 0.85 }).png().toBuffer(),
-    sharp(file).rotate().resize(W, H, { fit: "inside" }).png().toBuffer(),
-  ])
-  return sharp(fill).composite([{ input: picture, gravity: "center" }]).png().toBuffer()
-}
 
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
@@ -149,8 +132,10 @@ export async function POST(req: NextRequest) {
     // Her own picture (Hani, 2026-11-05: "התמונה תכנס ביצירה הראשונה"):
     // the b-roll is built ON it — her exact file, whole, never redrawn —
     // instead of a generated background. A link's picture stays a look only.
-    const placed = parseReferences(place)
-    const ownBackground = placed.length ? await herPictureAsBackground(placed[0]) : null
+    // Placing is Hani-only for now (lib/feature-access); off it, all are looks.
+    const gated = gatePlacement(user.email, parseReferences(place), parseReferences(references))
+    const placed = gated.place
+    const ownBackground = placed.length ? await pictureAsBackground(referenceBuffer(placed[0])) : null
     const baseDirection = withMediaBrief(
       await resolveDesignDirection(supabase, user.id, {
         format: "b_roll",
@@ -165,14 +150,14 @@ export async function POST(req: NextRequest) {
           lines: [
             ...baseDirection.lines,
             "",
-            "THE BACKGROUND IS THE CREATOR'S OWN PICTURE, used exactly as it is. Keep it visible and never cover its subject with a full-screen fill: set the text where the picture is calm, and give it a scrim, plate or shadow in the visual language wherever it needs one to stay legible.",
+            OWN_BACKGROUND_LINE,
           ],
         }
       : baseDirection
     // Her references: the background gets them as images, the motion design
     // as referenceBlocks. The saved composition brief keeps the plain lines,
     // so later edits aren't told about images they don't have.
-    const refs = parseReferences(references)
+    const refs = gated.looks
     const refDirection = withMediaReferences(direction, refs)
     let anthropicKey: string
     try {

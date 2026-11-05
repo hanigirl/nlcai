@@ -16,6 +16,7 @@
  * route answers with a sample picture. Nothing reaches the network: no
  * credits, no DB writes.
  *
+ *   ?gate=off — the panel as everyone but Hani sees it (images are looks only)
  *   ?format=image_post|story|b_roll|carousel
  *   &state=tiles | quick | brand | niche-dark | niche-light | blank | ref |
  *          link | ref-link | place-failed | link-failed | generating | done | error | has-media
@@ -147,6 +148,8 @@ export default function Page() {
 function Preview() {
   const params = useSearchParams()
   const format: AiEditFormat = FORMATS.find((f) => f.id === params.get("format"))?.id ?? "image_post"
+  // Placing her pictures is Hani-only (lib/feature-access); ?gate=off shows everyone else's panel.
+  const placeOn = params.get("gate") !== "off"
   const state = (STATES.find((s) => s.id === params.get("state"))?.id ?? "tiles") as State
   const startStyle: MediaStyle =
     state === "niche-dark" ? "ai-dark" : state === "niche-light" ? "ai-light" : state === "blank" ? "blank" : "brand"
@@ -194,7 +197,7 @@ function Preview() {
   /** The card's generate button — the same branch as the media panel. */
   const pressGenerate = (picked: MediaStyle = style) => {
     if (picked === "blank") {
-      requestAiEdit({ postId: POST_ID, format, opening: { id: openingId(), kind: "generate", run: (_b, looks, place) => fakeGenerate(looks, place), style: picked } })
+      requestAiEdit({ postId: POST_ID, format, opening: { id: openingId(), kind: "generate", run: (_b, looks, place) => fakeGenerate(looks, place), style: picked, placeRefs: placeOn } })
       return
     }
     void fakeGenerate()
@@ -205,7 +208,7 @@ function Preview() {
     requestAiEdit({
       postId: POST_ID,
       format,
-      opening: { id: openingId(), kind: "generate", run: (_b, looks, place) => fakeGenerate(looks, place), style: picked, fromEdit: true },
+      opening: { id: openingId(), kind: "generate", run: (_b, looks, place) => fakeGenerate(looks, place), style: picked, fromEdit: true, placeRefs: placeOn },
     })
 
   // Land on the state: clean conversation, then press where the state needs it.
@@ -223,9 +226,9 @@ function Preview() {
     if (state === "tiles") return
     const t = setTimeout(() => (state === "quick" ? pressGenerate(startStyle) : pressAiEdit(startStyle)), 400)
     return () => clearTimeout(t)
-    // Once per state / format.
+    // Once per state / format / gate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, format])
+  }, [state, format, placeOn])
 
   // Act inside the open panel per state.
   useEffect(() => {
@@ -247,7 +250,7 @@ function Preview() {
     return () => clearTimeout(t)
   }, [opening, state])
 
-  const href = (f: AiEditFormat, s: State) => `/test/talk-first?format=${f}&state=${s}`
+  const href = (f: AiEditFormat, s: State) => `/test/talk-first?format=${f}&state=${s}${placeOn ? "" : "&gate=off"}`
   const pill = (active: boolean) =>
     `rounded-full border px-2.5 py-1 hover:bg-gray-95 dark:hover:bg-gray-20 ${
       active ? "border-text-primary-default text-text-primary-default" : "border-border-neutral-default text-text-neutral-default"

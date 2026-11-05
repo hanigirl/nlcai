@@ -71,6 +71,7 @@ import { flushPendingSaves } from "@/lib/pending-saves"
 import { BLANK_TEMPLATE, BLANK_TEMPLATE_ID, BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import { openingId, requestAiEdit } from "@/lib/ai-edit-intent"
 import { AiHoverEditButton } from "@/components/ai-hover-edit"
+import { useRefPlace } from "@/lib/use-scheduling-access"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import type { AiEditFormat } from "@/components/media-ai-chat"
 import type { MediaGenResult } from "@/lib/media-brief"
@@ -239,7 +240,24 @@ function openGenerateBrief(
   /** Came from "עריכה עם AI" — with media already there it is a plain edit. */
   fromEdit = false,
 ) {
-  requestAiEdit({ postId, format, opening: { id: openingId(), kind: "generate", run, style, fromEdit } })
+  requestAiEdit({
+    postId,
+    format,
+    opening: { id: openingId(), kind: "generate", run, style, fromEdit, placeRefs: refPlaceNow },
+  })
+}
+
+/**
+ * Whether images attached in the ask step are placed (lib/feature-access) —
+ * read once per session by any mounted media panel (useRefPlace), so the
+ * opening can carry it. The server enforces the same gate.
+ */
+let refPlaceNow = false
+function useRefPlaceFlag() {
+  const on = useRefPlace()
+  useEffect(() => {
+    refPlaceNow = on === true
+  }, [on])
 }
 
 function useReportBusy(
@@ -293,6 +311,7 @@ export function MediaPanel({
   onStoryVideoUrlChange,
   onMediaBusyChange,
 }: MediaPanelProps) {
+  useRefPlaceFlag()
   const isOpen = formatId !== null
   const meta = formatId ? FORMAT_META[formatId] : null
   const Icon = meta?.icon
