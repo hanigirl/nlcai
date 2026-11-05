@@ -131,8 +131,6 @@ export interface VisualLanguage {
   formats?: Partial<Record<VisualFormat, string>>
   /** What each example was recognised as, keyed by user_media id. */
   example_kinds?: { id: string; kind: ExampleKind }[]
-  /** Old 👍 / 👎 per format (feature removed 2026-11-05). A new analysis starts fresh. */
-  feedback?: Partial<Record<VisualFormat, StyleFeedback>>
   /** Colours for the carousel picker's mini-mock tile. */
   preview?: { bg: string; accent: string; title: string; body: string }
   /** Inputs the brief was made from — compared to detect stale analysis. */
@@ -140,28 +138,6 @@ export interface VisualLanguage {
   /** Links that could not be read and were skipped (shown as a note). */
   unreadable_links?: string[]
   analyzed_at: string
-}
-
-/**
- * What she said about one style slot (a tone of her niche language, or one
- * format of her own visual language) through the 👍 / 👎 row on the result
- * cards. That row was removed on 2026-11-05 (the AI-edit chat replaced it);
- * nothing writes this any more. The shape stays only because rows saved
- * before then still carry it, and `anchor_path` is still read as a style
- * reference (lib/visual-language/direction).
- */
-export interface StyleFeedback {
-  /** She liked an image here. */
-  approved: boolean
-  /** Copy of the liked image (user-media path) — sent as a style reference. */
-  anchor_path?: string
-  votes: {
-    verdict: "like" | "dislike"
-    format: string
-    reasons?: string[]
-    note?: string
-    at: string
-  }[]
 }
 
 /** Fallback brief derived from the niche, cached until the niche changes. */
@@ -173,8 +149,6 @@ export interface NicheVisualLanguage {
   dark_spec?: string
   /** The same niche language on a light canvas ("בהיר"). */
   light_spec?: string
-  /** Old 👍 / 👎 per tone (feature removed 2026-11-05). Reset when the niche changes. */
-  feedback?: { dark?: StyleFeedback; light?: StyleFeedback }
   generated_at: string
 }
 

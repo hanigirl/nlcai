@@ -67,15 +67,6 @@ export function noExtrasRule(direction: DesignDirection): string {
     : "No watermarks, no logos, no UI chrome, no borders, no signatures."
 }
 
-async function loadAnchor(supabase: SupabaseClient, path: string): Promise<ModelImage | null> {
-  try {
-    return await loadImageForModels(supabase.storage.from("user-media").getPublicUrl(path).data.publicUrl)
-  } catch (err) {
-    console.error("[visual-language][style-anchor]", err)
-    return null
-  }
-}
-
 function toneLine(tone: "dark" | "light"): string {
   return tone === "dark"
     ? "Make it a DARK design: a deep, rich background colour that belongs to this world, with light readable text — not neon, not sci-fi."
@@ -83,8 +74,8 @@ function toneLine(tone: "dark" | "light"): string {
 }
 
 /**
- * The direction plus her standing preferences (lib/style-memory) — what she
- * asked for in earlier AI edits applies to every format from now on.
+ * The direction plus her standing preferences (lib/style-memory) — the ones
+ * saved for this format or for every format.
  */
 export async function resolveDesignDirection(
   supabase: SupabaseClient,
@@ -99,7 +90,7 @@ export async function resolveDesignDirection(
     resolveBaseDirection(supabase, userId, opts),
     nicheChosen ? Promise.resolve([]) : loadStyleRules(supabase, userId),
   ])
-  const extra = styleRuleLines(rules)
+  const extra = styleRuleLines(rules, opts.format)
   return extra.length ? { ...direction, lines: [...direction.lines, "", ...extra] } : direction
 }
 
@@ -160,17 +151,6 @@ async function resolveBaseDirection(
         ...loaded.map((r, i) => `- Reference image ${i + 1}: ${r.note}`),
       )
     }
-    // An image she liked in this format is its style anchor — appended
-    // after the element references so their numbering stays put.
-    const anchorPath = vl.feedback?.[opts.format]?.anchor_path
-    const anchor = anchorPath ? await loadAnchor(supabase, anchorPath) : null
-    if (anchor) {
-      references.push(anchor)
-      lines.push(
-        "",
-        `Reference image ${references.length} (the last one) is a STYLE ANCHOR — an image in this format the creator approved. Match its palette, background treatment, typography character, illustration style and overall feel closely, so they look like one series. Do NOT copy its text, layout or subject: this image has its own content.`,
-      )
-    }
     return { source: "brand", lines, references, fixed }
   }
 
@@ -194,10 +174,6 @@ async function resolveBaseDirection(
     }
     const spec = cached ? (tone ? cached[`${tone}_spec`] : cached.style_spec) : undefined
     if (cached && spec?.trim()) {
-      // A liked image in this tone is its style anchor: sent as a visual
-      // reference, because the written brief alone drifts between images.
-      const anchorPath = tone ? cached.feedback?.[tone]?.anchor_path : undefined
-      const anchor = anchorPath ? await loadAnchor(supabase, anchorPath) : null
       return {
         source: "niche",
         lines: [
@@ -206,14 +182,8 @@ async function resolveBaseDirection(
             : `VISUAL LANGUAGE — chosen to suit the creator's niche (${niche}). Follow it consistently; do NOT fall back to dark neon gradients or glossy 3D glass objects unless it says so:`,
           spec.trim(),
           ...(colorLine ? [colorLine] : []),
-          ...(anchor
-            ? [
-                "",
-                "Reference image 1 is a STYLE ANCHOR — an image in this style the creator approved. Match its palette, background treatment, typography character, illustration style and overall feel closely, so the two look like one brand. Do NOT copy its text, its layout or its subject: this image has its own content.",
-              ]
-            : []),
         ],
-        references: anchor ? [anchor] : [],
+        references: [],
         fixed: [],
       }
     }
