@@ -91,6 +91,7 @@ import {
 } from "@/lib/timing-storage"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { carouselErrorInfo } from "@/lib/carousel-errors"
+import { imageSrc } from "@/lib/image-src"
 import { longWaitDone, saveCarouselIfLeft, startLongWait } from "@/lib/long-wait"
 import { usePreviewAccess } from "@/lib/use-scheduling-access"
 
@@ -2207,7 +2208,7 @@ function CarouselFlow({
                   <img
                     src={
                       livePreview
-                        ? `data:image/png;base64,${livePreview}`
+                        ? imageSrc(livePreview)
                         : t.thumbnailUrl
                     }
                     alt={`שקופית לדוגמה בטמפלט ${t.name}`}
@@ -2311,7 +2312,7 @@ function CarouselFlow({
               <div className="relative w-full overflow-hidden rounded-xl border border-border-neutral-default bg-bg-surface">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={`data:image/png;base64,${dialogSlides[previewIndex]}`}
+                  src={imageSrc(dialogSlides[previewIndex])}
                   alt={`סלייד ${previewIndex + 1}`}
                   className="w-full h-auto"
                 />
@@ -2460,28 +2461,7 @@ function CarouselFlow({
             makes" read as the same kind of thing. Tapping it opens the same
             slide viewer, which is also where deleting it lives. */}
         {images && images.length > 0 && !savedTemplateId && (
-          <div className="grid grid-cols-3 gap-2">
-            <button
-              type="button"
-              onClick={() => openDialog(DRIVE_IMPORT_KEY)}
-              aria-label={`הקרוסלה שלך — ${images.length} שקופיות, לצפייה ולעריכה`}
-              className="relative flex flex-col gap-1 rounded-xl border border-yellow-50 p-1 pb-1.5 ring-1 ring-yellow-50 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={`data:image/png;base64,${images[0]}`}
-                alt="השקופית הראשונה של הקרוסלה שלך"
-                className="w-full rounded-lg"
-                style={{ aspectRatio: "1 / 1", objectFit: "cover" }}
-              />
-              <span className="absolute top-2 start-2 rounded-md bg-bg-surface-primary-default px-1.5 py-0.5 text-xs text-text-primary-default">
-                {images.length} שקופיות
-              </span>
-              <span className="w-full truncate text-center text-xs text-text-primary-default">
-                הקרוסלה שלך
-              </span>
-            </button>
-          </div>
+          <YourCarouselTile images={images} onOpen={() => openDialog(DRIVE_IMPORT_KEY)} />
         )}
             </>
           }
@@ -2496,29 +2476,77 @@ function CarouselFlow({
           leaving the panel. Purely additive — the template tiles, the saved
           slides and the import above are untouched. */}
       {images && images.length > 0 && (
-        <div className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-5 bg-gray-95 px-6 py-5 dark:bg-gray-10">
-          <p className="text-center text-xs text-text-neutral-default">
-            הקרוסלה שלך
-          </p>
-
-          <button
-            type="button"
-            onClick={() => openDialog(savedTemplateId ?? DRIVE_IMPORT_KEY)}
-            aria-label={`הקרוסלה שלך — ${images.length} שקופיות, לצפייה`}
-            className="relative w-[200px] overflow-hidden rounded-[10px] border border-border-neutral-default bg-bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={`data:image/png;base64,${images[0]}`}
-              alt="השקופית הראשונה של הקרוסלה שלך"
-              className="w-full"
-            />
-            <span className="absolute bottom-2 start-2 rounded-md bg-black/60 px-2 py-0.5 text-xs text-white">
-              1/{images.length}
-            </span>
-          </button>
-        </div>
+        <YourCarouselBand
+          images={images}
+          onOpen={() => openDialog(savedTemplateId ?? DRIVE_IMPORT_KEY)}
+        />
       )}
+    </div>
+  )
+}
+
+/**
+ * The post's own carousel, shown by its first slide. Two shapes, both in
+ * CarouselFlow: the tile beside the Drive import (a brought carousel) and the
+ * grey band that closes the panel. Exported for the /test/carousel-slide-thumb
+ * state page.
+ *
+ * `images` may hold storage URLs or base64 — the page loads a saved carousel
+ * as URLs, and the AI edit panel hands URLs back — so the slide goes through
+ * `imageSrc`, never a hard-coded `data:` prefix (that was the broken image,
+ * 2026-11-05).
+ */
+export function YourCarouselTile({ images, onOpen }: { images: string[]; onOpen: () => void }) {
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`הקרוסלה שלך — ${images.length} שקופיות, לצפייה ולעריכה`}
+        className="relative flex flex-col gap-1 rounded-xl border border-yellow-50 p-1 pb-1.5 ring-1 ring-yellow-50 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={imageSrc(images[0])}
+          alt="השקופית הראשונה של הקרוסלה שלך"
+          className="w-full rounded-lg"
+          style={{ aspectRatio: "1 / 1", objectFit: "cover" }}
+        />
+        <span className="absolute top-2 start-2 rounded-md bg-bg-surface-primary-default px-1.5 py-0.5 text-xs text-text-primary-default">
+          {images.length} שקופיות
+        </span>
+        <span className="w-full truncate text-center text-xs text-text-primary-default">
+          הקרוסלה שלך
+        </span>
+      </button>
+    </div>
+  )
+}
+
+/** The grey band that ends the carousel panel — see YourCarouselTile. */
+export function YourCarouselBand({ images, onOpen }: { images: string[]; onOpen: () => void }) {
+  return (
+    <div className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-5 bg-gray-95 px-6 py-5 dark:bg-gray-10">
+      <p className="text-center text-xs text-text-neutral-default">
+        הקרוסלה שלך
+      </p>
+
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`הקרוסלה שלך — ${images.length} שקופיות, לצפייה`}
+        className="relative w-[200px] overflow-hidden rounded-[10px] border border-border-neutral-default bg-bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={imageSrc(images[0])}
+          alt="השקופית הראשונה של הקרוסלה שלך"
+          className="w-full"
+        />
+        <span className="absolute bottom-2 start-2 rounded-md bg-black/60 px-2 py-0.5 text-xs text-white">
+          1/{images.length}
+        </span>
+      </button>
     </div>
   )
 }
@@ -3570,8 +3598,7 @@ function MediaUploadFlow({
   }
 
   /** Render a story frame that may be a storage URL or raw base64. */
-  const localStoryFrameSrc = (f: string) =>
-    f.startsWith("http") ? f : `data:image/png;base64,${f}`
+  const localStoryFrameSrc = imageSrc
 
   /**
    * Persist the generated PNG through the SAME path as a manual upload
