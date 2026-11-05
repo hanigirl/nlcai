@@ -22,7 +22,7 @@
 
 import { Suspense, useEffect, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
-import { Layers, Smartphone, Video, ImageIcon } from "lucide-react"
+import { Film, Layers, Smartphone, Video, ImageIcon } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { InfiniteCanvas, type InfiniteCanvasHandle } from "@/components/infinite-canvas"
 import { FormatLane, LaneColumn, LaneStem, TreeConnector, goToLaneCard, newestLaneCard } from "@/components/format-lanes"
@@ -46,6 +46,13 @@ const FULL: Lane[] = [
   },
   { fid: "carousel", cards: [{ title: "קרוסלה", icon: Layers }, { title: "הקרוסלה שלכם", icon: Layers, tall: true }] },
   { fid: "story", cards: [{ title: "סטורי", icon: Smartphone }, { title: "הסטורי שלכם", icon: Smartphone, tall: true }] },
+]
+
+/** jump: all five formats duplicated, as on a full post. */
+const ALL_FIVE: Lane[] = [
+  ...FULL,
+  { fid: "image_post", cards: [{ title: "פוסט תמונה", icon: ImageIcon }, { title: "התמונה שלכם", icon: ImageIcon, tall: true }] },
+  { fid: "b_roll", cards: [{ title: "בי-רול", icon: Film }, { title: "הבי-רול שלכם", icon: Film, tall: true }] },
 ]
 
 /** `live`: how many cards each lane shows at each step, and which one is still loading. */
@@ -113,7 +120,9 @@ function LanesPreview() {
               loading: live.loading?.[0] === li && live.loading?.[1] === ci,
             })),
           })).filter((l) => l.cards.length > 0)
-        : FULL
+        : state === "jump"
+          ? ALL_FIVE
+          : FULL
 
   // The same follow call /project makes when a lane gains or starts a card.
   const prevKey = useRef<string>("")
@@ -136,7 +145,11 @@ function LanesPreview() {
   }, [key, state])
 
   return (
-    <div className="h-screen w-full">
+    // jump: sized like /project — the page's <main> grows with the canvas
+    // content, so the canvas element runs far taller than the window (what
+    // threw the first version of the jump off-screen).
+    <div className={state === "jump" ? "flex min-h-screen w-full flex-col" : "h-screen w-full"}>
+      <div className={state === "jump" ? "flex-1 overflow-hidden" : "h-full"}>
       <InfiniteCanvas handleRef={canvasRef}>
         <div className="flex items-start gap-0 pt-24 pr-24" dir="rtl">
           <div className="flex w-[346px] shrink-0 flex-col gap-2 [&>div]:w-full">
@@ -179,6 +192,7 @@ function LanesPreview() {
           </div>
         </div>
       </InfiniteCanvas>
+      </div>
     </div>
   )
 }
@@ -188,12 +202,15 @@ const PICKER_FORMATS: { id: string; label: string }[] = [
   { id: "carousel", label: "קרוסלה" },
   { id: "story", label: "סטורי" },
   { id: "image_post", label: "פוסט תמונה" },
+  { id: "b_roll", label: "בי-רול" },
 ]
 /** Sample statuses, as useFormatApprovals computes them on /project. */
 const SAMPLE_STATUS: Record<string, ApprovalStatus> = {
   talking_head: "scheduled",
   carousel: "approved",
   story: "pending",
+  image_post: "edited",
+  b_roll: "approved",
 }
 
 /** The canvas's "לאיזה פורמטים לשכפל?" card, as /project draws it. */

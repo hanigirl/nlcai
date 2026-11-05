@@ -63,19 +63,25 @@ export function InfiniteCanvas({ children, handleRef }: InfiniteCanvasProps) {
       const follow = opts?.mode === "follow"
       if (follow && (panningRef.current || Date.now() - lastUserMoveAt.current < USER_IDLE_MS)) return
       const box = el.getBoundingClientRect()
+      // What she actually sees: the canvas element runs as tall as the
+      // canvas content (the page's <main> grows with it), far past the
+      // window's bottom edge. Centring on the ELEMENT put a card in the
+      // middle of that tall box — off-screen, with the whole workflow gone
+      // from view (Hani, 2026-11-05). Centre on the visible part.
+      const top = Math.max(view.top, 0)
+      const bottom = Math.min(view.bottom, window.innerHeight)
+      const left = Math.max(view.left, 0)
+      const right = Math.min(view.right, window.innerWidth)
+      const seenHeight = Math.max(0, bottom - top)
       // Centre it; a card taller than the view keeps its top in sight instead.
-      const dx = view.left + view.width / 2 - (box.left + box.width / 2)
+      const dx = left + (right - left) / 2 - (box.left + box.width / 2)
       let dy =
-        box.height > view.height * 0.8
-          ? view.top + 80 - box.top
-          : view.top + view.height / 2 - (box.top + box.height / 2)
+        box.height > seenHeight * 0.8
+          ? top + 80 - box.top
+          : top + seenHeight / 2 - (box.top + box.height / 2)
       if (follow) {
         // Lanes run sideways: keep the row where it is unless the card's top
         // is out of sight, and then bring it just inside the view.
-        // The canvas element can run taller than the window; what she sees
-        // ends at the window's bottom edge.
-        const top = Math.max(view.top, 0)
-        const bottom = Math.min(view.bottom, window.innerHeight)
         const margin = 80
         if (box.top >= top + margin && box.top <= bottom - margin * 2) dy = 0
         else dy = top + margin - box.top
