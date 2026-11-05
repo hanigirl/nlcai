@@ -408,72 +408,6 @@ export function storyFrames(body: string, asked?: number | null): string[] {
 /** Most frames a script can set for itself. */
 export const MAX_STORY_SCRIPT_FRAMES = MAX_SCRIPT_FRAMES
 
-/** Whether the script names its own frames ("סטורי 1", "[מסך 2]"…). */
-export function hasMarkedFrames(body: string): boolean {
-  return markedFrames(body) !== null
-}
-
-/**
- * Frames back to a script, each under its "סטורי N" line — the marker syntax
- * the split reads, so the frames she set are the frames that get made.
- */
-export function framesToScript(frames: string[]): string {
-  return frames
-    .map((f) => f.trim())
-    .filter(Boolean)
-    .slice(0, MAX_SCRIPT_FRAMES)
-    .map((f, i) => `סטורי ${i + 1}\n${f}`)
-    .join("\n\n")
-}
-
-const lines = (text: string) => text.split("\n").map((l) => l.trim()).filter(Boolean)
-
-/**
- * One frame into two, at the line nearest its middle (a frame of one line
- * splits at a sentence, else a space). Null when it can't be split, or the
- * script already has the most frames it can.
- */
-export function splitFrame(frames: string[], index: number): string[] | null {
-  if (frames.length >= MAX_SCRIPT_FRAMES) return null
-  const text = frames[index]
-  if (!text) return null
-  const ls = lines(text)
-  let halves: string[]
-  if (ls.length >= 2) {
-    const mid = Math.ceil(ls.length / 2)
-    halves = [ls.slice(0, mid).join("\n"), ls.slice(mid).join("\n")]
-  } else {
-    halves = splitBlockInHalf(text.trim())
-  }
-  if (halves.length < 2 || !halves[0] || !halves[1]) return null
-  return [...frames.slice(0, index), halves[0], halves[1], ...frames.slice(index + 1)]
-}
-
-/** A frame and the one after it, as one. */
-export function mergeWithNext(frames: string[], index: number): string[] | null {
-  if (index < 0 || index >= frames.length - 1) return null
-  return [...frames.slice(0, index), `${frames[index].trim()}\n${frames[index + 1].trim()}`, ...frames.slice(index + 2)]
-}
-
-/**
- * The boundary between frame `index` and the next, one line over: "forward"
- * sends the frame's last line to the next frame; "back" pulls the next
- * frame's first line up. Never empties a frame.
- */
-export function moveBoundary(frames: string[], index: number, dir: "forward" | "back"): string[] | null {
-  if (index < 0 || index >= frames.length - 1) return null
-  const a = lines(frames[index])
-  const b = lines(frames[index + 1])
-  if (dir === "forward") {
-    if (a.length < 2) return null
-    b.unshift(a.pop()!)
-  } else {
-    if (b.length < 2) return null
-    a.push(b.shift()!)
-  }
-  return [...frames.slice(0, index), a.join("\n"), b.join("\n"), ...frames.slice(index + 2)]
-}
-
 /**
  * The check behind "סטורי 1 never ends up in the picture" (Hani, 2026-11-05):
  * every text the story pipeline hands on — each frame the generator draws,
@@ -494,4 +428,39 @@ export function frameMarkerLeaks(body: string): string[] {
   if (hasFrameMarker([one.headline, one.body].filter(Boolean).join("\n"))) leaks.push("כיתוב על תמונה שהעלו")
   if (hasFrameMarker(stripFrameMarkers(body))) leaks.push("טקסט להעתקה")
   return leaks
+}
+
+/**
+ * The story card's sections (Hani, 2026-11-05: a grey "סטורי 1" over each
+ * story's text). The stories the generator makes (storyFrames) — plus any
+ * story she added and hasn't written yet: an empty "סטורי 3" stays on the
+ * card, while the generator simply skips it.
+ */
+export function storySections(body: string): string[] {
+  if (!markedFrames(body)) return storyFrames(body)
+  const sections: string[] = []
+  let current: string[] | null = null
+  for (const line of body.split("\n")) {
+    const m = line.match(FRAME_MARKER)
+    if (m && m[0].trim()) {
+      if (current) sections.push(current.join("\n").trim())
+      current = []
+      const rest = line.slice(m[0].length).trim()
+      if (rest) current.push(rest)
+    } else if (current) {
+      current.push(line)
+    } else if (line.trim()) {
+      current = [line]
+    }
+  }
+  if (current) sections.push(current.join("\n").trim())
+  return sections.slice(0, MAX_SCRIPT_FRAMES)
+}
+
+/** The card's sections back to a script — "סטורי N" over each, empty ones kept. */
+export function sectionsToScript(sections: string[]): string {
+  return sections
+    .slice(0, MAX_SCRIPT_FRAMES)
+    .map((f, i) => (f.trim() ? `סטורי ${i + 1}\n${f.trim()}` : `סטורי ${i + 1}`))
+    .join("\n\n")
 }
