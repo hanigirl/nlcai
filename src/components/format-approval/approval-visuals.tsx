@@ -114,6 +114,6 @@ export function ApprovalStatusPill({ status }: { status: ApprovalStatus | undefi
   if (status === "scheduled") return <ScheduledTag />
   if (status === "approved") return <ApprovedTag />
   if (status === "edited") return <EditedTag />
-  if (status === "pending") return <PendingTag />
+  // No "מחכה לאישור" tag in this list (Hani, 2026-11-05).
   return null
 }
