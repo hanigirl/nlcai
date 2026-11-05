@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { EMBED_MARKER, embedCookieOptions } from "@/lib/phebe-demo";
+import { isApiPath, maintenanceGate } from "@/lib/maintenance";
 
 // Onboarding gate. Two jobs:
 //   1. Send anonymous users to /login.
@@ -53,6 +54,17 @@ async function resolveUser(
 }
 
 export async function middleware(request: NextRequest) {
+  // Maintenance mode (MAINTENANCE_MODE=1, see lib/maintenance.ts) — before
+  // anything else, and above all before any Supabase call: while the database
+  // is being moved, nothing may reach it. Always null when the flag is unset.
+  const maintenanceResponse = maintenanceGate(request);
+  if (maintenanceResponse) return maintenanceResponse;
+
+  // /api/* is in the matcher ONLY so the gate above can refuse it. Past the
+  // gate it goes straight through, untouched — no domain redirect, no auth —
+  // exactly as when /api was outside the matcher.
+  if (isApiPath(request.nextUrl.pathname)) return NextResponse.next();
+
   // Domain cutover (Hani 2026-06-09): nextlevelappai.com is the canonical home.
   // Permanently (301) redirect the legacy Vercel alias to it, preserving the
   // path + query string. Only the exact production alias is matched — branch /
@@ -224,5 +236,8 @@ export const config = {
      *   public anyway.
      */
     "/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|api|.*\\..*).*)",
+    // API routes — matched only for the maintenance gate. When maintenance is
+    // off the middleware hands them straight back (see the top of middleware).
+    "/api/:path*",
   ],
 };
