@@ -68,7 +68,11 @@ import {
 } from "@/lib/story-generation-store"
 import type { SlideData } from "@/lib/carousel-templates"
 import { flushPendingSaves } from "@/lib/pending-saves"
-import { BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
+import { BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES, getTemplate } from "@/lib/carousel-templates"
+import { openingId, requestAiEdit } from "@/lib/ai-edit-intent"
+import type { AiEditFormat } from "@/components/media-ai-chat"
+import type { MediaGenResult } from "@/lib/media-brief"
+import type { MediaStyle } from "@/lib/visual-language/types"
 import { useBrandCarouselTemplate } from "@/hooks/use-brand-carousel-template"
 import { MediaStylePicker, useMediaStyle } from "@/components/media-style-picker"
 import { parseTextToSlides } from "@/lib/carousel-slides"
@@ -212,6 +216,28 @@ interface MediaPanelProps {
  * tracked in component state dies with the component, so a skeleton left up
  * after the panel closes would wait for a card that never comes.
  */
+/**
+ * "Think first, then generate" (Hani, 2026-11-05): a generate button opens the
+ * AI panel on the question "your visual language, or a direction of your
+ * own?" — the generation runs from there (`run`), and the panel stays open
+ * for edits once it lands. The project page closes this media panel when it
+ * opens, so brief → generate → refine happens in one place.
+ */
+function openGenerateBrief(
+  postId: string,
+  format: AiEditFormat,
+  style: { styleName: string; isVisualLanguage: boolean },
+  run: (brief?: string) => Promise<MediaGenResult>,
+) {
+  requestAiEdit({ postId, format, opening: { id: openingId(), kind: "generate", ...style, run } })
+}
+
+/** How the AI panel names the style picked in the media panel. */
+function mediaStyleLabel(style: MediaStyle): { styleName: string; isVisualLanguage: boolean } {
+  if (style === "brand") return { styleName: "השפה הוויזואלית שלכם", isVisualLanguage: true }
+  return { styleName: getTemplate(style)?.name ?? style, isVisualLanguage: false }
+}
+
 function useReportBusy(
   report: ((format: string, busy: boolean) => void) | undefined,
   format: string,
@@ -1685,11 +1711,37 @@ function CarouselFlow({
       setPendingGenerate(true)
       return
     }
-    void handleGenerate()
+    startGenerate()
   }
 
-  const handleGenerate = async () => {
-    if (!carouselText.trim()) return
+  /**
+   * AI templates ask first (Hani, 2026-11-05): the AI panel offers her visual
+   * language or a direction of her own, and runs the generation from there.
+   * The code-drawn templates have nothing to brief — they render straight away.
+   */
+  const startGenerate = () => {
+    if (!isAiTemplate || !postId) {
+      void handleGenerate()
+      return
+    }
+    openGenerateBrief(
+      postId,
+      "carousel",
+      selectedTemplate === BRAND_TEMPLATE_ID
+        ? { styleName: "השפה הוויזואלית שלכם", isVisualLanguage: true }
+        : { styleName: selectedConfig?.name ?? "", isVisualLanguage: false },
+      (brief) => handleGenerate({ brief, fromPanel: true }),
+    )
+  }
+
+  /**
+   * `fromPanel`: started from the AI panel, which reports progress and the
+   * result itself — no toasts, and no preview dialog over the canvas.
+   */
+  const handleGenerate = async (
+    { brief, fromPanel = false }: { brief?: string; fromPanel?: boolean } = {},
+  ): Promise<MediaGenResult> => {
+    if (!carouselText.trim()) return { ok: false, message: "אין עדיין טקסט לקרוסלה" }
     setGenerating(true)
     setError(null)
 
@@ -1697,14 +1749,14 @@ function CarouselFlow({
     if (allSlides.length === 0) {
       setError("לא נמצאו סליידים בטקסט הקרוסלה")
       setGenerating(false)
-      return
+      return { ok: false, message: "לא נמצאו סליידים בטקסט הקרוסלה" }
     }
     // Backstop only. The writer is told the ceiling and condenses with an
     // understanding of the words; this merge is mechanical and has none, so
     // it should fire rarely — when it does, the text itself is over the
     // ceiling and worth re-generating rather than living with.
     const parsedSlides = condenseSlides(allSlides, MAX_CAROUSEL_SLIDES)
-    if (allSlides.length > parsedSlides.length) {
+    if (allSlides.length > parsedSlides.length && !fromPanel) {
       toast.info(
         `צימצמנו את הקרוסלה מ-${allSlides.length} ל-${parsedSlides.length} שקופיות`,
         { duration: 5000 },
@@ -1725,7 +1777,10 @@ function CarouselFlow({
       ? `מציירים קרוסלת AI (${templateName})... זה לוקח כמה דקות`
       : `יוצרים קרוסלה (${templateName})...`
     let genToast: string | number
-    if (previewOn) {
+    let result: MediaGenResult = { ok: false, message: "שגיאה ביצירת הקרוסלה" }
+    if (fromPanel) {
+      genToast = `carousel-gen-${Date.now()}`
+    } else if (previewOn) {
       genToast = `carousel-gen-${Date.now()}`
       startLongWait(genToast, genTitle)
     } else {
@@ -1744,6 +1799,7 @@ function CarouselFlow({
             slides: parsedSlides,
             templateId: genId,
             postId,
+            ...(brief ? { brief } : {}),
           }),
         },
       )
@@ -1756,7 +1812,8 @@ function CarouselFlow({
       if (!res.ok || !data || data.error) {
         const info = carouselErrorInfo(res.status, data)
         setError(info.message)
-        toast.error(info.message, {
+        result = { ok: false, message: info.message }
+        if (!fromPanel) toast.error(info.message, {
           id: genToast,
           duration: info.action ? 30000 : 12000,
           action: info.action
@@ -1775,7 +1832,7 @@ function CarouselFlow({
         // to `finally`, leaving the `duration: Infinity` loading toast on screen
         // forever with no way to dismiss it.
         setError("שגיאה ביצירת הקרוסלה")
-        toast.error("שגיאה ביצירת הקרוסלה", { id: genToast, duration: 8000 })
+        if (!fromPanel) toast.error("שגיאה ביצירת הקרוסלה", { id: genToast, duration: 8000 })
       } else if (data.images) {
         if (postId) {
           carouselGenCache.set(postId, {
@@ -1797,20 +1854,29 @@ function CarouselFlow({
         setSavedTemplateId(genId === DRIVE_IMPORT_KEY ? undefined : genId)
         // She left /project mid-generation: the page that saves is gone.
         if (previewOn) void saveCarouselIfLeft(postId, data.images)
-        setDialogFor(genId)
-        setPreviewIndex(0)
-        longWaitDone(genToast, `הקרוסלה (${templateName}) מוכנה`, { postId, duration: 5000 })
+        result = { ok: true }
+        if (fromPanel) {
+          // The panel says it's ready and the card shows it — don't pop the
+          // slides dialog over it now, or when the media panel reopens.
+          if (postId) carouselResultSeen.add(`${postId}:${genId}`)
+        } else {
+          setDialogFor(genId)
+          setPreviewIndex(0)
+          longWaitDone(genToast, `הקרוסלה (${templateName}) מוכנה`, { postId, duration: 5000 })
+        }
       }
     } catch (err) {
       // Network drop, or the platform cut a long AI run off mid-response.
       console.error("[media-panel][generate-carousel]", err)
       const info = carouselErrorInfo(0, null)
       setError(info.message)
-      toast.error(info.message, { id: genToast, duration: 12000 })
+      result = { ok: false, message: info.message }
+      if (!fromPanel) toast.error(info.message, { id: genToast, duration: 12000 })
     } finally {
       setGenerating(false)
       onBusyChange?.("carousel", false)
     }
+    return result
   }
 
   // Preview dialog (mirrors the image_post lightbox): holds WHOSE slides
@@ -2341,7 +2407,7 @@ function CarouselFlow({
         description="השקופיות שהעליתם יוחלפו בקרוסלה החדשה ולא נשמרות. הקישורים מהדרייב יישארו, כך שאפשר יהיה לטעון אותן שוב."
         confirmLabel="כן, למחוק"
         cancelLabel="לא, בטל"
-        onConfirm={() => { void handleGenerate() }}
+        onConfirm={startGenerate}
       />
 
       <ConfirmModal
@@ -3104,7 +3170,10 @@ function MediaUploadFlow({
       toast.error("שמרו קודם את הפוסט כדי לייצר תמונה", { duration: 4000 })
       return
     }
-    startImageGeneration(postId, mediaStyle.style)
+    const style = mediaStyle.style
+    openGenerateBrief(postId, "image_post", mediaStyleLabel(style), (brief) =>
+      startImageGeneration(postId, style, { brief, quiet: true }),
+    )
   }
 
   /** Fire an AI story generation (produces a 1-3 frame set). */
@@ -3113,7 +3182,10 @@ function MediaUploadFlow({
       toast.error("שמרו קודם את הפוסט כדי לייצר סטורי", { duration: 4000 })
       return
     }
-    startStoryGeneration(postId, mediaStyle.style)
+    const style = mediaStyle.style
+    openGenerateBrief(postId, "story", mediaStyleLabel(style), (brief) =>
+      startStoryGeneration(postId, style, { brief, quiet: true }),
+    )
   }
 
   /**
@@ -3394,7 +3466,10 @@ function MediaUploadFlow({
     }
     // Bumped per press so a retry varies the palette instead of returning a
     // near-identical picture.
-    startBRollGeneration(postId, bRollAttemptRef.current++, mediaStyle.style)
+    const style = mediaStyle.style
+    openGenerateBrief(postId, "b_roll", mediaStyleLabel(style), (brief) =>
+      startBRollGeneration(postId, bRollAttemptRef.current++, style, { brief, quiet: true }),
+    )
   }
 
   // Save what the AI just made, without waiting to be asked (Hani,

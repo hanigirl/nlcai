@@ -1,3 +1,4 @@
+import { normalizeMediaBrief, withMediaBrief } from "@/lib/media-brief"
 import { NextRequest, NextResponse } from "next/server"
 import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
@@ -117,10 +118,12 @@ function cropToCanvasSvg(imageBase64: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { postId, variationIndex, style } = (await req.json().catch(() => ({}))) as {
+    const { postId, variationIndex, style, brief } = (await req.json().catch(() => ({}))) as {
       postId?: string
       variationIndex?: number
       style?: unknown
+      /** Her own direction for this piece (lib/media-brief). */
+      brief?: unknown
     }
     if (!postId) {
       return NextResponse.json({ error: "postId is required" }, { status: 400 })
@@ -187,10 +190,13 @@ export async function POST(req: NextRequest) {
     const context = [post.title, post.hook_text, post.body?.slice(0, 600)]
       .filter(Boolean)
       .join("\n")
-    const direction = await resolveDesignDirection(supabase, user.id, {
-      format: "image_post",
-      style: isMediaStyle(style) ? style : undefined,
-    })
+    const direction = withMediaBrief(
+      await resolveDesignDirection(supabase, user.id, {
+        format: "image_post",
+        style: isMediaStyle(style) ? style : undefined,
+      }),
+      normalizeMediaBrief(brief),
+    )
     const generatedBase64 = await generateImage(
       openaiKey,
       buildImagePrompt(texts, context, direction, pickComposition(variationIndex)),

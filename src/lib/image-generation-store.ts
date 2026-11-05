@@ -1,3 +1,4 @@
+import type { MediaGenResult } from "@/lib/media-brief"
 import { toast } from "sonner"
 import { longWaitDone, startLongWait } from "@/lib/long-wait"
 import type { MediaStyle } from "@/lib/visual-language/types"
@@ -158,15 +159,34 @@ export function getGenerationSnapshot(key: string): GenerationState {
  * repeatedly — each call runs in parallel and appends its own result.
  * Never throws (failures surface as a toast).
  */
-export function startImageGeneration(postId: string, style?: MediaStyle): void {
-  if (!postId) return
+/**
+ * From the AI panel (Hani, 2026-11-05): `brief` is her own direction for this
+ * piece (lib/media-brief); `quiet` — the panel reports progress and the
+ * result itself, so no toasts.
+ */
+export interface MediaGenOptions {
+  brief?: string
+  quiet?: boolean
+}
+
+export function startImageGeneration(
+  postId: string,
+  style?: MediaStyle,
+  opts: MediaGenOptions = {},
+): Promise<MediaGenResult> {
+  if (!postId) return Promise.resolve({ ok: false, message: "" })
+  const { brief, quiet = false } = opts
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   // Steers this attempt toward a design distinct from the previous ones.
   const variationIndex = nextVariationIndex(postId)
   const toastId = `img-gen-${++toastSeq}`
-  startLongWait(toastId, "מייצרים תמונה עם AI... זה יכול לקחת עד דקה")
+  if (!quiet) startLongWait(toastId, "מייצרים תמונה עם AI... זה יכול לקחת עד דקה")
+  const fail = (message: string): MediaGenResult => {
+    if (!quiet) toast.error(message, { id: toastId, duration: 10000 })
+    return { ok: false, message }
+  }
 
-  void (async () => {
+  return (async (): Promise<MediaGenResult> => {
     try {
       // The route reads the script from the DB: make sure the DB has what
       // the user sees before asking for a picture of it.
@@ -174,7 +194,7 @@ export function startImageGeneration(postId: string, style?: MediaStyle): void {
       const res = await fetch("/api/image-post/generate-media", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, variationIndex, style }),
+        body: JSON.stringify({ postId, variationIndex, style, ...(brief ? { brief } : {}) }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         image?: string
@@ -182,11 +202,7 @@ export function startImageGeneration(postId: string, style?: MediaStyle): void {
         message?: string
       }
       if (!res.ok || !data.image) {
-        toast.error(data.message ?? data.error ?? "יצירת התמונה נכשלה", {
-          id: toastId,
-          duration: 10000,
-        })
-        return
+        return fail(data.message ?? data.error ?? "יצירת התמונה נכשלה")
       }
       // Upload to Storage so the version is kept durably (survives reload).
       // If the upload fails, fall back to a session-only base64 result.
@@ -207,20 +223,14 @@ export function startImageGeneration(postId: string, style?: MediaStyle): void {
           body: JSON.stringify({ format: "image_post", url: entry, assetType: "image" }),
         }).catch(() => null)
         if (!saveRes?.ok) {
-          toast.error("התמונה נוצרה אבל לא נשמרה — פתחו את הפאנל כדי לבחור אותה", {
-            id: toastId,
-            duration: 10000,
-          })
-          return
+          return fail("התמונה נוצרה אבל לא נשמרה — פתחו את הפאנל כדי לבחור אותה")
         }
         update(postId, (s) => ({ ...s, saved: entry }))
       }
-      longWaitDone(toastId, "התמונה מוכנה ונשמרה", { postId })
+      if (!quiet) longWaitDone(toastId, "התמונה מוכנה ונשמרה", { postId })
+      return { ok: true }
     } catch (err) {
-      toast.error(
-        `יצירת התמונה נכשלה: ${err instanceof Error ? err.message : String(err)}`,
-        { id: toastId, duration: 10000 },
-      )
+      return fail(`יצירת התמונה נכשלה: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       update(postId, (s) => ({ ...s, inFlight: Math.max(0, s.inFlight - 1) }))
     }

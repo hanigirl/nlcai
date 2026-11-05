@@ -1,3 +1,4 @@
+import type { MediaGenResult } from "@/lib/media-brief"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import { toast } from "sonner"
 import { longWaitDone, startLongWait } from "@/lib/long-wait"
@@ -128,13 +129,20 @@ export function startBRollGeneration(
   postId: string,
   variationIndex: number,
   style?: MediaStyle,
-): void {
-  if (!postId) return
+  /** brief / quiet — see MediaGenOptions in lib/image-generation-store. */
+  opts: { brief?: string; quiet?: boolean } = {},
+): Promise<MediaGenResult> {
+  if (!postId) return Promise.resolve({ ok: false, message: "" })
+  const { brief, quiet = false } = opts
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   const toastId = `broll-gen-${++toastSeq}`
-  startLongWait(toastId, "מייצרים בי-רול... זה יכול לקחת כשתי דקות")
+  if (!quiet) startLongWait(toastId, "מייצרים בי-רול... זה יכול לקחת כשתי דקות")
+  const fail = (message: string): MediaGenResult => {
+    if (!quiet) toast.error(message, { id: toastId, duration: 10000 })
+    return { ok: false, message }
+  }
 
-  void (async () => {
+  return (async (): Promise<MediaGenResult> => {
     try {
       // The route reads the script from the DB: make sure the DB has what
       // the user sees before asking for a picture of it.
@@ -142,7 +150,7 @@ export function startBRollGeneration(
       const res = await fetch("/api/b-roll/generate-media", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, variationIndex, style }),
+        body: JSON.stringify({ postId, variationIndex, style, ...(brief ? { brief } : {}) }),
       })
       const data = (await res.json().catch(() => ({}))) as {
         url?: string
@@ -150,19 +158,13 @@ export function startBRollGeneration(
         message?: string
       }
       if (!res.ok || !data.url) {
-        toast.error(data.message ?? data.error ?? "יצירת הבי-רול נכשלה", {
-          id: toastId,
-          duration: 10000,
-        })
-        return
+        return fail(data.message ?? data.error ?? "יצירת הבי-רול נכשלה")
       }
       update(postId, (s) => ({ ...s, url: data.url as string }))
-      longWaitDone(toastId, "הבי-רול נוצר", { postId })
+      if (!quiet) longWaitDone(toastId, "הבי-רול נוצר", { postId })
+      return { ok: true }
     } catch (err) {
-      toast.error(
-        `יצירת הבי-רול נכשלה: ${err instanceof Error ? err.message : String(err)}`,
-        { id: toastId, duration: 10000 },
-      )
+      return fail(`יצירת הבי-רול נכשלה: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       update(postId, (s) => ({ ...s, inFlight: Math.max(0, s.inFlight - 1) }))
     }
