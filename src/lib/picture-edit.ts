@@ -66,3 +66,57 @@ export async function editPicture(
   }
   return { ok: true, png: await sharp(out).png().toBuffer() }
 }
+
+/**
+ * She asked to put her picture on a slide "as is" — "כמו שהיא", "בלי
+ * לשנות", "אחד לאחד". Only then is her exact file placed untouched.
+ */
+export function wantsPictureAsIs(text: string | null | undefined): boolean {
+  return !!text && /כמו\s*שה(?:יא|וא)|כמות\s*שה(?:יא|וא)|אחד\s*ל\s*-?\s*אחד|1\s*[:/]\s*1|בלי\s*לשנות|as[\s-]is|exactly\s+as|unchanged/i.test(text)
+}
+
+/**
+ * Her picture made INTO a slide's picture (Hani, 2026-11-05): dropped in raw,
+ * her meeting-room photo was cropped into the slot with the title over its
+ * busiest part and a strip of the old design around it. Now it goes through
+ * the image model first — re-framed to the slot's exact shape (the scene is
+ * extended, the person never cut), graded into her visual language, kept
+ * calm where the title lies over it, any caption in it removed — and only
+ * then placed. Her subject must still be hers (lib/placed-check); on a miss
+ * nothing is placed — never a raw crop instead.
+ */
+export async function adaptPictureForSlide(
+  openaiKey: string,
+  claudeKey: string | null,
+  source: Buffer,
+  slot: { width: number; height: number; textOver: "top" | "middle" | "bottom" | null },
+  styleLines: string[],
+  slideNumber: number,
+): Promise<PictureEditResult> {
+  const shape = nearestShape(slot.width, slot.height)
+  const input: ModelImage = await normaliseImage(source)
+  const language = styleLines.join("\n").slice(0, 2500)
+  const prompt = [
+    `Adapt this photo to be the picture on slide ${slide(slideNumber)} of the creator's Instagram carousel. It is HER picture: the person (or subject) in it must stay exactly who and what it is — the same face, hair, body, pose, clothing and details. Never replace, re-imagine or beautify the person.`,
+    "",
+    `- Re-frame it to the new ${shape} shape. Where the frame needs more picture, extend the scene naturally and seamlessly. Never crop or cut the person; keep them whole and well placed in the frame.`,
+    "- Grade it into her visual language below so it looks designed together with the slide: colour grade, palette, light, grain and her graphic motifs where they fit (e.g. a pixel mosaic dissolving at the edges) — while the photo stays a real photo.",
+    slot.textOver
+      ? `- The slide's title is laid over the ${slot.textOver} of this picture. Keep that area calm and low-detail, gently darkened or softened, so white or light text reads clearly — without hiding the person.`
+      : "- No text is laid over this picture.",
+    "- Remove any text, captions, logos or watermarks inside the photo and rebuild what was behind them naturally. Add no text, letters or numbers.",
+    "- Add no new person, character, animal or object.",
+    "",
+    "Her visual language:",
+    language,
+  ].join("\n")
+  const out = Buffer.from(await editImage(openaiKey, prompt, input, shape), "base64")
+  if ((await picturesPlaced(claudeKey, [input], out.toString("base64"))) === false) {
+    return { ok: false, message: PICTURE_NOT_HERS }
+  }
+  return { ok: true, png: await sharp(out).png().toBuffer() }
+}
+
+function slide(n: number): string {
+  return n === 1 ? "1 (the cover)" : String(n)
+}

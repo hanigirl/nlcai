@@ -494,3 +494,67 @@ export async function uploadIllustration(
   if (error) throw new Error(error.message)
   return supabase.storage.from(BUCKET).getPublicUrl(p).data.publicUrl
 }
+
+/** Where a picture sits on its slide: its box, and where the slide's text lies over it. */
+export interface ArtSlot {
+  width: number
+  height: number
+  /** The text box over the picture: "top" / "middle" / "bottom" of it, or null when they don't overlap. */
+  textOver: "top" | "middle" | "bottom" | null
+}
+
+/**
+ * Measure the picture slot of each slide, as the layout draws it, before her
+ * picture goes in — so the picture can be adapted to that exact shape (and
+ * kept calm where the title lies over it) instead of being cropped into it.
+ * `aspects`: per slide, the width/height of the picture that will fill the
+ * slot (a slot sized by its picture is measured at that ratio). Slides with
+ * no aspect, or no picture slot, get null.
+ */
+export async function measureArtSlots(
+  html: string,
+  aspects: (number | null)[],
+  fonts: BrandFont[],
+): Promise<(ArtSlot | null)[]> {
+  const sharpMod = (await import("sharp")).default
+  let page = html
+  for (let i = 0; i < aspects.length; i++) {
+    const a = aspects[i]
+    if (!a) continue
+    const w = 64
+    const h = Math.max(1, Math.round(w / a))
+    const png = await sharpMod({ create: { width: w, height: h, channels: 3, background: "#808080" } }).png().toBuffer()
+    page = page.split(IMAGE_TOKEN(i)).join(`data:image/png;base64,${png.toString("base64")}`)
+  }
+  page = page.replace(/__SLIDE_IMAGE_\d+__/g, "")
+  const head = fontHead(fonts) + fontEnforcement(fonts)
+  page = /<\/head>/i.test(page) ? page.replace(/<\/head>/i, `${head}</head>`) : `${head}${page}`
+  const browser = await launch({ width: SLIDE_W, height: SLIDE_H })
+  try {
+    const tab = await browser.newPage()
+    await tab.setViewport({ width: SLIDE_W, height: SLIDE_H })
+    await tab.setContent(page, { waitUntil: "load", timeout: 60_000 })
+    const found = (await tab.evaluate(`Array.from(document.querySelectorAll(".slide")).map((s) => {
+      s.style.display = "";
+      const img = s.querySelector("img.art");
+      if (!img || !img.getAttribute("src")) return null;
+      const a = img.getBoundingClientRect();
+      if (a.width < 2 || a.height < 2) return null;
+      const t = s.querySelector(".text-box");
+      let over = null;
+      if (t) {
+        const b = t.getBoundingClientRect();
+        const top = Math.max(a.top, b.top), bottom = Math.min(a.bottom, b.bottom);
+        const left = Math.max(a.left, b.left), right = Math.min(a.right, b.right);
+        if (bottom > top && right > left) {
+          const mid = ((top + bottom) / 2 - a.top) / a.height;
+          over = mid < 0.36 ? "top" : mid > 0.64 ? "bottom" : "middle";
+        }
+      }
+      return { width: a.width, height: a.height, textOver: over };
+    })`)) as (ArtSlot | null)[]
+    return aspects.map((a, i) => (a ? (found[i] ?? null) : null))
+  } finally {
+    await browser.close().catch(() => undefined)
+  }
+}
