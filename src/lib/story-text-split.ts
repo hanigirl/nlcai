@@ -243,3 +243,22 @@ export function frameCaption(
     body: rest.length > 0 ? rest.join("\n\n") : undefined,
   }
 }
+
+const HEBREW_COUNTS: Record<string, number> = {
+  אחד: 1, אחת: 1, שני: 2, שתי: 2, שניים: 2, שתיים: 2, שלוש: 3, שלושה: 3, ארבע: 4, ארבעה: 4, חמש: 5, חמישה: 5, שש: 6, שישה: 6,
+}
+
+/**
+ * A frame count she asked for in her own words for this piece — "לפצל ל-2
+ * סטוריז", "שני פריימים", "ב-3 חלקים" (Hani, 2026-11-05: "split into 2
+ * stories" came back as the script's 3). Null when she didn't say.
+ */
+export function requestedFrameCount(text: string | null | undefined): number | null {
+  if (!text) return null
+  const m = /(?:^|[\s\-־"'(לבו])(\d+|אחד|אחת|שני|שתי|שניים|שתיים|שלוש|שלושה|ארבע|ארבעה|חמש|חמישה|שש|שישה)\s*(?:סטורי(?:ז|ס|יז)?|סטוריז|פריימ(?:ים)?|פריים|חלקים|פרקים|stories|frames)/i.exec(
+    text,
+  )
+  if (!m) return null
+  const n = /^\d+$/.test(m[1]) ? Number(m[1]) : HEBREW_COUNTS[m[1]]
+  return n >= 1 && n <= MAX_SCRIPT_FRAMES ? n : null
+}
