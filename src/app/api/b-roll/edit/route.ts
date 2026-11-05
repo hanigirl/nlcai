@@ -24,6 +24,7 @@ import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
 import { changedArea, editPrompt, IMAGE_MISSING, planImageEdit } from "@/lib/ai-edit-plan"
 import { loadImageForModels, normaliseImage } from "@/lib/visual-language/image-input"
 import { picturesPlaced } from "@/lib/placed-check"
+import { canBlendBRoll } from "@/lib/feature-access"
 
 /**
  * Words that may be about the background PICTURE rather than the text —
@@ -185,12 +186,13 @@ export async function POST(req: NextRequest) {
       refs.length || PICTURE_WORDS.test(text) ? await planImageEdit(anthropicKey, "b_roll", 1, ask!, refs) : null
     if (planned?.needsImage) return NextResponse.json(IMAGE_MISSING, { status: 400 })
     const placed = planned?.place.length ? refs[planned.place[0] - 1] : null
-    // Her picture as is (photo over a blur) only when she says so, or when
+    // Off the blend gate (lib/feature-access): her photo as is, as before.
+    // On it: her picture as is only when she says so, or when
     // the background is already her own picture (never repainted). Otherwise
     // it is BLENDED into the existing background — the design already holds
     // her visual language (Hani, 2026-11-05: "שתשתלב בעיצוב שהוא עשה ... לא
     // כמו שהיא אחד לאחד אלא אם ציינתי זאת במפורש").
-    if (placed && (wantsAsIs(text) || ownBackground)) {
+    if (placed && (!canBlendBRoll(user.email) || wantsAsIs(text) || ownBackground)) {
       backgroundUrl = await uploadBackground(supabase, user.id, stamp, await pictureAsBackground(referenceBuffer(placed)))
       ownBackground = true
       brief = { ...brief, styleSpec: brief.styleSpec.includes(OWN_BACKGROUND_LINE) ? brief.styleSpec : `${brief.styleSpec}\n\n${OWN_BACKGROUND_LINE}` }

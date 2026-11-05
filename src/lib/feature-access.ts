@@ -23,3 +23,15 @@ export function gatePlacement(
 ): { place: string[]; looks: string[] } {
   return canPlaceRefs(email) ? { place, looks } : { place: [], looks: [...place, ...looks] }
 }
+
+/**
+ * "שתשתלב בעיצוב שהוא עשה" (Hani, 2026-11-05): in a b-roll AI edit, a picture
+ * she attaches is blended into the existing background (api/b-roll/edit),
+ * not pasted as is. Hani only while she tries it; everyone else keeps her
+ * photo over a blurred fill. Enforced on the server.
+ */
+export const BROLL_BLEND_EMAILS = ["hanigirl@gmail.com"]
+
+export function canBlendBRoll(email: string | null | undefined): boolean {
+  return !!email && BROLL_BLEND_EMAILS.includes(email.toLowerCase())
+}
