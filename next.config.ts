@@ -12,6 +12,9 @@ const nextConfig: NextConfig = {
       // (~2.3MB) instead of a resized WebP (~tens of KB). Supabase's own
       // image transformation would do the same job, but it's a paid add-on
       // and returns FeatureNotEnabled on this project.
+      // Frankfurt (eu-central-1) is the project's home since 2026-11; Tokyo
+      // stays listed for any link that still points at the old project.
+      { hostname: "fdinwqwujcahsoamcxqk.supabase.co" },
       { hostname: "mwogbieylrteorftphhi.supabase.co" },
     ],
   },
