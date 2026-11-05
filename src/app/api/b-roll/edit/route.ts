@@ -6,7 +6,6 @@ import { getAuthUser } from "@/lib/auth-user"
 import { finalizeHtml, reviseBRoll } from "@/lib/broll-animation/compose"
 import { renderComposition } from "@/lib/broll-animation/render"
 import { loadComposition, saveBRoll } from "@/lib/broll-animation/store"
-import { learnFromInstruction } from "@/lib/style-memory"
 import { parseReferences } from "@/lib/ai-edit-references"
 
 // Opus revision + frame-by-frame render.
@@ -91,12 +90,9 @@ export async function POST(req: NextRequest) {
       throw e
     }
 
-    // Learning runs alongside the edit: a lasting preference in her words
-    // ("the brush thin and yellow") applies to every format from now on.
-    const [template, remembered] = await Promise.all([
-      reviseBRoll(anthropicKey, composition.brief, composition.template, text, refs),
-      learnFromInstruction(supabase, user.id, anthropicKey, text, "b-roll", refs),
-    ])
+    // What to remember is decided before the edit, by the chat's memory
+    // check (POST /api/visual-language/style-memory) — this route only edits.
+    const template = await reviseBRoll(anthropicKey, composition.brief, composition.template, text, refs)
 
     const stamp = crypto.randomUUID()
     const os = await import("os")
@@ -115,7 +111,7 @@ export async function POST(req: NextRequest) {
       template,
       edits: [...composition.edits, text],
     })
-    return NextResponse.json({ url, remembered })
+    return NextResponse.json({ url })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("[b-roll/edit]", msg)

@@ -8,7 +8,6 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { editImage, type ImageShape } from "@/lib/openai-image"
 import { loadImageForModels } from "@/lib/visual-language/image-input"
 import { replaceImageAssetSet } from "@/lib/media-asset-set"
-import { learnFromInstruction } from "@/lib/style-memory"
 import { applyFixedElements } from "@/lib/visual-language/fixed-elements"
 import { resolveDesignDirection } from "@/lib/visual-language/direction"
 import {
@@ -207,8 +206,6 @@ export async function POST(req: NextRequest) {
       throw e
     }
 
-    const learning = learnFromInstruction(supabase, user.id, anthropicKey, text, NOUN[format], refs)
-
     // A carousel laid out in code is edited in its layout — exact and
     // obedient — and only the illustrations she asks about are redrawn. Only
     // while the post still holds exactly the slides that layout made; if she
@@ -258,7 +255,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         urls: ((after ?? []) as { url: string }[]).map((a) => a.url),
         edited: shots.map((_, i) => i + 1),
-        remembered: await learning,
       })
     }
     const { targets, edit } = await plan(anthropicKey, format, urls.length, text, refs)
@@ -286,7 +282,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       urls: ((after ?? []) as { url: string }[]).map((a) => a.url),
       edited: targets,
-      remembered: await learning,
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)

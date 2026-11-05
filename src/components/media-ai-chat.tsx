@@ -11,6 +11,8 @@ import { startBRollEdit } from "@/lib/broll-generation-store"
 import { LongWaitBusyRow } from "@/components/long-wait-busy-row"
 import { AWAY_COPY, trackAwayResult } from "@/lib/long-wait"
 import { SaveToVisualLanguageChip } from "@/components/save-to-visual-language-chip"
+import { VisualMemoryNote } from "@/components/visual-memory-note"
+import { memoryHeadline, triageMessage, type MemoryOutcome, type TriageResult } from "@/lib/visual-memory"
 import { usePreviewAccess } from "@/lib/use-scheduling-access"
 import { Chip } from "@/components/ui/chip"
 import { runOwnMediaEdit } from "@/lib/own-media-edit"
@@ -47,8 +49,13 @@ export interface ChatMessage {
   /** Assistant turn that landed a new clip. */
   done?: boolean
   error?: boolean
-  /** A lasting preference distilled from her instruction (Hebrew) — shown by the save chip. */
-  remembered?: string | null
+  /**
+   * Assistant turns: what the visual memory made of her message (saved, goes
+   * to the settings, contradicts an earlier preference…) — lib/visual-memory.
+   */
+  memory?: MemoryOutcome
+  /** No edit ran — the bubble IS the memory answer (its headline). */
+  memoryOnly?: boolean
   /** Own media: the edit changed only content (words, slides), nothing to save as a style. */
   noStyle?: boolean
 }
@@ -72,7 +79,7 @@ function lastLandedEdit(messages: ChatMessage[]) {
   for (let i = messages.length - 1; i > 0; i--) {
     if (messages[i].done) {
       const ask = messages.slice(0, i).reverse().find((m) => m.role === "user")
-      return ask ? { index: i, instruction: ask.content, remembered: messages[i].remembered ?? null } : null
+      return ask ? { index: i, instruction: ask.content, memory: messages[i].memory } : null
     }
   }
   return null
@@ -282,22 +289,58 @@ export function MediaAiChat({
     if (!text && attached.length) text = REFERENCE_ONLY_INSTRUCTION
     if (!text) return
     refs.clear()
+    const previousInstruction = [...cur.messages].reverse().find((m) => m.role === "user")?.content
     patchKey((s) => ({
       ...s,
       input: "",
       busy: true,
+      extra: { ...s.extra, progress: "בודקים את הבקשה מול ההעדפות שלכם..." },
       messages: [...s.messages, { role: "user", content: text, ...(attached.length ? { images: attached } : {}) }],
     }))
+
+    // First the visual memory (lib/visual-memory): her settings, her saved
+    // preferences, and whether the message asks for an edit at all ("תשמרו
+    // את זה" doesn't). A failed check never blocks the edit — it says so.
+    let triage: TriageResult
+    try {
+      triage = await triageMessage({ instruction: text, format, previousInstruction, references: attached })
+    } catch (err) {
+      console.error("[media-ai-chat][visual-memory]", err)
+      triage = {
+        edit: true,
+        editInstruction: text,
+        memory: { kind: "error", message: err instanceof Error ? err.message : String(err) },
+      }
+    }
+    const memory = triage.memory.kind === "none" && !triage.memory.explicit ? undefined : triage.memory
+    patchKey((s) => ({ ...s, extra: { ...s.extra, progress: "" } }))
+    if (!triage.edit) {
+      patchKey((s) => ({
+        ...s,
+        busy: false,
+        messages: [
+          ...s.messages,
+          {
+            role: "assistant",
+            content: memoryHeadline(triage.memory) ?? "לא מצאתי כאן שינוי לעשות או העדפה לשמור. כתבו מה לשנות.",
+            memory,
+            memoryOnly: true,
+          },
+        ],
+      }))
+      return
+    }
+    const editText = triage.editInstruction.trim() || text
     if (own) {
-      await sendOwn(text, cur.messages, patchKey, isWatching)
+      await sendOwn(editText, cur.messages, patchKey, isWatching, memory)
       return
     }
     // If she leaves before it lands, the result arrives as a toast (the
     // server has saved it either way) — see lib/long-wait.
     const run =
       format === "b_roll"
-        ? startBRollEdit(postId, text, { quiet: true, references: attached })
-        : editImages(text, attached)
+        ? startBRollEdit(postId, editText, { quiet: true, references: attached })
+        : editImages(editText, attached)
     const result = preview
       ? await trackAwayResult(`ai-edit-${postId}-${format}-${Date.now()}`, run, isWatching, AWAY_COPY[format], postId)
       : await run
@@ -307,8 +350,14 @@ export function MediaAiChat({
       messages: [
         ...s.messages,
         result.ok
-          ? { role: "assistant", content: copy.done, done: true, remembered: result.remembered }
-          : { role: "assistant", content: aiErrorMessage(result.message || "העריכה לא הצליחה. נסו שוב."), error: true },
+          ? { role: "assistant", content: copy.done, done: true, memory }
+          : {
+              role: "assistant",
+              content: aiErrorMessage(result.message || "העריכה לא הצליחה. נסו שוב."),
+              error: true,
+              // A saved preference stays saved even when the edit failed.
+              ...(memory && memory.kind !== "error" ? { memory } : {}),
+            },
       ],
     }))
     revealChatReply(key, result.ok ? AWAY_COPY[format].done : AWAY_COPY[format].failed)
@@ -320,6 +369,7 @@ export function MediaAiChat({
     before: ChatMessage[],
     patchKey: (fn: (s: MediaChat) => MediaChat) => void,
     isWatching: () => boolean,
+    memory?: MemoryOutcome,
   ) {
     const history = before
       .filter((m, i) => i > 0 && !m.error)
@@ -336,7 +386,7 @@ export function MediaAiChat({
     }).then((r) => {
       full = r
       if (r.ok && r.changed) onUpdated?.(format, r.urls, { driveLinks: r.driveLinks })
-      return r.ok ? { ok: true as const, remembered: null } : { ok: false as const, message: r.message }
+      return r.ok ? { ok: true as const } : { ok: false as const, message: r.message }
     })
     // If she leaves before it lands, the result arrives as a toast.
     const result = preview
@@ -345,10 +395,15 @@ export function MediaAiChat({
     const r = full as Awaited<ReturnType<typeof runOwnMediaEdit>> | null
     const reply: ChatMessage =
       !result.ok || !r || !r.ok
-        ? { role: "assistant", content: aiErrorMessage((r && r.message) || "העריכה לא הצליחה. נסו שוב."), error: true }
+        ? {
+            role: "assistant",
+            content: aiErrorMessage((r && r.message) || "העריכה לא הצליחה. נסו שוב."),
+            error: true,
+            ...(memory && memory.kind !== "error" ? { memory } : {}),
+          }
         : !r.changed
-          ? { role: "assistant", content: r.message }
-          : { role: "assistant", content: r.message || copy.done, done: true, remembered: null, noStyle: !r.styleChange }
+          ? { role: "assistant", content: r.message, memory }
+          : { role: "assistant", content: r.message || copy.done, done: true, memory, noStyle: !r.styleChange }
     patchKey((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" }, messages: [...s.messages, reply] }))
     revealChatReply(mediaChatKey(postId, format, own), reply.error ? AWAY_COPY[format].failed : AWAY_COPY[format].done)
   }
@@ -356,7 +411,7 @@ export function MediaAiChat({
   async function editImages(
     text: string,
     references: string[] = [],
-  ): Promise<{ ok: true; remembered?: string | null } | { ok: false; message: string }> {
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
     try {
       const res = await fetch("/api/media/ai-edit", {
         method: "POST",
@@ -372,17 +427,25 @@ export function MediaAiChat({
         urls?: string[]
         message?: string
         error?: string
-        remembered?: string | null
       }
       if (!res.ok || !data.urls) return { ok: false, message: data.message ?? data.error ?? "העריכה לא הצליחה" }
       onUpdated?.(format, data.urls)
-      return { ok: true, remembered: data.remembered ?? null }
+      return { ok: true }
     } catch (err) {
       return { ok: false, message: err instanceof Error ? err.message : String(err) }
     }
   }
 
   const lastEdit = lastLandedEdit(messages)
+
+  /** Her answer in a memory note (undo, across the board…) — kept with the thread. */
+  const setMemory = (index: number, next: MemoryOutcome) =>
+    patch((s) => ({
+      ...s,
+      messages: s.messages.map((x, j) =>
+        j === index ? { ...x, memory: next, ...(x.memoryOnly ? { content: memoryHeadline(next) ?? x.content } : {}) } : x,
+      ),
+    }))
 
   if (!open) return null
 
@@ -456,12 +519,19 @@ export function MediaAiChat({
                 ))}
               </div>
             )}
-            {/* The save-to-visual-language chip is open to everyone (Hani, 2026-10-29). */}
             {m.done && (
               <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
                 <Check className="size-3.5 text-green-success-50" />
                 הוחל.
               </span>
+            )}
+            {m.memory && (
+              <VisualMemoryNote
+                memory={m.memory}
+                showHeadline={!m.memoryOnly}
+                onChange={(next) => setMemory(i, next)}
+                className="max-w-[85%]"
+              />
             )}
           </div>
         ))}
@@ -479,12 +549,14 @@ export function MediaAiChat({
 
       {/* Composer */}
       <div className="border-t border-border-neutral-default p-3">
-        {lastEdit && !loading && !messages[lastEdit.index].noStyle && (
+        {/* The save chip is open to everyone (Hani, 2026-10-29) — for an edit
+            the memory didn't keep on its own. */}
+        {lastEdit && !loading && !messages[lastEdit.index].noStyle && (!lastEdit.memory || lastEdit.memory.kind === "error") && (
           <SaveToVisualLanguageChip
             key={`${chatKey}:${lastEdit.index}`}
             instruction={lastEdit.instruction}
             format={format}
-            remembered={lastEdit.remembered}
+            onOutcome={(next) => setMemory(lastEdit.index, next)}
           />
         )}
         <ReferenceTray r={refs} />
