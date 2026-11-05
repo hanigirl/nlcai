@@ -70,6 +70,8 @@ import type { SlideData } from "@/lib/carousel-templates"
 import { flushPendingSaves } from "@/lib/pending-saves"
 import { BLANK_TEMPLATE, BLANK_TEMPLATE_ID, BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import { openingId, requestAiEdit } from "@/lib/ai-edit-intent"
+import { TALK_FIRST_BUTTON, TalkFirstControl, useTalkFirst } from "@/components/media-talk-first"
+import type { MediaStyle } from "@/lib/visual-language/types"
 import type { AiEditFormat } from "@/components/media-ai-chat"
 import type { MediaGenResult } from "@/lib/media-brief"
 import { useBrandCarouselTemplate } from "@/hooks/use-brand-carousel-template"
@@ -228,8 +230,14 @@ function openGenerateBrief(
   postId: string,
   format: AiEditFormat,
   run: (brief: string, references: string[]) => Promise<MediaGenResult>,
+  /**
+   * Talk first (Hani, 2026-11-05 — components/media-talk-first): any other
+   * tile can ask first too; the panel then generates in that style, with her
+   * words and references on top.
+   */
+  style: MediaStyle = "blank",
 ) {
-  requestAiEdit({ postId, format, opening: { id: openingId(), kind: "generate", run } })
+  requestAiEdit({ postId, format, opening: { id: openingId(), kind: "generate", run, style } })
 }
 
 function useReportBusy(
@@ -1690,6 +1698,13 @@ function CarouselFlow({
     !!images?.length && !savedTemplateId && (driveLinks?.length ?? 0) > 0
 
   const [pendingGenerate, setPendingGenerate] = useState(false)
+  // Talk first (Hani, 2026-11-05) — review gate ?talk=a|b, off = as before.
+  // Only AI templates take her words; the code-drawn ones can't, and
+  // "חדש לגמרי" always asks.
+  const talk = useTalkFirst()
+  const canTalkFirst = isAiTemplate && selectedTemplate !== BLANK_TEMPLATE_ID
+  // Carried across the "replace your own slides?" confirm to startGenerate.
+  const askFirstRef = useRef(false)
 
   /**
    * Generate entry point. Asks first when there is an imported carousel to
@@ -1701,7 +1716,8 @@ function CarouselFlow({
    * first also means an AI template does not spend her OpenAI credits on a
    * carousel she is about to be told will overwrite her own slides.
    */
-  const requestGenerate = () => {
+  const requestGenerate = (askFirst = talk.askFirst && canTalkFirst) => {
+    askFirstRef.current = askFirst
     if (carouselIsHerOwn) {
       setPendingGenerate(true)
       return
@@ -1715,12 +1731,26 @@ function CarouselFlow({
    * her language, the AI looks, the code-drawn ones — generates straight away.
    */
   const startGenerate = () => {
-    if (selectedTemplate !== BLANK_TEMPLATE_ID || !postId) {
+    const blank = selectedTemplate === BLANK_TEMPLATE_ID
+    if ((!blank && !askFirstRef.current) || !postId) {
       void handleGenerate()
       return
     }
-    openGenerateBrief(postId, "carousel", (brief, references) =>
-      handleGenerate({ brief, references, fromPanel: true }),
+    // Talk first (Hani, 2026-11-05): an AI template can ask first too. The
+    // carousel's style is the template itself, so the panel only needs to
+    // know which language it speaks for its question.
+    const style: MediaStyle = blank
+      ? "blank"
+      : selectedTemplate === BRAND_TEMPLATE_ID
+        ? "brand"
+        : selectedTemplate === "ai-dark" || selectedTemplate === "ai-light"
+          ? selectedTemplate
+          : "niche"
+    openGenerateBrief(
+      postId,
+      "carousel",
+      (brief, references) => handleGenerate({ brief, references, fromPanel: true }),
+      style,
     )
   }
 
@@ -2240,22 +2270,40 @@ function CarouselFlow({
       {isAiTemplate && openAiConnected === false ? (
         <MediaCreditsCard />
       ) : (
-        <Button
-          onClick={requestGenerate}
-          disabled={generating || !carouselText.trim()}
-          className="w-full gap-2"
-        >
-          {generating ? (
-            <>
-              <Loader2 className="size-4 animate-spin" />
-              {isAiTemplate ? "מציירים עם AI... כמה דקות" : "יוצרים קרוסלה..."}
-            </>
-          ) : generatedByTemplate[selectedTemplate] ? (
-            "יצירה מחדש"
-          ) : (
-            "יצירת קרוסלה עם AI"
-          )}
-        </Button>
+        <div className="flex flex-col gap-3">
+          <TalkFirstControl
+            talk={talk}
+            slot="above"
+            blank={!canTalkFirst}
+            id="talk-first-carousel"
+            onTalk={() => requestGenerate(true)}
+          />
+          <Button
+            onClick={() => requestGenerate()}
+            disabled={generating || !carouselText.trim()}
+            className="w-full gap-2"
+          >
+            {generating ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                {isAiTemplate ? "מציירים עם AI... כמה דקות" : "יוצרים קרוסלה..."}
+              </>
+            ) : talk.askFirst && canTalkFirst ? (
+              TALK_FIRST_BUTTON
+            ) : generatedByTemplate[selectedTemplate] ? (
+              "יצירה מחדש"
+            ) : (
+              "יצירת קרוסלה עם AI"
+            )}
+          </Button>
+          <TalkFirstControl
+            talk={talk}
+            slot="below"
+            blank={!canTalkFirst}
+            disabled={generating || !carouselText.trim()}
+            onTalk={() => requestGenerate(true)}
+          />
+        </div>
       )}
 
       {error && (
@@ -3180,6 +3228,9 @@ function MediaUploadFlow({
   // language, or its dark / light version — picked in the AI card, like the
   // carousel templates.
   const mediaStyle = useMediaStyle()
+  // Talk first (Hani, 2026-11-05) — review gate ?talk=a|b, off = as before.
+  const talk = useTalkFirst()
+  const isBlankStyle = mediaStyle.style === "blank"
 
 
   /**
@@ -3189,16 +3240,20 @@ function MediaUploadFlow({
    * in parallel. The server reads the image_post text straight from the DB
    * (server-authoritative), so no payload is needed beyond postId.
    */
-  const handleAiGenerate = () => {
+  const handleAiGenerate = (askFirst = talk.askFirst) => {
     if (!postId) {
       toast.error("שמרו קודם את הפוסט כדי לייצר תמונה", { duration: 4000 })
       return
     }
     const style = mediaStyle.style
-    // "חדש לגמרי" asks how to start first; every other style generates now.
-    if (style === "blank") {
-      openGenerateBrief(postId, "image_post", (brief, references) =>
-        startImageGeneration(postId, "blank", { brief, references, quiet: true }),
+    // "חדש לגמרי" asks how to start first; so does any style she chose to
+    // talk first with. Otherwise the style generates now.
+    if (style === "blank" || askFirst) {
+      openGenerateBrief(
+        postId,
+        "image_post",
+        (brief, references) => startImageGeneration(postId, style, { brief, references, quiet: true }),
+        style,
       )
       return
     }
@@ -3206,15 +3261,18 @@ function MediaUploadFlow({
   }
 
   /** Fire an AI story generation (produces a 1-3 frame set). */
-  const handleStoryGenerate = () => {
+  const handleStoryGenerate = (askFirst = talk.askFirst) => {
     if (!postId) {
       toast.error("שמרו קודם את הפוסט כדי לייצר סטורי", { duration: 4000 })
       return
     }
     const style = mediaStyle.style
-    if (style === "blank") {
-      openGenerateBrief(postId, "story", (brief, references) =>
-        startStoryGeneration(postId, "blank", { brief, references, quiet: true }),
+    if (style === "blank" || askFirst) {
+      openGenerateBrief(
+        postId,
+        "story",
+        (brief, references) => startStoryGeneration(postId, style, { brief, references, quiet: true }),
+        style,
       )
       return
     }
@@ -3492,7 +3550,7 @@ function MediaUploadFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [format, burned])
 
-  const handleBRollGenerate = () => {
+  const handleBRollGenerate = (askFirst = talk.askFirst) => {
     if (!postId) {
       toast.error("שמרו קודם את הפוסט", { duration: 4000 })
       return
@@ -3500,9 +3558,13 @@ function MediaUploadFlow({
     // Bumped per press so a retry varies the palette instead of returning a
     // near-identical picture.
     const style = mediaStyle.style
-    if (style === "blank") {
-      openGenerateBrief(postId, "b_roll", (brief, references) =>
-        startBRollGeneration(postId, bRollAttemptRef.current++, "blank", { brief, references, quiet: true }),
+    if (style === "blank" || askFirst) {
+      openGenerateBrief(
+        postId,
+        "b_roll",
+        (brief, references) =>
+          startBRollGeneration(postId, bRollAttemptRef.current++, style, { brief, references, quiet: true }),
+        style,
       )
       return
     }
@@ -4033,15 +4095,23 @@ function MediaUploadFlow({
                 brandLoading={mediaStyle.brandLoading}
                 aspect="4/5"
               />
+              <TalkFirstControl talk={talk} slot="above" blank={isBlankStyle} id="talk-first-image" onTalk={() => handleAiGenerate(true)} />
               <Button
                 variant="default"
-                onClick={handleAiGenerate}
+                onClick={() => handleAiGenerate()}
                 disabled={!postId || mediaStyle.brandLoading}
                 className="w-full gap-1.5"
               >
                 {inFlight > 0 && <Loader2 className="size-3.5 animate-spin" />}
-                יצירת תמונה עם AI
+                {talk.askFirst && !isBlankStyle ? TALK_FIRST_BUTTON : "יצירת תמונה עם AI"}
               </Button>
+              <TalkFirstControl
+                talk={talk}
+                slot="below"
+                blank={isBlankStyle}
+                disabled={!postId || mediaStyle.brandLoading}
+                onTalk={() => handleAiGenerate(true)}
+              />
             </div>
           )}
 
@@ -4260,17 +4330,25 @@ function MediaUploadFlow({
                 brandTemplate={mediaStyle.brandTemplate}
                 brandLoading={mediaStyle.brandLoading}
               />
+              <TalkFirstControl talk={talk} slot="above" blank={isBlankStyle} id="talk-first-story" onTalk={() => handleStoryGenerate(true)} />
               <Button
                 variant="default"
-                onClick={handleStoryGenerate}
+                onClick={() => handleStoryGenerate()}
                 disabled={!postId || mediaStyle.brandLoading}
                 className="w-full gap-1.5"
               >
                 {storyInFlight > 0 && (
                   <Loader2 className="size-3.5 animate-spin" />
                 )}
-                יצירת תמונה לסטורי עם AI
+                {talk.askFirst && !isBlankStyle ? TALK_FIRST_BUTTON : "יצירת תמונה לסטורי עם AI"}
               </Button>
+              <TalkFirstControl
+                talk={talk}
+                slot="below"
+                blank={isBlankStyle}
+                disabled={!postId || mediaStyle.brandLoading}
+                onTalk={() => handleStoryGenerate(true)}
+              />
             </div>
           )}
 
@@ -4457,17 +4535,25 @@ function MediaUploadFlow({
                   brandTemplate={mediaStyle.brandTemplate}
                   brandLoading={mediaStyle.brandLoading}
                 />
+                <TalkFirstControl talk={talk} slot="above" blank={isBlankStyle} id="talk-first-broll" onTalk={() => handleBRollGenerate(true)} />
                 <Button
                   variant="default"
-                  onClick={handleBRollGenerate}
+                  onClick={() => handleBRollGenerate()}
                   disabled={!postId || bRollGenerating || mediaStyle.brandLoading}
                   className="w-full gap-1.5"
                 >
                   {bRollGenerating && (
                     <Loader2 className="size-3.5 animate-spin" />
                   )}
-                  יצירת בי-רול עם AI
+                  {talk.askFirst && !isBlankStyle ? TALK_FIRST_BUTTON : "יצירת בי-רול עם AI"}
                 </Button>
+                <TalkFirstControl
+                  talk={talk}
+                  slot="below"
+                  blank={isBlankStyle}
+                  disabled={!postId || bRollGenerating || mediaStyle.brandLoading}
+                  onTalk={() => handleBRollGenerate(true)}
+                />
               </div>
 
               <div className="flex items-center gap-3" role="separator">

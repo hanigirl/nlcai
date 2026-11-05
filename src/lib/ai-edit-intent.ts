@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react"
 import type { AiEditFormat } from "@/components/media-ai-chat"
 import type { MediaGenResult } from "@/lib/media-brief"
+import type { MediaStyle } from "@/lib/visual-language/types"
 
 /**
  * "חדש לגמרי" (Hani, 2026-11-05): with that tile picked, the media panel's
@@ -20,6 +21,13 @@ export type AiEditOpening = AiEditGenerateOpening
 export interface AiEditGenerateOpening {
   id: string
   kind: "generate"
+  /**
+   * The tile it generates in. "blank" (the default) designs from her words
+   * alone; any other style — her visual language, the niche dark / light —
+   * is "talk first" (Hani, 2026-11-05): her words and references go on top of
+   * that style, and she may also skip them and generate as is.
+   */
+  style?: MediaStyle
   /** Starts the from-zero generation with her brief and the references she attached. */
   run: (brief: string, references: string[]) => Promise<MediaGenResult>
 }
