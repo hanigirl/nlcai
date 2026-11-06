@@ -136,6 +136,7 @@ const LEGACY_SUBS: Record<string, ConnectionCategory> = {
   tiktok: "social",
   linkedin: "social",
   youtube: "social",
+  facebook: "social",
 }
 
 /**
@@ -282,18 +283,18 @@ export function ApiKeyCard({
 
 /**
  * The networks the רשתות חברתיות page lists. Instagram, YouTube and LinkedIn
- * are live (2026-11-05); TikTok stays "בקרוב" until there is an account to
- * test it end to end with.
+ * are live (2026-11-05); Facebook and TikTok are "בקרוב".
  */
-export type SocialNetworkId = "instagram" | "tiktok" | "linkedin" | "youtube"
+export type SocialNetworkId = "instagram" | "tiktok" | "linkedin" | "youtube" | "facebook"
 
 type IconComponent = ComponentType<SVGProps<SVGSVGElement> & { className?: string }>
 
 export const SOCIAL_NETWORKS: { id: SocialNetworkId; label: string; icon: IconComponent }[] = [
   { id: "instagram", label: "אינסטגרם", icon: NETWORK_LOGO.instagram },
-  { id: "tiktok", label: "TikTok", icon: NETWORK_LOGO.tiktok },
-  { id: "linkedin", label: "LinkedIn", icon: NETWORK_LOGO.linkedin },
   { id: "youtube", label: "YouTube", icon: NETWORK_LOGO.youtube },
+  { id: "linkedin", label: "LinkedIn", icon: NETWORK_LOGO.linkedin },
+  { id: "facebook", label: "פייסבוק", icon: NETWORK_LOGO.facebook ?? NETWORK_LOGO.instagram },
+  { id: "tiktok", label: "TikTok", icon: NETWORK_LOGO.tiktok },
 ]
 
 export type SocialConnectionState = "loading" | "connected" | "disconnected" | "expired"
@@ -417,7 +418,7 @@ export function SocialConnectionCard({
             ) : (
               <Link2 className="size-4" />
             )}
-            {state === "expired" ? "חיבור מחדש" : "חיבור"}
+            {state === "expired" ? "חיבור מחדש" : "חבר"}
           </Button>
         )}
       </div>
@@ -441,9 +442,13 @@ export function instagramCardState(connection: InstagramConnection): {
   return { state: "disconnected", handle: null, available: true }
 }
 
-/** The networks that connect today. TikTok is listed but not among them. */
+/** The networks that connect today. Facebook and TikTok are listed but not among them. */
 const LIVE_NETWORKS = ["instagram", "youtube", "linkedin"] as const
 type LiveNetworkId = (typeof LIVE_NETWORKS)[number]
+
+/** Networks that are coming soon (visible but not interactive). */
+const COMING_SOON_NETWORKS = ["facebook", "tiktok"] as const
+type ComingSoonNetworkId = (typeof COMING_SOON_NETWORKS)[number]
 
 /** Settings card notes: Instagram keeps Hani's Facebook-page copy. */
 const CARD_NOTE: Partial<Record<LiveNetworkId, string>> = {
@@ -505,7 +510,6 @@ export function SocialNetworksPanel({
     : multinetwork
       ? LIVE_NETWORKS
       : ["instagram"]
-  const soon = SOCIAL_NETWORKS.filter((n) => n.id === "tiktok" || !live.includes(n.id as LiveNetworkId))
   return (
     <div className="flex flex-col gap-4">
       <p className="text-small text-text-neutral-default">
@@ -527,10 +531,13 @@ export function SocialNetworksPanel({
           />
         )
       })}
-      {/* Not open to this account yet (or no account to test it with, for
-          TikTok) — "בקרוב", in the order the page always listed them. */}
-      {soon.map((network) => (
-        <SocialConnectionCard key={network.id} network={network} state="disconnected" />
+      {/* Coming soon: Facebook and TikTok — visible but not interactive. */}
+      {COMING_SOON_NETWORKS.map((id) => (
+        <SocialConnectionCard
+          key={id}
+          network={SOCIAL_NETWORKS.find((n) => n.id === id)!}
+          state="disconnected"
+        />
       ))}
     </div>
   )
