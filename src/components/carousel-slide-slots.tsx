@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { ImageIcon, Play, X } from "lucide-react"
+import { AiSparkle } from "@/components/ai-refine-button"
 import { cn } from "@/lib/utils"
 
 /**
@@ -10,6 +11,7 @@ import { cn } from "@/lib/utils"
  * a video, from her computer or from Drive — the composer shows one slot per
  * slide: what she attached sits in its slot, the rest are empty placeholders.
  *
+ *   - An empty slot is marked AI: that slide is made by the AI.
  *   - Clicking an empty slot points there: the next file she attaches goes in.
  *   - Dragging moves media between slots (onto a filled one: they swap).
  *   - On send, each filled slot becomes exactly that slide; empty slots are
@@ -21,6 +23,7 @@ export function CarouselSlideSlots({
   slots,
   videos,
   target,
+  aiEmpty = true,
   onPick,
   onMove,
   onRemove,
@@ -32,6 +35,8 @@ export function CarouselSlideSlots({
   videos: string[]
   /** The empty slot she pointed at — the next attachment goes there. */
   target: number | null
+  /** An empty slot is made by AI (false on her own carousel: it keeps her slide). */
+  aiEmpty?: boolean
   onPick: (slot: number) => void
   onMove: (from: number, to: number) => void
   onRemove: (slot: number) => void
@@ -113,14 +118,24 @@ export function CarouselSlideSlots({
                   onClick={() => onPick(i)}
                   disabled={disabled}
                   aria-pressed={isTarget}
-                  aria-label={`שקופית ${i + 1}, ריקה — בחירה כמקום לקובץ הבא`}
+                  aria-label={`שקופית ${i + 1}, ריקה${aiEmpty ? " — תיווצר עם AI" : ""}. בחירה כמקום לקובץ הבא`}
                   className={cn(
-                    "flex aspect-[4/5] w-full items-center justify-center rounded-md border border-dashed border-gray-80 bg-bg-surface text-text-neutral-default transition-colors hover:bg-gray-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 dark:hover:bg-gray-20",
+                    "flex aspect-[4/5] w-full flex-col items-center justify-center gap-0.5 rounded-md border border-dashed border-gray-80 bg-bg-surface text-text-neutral-default transition-colors hover:bg-gray-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 dark:hover:bg-gray-20",
                     isTarget && "border-solid border-yellow-50 ring-2 ring-yellow-50",
                     over === i && "bg-gray-95 dark:bg-gray-20",
                   )}
                 >
-                  <ImageIcon className="size-3.5" aria-hidden />
+                  {/* Empty = made by AI (Hani, 2026-11-06) — no confirming needed. */}
+                  {aiEmpty ? (
+                    <>
+                      <AiSparkle className="size-3.5" />
+                      <span className="text-xs-body font-medium leading-none text-text-neutral-default" aria-hidden>
+                        AI
+                      </span>
+                    </>
+                  ) : (
+                    <ImageIcon className="size-3.5" aria-hidden />
+                  )}
                 </button>
               )}
               <span className="mt-0.5 block text-center text-xs-body tabular-nums text-text-neutral-default">{i + 1}</span>

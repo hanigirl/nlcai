@@ -308,6 +308,8 @@ export function MediaAiChat({
   currentFrame,
   slideCount,
   seedAttachments,
+  seedEmptied,
+  seedAskEmpty,
   initialMessages,
   autoSend,
   opening,
@@ -330,6 +332,10 @@ export function MediaAiChat({
   slideCount?: number
   /** State previews (/test/*) only: attachments already in the composer, and their slots. */
   seedAttachments?: { preview: File; kind: "image" | "video"; at?: number }[]
+  /** State previews (/test/*) only: the slot she just emptied. */
+  seedEmptied?: number
+  /** State previews (/test/*) only: open on the "empty slides — with AI?" question. */
+  seedAskEmpty?: boolean
   /** State previews (/test/*) only: start the conversation here. */
   initialMessages?: ChatMessage[]
   /** State previews (/test/*) only: send this request once, on open. */
@@ -559,6 +565,7 @@ export function MediaAiChat({
         : await requestAsIsUpload(format, items)
     setSlotChoice({})
     setSlotTarget(null)
+    setEmptied(null)
     patchKey((s) => ({
       ...s,
       busy: false,
@@ -695,6 +702,12 @@ export function MediaAiChat({
   const [slotChoice, setSlotChoice] = useState<Record<string, number>>({})
   const [slotTarget, setSlotTarget] = useState<number | null>(null)
   const [addMenuOpen, setAddMenuOpen] = useState(false)
+  // The slot she just emptied (the X) — the panel says it's the AI's now
+  // (Hani, 2026-11-06: "כשמחקתי שקופית מסוימת הוא לא התריע שחסרה אחת").
+  const [emptied, setEmptied] = useState<number | null>(seedEmptied ?? null)
+  // The "empty slides — make them with AI?" question: for this exact slot set.
+  const [askKey, setAskKey] = useState<string | null>(seedAskEmpty ? "*" : null)
+  const confirmedEmpty = useRef(false)
   const slots: (string | null)[] = (() => {
     const out: (string | null)[] = new Array(slotCount).fill(null)
     const rest: string[] = []
@@ -710,6 +723,14 @@ export function MediaAiChat({
     return out
   })()
   const slotted = slots.filter((x): x is string => !!x)
+  const slotsKey = slots.map((x) => x ?? "").join("|")
+  const emptyNums = slots.flatMap((x, i) => (x ? [] : [i + 1]))
+  // Her own carousel: an empty slot keeps her slide — nothing is made with AI.
+  const emptyIsAi = !own
+  const emptyNeedsAsk = emptyIsAi && slotted.length > 0 && emptyNums.length > 0
+  const firstGen = !currentUrls.length
+  const listNums = (n: number[]) => (n.length === 1 ? `${n[0]}` : `${n.slice(0, -1).join(", ")} ו-${n[n.length - 1]}`)
+  const askNow = emptyNeedsAsk && (askKey === "*" || askKey === slotsKey)
   function slotPlacement(): { i: number; ref: string; item: AsIsItem }[] {
     return slots.flatMap((ref, i) => {
       const item = ref ? originOf(ref) : undefined
@@ -742,6 +763,16 @@ export function MediaAiChat({
    * לו לשים עוד שקופית ויגיד לו אם הוא לא שם, זו שקופית מה ai").
    */
   const slotReply = (() => {
+    // Just emptied, and still empty: that slide is the AI's — said at once.
+    if (emptied !== null && emptied < slots.length && slots[emptied] === null) {
+      return {
+        text: emptyIsAi
+          ? `שקופית ${emptied + 1} ריקה עכשיו, אז היא תיווצר עם AI. רוצים לשים בה מדיה?`
+          : `שקופית ${emptied + 1} ריקה עכשיו, אז תישאר בה השקופית שהייתה שם. רוצים לשים בה מדיה?`,
+        more: !refs.full,
+        target: emptied,
+      }
+    }
     if (!slotted.length) return null
     const nums = slots.flatMap((r, i) => (r ? [i + 1] : []))
     const kinds = slotted.map((r) => (videoRefs.includes(r) ? "video" : "image"))
@@ -755,10 +786,13 @@ export function MediaAiChat({
     return {
       text: `שמתי ${noun} ${where}.${
         empty > 0
-          ? `${more ? " רוצים להוסיף מדיה לשקופית נוספת?" : ""} ${empty === 1 ? "שקופית שתשאירו ריקה תיווצר" : "מקומות שתשאירו ריקים ייווצרו"} עם AI בשפה הוויזואלית.`
+          ? `${more ? " רוצים להוסיף מדיה לשקופית נוספת?" : ""}${
+              emptyIsAi ? ` ${empty === 1 ? "שקופית שתשאירו ריקה תיווצר" : "מקומות שתשאירו ריקים ייווצרו"} עם AI בשפה הוויזואלית.` : ""
+            }`
           : ""
       }`,
       more,
+      target: null as number | null,
     }
   })()
 
@@ -778,6 +812,7 @@ export function MediaAiChat({
     setSentAsIs(null)
     setSlotChoice({})
     setSlotTarget(null)
+    setEmptied(null)
     patchKey((s) => ({
       ...s,
       input: "",
@@ -839,6 +874,14 @@ export function MediaAiChat({
     const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, init, fn)
     const cur = getChat<ChatMessage, MediaChatExtra>(key) ?? init()
     if (cur.busy) return
+    // Slides still empty in her slots: asked first (Hani, 2026-11-06: "צריך
+    // אישור") — nothing is sent until she says yes or adds media.
+    if (emptyNeedsAsk && !confirmedEmpty.current) {
+      setAskKey(slotsKey)
+      return
+    }
+    confirmedEmpty.current = false
+    setAskKey(null)
     // Before the generation: whatever she types (and attaches) is her brief
     // for it — references alone work too, as in the AI edit.
     if (cur.extra.gen && cur.extra.gen.phase !== "running") {
@@ -877,6 +920,7 @@ export function MediaAiChat({
         links.reset()
         setSlotChoice({})
         setSlotTarget(null)
+        setEmptied(null)
         void generate(
           brief,
           sendPictures,
@@ -1213,14 +1257,52 @@ export function MediaAiChat({
 
         {/* What she attached to the carousel's slots: where it went, and
             that an empty slot is the AI's (Hani, 2026-11-06). */}
-        {slotReply && !loading && (
+        {askNow && !loading && (
+          <div className="flex flex-col items-end gap-1.5" role="alert">
+            <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-se-sm bg-bg-surface px-3 py-2 text-small leading-relaxed text-text-primary-default">
+              {emptyNums.length === 1 ? `שקופית ${emptyNums[0]} ריקה` : `שקופיות ${listNums(emptyNums)} ריקות`}
+              {firstGen
+                ? ` — ליצור ${emptyNums.length === 1 ? "אותה" : "אותן"} עם AI?`
+                : `, אז ${emptyNums.length === 1 ? "תישאר בה השקופית" : "יישארו בהן השקופיות"} שה-AI יצר. להמשיך?`}
+            </div>
+            <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
+              <Chip
+                onClick={() => {
+                  confirmedEmpty.current = true
+                  void send()
+                }}
+              >
+                {firstGen ? "כן, ליצור עם AI" : "כן, להמשיך"}
+              </Chip>
+              {!refs.full && (
+                <Chip
+                  onClick={() => {
+                    setAskKey(null)
+                    setSlotTarget(emptyNums[0] - 1)
+                    setAddMenuOpen(true)
+                  }}
+                >
+                  אוסיף מדיה
+                </Chip>
+              )}
+            </div>
+          </div>
+        )}
+        {slotReply && !askNow && !loading && (
           <div className="flex flex-col items-end gap-1.5" aria-live="polite">
             <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-se-sm bg-bg-surface px-3 py-2 text-small leading-relaxed text-text-primary-default">
               {slotReply.text}
             </div>
             {slotReply.more && (
               <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
-                <Chip onClick={() => setAddMenuOpen(true)}>להוסיף עוד מדיה</Chip>
+                <Chip
+                  onClick={() => {
+                    if (slotReply.target !== null) setSlotTarget(slotReply.target)
+                    setAddMenuOpen(true)
+                  }}
+                >
+                  להוסיף עוד מדיה
+                </Chip>
               </div>
             )}
           </div>
@@ -1255,11 +1337,12 @@ export function MediaAiChat({
             <Chip onClick={() => void uploadAsIs(asIsNow, refs.split(refs.refs).place)}>{AS_IS}</Chip>
           </div>
         )}
-        {slotted.length > 0 && (
+        {(slotted.length > 0 || slotReply?.target != null) && (
           <CarouselSlideSlots
             slots={slots}
             videos={videoRefs}
             target={slotTarget}
+            aiEmpty={emptyIsAi}
             onPick={(i) => {
               setSlotTarget(i)
               if (!refs.full) setAddMenuOpen(true)
@@ -1267,7 +1350,11 @@ export function MediaAiChat({
             onMove={moveSlot}
             onRemove={(i) => {
               const at = slots[i] ? refs.refs.indexOf(slots[i]!) : -1
-              if (at >= 0) refs.remove(at)
+              if (at < 0) return
+              // The rest stay exactly where they are — the emptied slot stays a gap.
+              setSlotChoice(Object.fromEntries(slots.flatMap((r, k) => (r && k !== i ? [[r, k]] : []))))
+              setEmptied(i)
+              refs.remove(at)
             }}
             disabled={loading}
           />
