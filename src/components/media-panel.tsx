@@ -69,7 +69,7 @@ import {
 import type { SlideData, TemplateConfig } from "@/lib/carousel-templates"
 import { flushPendingSaves } from "@/lib/pending-saves"
 import { BLANK_TEMPLATE, BLANK_TEMPLATE_ID, BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
-import { openingId, requestAiEdit } from "@/lib/ai-edit-intent"
+import { openingId, requestAiEdit, type AiEditGenerateOpening, type GenSlots } from "@/lib/ai-edit-intent"
 import { makeCarouselVideoSlide } from "@/lib/carousel-video-client"
 import { isVideoSlide } from "@/lib/carousel-video"
 import { registerAsIsImporter, requestDrivePicker, type AsIsItem, type AsIsOptions, type AsIsResult } from "@/lib/as-is-upload"
@@ -233,7 +233,7 @@ interface MediaPanelProps {
 function openGenerateBrief(
   postId: string,
   format: AiEditFormat,
-  run: (brief: string, references: string[], place: string[]) => Promise<MediaGenResult>,
+  run: AiEditGenerateOpening["run"],
   /**
    * The tile it generates in. "עריכה עם AI" on any tile (Hani, 2026-11-05)
    * asks first too; the panel then generates in that style, with her words
@@ -1785,7 +1785,7 @@ function CarouselFlow({
     openGenerateBrief(
       postId,
       "carousel",
-      (brief, references, place) => handleGenerate({ brief, references, place, fromPanel: true }),
+      (brief, references, place, slots) => handleGenerate({ brief, references, place, slots, fromPanel: true }),
       style,
       askFirstRef.current,
     )
@@ -1800,8 +1800,9 @@ function CarouselFlow({
       brief,
       references = [],
       place = [],
+      slots,
       fromPanel = false,
-    }: { brief?: string; references?: string[]; place?: string[]; fromPanel?: boolean } = {},
+    }: { brief?: string; references?: string[]; place?: string[]; slots?: GenSlots; fromPanel?: boolean } = {},
   ): Promise<MediaGenResult> => {
     if (!carouselText.trim()) return { ok: false, message: "אין עדיין טקסט לקרוסלה" }
     setGenerating(true)
@@ -1864,6 +1865,7 @@ function CarouselFlow({
             ...(brief ? { brief } : {}),
             ...(references.length ? { references } : {}),
             ...(place.length ? { place } : {}),
+            ...(place.length && slots?.placeAt?.length === place.length ? { placeAt: slots.placeAt } : {}),
           }),
         },
       )
@@ -1898,6 +1900,24 @@ function CarouselFlow({
         setError("שגיאה ביצירת הקרוסלה")
         if (!fromPanel) toast.error("שגיאה ביצירת הקרוסלה", { id: genToast, duration: 8000 })
       } else if (data.images) {
+        // Her clips in their slots (Hani, 2026-11-06): each made a video
+        // slide on its slide — her footage untouched, captioned per her brief.
+        let videoMiss: string | null = null
+        if (postId && slots?.videos?.length) {
+          const made: string[] = [...data.images]
+          for (const { at, item } of slots.videos) {
+            if (at < 0 || at >= made.length) continue
+            const v = await makeCarouselVideoSlide({
+              postId,
+              drive: item.drive,
+              file: item.file,
+              caption: { design: brief || undefined, slideIndex: at },
+            })
+            if (v.ok) made[at] = v.url
+            else videoMiss = `הקרוסלה מוכנה, אבל את הסרטון לשקופית ${at + 1} לא הצלחתי להכניס: ${v.message}`
+          }
+          data.images = made
+        }
         if (postId) {
           carouselGenCache.set(postId, {
             ...(carouselGenCache.get(postId) ?? {}),
@@ -1918,7 +1938,7 @@ function CarouselFlow({
         setSavedTemplateId(genId === DRIVE_IMPORT_KEY ? undefined : genId)
         // She left /project mid-generation: the page that saves is gone.
         if (previewOn) void saveCarouselIfLeft(postId, data.images)
-        result = { ok: true }
+        result = videoMiss ? { ok: true, message: videoMiss } : { ok: true }
         if (fromPanel) {
           // The panel says it's ready and the card shows it — don't pop the
           // slides dialog over it now, or when the media panel reopens.
@@ -2071,6 +2091,74 @@ function CarouselFlow({
   useEffect(() => {
     asIsRef.current = async (items, opts) => {
       if (!postId) return { ok: false, message: "שמרו קודם את הפוסט, ואז אפשר להעלות מדיה." }
+      // Her slide slots (Hani, 2026-11-06): each file on the slide she chose,
+      // replacing what's there — the slide count stays.
+      if (opts?.at && opts.at.length === items.length) {
+        const at = opts.at
+        const base = [...(opts.base ?? images ?? [])]
+        setDriveImportError(null)
+        setDriveImporting(true)
+        onBusyChange?.("carousel", true)
+        try {
+          const made: { at: number; slide: string }[] = []
+          for (let i = 0; i < items.length; i++) {
+            const it = items[i]
+            setDriveImportProgress(
+              it.kind === "video"
+                ? `מכינים את שקופית הווידאו לשקופית ${at[i] + 1}...`
+                : `מכינים את שקופית ${at[i] + 1}...`,
+            )
+            if (it.kind === "video") {
+              const v = await makeCarouselVideoSlide({
+                postId,
+                drive: it.drive,
+                file: it.file,
+                ...(opts.forEdit ? { caption: { design: opts.instruction, slideIndex: at[i] } } : {}),
+              })
+              if (!v.ok) return { ok: false, message: `${v.message} (שקופית ${at[i] + 1})` }
+              made.push({ at: at[i], slide: v.url })
+            } else if (it.file) {
+              const b64 = await new Promise<string>((resolve, reject) => {
+                const r = new FileReader()
+                r.onload = () => resolve(String(r.result).replace(/^data:[^,]*,/, ""))
+                r.onerror = () => reject(new Error("read"))
+                r.readAsDataURL(it.file!)
+              })
+              made.push({ at: at[i], slide: b64 })
+            } else if (it.drive) {
+              const res = await fetch("/api/media/from-drive", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ url: it.drive, store: false }),
+              })
+              const data = (await res.json().catch(() => ({}))) as { base64?: string }
+              if (!res.ok || !data.base64) return { ok: false, message: `טעינת שקופית ${at[i] + 1} מהדרייב נכשלה.` }
+              made.push({ at: at[i], slide: data.base64 })
+            }
+          }
+          let next: string[]
+          if (base.length) {
+            next = base
+            for (const m of made) if (m.at < next.length) next[m.at] = m.slide
+          } else {
+            // No carousel yet: her files are the slides, in slot order.
+            next = [...made].sort((a, b) => a.at - b.at).map((m) => m.slide)
+          }
+          onImagesChange(next)
+          const where = made.map((m) => m.at + 1).sort((a, b) => a - b)
+          const hasVideo = items.some((it) => it.kind === "video")
+          return {
+            ok: true,
+            message:
+              (where.length === 1 ? `שמתי את המדיה בשקופית ${where[0]}` : `שמתי את המדיה בשקופיות ${where.join(", ")}`) +
+              (opts.forEdit && hasVideo ? ", ועל הסרטון הכיתוב שביקשתם. מה שצילמתם לא השתנה." : ", כמו שהיא, בלי תוספות."),
+          }
+        } finally {
+          setDriveImporting(false)
+          onBusyChange?.("carousel", false)
+          setDriveImportProgress("")
+        }
+      }
       if (opts?.forEdit) {
         const video = items.find((it) => it.kind === "video")
         if (!video) return { ok: false, message: "אין כאן סרטון." }

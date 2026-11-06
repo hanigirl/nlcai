@@ -27,7 +27,13 @@ export const BLANK_NEEDS_BRIEF = {
 } as const
 
 /** What a generation started from the AI panel resolves to. */
-export type MediaGenResult = { ok: true } | { ok: false; message: string }
+export type MediaGenResult =
+  | {
+      ok: true
+      /** Said instead of the usual "ready" line (e.g. a video slot that didn't make it). */
+      message?: string
+    }
+  | { ok: false; message: string }
 
 /** The brief from a request body — trimmed and capped, or undefined. */
 export function normalizeMediaBrief(raw: unknown): string | undefined {

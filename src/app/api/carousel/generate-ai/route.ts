@@ -23,6 +23,7 @@ import {
 import { buildCarouselBrief } from "@/lib/carousel-brief"
 import {
   composeCarousel,
+  forceAttached,
   illustrationPrompt,
   measureArtSlots,
   renderCarousel,
@@ -123,7 +124,7 @@ function cropToCanvas(imageBase64: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { slides, templateId, postId, brief: mediaBrief, references, place } = (await req.json().catch(() => ({}))) as {
+    const { slides, templateId, postId, brief: mediaBrief, references, place, placeAt: rawPlaceAt } = (await req.json().catch(() => ({}))) as {
       slides?: SlideData[]
       templateId?: string
       /** Her own direction for this carousel (lib/media-brief). */
@@ -132,6 +133,8 @@ export async function POST(req: NextRequest) {
       references?: unknown
       /** Pictures she attached to put INTO the carousel as they are (lib/carousel-composition). */
       place?: unknown
+      /** The slide (0-based) she put each `place` picture on — the AI panel's slide slots. */
+      placeAt?: unknown
       /** Lets "עריכה עם AI" find this carousel's layout later. */
       postId?: string
     }
@@ -318,7 +321,19 @@ export async function POST(req: NextRequest) {
         // "Put my picture in, without the caption": the picture itself is
         // edited (lib/picture-edit) — Hani only for now (lib/feature-access).
         const pictureEditsOn = canEditPictures(user.email)
-        const layout = await composeCarousel(anthropicKey, brief, refs, placeRefs, pictureEditsOn)
+        // Her slide slots (Hani, 2026-11-06): each picture on the slide she chose.
+        const placeAt =
+          Array.isArray(rawPlaceAt) &&
+          rawPlaceAt.length === placeRefs.length &&
+          rawPlaceAt.every((n) => Number.isInteger(n) && n >= 0 && n < total)
+            ? (rawPlaceAt as number[])
+            : undefined
+        const layout = await composeCarousel(anthropicKey, brief, refs, placeRefs, pictureEditsOn, placeAt)
+        if (placeAt) {
+          const forced = forceAttached(layout.html, total, placeAt)
+          if (!forced) return NextResponse.json(PLACE_FAILED_GEN, { status: 422 })
+          layout.attached = forced
+        }
         const illustrations: string[] = new Array(total).fill("")
         const ownArt: boolean[] = new Array(total).fill(false)
         // Her pictures: each must have landed on a slide, as her exact file.

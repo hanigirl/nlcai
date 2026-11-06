@@ -105,7 +105,7 @@ export function useReferenceImages() {
       } = {},
     ) => {
       const room = MAX_REFERENCES - refsRef.current.length
-      if (room <= 0 || !files.length) return
+      if (room <= 0 || !files.length) return [] as string[]
       const taken = files.slice(0, room)
       const results = await Promise.all(taken.map((f) => shrink(f).catch(() => null)))
       const shrunk = results.filter((s): s is string => !!s)
@@ -119,6 +119,8 @@ export function useReferenceImages() {
           })
           return next
         })
+      // What was added — the carousel's slide slots put it where she pointed.
+      return shrunk
     },
     [],
   )
@@ -215,11 +217,18 @@ export function ReferenceButton({ r, disabled }: { r: ReferenceImages; disabled?
 }
 
 /** Thumbnails waiting to be sent, above the composer. */
-export function ReferenceTray({ r }: { r: ReferenceImages }) {
-  if (!r.refs.length) return null
+export function ReferenceTray({
+  r,
+  hide = [],
+}: {
+  r: ReferenceImages
+  /** Shown elsewhere — the carousel's slide slots (components/carousel-slide-slots). */
+  hide?: string[]
+}) {
+  if (!r.refs.some((src) => !hide.includes(src))) return null
   return (
     <div className="mb-2 flex flex-wrap gap-2">
-      {r.refs.map((src, i) => (
+      {r.refs.map((src, i) => hide.includes(src) ? null : (
         <div key={i} className="relative size-14 overflow-hidden rounded-lg border border-border-neutral-default">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={src} alt={`רפרנס ${i + 1}`} className="size-full object-cover" />

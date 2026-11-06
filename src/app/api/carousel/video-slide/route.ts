@@ -7,6 +7,7 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { fetchDriveFile } from "@/lib/drive-fetch"
 import { extractDriveFileId } from "@/lib/drive-media"
 import { parseTextToSlides } from "@/lib/carousel-slides"
+import { videoCaptionWords } from "@/lib/carousel-video-caption"
 import { renderOwnVideoCaption, OVERLAY_SECONDS } from "@/lib/own-video-captions"
 import {
   CAROUSEL_VIDEO_HEIGHT,
@@ -162,8 +163,11 @@ export async function POST(req: NextRequest) {
       const slides = parseTextToSlides((variant as { body: string | null } | null)?.body ?? "")
       const at = slides[Math.max(0, caption.slideIndex ?? 0)]
       const p = post as { hook_text: string | null; title: string | null }
-      const headline = at?.title?.trim() || p.hook_text?.trim() || p.title?.trim() || ""
-      const body = at?.title ? at.body?.trim() || undefined : undefined
+      const scriptHeadline = at?.title?.trim() || p.hook_text?.trim() || p.title?.trim() || ""
+      const scriptBody = at?.title ? at.body?.trim() || undefined : undefined
+      // The script's words by default; her message can change them, not
+      // only their look (Hani, 2026-11-06 — lib/carousel-video-caption).
+      const words = await videoCaptionWords(anthropicKey, { headline: scriptHeadline, body: scriptBody }, caption.design)
       const framesDir = path.join(work, "frames")
       await fs.mkdir(framesDir, { recursive: true })
       const frames = await renderOwnVideoCaption(
@@ -171,7 +175,7 @@ export async function POST(req: NextRequest) {
         user.id,
         anthropicKey,
         "carousel",
-        { headline, body, design: caption.design?.trim() || undefined },
+        { headline: words.headline, body: words.body, design: words.design },
         framesDir,
       )
       const fps = Math.max(1, Math.round(frames / OVERLAY_SECONDS))

@@ -26,6 +26,8 @@ import { SelectionCard } from "@/components/selection-card"
 import { Textarea } from "@/components/ui/textarea"
 import { RichBodyEditor } from "@/components/rich-body-editor"
 import { StorySections } from "@/components/story-frames"
+import { parseTextToSlides } from "@/lib/carousel-slides"
+import { MAX_CAROUSEL_SLIDES } from "@/lib/carousel-limits"
 import { isVideoSlide } from "@/lib/carousel-video"
 import { stripFrameMarkers } from "@/lib/story-text-split"
 import { Button } from "@/components/ui/button"
@@ -2951,6 +2953,12 @@ function ProjectPageInner() {
             format={aiChatFormat}
             own={own}
             currentUrls={mediaOf[aiChatFormat]}
+            // No carousel yet: the script's planned slide count — one slot per slide.
+            slideCount={
+              aiChatFormat === "carousel"
+                ? Math.min(parseTextToSlides(formatPosts["carousel"] ?? "").length, MAX_CAROUSEL_SLIDES)
+                : undefined
+            }
             open
             opening={aiChatOpening}
             onOpenChange={(open) => { if (!open) { setAiChatFormat(null); setAiChatOpening(null) } }}

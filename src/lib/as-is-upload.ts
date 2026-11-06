@@ -35,6 +35,14 @@ export type AsIsOptions = {
   forEdit?: boolean
   /** Her words — a carousel video slide's caption design (api/carousel/video-slide). */
   instruction?: string
+  /**
+   * Carousel slide slots (Hani, 2026-11-06): per item, the slide (0-based)
+   * it goes in — replacing what's there; the slide count stays. Without a
+   * carousel yet, the items become the slides in slot order.
+   */
+  at?: number[]
+  /** The carousel's slides right now, when the caller knows them fresher than the panel (just edited). */
+  base?: string[]
 }
 type Importer = (items: AsIsItem[], opts?: AsIsOptions) => Promise<AsIsResult>
 

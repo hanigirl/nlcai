@@ -92,10 +92,15 @@ export function ReferenceAddMenu({
   r,
   format,
   disabled,
+  menuOpen,
+  onMenuOpenChange,
 }: {
   r: ReferenceImages
   format: string
   disabled?: boolean
+  /** Controlled open (the carousel's "להוסיף עוד מדיה" chip opens it). */
+  menuOpen?: boolean
+  onMenuOpenChange?: (open: boolean) => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   // Opened straight on Drive by the media panel's "מדיה מוכנה מ Google Drive".
@@ -142,7 +147,7 @@ export function ReferenceAddMenu({
           })()
         }}
       />
-      <DropdownMenu dir="rtl">
+      <DropdownMenu dir="rtl" {...(onMenuOpenChange ? { open: !!menuOpen, onOpenChange: onMenuOpenChange } : {})}>
         <TooltipLabel label="הוספת תמונה">
           <DropdownMenuTrigger asChild>
             <Button

@@ -242,6 +242,32 @@ const PICTURE_EDIT_NOTE = [
  * each one lands on a slide through `attached`, and the route puts her exact
  * file there, never a redraw.
  */
+/**
+ * Her slide slots (Hani, 2026-11-06): which slide each of her pictures goes
+ * on, said as an order. Null when she didn't choose (the old "cover" rule).
+ */
+export function placeSlidesNote(placeAt: number[] | undefined, k: number): string | null {
+  if (!placeAt || placeAt.length !== k || placeAt.some((n) => !Number.isInteger(n) || n < 0)) return null
+  const each = placeAt.map((n, j) => `attached image ${j + 1} on slide ${n + 1}`).join(", ")
+  return `She chose exactly where each of her pictures goes: ${each}. Put each one on exactly that slide and no other — these are not suggestions; one picture per slide.`
+}
+
+/**
+ * Her slide slots, enforced on the layout's answer: `attached` rebuilt from
+ * her choice. Null when the layout has no picture slot on one of those
+ * slides (the route then says so instead of dropping her picture).
+ */
+export function forceAttached(html: string, count: number, placeAt: number[]): number[] | null {
+  const attached = new Array(count).fill(0)
+  for (let j = 0; j < placeAt.length; j++) {
+    const i = placeAt[j]
+    if (i < 0 || i >= count) return null
+    if (!html.includes(`__SLIDE_IMAGE_${i + 1}__`)) return null
+    attached[i] = j + 1
+  }
+  return attached
+}
+
 export function composeCarousel(
   apiKey: string,
   brief: CarouselBrief,
@@ -249,13 +275,20 @@ export function composeCarousel(
   place: string[] = [],
   /** Hani only (lib/feature-access): a change to her picture is a real picture edit. */
   pictureEdits = false,
+  /**
+   * The slide (0-based) she put each of `place` on, in the AI panel's slide
+   * slots (Hani, 2026-11-06) — exact, not a suggestion.
+   */
+  placeAt?: number[],
 ) {
   if (!place.length) return ask(apiKey, briefText(brief), brief.slides.length, brief.examples, refs)
   const k = place.length
   const placeNote = [
     "",
     `HER OWN PICTURE${k > 1 ? "S" : ""}: attached image${k > 1 ? `s 1–${k} are` : " 1 is"} her own picture${k > 1 ? "s" : ""} (photo, character, illustration, logo or product) to PUT INTO this carousel as ${k > 1 ? "they are" : "it is"}.${refs.length ? ` Attached image${refs.length > 1 ? `s ${k + 1}–${k + refs.length} are` : ` ${k + 1} is`} only a reference for the look — apply the look, never place ${refs.length > 1 ? "them" : "it"}.` : ""}`,
-    `Place EVERY one of her pictures on exactly one slide — the cover unless the brief says otherwise; one picture per slide. Put "attached": [one entry per slide: the attached image number placed on that slide, or 0] in the json block, leave that slide's "illustrations" entry empty, and show it with <img class="art" src="__SLIDE_IMAGE_N__"> (N = the slide number) styled object-fit: contain, so her picture is never cropped, stretched or distorted. We put her exact file there — never describe it as an illustration prompt. The layout makes room for it; it never covers the slide's text.`,
+    placeSlidesNote(placeAt, k) ??
+      `Place EVERY one of her pictures on exactly one slide — the cover unless the brief says otherwise; one picture per slide.`,
+    `Put "attached": [one entry per slide: the attached image number placed on that slide, or 0] in the json block, leave that slide's "illustrations" entry empty, and show it with <img class="art" src="__SLIDE_IMAGE_N__"> (N = the slide number) styled object-fit: contain, so her picture is never cropped, stretched or distorted. We put her exact file there — never describe it as an illustration prompt. The layout makes room for it; it never covers the slide's text.`,
     ...(pictureEdits ? ["", PICTURE_EDIT_NOTE] : []),
   ].join("\n")
   return ask(apiKey, briefText(brief) + placeNote, brief.slides.length, brief.examples, [...place, ...refs], true)

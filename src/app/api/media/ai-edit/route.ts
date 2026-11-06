@@ -88,7 +88,7 @@ function toCanvas(base64: string, [w, h]: [number, number]): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { postId, format, instruction, references, earlierReferences } = (await req.json().catch(() => ({}))) as {
+    const { postId, format, instruction, references, earlierReferences, placeAt: rawPlaceAt } = (await req.json().catch(() => ({}))) as {
       postId?: string
       format?: unknown
       instruction?: string
@@ -99,15 +99,29 @@ export async function POST(req: NextRequest) {
        * — "שימי את התמונה!" after a try that missed refers to them.
        */
       earlierReferences?: unknown
+      /**
+       * Carousel: per reference (same order), the slide (0-based) she put it
+       * on in the AI panel's slide slots, or -1 — Hani, 2026-11-06.
+       */
+      placeAt?: unknown
     }
     const text = instruction?.trim()
     const current = parseReferences(references)
     const refs = current.length ? current : parseReferences(earlierReferences)
     // What the models read: says where the images came from when they weren't attached now.
-    const ask =
+    // Her slide slots: which attached image goes on which slide, exactly.
+    const slotted =
+      Array.isArray(rawPlaceAt) && rawPlaceAt.length === current.length
+        ? rawPlaceAt.flatMap((n, j) => (Number.isInteger(n) && n >= 0 ? [{ j, i: n as number }] : []))
+        : []
+    const slotNote = slotted.length
+      ? `\nShe chose exactly where her pictures go: ${slotted.map(({ j, i }) => `attached image ${j + 1} on slide ${i + 1}`).join(", ")}. Place each one on exactly that slide (in "attached") and no other; slides she didn't choose keep what they have unless she asks otherwise.`
+      : ""
+    const ask0 =
       text && !current.length && refs.length
         ? `${text}\n(The attached image${refs.length > 1 ? "s" : ""} came with her earlier message in this chat.)`
         : text
+    const ask = ask0 ? `${ask0}${slotNote}` : ask0
     if (!postId || !text || !isEditableFormat(format)) {
       return NextResponse.json({ error: "postId, format and instruction are required" }, { status: 400 })
     }
@@ -202,6 +216,21 @@ export async function POST(req: NextRequest) {
       // A change to a picture itself is a real picture edit — Hani only for now (lib/feature-access).
       const pictureEditsOn = canEditPictures(user.email)
       const revised = await reviseCarousel(anthropicKey, stored, ask!, refs, restyle, pictureEditsOn)
+      // Her slots, enforced (the layout may still have put a picture elsewhere).
+      if (slotted.length) {
+        const count = stored.brief.slides.length
+        const forced = slotted.every(({ i }) => i < count && revised.html.includes(`__SLIDE_IMAGE_${i + 1}__`))
+        if (!forced) {
+          return NextResponse.json(
+            { error: "slot_missed", message: "לא הצלחתי לשים את התמונה בדיוק בשקופית שבחרתם, אז לא שיניתי כלום. נסו שוב, או בחרו שקופית אחרת." },
+            { status: 422 },
+          )
+        }
+        const mine = new Set(slotted.map((x) => x.j + 1))
+        const attached = Array.from({ length: count }, (_, i) => (mine.has(revised.attached[i] ?? 0) ? 0 : (revised.attached[i] ?? 0)))
+        for (const { j, i } of slotted) attached[i] = j + 1
+        revised.attached = attached
+      }
       const pictureEdits = pictureEditsOn ? revised.pictureEdits : []
       const isPictureEdit = (i: number) => pictureEdits.some((e) => e.slide === i)
       // She named a picture we don't have: ask for it — never a stand-in.
