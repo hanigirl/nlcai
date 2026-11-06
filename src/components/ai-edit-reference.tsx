@@ -74,8 +74,15 @@ function imageFiles(list: FileList | DataTransferItemList | null | undefined): F
   return out
 }
 
-export function useReferenceImages() {
+export function useReferenceImages(
+  /**
+   * How many may wait at once. 3 everywhere (a request-size cap — lib/ai-edit-
+   * references); a carousel's slide slots allow one per slide, sent as URLs.
+   */
+  max: number = MAX_REFERENCES,
+) {
   const [refs, setRefs] = useState<string[]>([])
+  const maxRef = useRef(max)
   /**
    * The ones that only show a look — a picture pulled from a link
    * (components/ai-edit-link-reference). Everything else is a picture she
@@ -93,6 +100,7 @@ export function useReferenceImages() {
   const refsRef = useRef(refs)
   useEffect(() => {
     refsRef.current = refs
+    maxRef.current = max
   })
 
   const add = useCallback(
@@ -104,12 +112,12 @@ export function useReferenceImages() {
         origins?: (AsIsItem | undefined)[]
       } = {},
     ) => {
-      const room = MAX_REFERENCES - refsRef.current.length
-      if (room <= 0 || !files.length) return
+      const room = maxRef.current - refsRef.current.length
+      if (room <= 0 || !files.length) return [] as string[]
       const taken = files.slice(0, room)
       const results = await Promise.all(taken.map((f) => shrink(f).catch(() => null)))
       const shrunk = results.filter((s): s is string => !!s)
-      setRefs((prev) => [...prev, ...shrunk].slice(0, MAX_REFERENCES))
+      setRefs((prev) => [...prev, ...shrunk].slice(0, maxRef.current))
       if (opts.look) setLooks((prev) => [...prev, ...shrunk])
       else
         setOrigins((prev) => {
@@ -119,6 +127,8 @@ export function useReferenceImages() {
           })
           return next
         })
+      // What was added — the carousel's slide slots put it where she pointed.
+      return shrunk
     },
     [],
   )
@@ -136,7 +146,7 @@ export function useReferenceImages() {
   )
   /** Put sent references back in the tray (a generation that failed). */
   const restore = useCallback((list: string[], lookList: string[] = []) => {
-    setRefs(list.slice(0, MAX_REFERENCES))
+    setRefs(list.slice(0, maxRef.current))
     setLooks(lookList)
   }, [])
   /** Split for a generation: her own pictures to place, and look-only ones. */
@@ -175,7 +185,7 @@ export function useReferenceImages() {
     },
   }
 
-  return { refs, add, remove, clear, restore, split, originals, onPaste, dropProps, dragging, full: refs.length >= MAX_REFERENCES }
+  return { refs, add, remove, clear, restore, split, originals, onPaste, dropProps, dragging, full: refs.length >= max }
 }
 
 export type ReferenceImages = ReturnType<typeof useReferenceImages>
@@ -215,11 +225,18 @@ export function ReferenceButton({ r, disabled }: { r: ReferenceImages; disabled?
 }
 
 /** Thumbnails waiting to be sent, above the composer. */
-export function ReferenceTray({ r }: { r: ReferenceImages }) {
-  if (!r.refs.length) return null
+export function ReferenceTray({
+  r,
+  hide = [],
+}: {
+  r: ReferenceImages
+  /** Shown elsewhere — the carousel's slide slots (components/carousel-slide-slots). */
+  hide?: string[]
+}) {
+  if (!r.refs.some((src) => !hide.includes(src))) return null
   return (
     <div className="mb-2 flex flex-wrap gap-2">
-      {r.refs.map((src, i) => (
+      {r.refs.map((src, i) => hide.includes(src) ? null : (
         <div key={i} className="relative size-14 overflow-hidden rounded-lg border border-border-neutral-default">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={src} alt={`רפרנס ${i + 1}`} className="size-full object-cover" />

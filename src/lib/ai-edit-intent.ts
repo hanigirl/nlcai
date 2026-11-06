@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react"
 import type { AiEditFormat } from "@/components/media-ai-chat"
 import type { MediaGenResult } from "@/lib/media-brief"
+import type { AsIsItem } from "@/lib/as-is-upload"
 import type { MediaStyle } from "@/lib/visual-language/types"
 
 /**
@@ -44,7 +45,18 @@ export interface AiEditGenerateOpening {
    * `references`: looks only (a picture from a link). `place`: pictures she
    * attached, put INTO the media as they are (Hani, 2026-11-05).
    */
-  run: (brief: string, references: string[], place: string[]) => Promise<MediaGenResult>
+  run: (brief: string, references: string[], place: string[], slots?: GenSlots) => Promise<MediaGenResult>
+}
+
+/**
+ * A carousel's slide slots in the AI panel (Hani, 2026-11-06): she chose the
+ * slide each attachment goes on. `placeAt[j]` = the slide (0-based) of
+ * `place[j]`; `videos` = her clips, each made a video slide in its slot.
+ * Empty slots are made by the AI; the slide count never changes.
+ */
+export type GenSlots = {
+  placeAt?: number[]
+  videos?: { at: number; item: AsIsItem }[]
 }
 
 export interface AiEditRequest {

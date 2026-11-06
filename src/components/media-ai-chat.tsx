@@ -13,7 +13,7 @@ import { AWAY_COPY, trackAwayResult } from "@/lib/long-wait"
 import { SaveToVisualLanguageChip } from "@/components/save-to-visual-language-chip"
 import { VisualMemoryNote } from "@/components/visual-memory-note"
 import { memoryHeadline, triageMessage, type MemoryOutcome, type TriageResult } from "@/lib/visual-memory"
-import type { AiEditGenerateOpening, AiEditOpening } from "@/lib/ai-edit-intent"
+import type { AiEditGenerateOpening, AiEditOpening, GenSlots } from "@/lib/ai-edit-intent"
 import { usePreviewAccess } from "@/lib/use-scheduling-access"
 import { Chip } from "@/components/ui/chip"
 import { runOwnMediaEdit } from "@/lib/own-media-edit"
@@ -28,7 +28,7 @@ import {
 } from "@/lib/ai-chat-session-store"
 import { AiChatNewButton } from "@/components/ai-chat-new-button"
 import { canRevealChat, revealChatReply } from "@/lib/ai-chat-reveal"
-import { REFERENCE_ONLY_INSTRUCTION } from "@/lib/ai-edit-references"
+import { MAX_REFERENCES, MAX_SLOT_REFERENCES, REFERENCE_ONLY_INSTRUCTION } from "@/lib/ai-edit-references"
 import {
   ReferenceDropHint,
   ReferenceThumbs,
@@ -39,6 +39,9 @@ import { LinkReferenceRows, useLinkReferences } from "@/components/ai-edit-link-
 import { ReferenceAddMenu } from "@/components/ai-edit-drive-reference"
 import { requestAsIsUpload, type AsIsItem } from "@/lib/as-is-upload"
 import { CAROUSEL_VIDEO_MAX_SECONDS } from "@/lib/carousel-video"
+import { uploadSlotPicture } from "@/lib/carousel-video-client"
+import { CarouselSlideSlots } from "@/components/carousel-slide-slots"
+import type { ReferenceImages } from "@/components/ai-edit-reference"
 import type { MediaStyle } from "@/lib/visual-language/types"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
@@ -211,7 +214,7 @@ const PLACE_NOTE: Record<AiEditFormat, string> = {
   image_post: "התמונה שצירפתם תיכנס לתמונה כמו שהיא.",
   story: "התמונה שצירפתם תיכנס כמו שהיא לפריים הראשון של הסטורי.",
   b_roll: "הבי-רול ייבנה על התמונה שצירפתם, כמו שהיא.",
-  carousel: "התמונה שצירפתם תיכנס כמו שהיא לאחת השקופיות, בדרך כלל לשער.",
+  carousel: "התמונה שצירפתם תיכנס לשקופית שבחרתם.",
 }
 const LOOK_NOTE = "תמונה מקישור משמשת רק כהשראה למראה."
 /** Only pictures, no words: what her brief says. */
@@ -303,6 +306,10 @@ export function MediaAiChat({
   own = false,
   currentUrls = [],
   currentFrame,
+  slideCount,
+  seedAttachments,
+  seedEmptied,
+  seedAskEmpty,
   initialMessages,
   autoSend,
   opening,
@@ -318,6 +325,17 @@ export function MediaAiChat({
   currentUrls?: string[]
   /** Own media: the frame / slide on screen (1-based). */
   currentFrame?: number
+  /**
+   * Carousel without slides yet: how many it will have (the script's planned
+   * count) — the AI panel's slide slots (Hani, 2026-11-06).
+   */
+  slideCount?: number
+  /** State previews (/test/*) only: attachments already in the composer, and their slots. */
+  seedAttachments?: { preview: File; kind: "image" | "video"; at?: number }[]
+  /** State previews (/test/*) only: the slot she just emptied. */
+  seedEmptied?: number
+  /** State previews (/test/*) only: open on the "empty slides — with AI?" question. */
+  seedAskEmpty?: boolean
   /** State previews (/test/*) only: start the conversation here. */
   initialMessages?: ChatMessage[]
   /** State previews (/test/*) only: send this request once, on open. */
@@ -381,7 +399,15 @@ export function MediaAiChat({
   // she's really away.
   useWatchChat(chatKey)
   // Screenshots waiting to go with the next message; another conversation starts clean.
-  const refs = useReferenceImages()
+  // A carousel's slide slots take one attachment per slide (up to 10), sent
+  // as storage URLs; everywhere else the 3-reference cap stays.
+  const slotsMax =
+    format === "carousel" &&
+    (!session.extra.gen || session.extra.gen.phase === "running" || !!session.extra.gen.placeRefs)
+      ? Math.min(MAX_SLOT_REFERENCES, Math.max(MAX_REFERENCES, currentUrls.length || slideCount || 0))
+      : MAX_REFERENCES
+  const refs = useReferenceImages(slotsMax)
+  const [uploading, setUploading] = useState(false)
   /**
    * The originals of the attachments she just sent with a message — "להעלות
    * כמו שזה" stays offered under that message once the AI has answered.
@@ -423,7 +449,18 @@ export function MediaAiChat({
    * blank page, or on top of the style she picked. `shown`:
    * what her bubble shows when it isn't the brief itself (GEN_SKIP).
    */
-  const generate = async (brief: string, references: string[] = [], shown?: string, looks: string[] = []) => {
+  const generate = async (
+    brief: string,
+    references: string[] = [],
+    shown?: string,
+    looks: string[] = [],
+    /** Carousel slide slots: where her pictures and clips go (lib/ai-edit-intent). */
+    slots?: GenSlots,
+    /** Shown in her bubble too, not sent as pictures (a clip's first moment). */
+    alsoShown: string[] = [],
+    /** On a failure, these go back in the tray (her attachments, not their uploaded copies). */
+    restoreWith?: string[],
+  ) => {
     const key = chatKey
     const init = fresh
     const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, init, fn)
@@ -431,7 +468,8 @@ export function MediaAiChat({
     const g = cur.extra.gen
     if (cur.busy || !g || g.phase === "running") return
     const run = generatorById.get(g.id)
-    const said: ChatMessage = { role: "user", content: shown ?? brief, ...(references.length ? { images: references } : {}) }
+    const bubble = [...references, ...alsoShown]
+    const said: ChatMessage = { role: "user", content: shown ?? brief, ...(bubble.length ? { images: bubble } : {}) }
     // Her own pictures go IN the media; a link's picture is a look only.
     // Off the gate (lib/feature-access) every image is a look, as before.
     const place = g?.placeRefs ? references.filter((r) => !looks.includes(r)) : []
@@ -458,8 +496,8 @@ export function MediaAiChat({
     let result: Awaited<ReturnType<typeof run>>
     try {
       result = preview
-        ? await trackAwayResult(`ai-gen-${postId}-${format}-${Date.now()}`, run(brief, lookRefs, place), isWatching, away, postId)
-        : await run(brief, lookRefs, place)
+        ? await trackAwayResult(`ai-gen-${postId}-${format}-${Date.now()}`, run(brief, lookRefs, place, slots), isWatching, away, postId)
+        : await run(brief, lookRefs, place, slots)
     } catch (err) {
       result = { ok: false, message: err instanceof Error ? err.message : String(err) }
     }
@@ -471,7 +509,7 @@ export function MediaAiChat({
           busy: false,
           // A from-zero brief is about this piece, not her lasting style —
           // nothing to offer saving to the visual language.
-          messages: [...s.messages, { role: "assistant", content: GEN_COPY[format].done, done: true, noStyle: true }],
+          messages: [...s.messages, { role: "assistant", content: result.message || GEN_COPY[format].done, done: true, noStyle: true }],
           extra: { ...s.extra, gen: null },
         }
       }
@@ -488,7 +526,7 @@ export function MediaAiChat({
         extra: { ...s.extra, gen: { ...g, phase: "brief", lastBrief: brief } },
       }
     })
-    if (!result.ok && references.length) restoreRefs(references, lookRefs)
+    if (!result.ok && (restoreWith ?? bubble).length) restoreRefs(restoreWith ?? bubble, lookRefs)
     revealChatReply(key, result.ok ? away.done : away.failed)
   }
 
@@ -519,7 +557,15 @@ export function MediaAiChat({
       extra: { ...s.extra, progress: AS_IS_BUSY, gen: null },
       messages: [...s.messages, { role: "user", content: AS_IS, ...(images.length ? { images } : {}) }],
     }))
-    const result = await requestAsIsUpload(format, items)
+    // Carousel slide slots: each file on the slide she chose.
+    const placed = slotPlacement()
+    const result =
+      placed.length && placed.length === items.length
+        ? await requestAsIsUpload(format, placed.map((p) => p.item), { at: placed.map((p) => p.i) })
+        : await requestAsIsUpload(format, items)
+    setSlotChoice({})
+    setSlotTarget(null)
+    setEmptied(null)
     patchKey((s) => ({
       ...s,
       busy: false,
@@ -616,6 +662,207 @@ export function MediaAiChat({
   const stillWithVideo = format === "image_post" && asIsAttached.some((o) => o.kind === "video")
   const asIsNow = stillWithVideo ? [] : asIsAttached
 
+  // State previews: attachments already in the composer (once, on mount).
+  const seeded = useRef(false)
+  useEffect(() => {
+    if (!seedAttachments?.length || seeded.current) return
+    seeded.current = true
+    void refs
+      .add(
+        seedAttachments.map((a) => a.preview),
+        { origins: seedAttachments.map((a) => ({ kind: a.kind, file: a.preview })) },
+      )
+      .then((added) => {
+        const choice: Record<string, number> = {}
+        added.forEach((src, i) => {
+          const at = seedAttachments[i]?.at
+          if (at !== undefined) choice[src] = at
+        })
+        setSlotChoice(choice)
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedAttachments])
+
+  // ---- Carousel slide slots (Hani, 2026-11-06) ----
+  // One slot per slide as soon as she attaches media; each file goes on the
+  // slide she chose, empty slots are made by the AI, the count never changes.
+  const slotCount = format === "carousel" ? currentUrls.length || slideCount || 0 : 0
+  const genNow = session.extra.gen
+  // Before the first generation her pictures go IN only on the placing gate
+  // (lib/feature-access) — off it they're looks, so only clips get a slot.
+  const picturesSlot = !genNow || genNow.phase === "running" || !!genNow.placeRefs
+  const originOf = (ref: string) => refs.originals([ref])[0]
+  const videoRefs = refs.refs.filter((r) => originOf(r)?.kind === "video")
+  const slottable = slotCount
+    ? refs.refs.filter((r) => {
+        const o = originOf(r)
+        return !!o && (o.kind === "video" || picturesSlot)
+      })
+    : []
+  const [slotChoice, setSlotChoice] = useState<Record<string, number>>({})
+  const [slotTarget, setSlotTarget] = useState<number | null>(null)
+  const [addMenuOpen, setAddMenuOpen] = useState(false)
+  // The slot she just emptied (the X) — the panel says it's the AI's now
+  // (Hani, 2026-11-06: "כשמחקתי שקופית מסוימת הוא לא התריע שחסרה אחת").
+  const [emptied, setEmptied] = useState<number | null>(seedEmptied ?? null)
+  // The "empty slides — make them with AI?" question: for this exact slot set.
+  const [askKey, setAskKey] = useState<string | null>(seedAskEmpty ? "*" : null)
+  const confirmedEmpty = useRef(false)
+  const slots: (string | null)[] = (() => {
+    const out: (string | null)[] = new Array(slotCount).fill(null)
+    const rest: string[] = []
+    for (const r of slottable) {
+      const c = slotChoice[r]
+      if (c !== undefined && c < slotCount && out[c] === null) out[c] = r
+      else rest.push(r)
+    }
+    for (const r of rest) {
+      const free = out.indexOf(null)
+      if (free >= 0) out[free] = r
+    }
+    return out
+  })()
+  const slotted = slots.filter((x): x is string => !!x)
+  const slotsKey = slots.map((x) => x ?? "").join("|")
+  const emptyNums = slots.flatMap((x, i) => (x ? [] : [i + 1]))
+  // Her own carousel: an empty slot keeps her slide — nothing is made with AI.
+  const emptyIsAi = !own
+  const emptyNeedsAsk = emptyIsAi && slotted.length > 0 && emptyNums.length > 0
+  const firstGen = !currentUrls.length
+  const listNums = (n: number[]) => (n.length === 1 ? `${n[0]}` : `${n.slice(0, -1).join(", ")} ו-${n[n.length - 1]}`)
+  const askNow = emptyNeedsAsk && (askKey === "*" || askKey === slotsKey)
+  function slotPlacement(): { i: number; ref: string; item: AsIsItem }[] {
+    return slots.flatMap((ref, i) => {
+      const item = ref ? originOf(ref) : undefined
+      return ref && item ? [{ i, ref, item }] : []
+    })
+  }
+  const moveSlot = (from: number, to: number) => {
+    const a = slots[from]
+    const b = slots[to]
+    if (!a) return
+    setSlotChoice((c) => ({ ...c, [a]: to, ...(b ? { [b]: from } : {}) }))
+  }
+  // The add menu, wrapped: a file added after she pointed at an empty slot goes there.
+  const slotRefs: ReferenceImages = slotCount
+    ? {
+        ...refs,
+        add: async (files, opts) => {
+          const added = await refs.add(files, opts)
+          if (slotTarget !== null && !opts?.look && added[0]) {
+            const at = slotTarget
+            setSlotChoice((c) => ({ ...c, [added[0]]: at }))
+            setSlotTarget(null)
+          }
+          return added
+        },
+      }
+    : refs
+  /**
+   * The panel's answer to what she attached (Hani, 2026-11-06: "שהצ׳אט יציע
+   * לו לשים עוד שקופית ויגיד לו אם הוא לא שם, זו שקופית מה ai").
+   */
+  const slotReply = (() => {
+    // Just emptied, and still empty: that slide is the AI's — said at once.
+    if (emptied !== null && emptied < slots.length && slots[emptied] === null) {
+      return {
+        text: emptyIsAi
+          ? `שקופית ${emptied + 1} ריקה עכשיו, אז היא תיווצר עם AI. רוצים לשים בה מדיה?`
+          : `שקופית ${emptied + 1} ריקה עכשיו, אז תישאר בה השקופית שהייתה שם. רוצים לשים בה מדיה?`,
+        more: !refs.full,
+        target: emptied,
+      }
+    }
+    if (!slotted.length) return null
+    const nums = slots.flatMap((r, i) => (r ? [i + 1] : []))
+    const kinds = slotted.map((r) => (videoRefs.includes(r) ? "video" : "image"))
+    const noun =
+      kinds.length === 1
+        ? kinds[0] === "video" ? "את הסרטון" : "את התמונה"
+        : kinds.every((k) => k === "video") ? "את הסרטונים" : kinds.every((k) => k === "image") ? "את התמונות" : "את המדיה"
+    const where = nums.length === 1 ? `בשקופית ${nums[0]}` : `בשקופיות ${nums.slice(0, -1).join(", ")} ו-${nums[nums.length - 1]}`
+    const empty = slots.length - slotted.length
+    const more = empty > 0 && !refs.full
+    return {
+      text: `שמתי ${noun} ${where}.${
+        empty > 0
+          ? `${more ? " רוצים להוסיף מדיה לשקופית נוספת?" : ""}${
+              emptyIsAi ? ` ${empty === 1 ? "שקופית שתשאירו ריקה תיווצר" : "מקומות שתשאירו ריקים ייווצרו"} עם AI בשפה הוויזואלית.` : ""
+            }`
+          : ""
+      }`,
+      more,
+      target: null as number | null,
+    }
+  })()
+
+  /**
+   * A message with media in her slide slots, on a carousel that exists: her
+   * pictures go into their slides through the AI edit (adapted as today);
+   * her clips become video slides in theirs — captioned per her words, or as
+   * they are with no words. Her own carousel: every file as it is.
+   */
+  const sendSlotted = async (text: string, attached: string[], placed: { i: number; ref: string; item: AsIsItem }[]) => {
+    const key = chatKey
+    const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, fresh, fn)
+    const imgs = own ? [] : placed.filter((p) => p.item.kind === "image")
+    const asIs = own ? placed : placed.filter((p) => p.item.kind === "video")
+    refs.clear()
+    links.reset()
+    setSentAsIs(null)
+    setSlotChoice({})
+    setSlotTarget(null)
+    setEmptied(null)
+    patchKey((s) => ({
+      ...s,
+      input: "",
+      busy: true,
+      extra: { ...s.extra, progress: imgs.length ? "מכניסים את התמונות לשקופיות שבחרתם..." : "מכינים את השקופיות שבחרתם..." },
+      messages: [...s.messages, { role: "user", content: text, ...(attached.length ? { images: attached } : {}) }],
+    }))
+    const fail = (message: string) =>
+      patchKey((s) => ({
+        ...s,
+        busy: false,
+        extra: { ...s.extra, progress: "" },
+        messages: [...s.messages, { role: "assistant", content: message, error: true }],
+      }))
+    let base: string[] | undefined
+    if (imgs.length) {
+      const pictures = attached.filter((r) => !videoRefs.includes(r))
+      // Slot pictures go up to her storage first and travel as URLs — one
+      // per slide, past the request-size cap (lib/ai-edit-references).
+      const sent = await Promise.all(
+        pictures.map((ref) => (imgs.some((p) => p.ref === ref) ? uploadSlotPicture(ref) : Promise.resolve(ref))),
+      )
+      if (sent.some((u) => !u)) return fail("לא הצלחתי להעלות את אחת התמונות. נסו שוב.")
+      const r = await editImages(text, sent as string[], [], pictures.map((ref) => imgs.find((p) => p.ref === ref)?.i ?? -1))
+      if (!r.ok) return fail(aiErrorMessage(r.message || "העריכה לא הצליחה. נסו שוב."))
+      if (r.unchanged) return fail(r.unchanged)
+      base = r.urls
+    }
+    let said = imgs.length
+      ? `הכנסתי ${imgs.length === 1 ? "את התמונה לשקופית" : "את התמונות לשקופיות"} ${imgs.map((p) => p.i + 1).join(", ")}.`
+      : ""
+    if (asIs.length) {
+      patchKey((s) => ({ ...s, extra: { ...s.extra, progress: "מכינים את שקופית הווידאו..." } }))
+      const words = text !== REFERENCE_ONLY_INSTRUCTION ? text : ""
+      const res = await requestAsIsUpload(
+        format,
+        asIs.map((p) => p.item),
+        { at: asIs.map((p) => p.i), ...(words ? { forEdit: true, instruction: words } : {}), ...(base ? { base } : {}) },
+      )
+      if (!res.ok) return fail(said ? `${said} ${res.message}` : res.message)
+      said = said ? `${said} ${res.message}` : res.message
+    }
+    patchKey((s) => ({
+      ...s,
+      busy: false,
+      extra: { ...s.extra, progress: "" },
+      messages: [...s.messages, { role: "assistant", content: said, done: true, noStyle: true }],
+    }))
+  }
+
   const send = async (preset?: string) => {
     // The reply belongs to this conversation even if the panel closes or
     // switches format before it lands.
@@ -627,6 +874,14 @@ export function MediaAiChat({
     const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, init, fn)
     const cur = getChat<ChatMessage, MediaChatExtra>(key) ?? init()
     if (cur.busy) return
+    // Slides still empty in her slots: asked first (Hani, 2026-11-06: "צריך
+    // אישור") — nothing is sent until she says yes or adds media.
+    if (emptyNeedsAsk && !confirmedEmpty.current) {
+      setAskKey(slotsKey)
+      return
+    }
+    confirmedEmpty.current = false
+    setAskKey(null)
     // Before the generation: whatever she types (and attaches) is her brief
     // for it — references alone work too, as in the AI edit.
     if (cur.extra.gen && cur.extra.gen.phase !== "running") {
@@ -636,6 +891,50 @@ export function MediaAiChat({
       const typed = (preset ?? cur.input).trim()
       const brief = typed || (placing ? PLACE_ONLY_INSTRUCTION : attached.length ? REFERENCE_ONLY_INSTRUCTION : "")
       if (!brief || links.busy) return
+      // Carousel slide slots: each picture / clip on the slide she chose.
+      const placedNow = slotPlacement()
+      if (placedNow.length) {
+        const clips = placedNow.filter((p) => p.item.kind === "video")
+        const pictures = attached.filter((r) => !videoRefs.includes(r))
+        const placeList = cur.extra.gen.placeRefs ? pictures.filter((r) => !looks.includes(r)) : []
+        const placeAt = placeList.map((r) => placedNow.find((p) => p.ref === r)?.i ?? -1)
+        // Uploaded first and sent as URLs — every slide can have one, past
+        // the request-size cap data URLs have (lib/ai-edit-references).
+        setUploading(true)
+        const uploaded = await Promise.all(placeList.map((r) => uploadSlotPicture(r)))
+        setUploading(false)
+        if (uploaded.some((u) => !u)) {
+          patchKey((s) => ({
+            ...s,
+            messages: [...s.messages, { role: "assistant", content: "לא הצלחתי להעלות את אחת התמונות. נסו שוב.", error: true }],
+          }))
+          return
+        }
+        const sendPictures = pictures.map((r) => {
+          const k = placeList.indexOf(r)
+          return k >= 0 ? (uploaded[k] as string) : r
+        })
+        const originals = refs.originals(attached)
+        setSentAsIs(originals.length ? { index: cur.messages.length, items: originals } : null)
+        refs.clear()
+        links.reset()
+        setSlotChoice({})
+        setSlotTarget(null)
+        setEmptied(null)
+        void generate(
+          brief,
+          sendPictures,
+          undefined,
+          looks,
+          {
+            ...(placeAt.length && placeAt.every((n) => n >= 0) ? { placeAt } : {}),
+            videos: clips.map((p) => ({ at: p.i, item: p.item })),
+          },
+          clips.map((p) => p.ref),
+          attached,
+        )
+        return
+      }
       // A video makes a video (never a frame).
       if (await sendWithVideo(typed || brief, attached)) return
       const originals = refs.originals(attached)
@@ -649,6 +948,12 @@ export function MediaAiChat({
     const attached = refs.refs
     if (!text && attached.length) text = REFERENCE_ONLY_INSTRUCTION
     if (!text) return
+    // Carousel slide slots: each file on the slide she chose.
+    const placedNow = slotPlacement()
+    if (placedNow.length) {
+      await sendSlotted(text, attached, placedNow)
+      return
+    }
     if (await sendWithVideo(text, attached)) return
     const originals = refs.originals(attached)
     setSentAsIs(originals.length ? { index: cur.messages.length, items: originals } : null)
@@ -790,7 +1095,9 @@ export function MediaAiChat({
     text: string,
     references: string[] = [],
     earlierReferences: string[] = [],
-  ): Promise<{ ok: true; unchanged?: string } | { ok: false; message: string }> {
+    /** Carousel slide slots: per reference, its slide (0-based) or -1. */
+    placeAt?: number[],
+  ): Promise<{ ok: true; unchanged?: string; urls?: string[] } | { ok: false; message: string }> {
     try {
       const res = await fetch("/api/media/ai-edit", {
         method: "POST",
@@ -801,6 +1108,7 @@ export function MediaAiChat({
           instruction: text,
           ...(references.length ? { references } : {}),
           ...(earlierReferences.length ? { earlierReferences } : {}),
+          ...(placeAt?.some((n) => n >= 0) ? { placeAt } : {}),
         }),
       })
       const data = (await res.json().catch(() => ({}))) as {
@@ -812,7 +1120,7 @@ export function MediaAiChat({
       if (!res.ok || !data.urls) return { ok: false, message: data.message ?? data.error ?? "העריכה לא הצליחה" }
       if (data.unchanged) return { ok: true, unchanged: data.message || "הבקשה לא שינתה כלום, אז השארתי את המדיה כמו שהייתה." }
       onUpdated?.(format, data.urls)
-      return { ok: true }
+      return { ok: true, urls: data.urls }
     } catch (err) {
       return { ok: false, message: err instanceof Error ? err.message : String(err) }
     }
@@ -947,6 +1255,59 @@ export function MediaAiChat({
           </div>
         ))}
 
+        {/* What she attached to the carousel's slots: where it went, and
+            that an empty slot is the AI's (Hani, 2026-11-06). */}
+        {askNow && !loading && (
+          <div className="flex flex-col items-end gap-1.5" role="alert">
+            <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-se-sm bg-bg-surface px-3 py-2 text-small leading-relaxed text-text-primary-default">
+              {emptyNums.length === 1 ? `שקופית ${emptyNums[0]} ריקה` : `שקופיות ${listNums(emptyNums)} ריקות`}
+              {firstGen
+                ? ` — ליצור ${emptyNums.length === 1 ? "אותה" : "אותן"} עם AI?`
+                : `, אז ${emptyNums.length === 1 ? "תישאר בה השקופית" : "יישארו בהן השקופיות"} שה-AI יצר. להמשיך?`}
+            </div>
+            <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
+              <Chip
+                onClick={() => {
+                  confirmedEmpty.current = true
+                  void send()
+                }}
+              >
+                {firstGen ? "כן, ליצור עם AI" : "כן, להמשיך"}
+              </Chip>
+              {!refs.full && (
+                <Chip
+                  onClick={() => {
+                    setAskKey(null)
+                    setSlotTarget(emptyNums[0] - 1)
+                    setAddMenuOpen(true)
+                  }}
+                >
+                  אוסיף מדיה
+                </Chip>
+              )}
+            </div>
+          </div>
+        )}
+        {slotReply && !askNow && !loading && (
+          <div className="flex flex-col items-end gap-1.5" aria-live="polite">
+            <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-se-sm bg-bg-surface px-3 py-2 text-small leading-relaxed text-text-primary-default">
+              {slotReply.text}
+            </div>
+            {slotReply.more && (
+              <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
+                <Chip
+                  onClick={() => {
+                    if (slotReply.target !== null) setSlotTarget(slotReply.target)
+                    setAddMenuOpen(true)
+                  }}
+                >
+                  להוסיף עוד מדיה
+                </Chip>
+              </div>
+            )}
+          </div>
+        )}
+
         {loading && preview && (
           <LongWaitBusyRow text={busyText} />
         )}
@@ -976,7 +1337,29 @@ export function MediaAiChat({
             <Chip onClick={() => void uploadAsIs(asIsNow, refs.split(refs.refs).place)}>{AS_IS}</Chip>
           </div>
         )}
-        <ReferenceTray r={refs} />
+        {(slotted.length > 0 || slotReply?.target != null) && (
+          <CarouselSlideSlots
+            slots={slots}
+            videos={videoRefs}
+            target={slotTarget}
+            aiEmpty={emptyIsAi}
+            onPick={(i) => {
+              setSlotTarget(i)
+              if (!refs.full) setAddMenuOpen(true)
+            }}
+            onMove={moveSlot}
+            onRemove={(i) => {
+              const at = slots[i] ? refs.refs.indexOf(slots[i]!) : -1
+              if (at < 0) return
+              // The rest stay exactly where they are — the emptied slot stays a gap.
+              setSlotChoice(Object.fromEntries(slots.flatMap((r, k) => (r && k !== i ? [[r, k]] : []))))
+              setEmptied(i)
+              refs.remove(at)
+            }}
+            disabled={loading}
+          />
+        )}
+        <ReferenceTray r={refs} hide={slotted} />
         {/* A video attached: said right away what happens with it. */}
         {asIsAttached.some((o) => o.kind === "video") ? (
           format === "image_post" ? (
@@ -985,7 +1368,7 @@ export function MediaAiChat({
             </p>
           ) : format === "carousel" ? (
             <p className="mb-2 text-xs-body text-text-neutral-default">
-              הסרטון ייכנס כשקופית וידאו (4:5, עד {CAROUSEL_VIDEO_MAX_SECONDS} שניות). עם בקשה, יתווסף עליו כיתוב מונפש; מה שצילמתם לא משתנה.
+              הסרטון ייכנס לשקופית שבחרתם (4:5, עד {CAROUSEL_VIDEO_MAX_SECONDS} שניות). עם בקשה, יתווסף עליו כיתוב מונפש; מה שצילמתם לא משתנה.
             </p>
           ) : (
             <p className="mb-2 text-xs-body text-text-neutral-default">
@@ -1024,11 +1407,16 @@ export function MediaAiChat({
             className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent px-1 py-2 text-small shadow-none focus-visible:ring-0"
           />
           {/* "מהמחשב" / "מגוגל דרייב" — the folder linked to this format (Hani, 2026-11-06). */}
-          <ReferenceAddMenu r={refs} format={format} disabled={loading} />
+          <ReferenceAddMenu
+            r={slotRefs}
+            format={format}
+            disabled={loading}
+            {...(slotCount ? { menuOpen: addMenuOpen, onMenuOpenChange: setAddMenuOpen } : {})}
+          />
           <Button
             size="icon-sm"
             onClick={() => void send()}
-            disabled={(!input.trim() && !refs.refs.length) || loading || links.busy}
+            disabled={(!input.trim() && !refs.refs.length) || loading || links.busy || uploading}
             aria-label={gen && gen.phase !== "running" ? "יצירה" : "שליחה"}
             className="shrink-0 rounded-full"
           >
