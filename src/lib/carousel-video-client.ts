@@ -46,3 +46,29 @@ export async function makeCarouselVideoSlide(opts: {
     return { ok: false, message: err instanceof Error ? err.message : "לא הצלחתי להכין את שקופית הווידאו." }
   }
 }
+
+/**
+ * A slide-slot picture into her storage, its public URL back (Hani,
+ * 2026-11-06 — fill every slide at once). Sent as a URL, so six or ten
+ * pictures don't push the request past Vercel's 4.5MB body limit, as data
+ * URLs would. `src`: the composer's shrunk preview (data URL) or her file.
+ */
+export async function uploadSlotPicture(src: string | File): Promise<string | null> {
+  try {
+    if (typeof src === "string" && /^https?:\/\//i.test(src)) return src
+    const supabase = createClient()
+    const {
+      data: { user },
+    } = await getCurrentUser(supabase)
+    if (!user) return null
+    const blob = typeof src === "string" ? await (await fetch(src)).blob() : src
+    const type = blob.type || "image/jpeg"
+    const ext = type.includes("png") ? "png" : type.includes("webp") ? "webp" : "jpg"
+    const path = `${user.id}/slots/${crypto.randomUUID()}.${ext}`
+    const { error } = await supabase.storage.from("user-media").upload(path, blob, { contentType: type })
+    if (error) return null
+    return supabase.storage.from("user-media").getPublicUrl(path).data.publicUrl
+  } catch {
+    return null
+  }
+}

@@ -2,7 +2,7 @@ import { canEditPictures } from "@/lib/feature-access"
 import { PICTURE_UNCHANGED, adaptPictureForSlide, editPicture, wantsPictureAsIs } from "@/lib/picture-edit"
 import { gatePlacement } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
-import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
+import { resolveReferences, parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
 import sharp from "sharp"
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
@@ -276,7 +276,19 @@ export async function POST(req: NextRequest) {
     // model as reference images. The saved brief keeps the plain lines, so
     // later edits aren't told about images they don't have.
     // Placing is Hani-only for now (lib/feature-access); off it, all are looks.
-    const gated = gatePlacement(user.email, parseReferences(place), parseReferences(references))
+    const placeIn = await resolveReferences(place, user.id)
+    if (Array.isArray(place) && placeIn.length !== place.length) {
+      return NextResponse.json(
+        { error: "slot_picture_unreadable", message: "לא הצלחתי לקרוא את אחת התמונות שצירפתם, אז לא יצרתי כלום. נסו לצרף אותה שוב." },
+        { status: 422 },
+      )
+    }
+    const gated = gatePlacement(
+      user.email,
+      // Her pictures may be storage URLs (the slide slots — up to a carousel's maximum).
+      placeIn,
+      parseReferences(references),
+    )
     const refs = gated.looks
     const refDirection = withMediaReferences(direction, refs)
     // Her own pictures (Hani, 2026-11-05): placed as her exact files by the

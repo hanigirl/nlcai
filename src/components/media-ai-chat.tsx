@@ -28,7 +28,7 @@ import {
 } from "@/lib/ai-chat-session-store"
 import { AiChatNewButton } from "@/components/ai-chat-new-button"
 import { canRevealChat, revealChatReply } from "@/lib/ai-chat-reveal"
-import { REFERENCE_ONLY_INSTRUCTION } from "@/lib/ai-edit-references"
+import { MAX_REFERENCES, MAX_SLOT_REFERENCES, REFERENCE_ONLY_INSTRUCTION } from "@/lib/ai-edit-references"
 import {
   ReferenceDropHint,
   ReferenceThumbs,
@@ -39,6 +39,7 @@ import { LinkReferenceRows, useLinkReferences } from "@/components/ai-edit-link-
 import { ReferenceAddMenu } from "@/components/ai-edit-drive-reference"
 import { requestAsIsUpload, type AsIsItem } from "@/lib/as-is-upload"
 import { CAROUSEL_VIDEO_MAX_SECONDS } from "@/lib/carousel-video"
+import { uploadSlotPicture } from "@/lib/carousel-video-client"
 import { CarouselSlideSlots } from "@/components/carousel-slide-slots"
 import type { ReferenceImages } from "@/components/ai-edit-reference"
 import type { MediaStyle } from "@/lib/visual-language/types"
@@ -392,7 +393,15 @@ export function MediaAiChat({
   // she's really away.
   useWatchChat(chatKey)
   // Screenshots waiting to go with the next message; another conversation starts clean.
-  const refs = useReferenceImages()
+  // A carousel's slide slots take one attachment per slide (up to 10), sent
+  // as storage URLs; everywhere else the 3-reference cap stays.
+  const slotsMax =
+    format === "carousel" &&
+    (!session.extra.gen || session.extra.gen.phase === "running" || !!session.extra.gen.placeRefs)
+      ? Math.min(MAX_SLOT_REFERENCES, Math.max(MAX_REFERENCES, currentUrls.length || slideCount || 0))
+      : MAX_REFERENCES
+  const refs = useReferenceImages(slotsMax)
+  const [uploading, setUploading] = useState(false)
   /**
    * The originals of the attachments she just sent with a message — "להעלות
    * כמו שזה" stays offered under that message once the AI has answered.
@@ -443,6 +452,8 @@ export function MediaAiChat({
     slots?: GenSlots,
     /** Shown in her bubble too, not sent as pictures (a clip's first moment). */
     alsoShown: string[] = [],
+    /** On a failure, these go back in the tray (her attachments, not their uploaded copies). */
+    restoreWith?: string[],
   ) => {
     const key = chatKey
     const init = fresh
@@ -509,7 +520,7 @@ export function MediaAiChat({
         extra: { ...s.extra, gen: { ...g, phase: "brief", lastBrief: brief } },
       }
     })
-    if (!result.ok && bubble.length) restoreRefs(bubble, lookRefs)
+    if (!result.ok && (restoreWith ?? bubble).length) restoreRefs(restoreWith ?? bubble, lookRefs)
     revealChatReply(key, result.ok ? away.done : away.failed)
   }
 
@@ -784,7 +795,13 @@ export function MediaAiChat({
     let base: string[] | undefined
     if (imgs.length) {
       const pictures = attached.filter((r) => !videoRefs.includes(r))
-      const r = await editImages(text, pictures, [], pictures.map((ref) => imgs.find((p) => p.ref === ref)?.i ?? -1))
+      // Slot pictures go up to her storage first and travel as URLs — one
+      // per slide, past the request-size cap (lib/ai-edit-references).
+      const sent = await Promise.all(
+        pictures.map((ref) => (imgs.some((p) => p.ref === ref) ? uploadSlotPicture(ref) : Promise.resolve(ref))),
+      )
+      if (sent.some((u) => !u)) return fail("לא הצלחתי להעלות את אחת התמונות. נסו שוב.")
+      const r = await editImages(text, sent as string[], [], pictures.map((ref) => imgs.find((p) => p.ref === ref)?.i ?? -1))
       if (!r.ok) return fail(aiErrorMessage(r.message || "העריכה לא הצליחה. נסו שוב."))
       if (r.unchanged) return fail(r.unchanged)
       base = r.urls
@@ -838,6 +855,22 @@ export function MediaAiChat({
         const pictures = attached.filter((r) => !videoRefs.includes(r))
         const placeList = cur.extra.gen.placeRefs ? pictures.filter((r) => !looks.includes(r)) : []
         const placeAt = placeList.map((r) => placedNow.find((p) => p.ref === r)?.i ?? -1)
+        // Uploaded first and sent as URLs — every slide can have one, past
+        // the request-size cap data URLs have (lib/ai-edit-references).
+        setUploading(true)
+        const uploaded = await Promise.all(placeList.map((r) => uploadSlotPicture(r)))
+        setUploading(false)
+        if (uploaded.some((u) => !u)) {
+          patchKey((s) => ({
+            ...s,
+            messages: [...s.messages, { role: "assistant", content: "לא הצלחתי להעלות את אחת התמונות. נסו שוב.", error: true }],
+          }))
+          return
+        }
+        const sendPictures = pictures.map((r) => {
+          const k = placeList.indexOf(r)
+          return k >= 0 ? (uploaded[k] as string) : r
+        })
         const originals = refs.originals(attached)
         setSentAsIs(originals.length ? { index: cur.messages.length, items: originals } : null)
         refs.clear()
@@ -846,7 +879,7 @@ export function MediaAiChat({
         setSlotTarget(null)
         void generate(
           brief,
-          pictures,
+          sendPictures,
           undefined,
           looks,
           {
@@ -854,6 +887,7 @@ export function MediaAiChat({
             videos: clips.map((p) => ({ at: p.i, item: p.item })),
           },
           clips.map((p) => p.ref),
+          attached,
         )
         return
       }
@@ -1295,7 +1329,7 @@ export function MediaAiChat({
           <Button
             size="icon-sm"
             onClick={() => void send()}
-            disabled={(!input.trim() && !refs.refs.length) || loading || links.busy}
+            disabled={(!input.trim() && !refs.refs.length) || loading || links.busy || uploading}
             aria-label={gen && gen.phase !== "running" ? "יצירה" : "שליחה"}
             className="shrink-0 rounded-full"
           >

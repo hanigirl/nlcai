@@ -70,7 +70,7 @@ import type { SlideData, TemplateConfig } from "@/lib/carousel-templates"
 import { flushPendingSaves } from "@/lib/pending-saves"
 import { BLANK_TEMPLATE, BLANK_TEMPLATE_ID, BRAND_TEMPLATE_ID, CAROUSEL_TEMPLATES } from "@/lib/carousel-templates"
 import { openingId, requestAiEdit, type AiEditGenerateOpening, type GenSlots } from "@/lib/ai-edit-intent"
-import { makeCarouselVideoSlide } from "@/lib/carousel-video-client"
+import { makeCarouselVideoSlide, uploadSlotPicture } from "@/lib/carousel-video-client"
 import { isVideoSlide } from "@/lib/carousel-video"
 import { registerAsIsImporter, requestDrivePicker, type AsIsItem, type AsIsOptions, type AsIsResult } from "@/lib/as-is-upload"
 import { AiHoverEditButton } from "@/components/ai-hover-edit"
@@ -2118,22 +2118,20 @@ function CarouselFlow({
               if (!v.ok) return { ok: false, message: `${v.message} (שקופית ${at[i] + 1})` }
               made.push({ at: at[i], slide: v.url })
             } else if (it.file) {
-              const b64 = await new Promise<string>((resolve, reject) => {
-                const r = new FileReader()
-                r.onload = () => resolve(String(r.result).replace(/^data:[^,]*,/, ""))
-                r.onerror = () => reject(new Error("read"))
-                r.readAsDataURL(it.file!)
-              })
-              made.push({ at: at[i], slide: b64 })
+              // Into her storage, kept as a URL — a whole carousel of slot
+              // pictures never rides in one request body.
+              const url = await uploadSlotPicture(it.file)
+              if (!url) return { ok: false, message: `העלאת התמונה לשקופית ${at[i] + 1} נכשלה. נסו שוב.` }
+              made.push({ at: at[i], slide: url })
             } else if (it.drive) {
               const res = await fetch("/api/media/from-drive", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ url: it.drive, store: false }),
+                body: JSON.stringify({ url: it.drive }),
               })
-              const data = (await res.json().catch(() => ({}))) as { base64?: string }
-              if (!res.ok || !data.base64) return { ok: false, message: `טעינת שקופית ${at[i] + 1} מהדרייב נכשלה.` }
-              made.push({ at: at[i], slide: data.base64 })
+              const data = (await res.json().catch(() => ({}))) as { url?: string; kind?: string }
+              if (!res.ok || !data.url || data.kind === "video") return { ok: false, message: `טעינת שקופית ${at[i] + 1} מהדרייב נכשלה.` }
+              made.push({ at: at[i], slide: data.url })
             }
           }
           let next: string[]

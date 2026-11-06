@@ -22,7 +22,7 @@ import {
   measureArtSlots,
 } from "@/lib/carousel-composition"
 import { isOwnMediaUrl } from "@/lib/own-media"
-import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
+import { parseReferences, referenceBuffer, resolveReferences } from "@/lib/ai-edit-references"
 import {
   changedArea,
   editPrompt,
@@ -106,22 +106,6 @@ export async function POST(req: NextRequest) {
       placeAt?: unknown
     }
     const text = instruction?.trim()
-    const current = parseReferences(references)
-    const refs = current.length ? current : parseReferences(earlierReferences)
-    // What the models read: says where the images came from when they weren't attached now.
-    // Her slide slots: which attached image goes on which slide, exactly.
-    const slotted =
-      Array.isArray(rawPlaceAt) && rawPlaceAt.length === current.length
-        ? rawPlaceAt.flatMap((n, j) => (Number.isInteger(n) && n >= 0 ? [{ j, i: n as number }] : []))
-        : []
-    const slotNote = slotted.length
-      ? `\nShe chose exactly where her pictures go: ${slotted.map(({ j, i }) => `attached image ${j + 1} on slide ${i + 1}`).join(", ")}. Place each one on exactly that slide (in "attached") and no other; slides she didn't choose keep what they have unless she asks otherwise.`
-      : ""
-    const ask0 =
-      text && !current.length && refs.length
-        ? `${text}\n(The attached image${refs.length > 1 ? "s" : ""} came with her earlier message in this chat.)`
-        : text
-    const ask = ask0 ? `${ask0}${slotNote}` : ask0
     if (!postId || !text || !isEditableFormat(format)) {
       return NextResponse.json({ error: "postId, format and instruction are required" }, { status: 400 })
     }
@@ -137,6 +121,31 @@ export async function POST(req: NextRequest) {
       .eq("user_id", user.id)
       .maybeSingle()
     if (!post) return NextResponse.json({ error: "Post not found" }, { status: 404 })
+    // Slide slots send her pictures as storage URLs, one per slide, up to a
+    // carousel's maximum (lib/ai-edit-references); otherwise data URLs, max 3.
+    const slotsSent = Array.isArray(rawPlaceAt) && rawPlaceAt.some((n) => Number.isInteger(n) && n >= 0)
+    const current = slotsSent ? await resolveReferences(references, user.id) : parseReferences(references)
+    if (slotsSent && Array.isArray(references) && current.length !== references.length) {
+      return NextResponse.json(
+        { error: "slot_picture_unreadable", message: "לא הצלחתי לקרוא את אחת התמונות שבחרתם לשקופיות, אז לא שיניתי כלום. נסו לצרף אותה שוב." },
+        { status: 422 },
+      )
+    }
+    const refs = current.length ? current : parseReferences(earlierReferences)
+    // What the models read: says where the images came from when they weren't attached now.
+    // Her slide slots: which attached image goes on which slide, exactly.
+    const slotted =
+      Array.isArray(rawPlaceAt) && rawPlaceAt.length === current.length
+        ? rawPlaceAt.flatMap((n, j) => (Number.isInteger(n) && n >= 0 ? [{ j, i: n as number }] : []))
+        : []
+    const slotNote = slotted.length
+      ? `\nShe chose exactly where her pictures go: ${slotted.map(({ j, i }) => `attached image ${j + 1} on slide ${i + 1}`).join(", ")}. Place each one on exactly that slide (in "attached") and no other; slides she didn't choose keep what they have unless she asks otherwise.`
+      : ""
+    const ask0 =
+      text && !current.length && refs.length
+        ? `${text}\n(The attached image${refs.length > 1 ? "s" : ""} came with her earlier message in this chat.)`
+        : text
+    const ask = ask0 ? `${ask0}${slotNote}` : ask0
 
     const { data: variant } = await supabase
       .from("format_variants")

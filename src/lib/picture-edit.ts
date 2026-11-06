@@ -93,6 +93,41 @@ export async function adaptPictureForSlide(
   styleLines: string[],
   slideNumber: number,
 ): Promise<PictureEditResult> {
+  // Each picture on its own slide, in one call of its own — at most
+  // ADAPT_CONCURRENCY at a time, so filling every slide of a carousel at
+  // once (the slide slots, up to 10) doesn't burst the image model's limits.
+  await adaptSlot()
+  try {
+    return await adaptOne(openaiKey, claudeKey, source, slot, styleLines, slideNumber)
+  } finally {
+    adaptDone()
+  }
+}
+
+const ADAPT_CONCURRENCY = 3
+let adapting = 0
+const adaptQueue: (() => void)[] = []
+function adaptSlot(): Promise<void> {
+  if (adapting < ADAPT_CONCURRENCY) {
+    adapting++
+    return Promise.resolve()
+  }
+  return new Promise((resolve) => adaptQueue.push(resolve))
+}
+function adaptDone() {
+  const next = adaptQueue.shift()
+  if (next) next()
+  else adapting--
+}
+
+async function adaptOne(
+  openaiKey: string,
+  claudeKey: string | null,
+  source: Buffer,
+  slot: { width: number; height: number; textOver: "top" | "middle" | "bottom" | null },
+  styleLines: string[],
+  slideNumber: number,
+): Promise<PictureEditResult> {
   const shape = nearestShape(slot.width, slot.height)
   const input: ModelImage = await normaliseImage(source)
   const language = styleLines.join("\n").slice(0, 2500)

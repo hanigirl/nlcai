@@ -31,6 +31,45 @@ export function parseReferences(raw: unknown): string[] {
     .slice(0, MAX_REFERENCES)
 }
 
+/**
+ * The carousel's slide slots (Hani, 2026-11-06: "יש לי עכשיו 3 שקופיות ואני
+ * רוצה להמשיך לסדר את ה 6"): up to a carousel's maximum, one picture per
+ * slide. The 3 above is a request-size cap (every picture rides in the body
+ * as a data URL, under Vercel's 4.5MB) — slot pictures are uploaded to her
+ * storage first and sent as URLs, so they don't count against it.
+ */
+export const MAX_SLOT_REFERENCES = 10
+
+/**
+ * References that may be HER storage URLs (slot pictures) as well as data
+ * URLs: each URL is fetched here and turned into a data URL, so every model
+ * call and `referenceBuffer` work unchanged. Only her own folder of our
+ * storage — anything else is dropped.
+ */
+export async function resolveReferences(raw: unknown, userId: string, max = MAX_SLOT_REFERENCES): Promise<string[]> {
+  if (!Array.isArray(raw)) return []
+  const base = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const prefix = base ? `${new URL(base).origin}/storage/v1/object/public/user-media/${userId}/` : null
+  const out = await Promise.all(
+    raw.slice(0, max).map(async (r): Promise<string | null> => {
+      if (typeof r !== "string") return null
+      if (DATA_URL.test(r)) return r.length <= MAX_DATA_URL_CHARS ? r : null
+      if (!prefix || !r.startsWith(prefix)) return null
+      try {
+        const res = await fetch(r)
+        if (!res.ok) return null
+        const type = (res.headers.get("content-type") ?? "").split(";")[0].trim()
+        if (!/^image\/(png|jpeg|webp|gif)$/.test(type)) return null
+        const b64 = Buffer.from(await res.arrayBuffer()).toString("base64")
+        return `data:${type};base64,${b64}`
+      } catch {
+        return null
+      }
+    }),
+  )
+  return out.filter((x): x is string => !!x)
+}
+
 function imageBlock(r: string): Anthropic.ContentBlockParam {
   const [, mediaType, data] = r.match(DATA_URL)!
   return { type: "image", source: { type: "base64", media_type: mediaType as MediaType, data } }

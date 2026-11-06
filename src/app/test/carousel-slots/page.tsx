@@ -4,10 +4,12 @@
  * State preview for the carousel's slide slots in the AI panel (Hani,
  * 2026-11-06: "תן למשתמש להחליט מתי הוא רוצה סרטון").
  *
- * Route: /test/carousel-slots?state=one|mixed|full|first|none
+ * Route: /test/carousel-slots?state=one|mixed|six|full|first|none
  *   one   — a 6-slide carousel, one picture attached (in slide 1): the panel
  *           says where it went, offers more media, says empty = AI.
  *   mixed — a picture in slide 1 and a video in slide 3 (play mark).
+ *   six   — every slide of a 6-slide carousel filled in one go (5 pictures
+ *           and a video) — past the old 3-attachment cap.
  *   full  — a 3-slide carousel, every slot filled: no line about the AI.
  *   first — no carousel yet (first generation): 6 slots from the script's
  *           planned count, a picture in slide 2.
@@ -27,6 +29,7 @@ import { openingId, type AiEditOpening } from "@/lib/ai-edit-intent"
 const STATES = [
   { id: "one", label: "תמונה אחת בקרוסלה של 6" },
   { id: "mixed", label: "תמונה + סרטון" },
+  { id: "six", label: "כל 6 השקופיות בבת אחת" },
   { id: "full", label: "כל השקופיות מלאות" },
   { id: "first", label: "לפני היצירה הראשונה" },
   { id: "none", label: "בלי מדיה" },
@@ -57,8 +60,11 @@ function Panel({ state }: { state: State }) {
       const pic = await fileOf("/images/carousel-templates/ai-amber.png", "photo.png")
       const frame = await fileOf("/images/carousel-templates/ai-dark.png", "clip-frame.png")
       const pic2 = await fileOf("/images/carousel-templates/ai-ice.png", "photo2.png")
+      const six = await Promise.all(SLIDES.map((p, i) => fileOf(p, `slide-${i + 1}.png`)))
       const next: Seed[] =
-        state === "one"
+        state === "six"
+          ? six.map((f, i) => ({ preview: f, kind: i === 3 ? "video" : "image", at: i }))
+          : state === "one"
           ? [{ preview: pic, kind: "image", at: 0 }]
           : state === "mixed"
             ? [
