@@ -1,5 +1,6 @@
 "use client"
 
+import { VideoWithPlay } from "@/components/video-with-play"
 import { useState } from "react"
 import { extractDriveFileId, driveEmbedUrl, driveThumbnailUrl, playableVideoSrc } from "@/lib/drive-media"
 
@@ -67,7 +68,7 @@ export function DriveVideoPreview({
         onOpen()
       }}
     >
-      <video
+      <VideoWithPlay
         src={playableVideoSrc(url)}
         poster={driveThumbnailUrl(fileId, 800)}
         controls

@@ -336,7 +336,9 @@ function renderCover(
 
 export async function POST(req: NextRequest) {
   try {
-    const { thumbnail_url, title, pill_color, use_cover_settings } = (await req.json()) as {
+    const { thumbnail_url, title, pill_color, use_cover_settings, requested } = (await req.json()) as {
+      /** She pressed "יצירת קאבר" (or asked again). */
+      requested?: boolean
       thumbnail_url?: string
       title: string
       pill_color?: string
@@ -355,6 +357,13 @@ export async function POST(req: NextRequest) {
     const user = await getAuthUser(supabase)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    // Hani + Nataliya: a talking-head cover is made ONLY when she asks
+    // (2026-11-08 — one was made on its own). Every automatic path (post
+    // load, a video landing, the panel) is refused here, whatever the client.
+    if (canTalkingHeadAi(user.email) && !requested) {
+      return NextResponse.json({ error: "cover_on_request" }, { status: 409 })
     }
 
     // Per-user brand_style is intentionally bypassed here — every cover

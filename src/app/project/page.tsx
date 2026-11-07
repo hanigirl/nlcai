@@ -1,5 +1,6 @@
 "use client"
 
+import { VideoWithPlay } from "@/components/video-with-play"
 import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { FormatLane, LaneColumn, LaneStem, TreeConnector, newestLaneCard } from "@/components/format-lanes"
 import { useAiEditRequests, type AiEditOpening } from "@/lib/ai-edit-intent"
@@ -43,6 +44,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipLabel } from "@/components/ui/tooltip"
 import { MediaPanel } from "@/components/media-panel"
+import { isTalkingHeadRender } from "@/lib/talking-head-original"
 import {
   FormatCardsRow,
   FormatPanelFooter,
@@ -762,12 +764,31 @@ function ProjectPageInner() {
   // sidesteps the state-update race when the user picks a new pill colour
   // and we kick off a regenerate before pillColor has flushed through
   // the next render.
-  const generateCoverForPost = async (hookText: string, videoSrc?: string, colorOverride?: string) => {
+  const generateCoverForPost = async (
+    hookText: string,
+    videoSrcIn?: string,
+    colorOverride?: string,
+    /** She pressed "יצירת קאבר" / "ליצור מחדש". Gated users get a cover ONLY this way. */
+    requested = false,
+  ) => {
+    // Hani + Nataliya: a cover is made only when she asks (Hani, 2026-11-08 —
+    // one was made on its own at 22:53). The server refuses it too.
+    if (thAiOnRef.current && !requested) return
     setThCoverLoading(true)
     let thumbnailUrl: string | undefined
+    // The frame comes from her ORIGINAL video — an edited render has captions
+    // burned in, and a cover must not carry them.
+    let videoSrc = videoSrcIn
+    const fromRender = isTalkingHeadRender(videoSrc)
+    if (fromRender && savedPostId) {
+      const orig = await fetch(`/api/talking-head/original?postId=${encodeURIComponent(savedPostId)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null) as { url?: string | null } | null
+      if (orig?.url) videoSrc = orig.url
+    }
 
-    // Reuse saved frame data URL if available
-    if (thVideoFrameDataUrl) {
+    // Reuse saved frame data URL if available (not one taken from a render)
+    if (thVideoFrameDataUrl && !fromRender) {
       thumbnailUrl = thVideoFrameDataUrl
     } else if (isDriveUrl(videoSrc)) {
       // Link-mode video: the clip lives in Drive, so a canvas frame-grab
@@ -798,6 +819,7 @@ function ProjectPageInner() {
           title: hookText,
           thumbnail_url: thumbnailUrl,
           pill_color: colorOverride ?? pillColor,
+          ...(requested ? { requested: true } : {}),
           // Talking head AI edit (gated): her cover examples are the style.
           ...(thAiOnRef.current ? { use_cover_settings: true } : {}),
         }),
@@ -1123,6 +1145,7 @@ function ProjectPageInner() {
                     })
                     const stored = await storeRes.json()
                     if (stored.url) {
+                      prevVideoUrlRef.current = stored.url
                       setThVideoUrl(stored.url)
                       if (postId) {
                         fetch(`/api/core-posts/${postId}`, {
@@ -1143,6 +1166,9 @@ function ProjectPageInner() {
                   if (hookForCover && !hasSavedCover) autoCover(() => generateCoverForPost(hookForCover))
                 })
             } else {
+              // Already the post's video: the autosave must not write it again
+              // (a fresh row per load — Hani, 2026-11-08).
+              prevVideoUrlRef.current = videoUrl
               setThVideoUrl(videoUrl)
               if (hookForCover && !hasSavedCover) autoCover(() => generateCoverForPost(hookForCover, videoUrl))
             }
@@ -2391,7 +2417,7 @@ function ProjectPageInner() {
                 }
                 cover={thCoverImage}
                 coverLoading={thCoverLoading}
-                onCreateCover={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
+                onCreateCover={() => generateCoverForPost(coverText, thVideoUrl || undefined, undefined, true)}
                 hasCoverSettings={!!hasCoverSettings}
                 brandBackground={coverDefaultColor.toLowerCase() !== "#000000"}
               />
@@ -2419,7 +2445,7 @@ function ProjectPageInner() {
               fid === "talking_head" && thAiOn && !thCoverImage && !thCoverSkipped && approvalProps.status !== "approved" && approvalProps.status !== "scheduled" ? (
                 <TalkingHeadCoverReminder
                   loading={thCoverLoading}
-                  onCreate={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
+                  onCreate={() => generateCoverForPost(coverText, thVideoUrl || undefined, undefined, true)}
                   onApproveWithout={() => {
                     setThCoverSkipped(true)
                     approvalProps.onApprove()
@@ -2517,7 +2543,7 @@ function ProjectPageInner() {
       {/* Media Panel — sibling to InfiniteCanvas, slides from left */}
       <MediaPanel
         // Only when we KNOW she isn't gated — never while the gate is loading.
-        onThCreateCover={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
+        onThCreateCover={() => generateCoverForPost(coverText, thVideoUrl || undefined, undefined, true)}
         thCoverLoading={thCoverLoading}
         thAutoCover={thAiGate === false}
         formatId={selectedFormatCard}
@@ -3307,7 +3333,7 @@ function ProjectPageInner() {
                       thCoverLoading={thCoverLoading}
                       coverText={coverText}
                       onCoverTextChange={setCoverText}
-                      onCoverRegenerate={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
+                      onCoverRegenerate={() => generateCoverForPost(coverText, thVideoUrl || undefined, undefined, true)}
                       pillColor={pillColor}
                       onPillColorChange={(next) => {
                         pillTouchedRef.current = true
@@ -3316,7 +3342,7 @@ function ProjectPageInner() {
                         // commits; we drop the CSS overlay only after the
                         // regenerated PNG lands so the user never sees
                         // the old colour flash back during the round-trip.
-                        generateCoverForPost(coverText, thVideoUrl || undefined, next)
+                        generateCoverForPost(coverText, thVideoUrl || undefined, next, true)
                           .finally(() => setLivePillColor(null))
                       }}
                       livePillColor={livePillColor}
@@ -4302,7 +4328,7 @@ function FormatTree({
                                 onMouseDown={(e) => e.stopPropagation()}
                               />
                             ) : (
-                              <video
+                              <VideoWithPlay
                                 src={`${playableVideoSrc(bRollUrl)}#t=0.001`}
                                 controls
                                 playsInline
@@ -4592,7 +4618,7 @@ function CarouselResultCard({
             {isVideoSlide(shownSlides[currentSlide]) ? (
               // A video slide (2026-11-06): it plays on the card; only its
               // control bar takes clicks (MediaPreviewZone skips video[controls]).
-              <video
+              <VideoWithPlay
                 key={shownSlides[currentSlide]}
                 src={`${playableVideoSrc(shownSlides[currentSlide])}#t=0.001`}
                 controls

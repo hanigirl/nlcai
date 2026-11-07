@@ -80,3 +80,8 @@ export async function recordedOriginal(supabase: SupabaseClient, userId: string,
   await writeRecord(supabase, userId, postId, { originalUrl: rec.originalUrl })
   return rec.originalUrl
 }
+
+/** Her original, read only — nothing reset (for a cover made from the original). */
+export async function peekOriginal(supabase: SupabaseClient, userId: string, postId: string): Promise<string | null> {
+  return (await readRecord(supabase, userId, postId))?.originalUrl ?? null
+}

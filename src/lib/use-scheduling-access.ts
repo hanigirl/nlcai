@@ -72,10 +72,13 @@ function useEmailGate(allowed: (email: string | null | undefined) => boolean): b
     let cancelled = false
     getCurrentUser(createClient())
       .then(({ data }) => {
-        if (!cancelled) setOn(allowed(data.user?.email))
+        // No user read (a session hiccup) is "unknown", not "not allowed" — a
+        // false here let the automatic talking-head cover run for Hani
+        // (2026-11-08). Gated features treat null as off anyway.
+        if (!cancelled) setOn(data.user?.email ? allowed(data.user.email) : null)
       })
       .catch(() => {
-        if (!cancelled) setOn(false)
+        if (!cancelled) setOn(null)
       })
     return () => {
       cancelled = true
