@@ -61,7 +61,24 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const transcript = await transcribeVideo(openaiKey, videoUrl)
+    // What she meant to say (the hook + the talking-head script) and her
+    // brand names: context for Whisper and the spelling reference.
+    const [{ data: postRow }, { data: variantRow }, { data: userRow }] = await Promise.all([
+      supabase.from("core_posts").select("hook_text").eq("id", postId).maybeSingle(),
+      supabase.from("format_variants").select("body").eq("core_post_id", postId).eq("format", "talking_head").maybeSingle(),
+      supabase.from("users").select("visual_language").eq("id", user.id).maybeSingle(),
+    ])
+    const script = [
+      (postRow as { hook_text?: string | null } | null)?.hook_text,
+      (variantRow as { body?: string | null } | null)?.body,
+    ]
+      .filter(Boolean)
+      .join("\n")
+    const vl = (userRow as { visual_language?: { elements?: { name?: string }[] } | null } | null)?.visual_language
+    const names = (vl?.elements ?? []).map((e) => e.name ?? "").filter(Boolean)
+    // Opus 5.5 spelling pass on her Claude key, when she has one.
+    const anthropicKey = await getUserApiKey(supabase, "anthropic_api_key").catch(() => null)
+    const transcript = await transcribeVideo(openaiKey, videoUrl, { script, names, anthropicKey })
     return NextResponse.json({ ...transcript, lines: captionLines(transcript.words) })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
