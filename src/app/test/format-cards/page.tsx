@@ -110,7 +110,8 @@ function startStates(state: StateId): Record<string, FormatCardState> {
 
 function Preview() {
   const params = useSearchParams()
-  const variant: FormatCardsVariant = params.get("variant") === "b" ? "b" : "a"
+  const vp = params.get("variant")
+  const variant: FormatCardsVariant = vp === "b" || vp === "c" ? vp : "a"
   const state = (STATES.find((s) => s.id === params.get("state"))?.id ?? "row") as StateId
 
   const [cardStates, setCardStates] = useState(() => startStates(state))
@@ -201,7 +202,7 @@ function Preview() {
           </Button>
         </div>
       )
-      if (variant === "a") {
+      if (variant !== "b") {
         title = "יצירת מדיה"
         headerStart = (
           <button
@@ -275,7 +276,7 @@ function Preview() {
         className="fixed inset-x-0 top-0 z-40 flex h-14 items-center gap-2 overflow-x-auto border-b border-border-neutral-default bg-white px-4 dark:bg-gray-10"
       >
         <span className="text-small-bold text-text-primary-default shrink-0">אופציה</span>
-        {(["a", "b"] as const).map((v) => (
+        {(["a", "b", "c"] as const).map((v) => (
           <a
             key={v}
             href={`?variant=${v}&state=${state}`}

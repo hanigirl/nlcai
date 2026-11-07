@@ -2166,7 +2166,7 @@ function ProjectPageInner() {
     if (!item) return {}
     const copyAi = previewOn ? copyEdit.copyAi : undefined
     if (panelStep === "media") {
-      return cardsVariant === "a"
+      return cardsVariant !== "b"
         ? { onBack: () => setPanelStep("script"), headerTitle: "יצירת מדיה" }
         : {
             scriptView: (

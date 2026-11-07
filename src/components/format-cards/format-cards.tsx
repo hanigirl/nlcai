@@ -46,11 +46,12 @@ import { storyFrameSrc } from "@/components/story-player"
 import { stripFrameMarkers } from "@/lib/story-text-split"
 import { cn } from "@/lib/utils"
 
-export type FormatCardsVariant = "a" | "b"
+/** c = Hani's pick (2026-11-07): B's uniform cards + A's two-screen panel. */
+export type FormatCardsVariant = "a" | "b" | "c"
 
 /** Read `?cards=` — anything but a / b is the production canvas. */
 export function parseCardsVariant(v: string | null): FormatCardsVariant | null {
-  return v === "a" || v === "b" ? v : null
+  return v === "a" || v === "b" || v === "c" ? v : null
 }
 
 export type FormatCardMedia =
