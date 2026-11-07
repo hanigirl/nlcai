@@ -18,6 +18,9 @@
  *   three — no carousel yet, 3 slides planned, 3 pictures attached: the live
  *           bug's start (2026-11-07). Remove one with the X, then press send
  *           or "להעלות כמו שזה" — the panel must ask about the empty slide.
+ *   existing — a carousel the AI already made, one picture attached: no
+ *           slots any more (Hani, 2026-11-07) — the picture is a reference /
+ *           element the edit uses as she says (type "לשים בכל השקופיות").
  *   live  — no carousel yet, 3 slides planned, nothing attached: attach from
  *           the computer yourself (the real add menu), X one, then
  *           "להעלות כמו שזה" — the real path of the 2026-11-07 bug.
@@ -43,6 +46,7 @@ const STATES = [
   { id: "six", label: "כל 6 השקופיות בבת אחת" },
   { id: "emptied", label: "אחרי מחיקה משקופית 4" },
   { id: "ask", label: "שאלה לפני יצירה עם AI" },
+  { id: "existing", label: "קרוסלה קיימת + תמונה (רפרנס, בלי משבצות)" },
   { id: "live", label: "ריק, לפני היצירה — לצרף בעצמכם מהמחשב" },
   { id: "three", label: "3 תמונות, לפני היצירה (להסיר אחת ולשלוח)" },
   { id: "full", label: "כל השקופיות מלאות" },
@@ -80,6 +84,8 @@ function Panel({ state }: { state: State }) {
       const next: Seed[] =
         state === "six"
           ? six.map((f, i) => ({ preview: f, kind: i === 3 ? "video" : "image", at: i }))
+          : state === "existing"
+            ? [{ preview: six[2], kind: "image" as const }]
           : state === "three"
             ? six.slice(0, 3).map((f, i): Seed => ({ preview: f, kind: "image", at: i }))
           : state === "ask"
