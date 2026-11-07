@@ -506,7 +506,7 @@ export function FormatPanelMedia({
 
 /**
  * The תזמון tab's picture (Hani, 2026-11-07): the calendar, 7 columns in the
- * design system's grays, and its side panel on the right where the approved
+ * design system's grays, and its side panel on the left where the approved
  * post waits, green and marked "מאושר", until it is scheduled. Decorative.
  */
 function ScheduleIllustration() {
@@ -515,18 +515,6 @@ function ScheduleIllustration() {
       aria-hidden
       className="flex h-[220px] w-full overflow-hidden rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10"
     >
-      {/* Side panel — first child sits on the right in RTL. */}
-      <div className="flex w-[34%] shrink-0 flex-col gap-2 border-e border-border-neutral-default bg-gray-98 p-2 dark:bg-gray-20">
-        <div className="h-2 w-3/5 rounded-full bg-gray-90" />
-        <div className="flex flex-col gap-1.5 rounded-lg border border-green-success-50 bg-green-success-97 p-1.5">
-          <div className="h-10 rounded-md bg-green-success-70/40" />
-          <ApprovedTag className="h-5 self-start px-1.5 text-[10px]" />
-        </div>
-        <div className="flex flex-col gap-1.5 rounded-lg border border-border-neutral-default bg-white p-1.5 dark:bg-gray-10">
-          <div className="h-6 rounded-md bg-gray-95" />
-          <div className="h-1.5 w-1/2 rounded-full bg-gray-90" />
-        </div>
-      </div>
       {/* The month: weekday row + 5 weeks × 7 days. */}
       <div className="flex min-w-0 flex-1 flex-col gap-1 p-2">
         <div className="grid grid-cols-7 gap-1">
@@ -540,6 +528,18 @@ function ScheduleIllustration() {
               {[3, 9, 12, 20, 26, 31].includes(i) && <div className="h-1.5 rounded-full bg-gray-80" />}
             </div>
           ))}
+        </div>
+      </div>
+      {/* Side panel — last child sits on the left in RTL (Hani, 2026-11-07). */}
+      <div className="flex w-[34%] shrink-0 flex-col gap-2 border-s border-border-neutral-default bg-gray-98 p-2 dark:bg-gray-20">
+        <div className="h-2 w-3/5 rounded-full bg-gray-90" />
+        <div className="flex flex-col gap-1.5 rounded-lg border border-green-success-50 bg-green-success-97 p-1.5">
+          <div className="h-10 rounded-md bg-green-success-70/40" />
+          <ApprovedTag className="h-5 self-start px-1.5 text-[10px]" />
+        </div>
+        <div className="flex flex-col gap-1.5 rounded-lg border border-border-neutral-default bg-white p-1.5 dark:bg-gray-10">
+          <div className="h-6 rounded-md bg-gray-95" />
+          <div className="h-1.5 w-1/2 rounded-full bg-gray-90" />
         </div>
       </div>
     </div>

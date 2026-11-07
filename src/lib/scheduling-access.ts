@@ -54,3 +54,14 @@ export const MULTINETWORK_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.
 export function canUseMultinetwork(email: string | null | undefined): boolean {
   return !!email && MULTINETWORK_EMAILS.includes(email.toLowerCase())
 }
+
+/**
+ * The new format cards + tabbed panel on the canvas (סקריפט / מדיה / תזמון,
+ * Notion task 4114d905). Hani and Nataliya only while they try it
+ * (2026-11-07). Everyone else keeps the canvas exactly as before.
+ */
+export const FORMAT_CARDS_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+
+export function canUseFormatCards(email: string | null | undefined): boolean {
+  return !!email && FORMAT_CARDS_EMAILS.includes(email.toLowerCase())
+}

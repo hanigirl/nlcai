@@ -97,7 +97,7 @@ import {
   approvalHeaderFill,
 } from "@/components/format-approval/approval-visuals"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
-import { usePreviewAccess, useSchedulingAccess } from "@/lib/use-scheduling-access"
+import { useFormatCards, usePreviewAccess, useSchedulingAccess } from "@/lib/use-scheduling-access"
 // "עריכה עם AI" on every format's copy (Hani, 2026-10-29).
 import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
 import { useChatRevealer } from "@/lib/ai-chat-reveal"
@@ -2102,8 +2102,10 @@ function ProjectPageInner() {
   // the media); the script and the way to media move into the left panel.
   // UI only: every action below is a handler this page already had. With no
   // param nothing here renders and the canvas is the production one.
-  // C is the shipped design (Hani, 2026-11-07); ?cards=a|b still opens the review options.
-  const cardsVariant = parseCardsVariant(searchParams.get("cards")) ?? "c"
+  // C is the shipped design (Hani, 2026-11-07), for FORMAT_CARDS_EMAILS only
+  // (Hani + Nataliya); for them ?cards=a|b still opens the review options.
+  const formatCardsOn = useFormatCards() === true
+  const cardsVariant = formatCardsOn ? (parseCardsVariant(searchParams.get("cards")) ?? "c") : null
   const [panelStep, setPanelStepRaw] = useState<FormatPanelTab>("script")
   // מדיה tab with media: the preview, until she clicks it to replace the media.
   const [mediaReplacing, setMediaReplacing] = useState(false)

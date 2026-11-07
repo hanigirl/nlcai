@@ -3,12 +3,17 @@
 import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
-import { canUseFormatGap, canUseMultinetwork, canUsePreview, canUseScheduleAllA, canUseScheduling } from "@/lib/scheduling-access"
+import { canUseFormatCards, canUseFormatGap, canUseMultinetwork, canUsePreview, canUseScheduleAllA, canUseScheduling } from "@/lib/scheduling-access"
 import { canCopyStructure, canPlaceRefs } from "@/lib/feature-access"
 
 /** null while the session is read, then true/false. */
 export function useSchedulingAccess(): boolean | null {
   return useEmailGate(canUseScheduling)
+}
+
+/** The new format cards + tabbed panel — Hani + Nataliya (FORMAT_CARDS_EMAILS). */
+export function useFormatCards(): boolean | null {
+  return useEmailGate(canUseFormatCards)
 }
 
 /** The one-row schedule-all (direction A) — Hani only for now. */
