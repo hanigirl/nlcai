@@ -46,7 +46,7 @@ import { CarouselSlideSlots } from "@/components/carousel-slide-slots"
 import type { ReferenceImages } from "@/components/ai-edit-reference"
 import type { MediaStyle, VisualFormat } from "@/lib/visual-language/types"
 import type { OwnEditFormat } from "@/lib/own-media"
-import { SAMPLE_TH_PLAN, TH_EDIT_MODES, TalkingHeadPlanEditor, TalkingHeadTemplateChip, appendToTalkingHeadTemplate, type ThPlanMoment } from "@/components/talking-head-ai"
+import { TH_EDIT_MODES, TalkingHeadPlanEditor, TalkingHeadTemplateChip, appendToTalkingHeadTemplate, type ThPlanMoment } from "@/components/talking-head-ai"
 import { useCopyStructure } from "@/lib/use-scheduling-access"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
@@ -1280,24 +1280,62 @@ export function MediaAiChat({
    * edit runs only after "אישור". Every edit offers saving what she asked as
    * her template ("איך לייצר סרטון דיבור למצלמה").
    */
-  const sendTalkingHead = (text: string, patchKey: (fn: (s: MediaChat) => MediaChat) => void) => {
-    const plus = text === TH_EDIT_MODES.find((m) => m.id === "captions_plus")?.request
+  const sendTalkingHead = async (text: string, patchKey: (fn: (s: MediaChat) => MediaChat) => void) => {
+    const mode = TH_EDIT_MODES.find((m) => m.request && m.request === text)?.id
+    const reply = (msg: ChatMessage) =>
+      patchKey((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" }, messages: [...s.messages, msg] }))
     patchKey((s) => ({
       ...s,
       input: "",
-      messages: [
-        ...s.messages,
-        { role: "user", content: text },
-        plus
-          ? { role: "assistant", content: "לפני שאני עורכת, זה מה שאדגיש בסרטון:", thPlan: SAMPLE_TH_PLAN }
-          : {
-              role: "assistant",
-              content: thTemplateText && text !== thTemplateText ? `${TH_PREVIEW_DONE} העריכה תכלול גם את התבנית שלכם מההגדרות.` : TH_PREVIEW_DONE,
-              noStyle: true,
-              thTemplate: text,
-            },
-      ],
+      busy: mode === "captions" || mode === "captions_plus",
+      extra: {
+        ...s.extra,
+        progress:
+          mode === "captions"
+            ? "מתמללים את הדיבור ומוסיפים כתוביות... זה יכול לקחת כמה דקות"
+            : mode === "captions_plus"
+              ? "מתמללים את הדיבור ומתכננים מה להדגיש..."
+              : "",
+      },
+      messages: [...s.messages, { role: "user", content: text }],
     }))
+    const call = async (route: string, body: Record<string, unknown>) => {
+      const res = await fetch(route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+      return { ok: res.ok, data }
+    }
+    const failed = (data: Record<string, unknown>, fallback: string) =>
+      reply({ role: "assistant", content: aiErrorMessage(typeof data.message === "string" ? data.message : fallback), error: true })
+    try {
+      if (mode === "captions") {
+        // Her speech, word by word, as captions in her font (else Rubik).
+        const { ok, data } = await call("/api/talking-head/captions", { postId, url: currentUrls[0] })
+        if (!ok || typeof data.url !== "string") return failed(data, "הוספת הכתוביות לא הצליחה. נסו שוב.")
+        onUpdated?.(format, [data.url])
+        return reply({
+          role: "assistant",
+          content: "הוספתי כתוביות לכל מה שאמרתם, בגופן של השפה הוויזואלית שלכם. מה שצילמתם לא השתנה.",
+          done: true,
+          noStyle: true,
+          thTemplate: text,
+        })
+      }
+      if (mode === "captions_plus") {
+        // The plan first, timed from her transcript — nothing paid is edited yet.
+        const { ok, data } = await call("/api/talking-head/plan", { postId, url: currentUrls[0], request: text })
+        if (!ok || !Array.isArray(data.moments)) return failed(data, "התכנון לא הצליח. נסו שוב.")
+        return reply({ role: "assistant", content: "לפני שאני עורכת, זה מה שאדגיש בסרטון:", thPlan: data.moments as ThPlanMoment[] })
+      }
+    } catch {
+      return failed({}, "משהו השתבש. נסו שוב.")
+    }
+    // Her own words: the edit for a free prompt isn't wired yet — said plainly.
+    reply({
+      role: "assistant",
+      content: thTemplateText && text !== thTemplateText ? `${TH_PREVIEW_DONE} העריכה תכלול גם את התבנית שלכם מההגדרות.` : TH_PREVIEW_DONE,
+      noStyle: true,
+      thTemplate: text,
+    })
   }
   const approveThPlan = (index: number, moments: ThPlanMoment[]) => {
     const request = TH_EDIT_MODES.find((m) => m.id === "captions_plus")?.request ?? ""
@@ -1305,7 +1343,12 @@ export function MediaAiChat({
       ...s,
       messages: [
         ...s.messages.map((m, k) => (k === index ? { ...m, thPlan: moments, thPlanApproved: true } : m)),
-        { role: "assistant", content: TH_PREVIEW_DONE, noStyle: true, thTemplate: request },
+        {
+          role: "assistant",
+          content: "התוכנית אושרה. עריכת האלמנטים עצמה עוד לא מחוברת, אז הסרטון עוד לא השתנה. בינתיים ״רק כתוביות״ כבר עובד.",
+          noStyle: true,
+          thTemplate: request,
+        },
       ],
     }))
   }
@@ -1326,7 +1369,7 @@ export function MediaAiChat({
     if (format === "talking_head") {
       const text = (preset ?? cur.input).trim()
       if (!text) return
-      sendTalkingHead(text, patchKey)
+      await sendTalkingHead(text, patchKey)
       return
     }
     // "תעשה לי כזה": a carousel to copy the structure of — before the slots,

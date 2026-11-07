@@ -3445,6 +3445,17 @@ function ProjectPageInner() {
                 if (own) setStoryVideoUrl(null)
               }
               if (format === "b_roll" && urls[0]) setBRollUrl(urls[0])
+              // Talking head: her video with the captions becomes the post's video.
+              if (format === "talking_head" && urls[0]) {
+                setThVideoUrl(urls[0])
+                if (savedPostId) {
+                  fetch(`/api/core-posts/${savedPostId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ videoUrl: urls[0] }),
+                  }).catch(() => {})
+                }
+              }
             }}
           />
         )

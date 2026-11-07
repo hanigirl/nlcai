@@ -21,15 +21,8 @@ import { BROLL_MODEL } from "@/lib/broll-animation/compose"
 /** Every planning / edit step of a talking-head AI edit runs on Opus 5.5 (her Claude key). */
 export const TALKING_HEAD_MODEL = BROLL_MODEL // "claude-opus-5-5"
 
-/**
- * Hani + Nataliya while the talking-head AI edit is being tried — the same
- * two as TALKING_HEAD_AI_EMAILS on joey/talking-head-ai-edit; fold into
- * lib/feature-access once that lands.
- */
-export const TRANSCRIBE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
-export function canTranscribe(email: string | null | undefined): boolean {
-  return !!email && TRANSCRIBE_EMAILS.includes(email.toLowerCase())
-}
+/** Who may transcribe: the talking-head AI edit's one list (lib/feature-access). */
+export { canTalkingHeadAi as canTranscribe } from "@/lib/feature-access"
 
 export interface Word {
   text: string
