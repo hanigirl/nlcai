@@ -45,6 +45,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipLabel } from "@/components/ui/tooltip"
 import { MediaPanel } from "@/components/media-panel"
+import { HoverMediaIconButton } from "@/components/media-preview-zone"
 import { isTalkingHeadRender } from "@/lib/talking-head-original"
 import {
   FormatCardsRow,
@@ -4163,7 +4164,23 @@ function FormatTree({
                         </div>
                       </div>
                       <div className="flex justify-center">
-                        <div className="relative w-[200px] aspect-[9/16] rounded-xl overflow-hidden">
+                        {/* Download and delete float on the cover on hover — the
+                            media convention (Hani, 2026-11-08). */}
+                        <div className={`${AI_HOVER_ZONE} w-[200px] aspect-[9/16] rounded-xl overflow-hidden`}>
+                          <HoverMediaIconButton
+                            label="הורדת הקאבר"
+                            icon={Download}
+                            onClick={() => {
+                              const a = document.createElement("a")
+                              a.href = `data:image/png;base64,${thCoverImage}`
+                              a.download = "reel-cover.png"
+                              a.click()
+                            }}
+                            className={onCoverDelete ? "bottom-2 end-[52px]" : "bottom-2 end-2"}
+                          />
+                          {onCoverDelete && (
+                            <HoverMediaIconButton label="מחיקת הקאבר" icon={Trash2} destructive onClick={onCoverDelete} className="bottom-2 end-2" />
+                          )}
                           {livePillColor !== null ? (
                             // Live client composite. Mirrors the server's
                             // DEFAULT_BRAND_STYLE (center/center, Rubik
@@ -4237,15 +4254,6 @@ function FormatTree({
                             userId={userId}
                             label="רקע הכותרת"
                           />
-                        )}
-                        <IconActionButton
-                          label="הורדת הקאבר"
-                          icon={Download}
-                          href={`data:image/png;base64,${thCoverImage}`}
-                          download="reel-cover.png"
-                        />
-                        {onCoverDelete && (
-                          <IconActionButton label="מחיקת הקאבר" icon={Trash2} destructive onClick={onCoverDelete} />
                         )}
                       </div>
                     </div>
