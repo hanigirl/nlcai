@@ -50,3 +50,15 @@ export const PICTURE_EDIT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.
 export function canEditPictures(email: string | null | undefined): boolean {
   return !!email && PICTURE_EDIT_EMAILS.includes(email.toLowerCase())
 }
+
+/**
+ * "תעשה לי כזה" (Hani, 2026-11-07): a carousel built on another carousel's
+ * structure (link or screenshots), in her brand or exactly like it. Hani +
+ * Nataliya while they try it; enforced on the server (api/carousel/generate-ai,
+ * api/carousel/reference-slides) and in the panel.
+ */
+export const COPY_STRUCTURE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+
+export function canCopyStructure(email: string | null | undefined): boolean {
+  return !!email && COPY_STRUCTURE_EMAILS.includes(email.toLowerCase())
+}

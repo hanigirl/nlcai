@@ -59,6 +59,11 @@ export type GenSlots = {
   videos?: { at: number; item: AsIsItem }[]
   /** Slides already made from her files (as they are): put on their slide over the generated one. */
   fixed?: { at: number; slide: string }[]
+  /**
+   * "תעשה לי כזה" (Hani, 2026-11-07): another carousel to copy the structure
+   * of — its slides (her storage URLs) and the look: hers or the reference's.
+   */
+  structure?: { refs: string[]; mode: "brand" | "exact" }
 }
 
 export interface AiEditRequest {

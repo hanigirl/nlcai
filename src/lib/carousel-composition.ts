@@ -1,5 +1,6 @@
 import { createHash } from "crypto"
 import Anthropic from "@anthropic-ai/sdk"
+import { structureNote, type StructureMode } from "@/lib/carousel-structure"
 import { referenceBlocks } from "@/lib/ai-edit-references"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { SlideData } from "@/lib/carousel-templates"
@@ -280,7 +281,22 @@ export function composeCarousel(
    * slots (Hani, 2026-11-06) — exact, not a suggestion.
    */
   placeAt?: number[],
+  /**
+   * "תעשה לי כזה" (Hani, 2026-11-07): another carousel's structure to copy
+   * (lib/carousel-structure) — its slides as images, read into words.
+   */
+  structure?: { images: string[]; analysis: string; mode: StructureMode },
 ) {
+  if (structure) {
+    return ask(
+      apiKey,
+      briefText(brief) + structureNote(structure.analysis, structure.mode, brief.slides.length),
+      brief.slides.length,
+      structure.mode === "brand" ? brief.examples : [],
+      structure.images,
+      false,
+    )
+  }
   if (!place.length) return ask(apiKey, briefText(brief), brief.slides.length, brief.examples, refs)
   const k = place.length
   const placeNote = [
