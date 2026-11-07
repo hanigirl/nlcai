@@ -998,6 +998,9 @@ export function MediaAiChat({
     if (!copyAllowed) return false
     const wants = LIKE_THIS.test(typed)
     if (!wants && !(waiting && (link || shots.length))) return false
+    // On a carousel that exists, "כזה" alone may be an ordinary edit ("תעשו את
+    // הכותרת כזאת גדולה") — only a link or screenshots make it a copy.
+    if (!cur.extra.gen && !waiting && !link && !shots.length) return false
     const attached = refs.refs
     const brief = typed.replace(LINK_RE, "").trim()
     refs.clear()
@@ -1066,13 +1069,34 @@ export function MediaAiChat({
     const c = session.extra.copy
     if (!c || c.phase !== "choose") return
     patch((s) => ({ ...s, extra: { ...s.extra, copy: null } }))
-    void generate(
-      c.brief || "קרוסלה באותו מבנה כמו הקרוסלה המצורפת",
-      [],
-      mode === "brand" ? COPY_COPY.brand : COPY_COPY.exact,
-      [],
-      { structure: { refs: c.refs, mode } },
-    )
+    const brief = c.brief || "קרוסלה באותו מבנה כמו הקרוסלה המצורפת"
+    const label = mode === "brand" ? COPY_COPY.brand : COPY_COPY.exact
+    if (session.extra.gen && session.extra.gen.phase !== "running") {
+      void generate(brief, [], label, [], { structure: { refs: c.refs, mode } })
+      return
+    }
+    // A carousel that exists: rebuilt on the reference, through the media
+    // panel's own generation (the same channel as "להעלות כמו שזה").
+    void (async () => {
+      patch((s) => ({
+        ...s,
+        busy: true,
+        extra: { ...s.extra, progress: "בונים את הקרוסלה מחדש לפי המבנה של הרפרנס... זה לוקח כמה דקות" },
+        messages: [...s.messages, { role: "user", content: label }],
+      }))
+      const r = await requestAsIsUpload(format, [], { regenerate: { structure: { refs: c.refs, mode } }, instruction: brief })
+      patch((s) => ({
+        ...s,
+        busy: false,
+        extra: { ...s.extra, progress: "" },
+        messages: [
+          ...s.messages,
+          r.ok
+            ? { role: "assistant", content: r.message, done: true, noStyle: true }
+            : { role: "assistant", content: aiErrorMessage(r.message), error: true },
+        ],
+      }))
+    })()
   }
 
   const send = async (preset?: string) => {
@@ -1088,7 +1112,10 @@ export function MediaAiChat({
     if (cur.busy) return
     // "תעשה לי כזה": a carousel to copy the structure of — before the slots,
     // since then what she attached is a reference, not slides.
-    if (format === "carousel" && cur.extra.gen && cur.extra.gen.phase !== "running") {
+    // Before the first generation AND on a carousel that exists (live bug,
+    // 2026-11-07: "הקרוסלה נערכה" — an edit with a reference). Not on her own
+    // slides: rebuilding would replace what she brought.
+    if (format === "carousel" && !own && (!cur.extra.gen || cur.extra.gen.phase !== "running")) {
       const typed = (preset ?? cur.input).trim()
       if (await maybeCopy(typed, cur, patchKey)) return
     }
