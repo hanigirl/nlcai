@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Captions, Image as ImageIcon, Loader2, PenLine, Plus, Sparkles, Trash2 } from "lucide-react"
+import { Image as ImageIcon, Loader2, Plus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
@@ -16,8 +17,9 @@ import { userExampleKind } from "@/lib/visual-language/types"
  * Talking head AI edit (Notion: "עריכת דיבור למצלמה, עריכה עם כתוביות, שפה
  * ויזואלית שלהם", Hani 2026-11-07) — the pieces both design variants share:
  *
- *   - the three ways in: only captions · captions + supporting elements ·
- *     her own prompt (TH_EDIT_MODES);
+ *   - the three ways in — chips in the AI panel (✨ on the video; Hani
+ *     picked this direction, 2026-11-07): only captions · captions +
+ *     supporting elements · her own prompt (TH_EDIT_MODES);
  *   - the PLAN shown before the paid edit for "כתוביות + אלמנטים תומכים":
  *     ~3 moments of her speech, each with its time and the element it gets
  *     (card / highlight / animation) — she fixes, deletes or adds, and only
@@ -225,11 +227,14 @@ export const COVER_SETTINGS_HREF = "/settings?tab=media&sub=covers"
 /** "יצירת קאבר" — made when she asks, saying which settings it follows. */
 export function TalkingHeadCoverAction({
   hasCoverSettings,
+  brandBackground = false,
   loading = false,
   onCreate,
   className,
 }: {
   hasCoverSettings: boolean
+  /** No cover settings: the default's background is her main brand colour (else black). */
+  brandBackground?: boolean
   loading?: boolean
   onCreate: () => void
   className?: string
@@ -242,10 +247,10 @@ export function TalkingHeadCoverAction({
       </Button>
       <p className="text-center text-xs-body text-text-neutral-default">
         {hasCoverSettings ? (
-          "הקאבר ייווצר לפי הגדרות המדיה."
+          "הקאבר ייווצר לפי הגדרות הקאבר שלכם."
         ) : (
           <>
-            הקאבר ייווצר לפי הגדרות ברירת המחדל.{" "}
+            הקאבר ייווצר בברירת המחדל: Rubik על רקע {brandBackground ? "צבע המותג שלכם" : "שחור"}.{" "}
             <Link href={COVER_SETTINGS_HREF} className="underline underline-offset-2 hover:text-text-primary-default">
               לשינוי ההגדרות
             </Link>
@@ -324,6 +329,20 @@ export function TalkingHeadCoverReminder({
 }
 
 /** Save what she asked as her template for every talking head video. */
+/** The panel's chip: adds what she asked to her template (api/visual-language/talking-head-template). */
+export async function appendToTalkingHeadTemplate(request: string): Promise<boolean> {
+  try {
+    const res = await fetch("/api/visual-language/talking-head-template", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ append: request }),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 export function TalkingHeadTemplateChip({ onSave }: { onSave?: () => Promise<boolean> | boolean }) {
   const [state, setState] = useState<"ready" | "saving" | "saved">("ready")
   if (state === "saved") {
@@ -349,33 +368,80 @@ export function TalkingHeadTemplateChip({ onSave }: { onSave?: () => Promise<boo
 }
 
 /**
- * Variant B: the three ways in, right under the video on the media tab —
- * picked before any panel opens.
+ * Settings → מדיה → העדפות ויזואליות → דיבור למצלמה (Hani, 2026-11-07):
+ * "איך לייצר סרטון דיבור למצלמה" — her instructions for every AI edit of a
+ * talking-head video, editable. `initial`: state previews only (no fetch).
  */
-export function TalkingHeadEditChoices({ onPick }: { onPick: (mode: TalkingHeadEditMode) => void }) {
-  const icon = { captions: Captions, captions_plus: Sparkles, prompt: PenLine } as const
+export function TalkingHeadTemplateSettings({ initial }: { initial?: string }) {
+  const [text, setText] = useState(initial ?? "")
+  const [saved, setSaved] = useState(initial ?? "")
+  const [loading, setLoading] = useState(initial === undefined)
+  const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle")
+  useEffect(() => {
+    if (initial !== undefined) return
+    let live = true
+    fetch("/api/visual-language/talking-head-template")
+      .then((r) => (r.ok ? r.json() : { instructions: "" }))
+      .then((d: { instructions?: string }) => {
+        if (!live) return
+        setText(d.instructions ?? "")
+        setSaved(d.instructions ?? "")
+      })
+      .catch(() => undefined)
+      .finally(() => live && setLoading(false))
+    return () => {
+      live = false
+    }
+  }, [initial])
+  const save = async () => {
+    setState("saving")
+    try {
+      const res = await fetch("/api/visual-language/talking-head-template", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instructions: text }),
+      })
+      if (!res.ok) throw new Error(String(res.status))
+      setSaved(text.trim())
+      setState("saved")
+    } catch {
+      setState("error")
+    }
+  }
   return (
-    <section className="flex flex-col gap-2" aria-label="עריכה עם AI">
-      <p className="text-small-bold text-text-primary-default">עריכה עם AI</p>
-      <div className="flex flex-col gap-1.5">
-        {TH_EDIT_MODES.map((m) => {
-          const Icon = icon[m.id]
-          return (
-            <button
-              key={m.id}
-              type="button"
-              onClick={() => onPick(m.id)}
-              className="flex items-start gap-2.5 rounded-xl border border-border-neutral-default bg-white px-3 py-2.5 text-start transition-colors hover:bg-gray-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 dark:bg-gray-10 dark:hover:bg-gray-20"
-            >
-              <Icon className="mt-0.5 size-4 shrink-0 text-text-neutral-default" aria-hidden />
-              <span className="flex flex-col gap-0.5">
-                <span className="text-small text-text-primary-default">{m.label}</span>
-                <span className="text-xs-body text-text-neutral-default">{m.hint}</span>
-              </span>
-            </button>
-          )
-        })}
+    <section className="flex flex-col gap-3" aria-label="איך לייצר סרטון דיבור למצלמה">
+      <div className="flex flex-col gap-1">
+        <h3 className="text-p-bold text-text-primary-default">איך לייצר סרטון דיבור למצלמה</h3>
+        <p className="text-small text-text-neutral-default">
+          ההוראות האלה חלות על כל עריכה עם AI של סרטון דיבור למצלמה: כתוביות, אלמנטים, הדגשות ואנימציות. אפשר לכתוב כאן, או לשמור מהצ׳אט של העריכה עם ״לשמור כתבנית לסרטוני דיבור למצלמה״.
+        </p>
       </div>
+      {loading ? (
+        <Loader2 className="size-5 animate-spin text-text-neutral-default" aria-label="טוען" />
+      ) : (
+        <>
+          <Textarea
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value)
+              setState("idle")
+            }}
+            rows={6}
+            aria-label="ההוראות לסרטוני דיבור למצלמה"
+            placeholder="למשל: כתוביות גדולות בתחתית, מילת המפתח בכל משפט מודגשת בצבע המותג, כרטיס עם שלושת הצעדים כשאני מונה אותם."
+            className="text-small"
+          />
+          <div className="flex items-center gap-3">
+            <Button type="button" size="sm" onClick={save} disabled={state === "saving" || text.trim() === saved.trim()} className="gap-1.5">
+              {state === "saving" && <Loader2 className="size-4 animate-spin" aria-hidden />}
+              שמירה
+            </Button>
+            <span className="text-xs-body text-text-neutral-default" role="status">
+              {state === "saved" ? "נשמר. העריכה הבאה תעבוד לפי זה." : state === "error" ? "לא הצלחנו לשמור. נסו שוב." : ""}
+            </span>
+          </div>
+        </>
+      )}
     </section>
   )
 }

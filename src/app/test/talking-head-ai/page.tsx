@@ -3,21 +3,23 @@
 /**
  * State preview for the talking head AI edit (Notion: "עריכת דיבור למצלמה,
  * עריכה עם כתוביות, שפה ויזואלית שלהם", Hani 2026-11-07). The live version is
- * /project?variant=a|b on a real post (Hani + Nataliya only); this page shows
- * every state from sample data — no fetches of hers, no DB writes, no credits.
+ * /project on a real post (Hani + Nataliya only); this page shows every state
+ * from sample data — no fetches of hers, no DB writes, no credits. Hani picked
+ * the direction where ✨ on the video opens the AI panel on three chips:
+ * רק כתוביות / כתוביות + אלמנטים תומכים / לכתוב בעצמי.
  *
- *   ?variant=a — the ways in are in the AI panel (✨ on the video → the panel
- *                asks: רק כתוביות / כתוביות + אלמנטים תומכים / לכתוב בעצמי).
- *   ?variant=b — the ways in sit on the media tab, under the video; picking
- *                one opens the panel already on it.
  *   ?state=
- *     media          — the media tab: the video + "יצירת קאבר" (default)
- *     media-nocover  — the same, without cover settings (default-settings text + link)
+ *     media          — the media tab: the video + "יצירת קאבר" (default),
+ *                      she has cover settings / examples
+ *     media-nocover  — no cover settings: "Rubik על רקע שחור" + a link
+ *     media-brand    — no cover settings, a brand colour: "Rubik על רקע צבע המותג שלכם"
  *     panel          — the AI panel open on the ways in
  *     plan           — "כתוביות + אלמנטים תומכים": the plan to approve first
  *     done           — after an edit: "לשמור כתבנית לסרטוני דיבור למצלמה"
  *     cover          — the cover made: its preview + "ליצור מחדש"
  *     reminder       — תזמון tab with no cover: the reminder before approving
+ *     settings       — Settings → מדיה → העדפות ויזואליות → דיבור למצלמה: her
+ *                      template, editable (sample text; saving needs a login)
  */
 
 import { Suspense, useState } from "react"
@@ -38,17 +40,19 @@ import {
   TalkingHeadCoverAction,
   TalkingHeadCoverDone,
   TalkingHeadCoverReminder,
-  TalkingHeadEditChoices,
+  TalkingHeadTemplateSettings,
 } from "@/components/talking-head-ai"
 
 const STATES = [
   { id: "media", label: "טאב מדיה · יש הגדרות קאבר" },
   { id: "media-nocover", label: "טאב מדיה · בלי הגדרות קאבר" },
+  { id: "media-brand", label: "טאב מדיה · בלי הגדרות, עם צבע מותג" },
   { id: "panel", label: "פאנל AI · דרכי העריכה" },
   { id: "plan", label: "תוכנית לפני עריכה" },
   { id: "done", label: "אחרי עריכה · שמירה כתבנית" },
   { id: "cover", label: "הקאבר נוצר" },
   { id: "reminder", label: "תזמון · תזכורת קאבר" },
+  { id: "settings", label: "הגדרות · דיבור למצלמה" },
 ] as const
 type StateId = (typeof STATES)[number]["id"]
 
@@ -77,15 +81,13 @@ function seededChat(state: StateId): ChatMessage[] | undefined {
 
 function Page() {
   const params = useSearchParams()
-  const variant = params.get("variant") === "b" ? "b" : "a"
   const state: StateId = STATES.find((s) => s.id === params.get("state"))?.id ?? "media"
   const [tab, setTab] = useState<FormatPanelTab>(state === "reminder" ? "schedule" : "media")
   const [panelOpen, setPanelOpen] = useState(state === "panel" || state === "plan" || state === "done")
-  const [autoSend, setAutoSend] = useState<string | undefined>(undefined)
   const [cover, setCover] = useState<string | null>(state === "cover" ? COVER : null)
   const [approved, setApproved] = useState(false)
-  const hasSettings = state !== "media-nocover"
-  const href = (s: StateId, v = variant) => `/test/talking-head-ai?variant=${v}&state=${s}`
+  const hasSettings = state !== "media-nocover" && state !== "media-brand"
+  const href = (s: StateId) => `/test/talking-head-ai?state=${s}`
   const pill = (on: boolean) =>
     `rounded-full border px-2.5 py-1 hover:bg-gray-95 dark:hover:bg-gray-20 ${
       on ? "border-text-primary-default text-text-primary-default" : "border-border-neutral-default text-text-neutral-default"
@@ -97,21 +99,17 @@ function Page() {
         fid="talking_head"
         media={{ kind: "video", url: VIDEO }}
         onOpenMedia={() => {}}
-        onAiEditMedia={variant === "a" ? () => setPanelOpen(true) : undefined}
+        onAiEditMedia={() => setPanelOpen(true)}
         onDeleteMedia={() => {}}
       />
-      {variant === "b" && (
-        <TalkingHeadEditChoices
-          onPick={(mode) => {
-            setAutoSend(TH_EDIT_MODES.find((m) => m.id === mode)?.request || undefined)
-            setPanelOpen(true)
-          }}
-        />
-      )}
       {cover ? (
         <TalkingHeadCoverDone image={cover} onRemake={() => setCover(COVER)} />
       ) : (
-        <TalkingHeadCoverAction hasCoverSettings={hasSettings} onCreate={() => setCover(COVER)} />
+        <TalkingHeadCoverAction
+          hasCoverSettings={hasSettings}
+          brandBackground={state === "media-brand"}
+          onCreate={() => setCover(COVER)}
+        />
       )}
     </div>
   )
@@ -125,17 +123,25 @@ function Page() {
     <TalkingHeadCoverReminder onCreate={() => setCover(COVER)} onApproveWithout={() => setApproved(true)} />
   )
 
+  if (state === "settings") {
+    return (
+      <div dir="rtl" className="min-h-screen bg-bg-surface p-6">
+        <div className="mb-6 flex flex-wrap items-center gap-2 text-xs">
+          {STATES.map((s) => (
+            <Link key={s.id} href={href(s.id)} className={pill(s.id === state)}>
+              {s.label}
+            </Link>
+          ))}
+        </div>
+        <div className="max-w-[560px] rounded-2xl border border-border-neutral-default bg-white p-6 dark:bg-gray-10">
+          <TalkingHeadTemplateSettings initial={TH_EDIT_MODES[1].request} />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div dir="rtl" className="min-h-screen bg-bg-surface p-6">
-      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-text-neutral-default">כיוון:</span>
-        <Link href={href(state, "a")} className={pill(variant === "a")}>
-          A · הדרכים בפאנל ה-AI
-        </Link>
-        <Link href={href(state, "b")} className={pill(variant === "b")}>
-          B · הדרכים בטאב המדיה
-        </Link>
-      </div>
       <div className="mb-6 flex max-w-[60%] flex-wrap items-center gap-2 text-xs">
         {STATES.map((s) => (
           <Link key={s.id} href={href(s.id)} className={pill(s.id === state)}>
@@ -162,19 +168,16 @@ function Page() {
 
       {panelOpen && (
         <MediaAiChat
-          key={`${variant}-${state}-${autoSend ?? ""}`}
-          postId={`test-talking-head-${variant}-${state}`}
+          key={state}
+          postId={`test-talking-head-${state}`}
           format="talking_head"
           own
           open
           currentUrls={[VIDEO]}
           initialMessages={seededChat(state)}
-          autoSend={autoSend}
-          hideSuggestions={variant === "b"}
           onOpenChange={(open) => {
             if (!open) {
               setPanelOpen(false)
-              setAutoSend(undefined)
             }
           }}
           onUpdated={() => {}}

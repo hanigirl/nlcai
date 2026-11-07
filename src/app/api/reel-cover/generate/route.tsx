@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server"
 import type { BrandStyle } from "@/lib/supabase/types"
 import { getAuthUser } from "@/lib/auth-user"
 import { cleanBrandColors, defaultCoverColor, isCoverHex } from "@/lib/cover-brand-color"
+import { canTalkingHeadAi } from "@/lib/feature-access"
+import { coverStyleFromExamples } from "@/lib/cover-from-examples"
 
 const COVER_WIDTH = 1080
 const COVER_HEIGHT = 1920 // 9:16 aspect ratio
@@ -331,10 +333,15 @@ function renderCover(
 
 export async function POST(req: NextRequest) {
   try {
-    const { thumbnail_url, title, pill_color } = (await req.json()) as {
+    const { thumbnail_url, title, pill_color, use_cover_settings } = (await req.json()) as {
       thumbnail_url?: string
       title: string
       pill_color?: string
+      /**
+       * Talking head, on request (Hani + Nataliya — lib/feature-access): her
+       * cover examples are the style; without them, the default below.
+       */
+      use_cover_settings?: boolean
     }
 
     if (!title) {
@@ -363,9 +370,15 @@ export async function POST(req: NextRequest) {
       const { data: row } = await supabase.from("users").select("brand_colors").eq("id", user.id).single()
       pillHex = defaultCoverColor(cleanBrandColors((row as { brand_colors?: unknown } | null)?.brand_colors))
     }
-    const style: BrandStyle = pillHex
-      ? { ...DEFAULT_BRAND_STYLE, text_background_color: pillHex }
-      : DEFAULT_BRAND_STYLE
+    // Her cover examples, read into a style (gated). Without examples — or
+    // for everyone else — the default: Rubik on black, or her main brand colour.
+    const fromExamples =
+      use_cover_settings && canTalkingHeadAi(user.email) ? await coverStyleFromExamples(supabase, user.id) : null
+    const style: BrandStyle = fromExamples
+      ? fromExamples
+      : pillHex
+        ? { ...DEFAULT_BRAND_STYLE, text_background_color: pillHex }
+        : DEFAULT_BRAND_STYLE
 
     // Fetch thumbnail if provided (supports data URLs and regular URLs)
     let thumbBase64: string | undefined

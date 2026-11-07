@@ -46,7 +46,7 @@ import { CarouselSlideSlots } from "@/components/carousel-slide-slots"
 import type { ReferenceImages } from "@/components/ai-edit-reference"
 import type { MediaStyle, VisualFormat } from "@/lib/visual-language/types"
 import type { OwnEditFormat } from "@/lib/own-media"
-import { SAMPLE_TH_PLAN, TH_EDIT_MODES, TalkingHeadPlanEditor, TalkingHeadTemplateChip, type ThPlanMoment } from "@/components/talking-head-ai"
+import { SAMPLE_TH_PLAN, TH_EDIT_MODES, TalkingHeadPlanEditor, TalkingHeadTemplateChip, appendToTalkingHeadTemplate, type ThPlanMoment } from "@/components/talking-head-ai"
 import { useCopyStructure } from "@/lib/use-scheduling-access"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
@@ -406,7 +406,6 @@ export function MediaAiChat({
   seedAttachments,
   seedEmptied,
   seedAskEmpty,
-  hideSuggestions,
   seedCopy,
   forceCopyStructure,
   initialMessages,
@@ -435,8 +434,6 @@ export function MediaAiChat({
   seedEmptied?: number
   /** State previews (/test/*) only: open on the "empty slides — with AI?" question. */
   seedAskEmpty?: boolean
-  /** The ways in were already offered elsewhere (the talking-head card, variant B). */
-  hideSuggestions?: boolean
   /** State previews (/test/*) only: a "תעשה לי כזה" step already under way. */
   seedCopy?: MediaChatExtra["copy"]
   /** State previews (/test/*) only: the "תעשה לי כזה" gate on without a login. */
@@ -499,6 +496,20 @@ export function MediaAiChat({
   }, [chatKey, opening, fresh, format])
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // Talking head: her template ("איך לייצר סרטון דיבור למצלמה") — the next
+  // edit starts from it (gated; the route answers 403 for everyone else).
+  const [thTemplateText, setThTemplateText] = useState("")
+  useEffect(() => {
+    if (format !== "talking_head") return
+    let live = true
+    fetch("/api/visual-language/talking-head-template")
+      .then((r) => (r.ok ? r.json() : { instructions: "" }))
+      .then((d: { instructions?: string }) => live && setThTemplateText(d.instructions?.trim() ?? ""))
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [format])
   // "Watching" = a panel shows this conversation when the reply lands — the
   // one she reopened counts too, so the leave-screen toast only comes when
   // she's really away.
@@ -1279,7 +1290,12 @@ export function MediaAiChat({
         { role: "user", content: text },
         plus
           ? { role: "assistant", content: "לפני שאני עורכת, זה מה שאדגיש בסרטון:", thPlan: SAMPLE_TH_PLAN }
-          : { role: "assistant", content: TH_PREVIEW_DONE, noStyle: true, thTemplate: text },
+          : {
+              role: "assistant",
+              content: thTemplateText && text !== thTemplateText ? `${TH_PREVIEW_DONE} העריכה תכלול גם את התבנית שלכם מההגדרות.` : TH_PREVIEW_DONE,
+              noStyle: true,
+              thTemplate: text,
+            },
       ],
     }))
   }
@@ -1657,9 +1673,15 @@ export function MediaAiChat({
               <ReferenceThumbs images={m.images} className="mt-1.5" />
             </div>
             {/* Own media: what it can do, one tap away — until her first ask. */}
-            {own && !hideSuggestions && i === 0 && messages.length === 1 && !loading && (
+            {own && i === 0 && messages.length === 1 && !loading && (
               <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5" role="group" aria-label="הצעות לעריכה">
-                {OWN_COPY[format].suggestions.map((sg) => (
+                {[
+                  // Her template first, when she has one (Settings → דיבור למצלמה).
+                  ...(format === "talking_head" && thTemplateText
+                    ? [{ label: "לפי התבנית שלי", text: thTemplateText, send: true }]
+                    : []),
+                  ...OWN_COPY[format].suggestions,
+                ].map((sg) => (
                   <Chip
                     key={sg.label}
                     onClick={() => {
@@ -1717,7 +1739,7 @@ export function MediaAiChat({
             )}
             {m.thTemplate && i === messages.length - 1 && !loading && (
               <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
-                <TalkingHeadTemplateChip />
+                <TalkingHeadTemplateChip onSave={() => appendToTalkingHeadTemplate(m.thTemplate!)} />
               </div>
             )}
             {/* Her missing personal elements: go on without, or add them. */}

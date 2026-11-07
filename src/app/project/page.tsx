@@ -27,13 +27,12 @@ import { Textarea } from "@/components/ui/textarea"
 import { RichBodyEditor } from "@/components/rich-body-editor"
 import { StorySections } from "@/components/story-frames"
 import {
-  TH_EDIT_MODES,
   TalkingHeadCoverAction,
   TalkingHeadCoverDone,
   TalkingHeadCoverReminder,
-  TalkingHeadEditChoices,
   useHasCoverSettings,
 } from "@/components/talking-head-ai"
+import { useCoverDefaultColor } from "@/lib/use-cover-brand-colors"
 import { parseTextToSlides } from "@/lib/carousel-slides"
 import { MAX_CAROUSEL_SLIDES } from "@/lib/carousel-limits"
 import { isVideoSlide } from "@/lib/carousel-video"
@@ -367,8 +366,6 @@ function ProjectPageInner() {
   const [aiChatFormat, setAiChatFormat] = useState<AiEditFormat | null>(null)
   // A generate button opens the AI edit to ask for a brief first (lib/ai-edit-intent).
   const [aiChatOpening, setAiChatOpening] = useState<AiEditOpening | null>(null)
-  // Talking head, variant B: the way she picked on the media tab, sent as the panel opens.
-  const [thAutoSend, setThAutoSend] = useState<string | undefined>(undefined)
   useAiEditRequests((req) => {
     if (req.postId !== savedPostId) return
     setAiChatFormat(req.format)
@@ -800,6 +797,8 @@ function ProjectPageInner() {
           title: hookText,
           thumbnail_url: thumbnailUrl,
           pill_color: colorOverride ?? pillColor,
+          // Talking head AI edit (gated): her cover examples are the style.
+          ...(thAiOnRef.current ? { use_cover_settings: true } : {}),
         }),
       })
       const d = await res.json()
@@ -1102,9 +1101,8 @@ function ProjectPageInner() {
           if (data.post.videoUrl) {
             const videoUrl = data.post.videoUrl as string
             const hookForCover = (data.post.hook_text as string) || ""
-            // Under the talking-head review param, no automatic cover.
-            const thParam = new URLSearchParams(window.location.search).get("variant")
-            const hasSavedCover = !!data.post.coverUrl || thParam === "a" || thParam === "b"
+            // Talking head AI edit (gated): the cover is made on request, not here.
+            const hasSavedCover = !!data.post.coverUrl || thAiOnRef.current
 
             // Convert HeyGen embed to stored MP4
             const embedMatch = videoUrl.match(/heygen\.com\/embeds\/([a-f0-9]+)/)
@@ -2144,13 +2142,17 @@ function ProjectPageInner() {
   // C is the shipped design (Hani, 2026-11-07), for FORMAT_CARDS_EMAILS only
   // (Hani + Nataliya); for them ?cards=a|b still opens the review options.
   const formatCardsOn = useFormatCards() === true
-  // Talking head AI edit (Notion, Hani 2026-11-07) — gated, two design
-  // directions for review: ?variant=a (the ways in, in the AI panel) / b (on
-  // the media tab). No param: today's talking head, the automatic cover too.
+  // Talking head AI edit (Notion, Hani 2026-11-07 — she picked ✨ → the panel
+  // with three chips). Hani + Nataliya only (lib/feature-access); everyone else
+  // keeps today's talking head, the automatic cover too.
   const thAiOn = useTalkingHeadAi() === true
-  const thVariantParam = searchParams.get("variant")
-  const thVariant: "a" | "b" | null = thAiOn && (thVariantParam === "a" || thVariantParam === "b") ? thVariantParam : null
-  const hasCoverSettings = useHasCoverSettings(!!thVariant)
+  // Read by the post load and the cover request, which run outside render.
+  const thAiOnRef = useRef(false)
+  useEffect(() => {
+    thAiOnRef.current = thAiOn
+  }, [thAiOn])
+  const hasCoverSettings = useHasCoverSettings(thAiOn)
+  const coverDefaultColor = useCoverDefaultColor()
   // "לאשר בלי קאבר" — she saw the reminder and chose to go on.
   const [thCoverSkipped, setThCoverSkipped] = useState(false)
   const cardsVariant = formatCardsOn ? (parseCardsVariant(searchParams.get("cards")) ?? "c") : null
@@ -2318,7 +2320,7 @@ function ProjectPageInner() {
           }
         : undefined
     const onAiEditMedia =
-      fid !== "talking_head" || thVariant === "a"
+      fid !== "talking_head" || thAiOn
         ? () => {
             setAiChatFormat(fid as AiEditFormat)
             setAiChatOpening(null)
@@ -2351,7 +2353,7 @@ function ProjectPageInner() {
             <FormatPanelNextStep label="תזמון" onNext={() => setPanelStep("schedule")} />
           ) : undefined,
           scriptView:
-            fid === "talking_head" && thVariant ? (
+            fid === "talking_head" && thAiOn ? (
               <div className="flex flex-col gap-4">
                 <FormatPanelMedia
                   fid={fid}
@@ -2360,20 +2362,12 @@ function ProjectPageInner() {
                   onAiEditMedia={onAiEditMedia}
                   onDeleteMedia={onDeleteMedia}
                 />
-                {thVariant === "b" && (
-                  <TalkingHeadEditChoices
-                    onPick={(mode) => {
-                      setThAutoSend(TH_EDIT_MODES.find((m) => m.id === mode)?.request || undefined)
-                      setAiChatFormat("talking_head")
-                      setAiChatOpening(null)
-                    }}
-                  />
-                )}
                 {thCoverImage ? (
                   <TalkingHeadCoverDone image={thCoverImage} loading={thCoverLoading} onRemake={() => generateCoverForPost(coverText, thVideoUrl || undefined)} />
                 ) : (
                   <TalkingHeadCoverAction
                     hasCoverSettings={!!hasCoverSettings}
+                    brandBackground={coverDefaultColor.toLowerCase() !== "#000000"}
                     loading={thCoverLoading}
                     onCreate={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
                   />
@@ -2400,7 +2394,7 @@ function ProjectPageInner() {
           footer:
             hasMedia && approvalProps ? (
               // A reel with no cover: the reminder comes before the approve (gated).
-              fid === "talking_head" && thVariant && !thCoverImage && !thCoverSkipped && approvalProps.status !== "approved" && approvalProps.status !== "scheduled" ? (
+              fid === "talking_head" && thAiOn && !thCoverImage && !thCoverSkipped && approvalProps.status !== "approved" && approvalProps.status !== "scheduled" ? (
                 <TalkingHeadCoverReminder
                   loading={thCoverLoading}
                   onCreate={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
@@ -2500,7 +2494,7 @@ function ProjectPageInner() {
     <AppShell idea={shortenTitle(idea || hookParam || (postId ? "עריכת פוסט" : ""))}>
       {/* Media Panel — sibling to InfiniteCanvas, slides from left */}
       <MediaPanel
-        thAutoCover={!thVariant}
+        thAutoCover={!thAiOn}
         formatId={selectedFormatCard}
         onClose={() => setSelectedFormatCard(null)}
         postId={savedPostId}
@@ -3438,10 +3432,7 @@ function ProjectPageInner() {
             }
             open
             opening={aiChatOpening}
-            // Talking head, variant B: the way she picked on the media tab.
-            autoSend={aiChatFormat === "talking_head" ? thAutoSend : undefined}
-            hideSuggestions={aiChatFormat === "talking_head" && thVariant === "b"}
-            onOpenChange={(open) => { if (!open) { setAiChatFormat(null); setAiChatOpening(null); setThAutoSend(undefined) } }}
+            onOpenChange={(open) => { if (!open) { setAiChatFormat(null); setAiChatOpening(null) } }}
             onUpdated={(format, urls, extra) => {
               if (format === "image_post") setImagePostUrl(urls[0] ?? null)
               if (format === "carousel") {
