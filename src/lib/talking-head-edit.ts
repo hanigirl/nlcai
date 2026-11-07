@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { getUserApiKey } from "@/lib/api-keys"
 import { captionLines, transcribeVideo, type CaptionLine } from "@/lib/transcribe"
 import { renderOwnVideoCaption, OVERLAY_SECONDS } from "@/lib/own-video-captions"
-import { talkingHeadVideoUrl } from "@/lib/talking-head-video"
+import { talkingHeadVideoUrl, transcriptionContext } from "@/lib/talking-head-video"
 import { originalFor } from "@/lib/talking-head-original"
 import { loadTalkingHeadTemplate } from "@/lib/talking-head-template"
 import { detectFaces, headZone, intersects, placeClear, type Box } from "@/lib/face-boxes"
@@ -137,7 +137,7 @@ export async function runTalkingHeadEdit(opts: {
     } catch {
       throw new EditError("openai_not_connected", "כדי לתמלל את הסרטון לכתוביות צריך לחבר מפתח OpenAI בהגדרות ← חיבורים.", 400)
     }
-    const transcript = await transcribeVideo(openaiKey, source)
+    const transcript = await transcribeVideo(openaiKey, source, await transcriptionContext(supabase, userId, postId))
     lines = captionLines(transcript.words)
     if (lines.length) {
       const [fonts, plate] = await Promise.all([captionFonts(supabase, userId), captionPlateColor(supabase, userId)])

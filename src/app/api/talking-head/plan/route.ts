@@ -5,7 +5,7 @@ import { getAuthUser } from "@/lib/auth-user"
 import { getUserApiKey } from "@/lib/api-keys"
 import { canTalkingHeadAi } from "@/lib/feature-access"
 import { TALKING_HEAD_MODEL, captionLines, transcribeVideo } from "@/lib/transcribe"
-import { talkingHeadVideoUrl } from "@/lib/talking-head-video"
+import { talkingHeadVideoUrl, transcriptionContext } from "@/lib/talking-head-video"
 import { loadTalkingHeadTemplate } from "@/lib/talking-head-template"
 import { originalFor } from "@/lib/talking-head-original"
 import { MAX_TALKING_HEAD_SECONDS, probeSeconds, tooLongMessage } from "@/lib/talking-head-captions"
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const transcript = await transcribeVideo(openaiKey, videoUrl)
+    const transcript = await transcribeVideo(openaiKey, videoUrl, await transcriptionContext(supabase, user.id, postId))
     const lines = captionLines(transcript.words)
     if (!lines.length) return NextResponse.json({ error: "no_speech", message: "לא שמעתי דיבור בסרטון, אז אין מה להדגיש." }, { status: 422 })
     const template = await loadTalkingHeadTemplate(supabase, user.id)
