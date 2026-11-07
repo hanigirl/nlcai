@@ -2124,6 +2124,25 @@ function ProjectPageInner() {
   // the whole format from the post (PATCH deleteFormat, server refuses if media).
   const [pendingCardDelete, setPendingCardDelete] = useState<string | null>(null)
 
+  // Arriving on a post that already has formats lands on them, not on the
+  // idea at the top (Hani, 2026-11-07). Once per visit; after that the canvas
+  // is hers to move.
+  const focusedFormatsRef = useRef(false)
+  useEffect(() => {
+    if (focusedFormatsRef.current || savedPostLoading || !cardsVariant || duplicatedFormats.length === 0) return
+    // Two frames: let the row mount and lay out before measuring it.
+    let raf2 = 0
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        const row = document.querySelector<HTMLElement>("[data-format-cards]")
+        if (!row) return
+        focusedFormatsRef.current = true
+        canvasRef.current?.focusOn(row)
+      })
+    })
+    return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2) }
+  }, [savedPostLoading, cardsVariant, duplicatedFormats.length])
+
   const cardMediaOf = (fid: string): FormatCardMedia | null => {
     const one = (url: string | null): FormatCardMedia | null => {
       if (!url) return null
