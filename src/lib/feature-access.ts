@@ -59,6 +59,7 @@ export function canEditPictures(email: string | null | undefined): boolean {
  */
 export const COPY_STRUCTURE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 
+/** Open to everyone (Hani, 2026-11-07); the list stays for reference. */
 export function canCopyStructure(email: string | null | undefined): boolean {
-  return !!email && COPY_STRUCTURE_EMAILS.includes(email.toLowerCase())
+  return !!email
 }
