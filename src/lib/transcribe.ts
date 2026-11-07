@@ -107,10 +107,37 @@ export function parseWhisper(data: {
   duration?: number
   words?: { word: string; start: number; end: number }[]
 }): Transcript {
-  const words = (data.words ?? [])
-    .map((w) => ({ text: (w.word ?? "").trim(), start: Number(w.start), end: Number(w.end) }))
-    .filter((w) => w.text && Number.isFinite(w.start) && Number.isFinite(w.end))
-  return { words, text: (data.text ?? "").trim(), duration: Number(data.duration) || (words.at(-1)?.end ?? 0) }
+  const text = (data.text ?? "").trim()
+  const words = withPunctuation(
+    (data.words ?? [])
+      .map((w) => ({ text: (w.word ?? "").trim(), start: Number(w.start), end: Number(w.end) }))
+      .filter((w) => w.text && Number.isFinite(w.start) && Number.isFinite(w.end)),
+    text,
+  )
+  return { words, text, duration: Number(data.duration) || (words.at(-1)?.end ?? 0) }
+}
+
+const bare = (s: string) => s.replace(/[^\p{L}\p{N}]/gu, "")
+
+/**
+ * Whisper's word list comes without punctuation (its full text has it), and
+ * the line breaker needs it to break at sentence and clause ends. Walk the
+ * text's tokens alongside the words and give each word its token's
+ * punctuation. A word that can't be matched keeps its own text.
+ */
+function withPunctuation(words: Word[], text: string): Word[] {
+  const tokens = text.split(/\s+/).filter(Boolean)
+  let t = 0
+  return words.map((w) => {
+    const key = bare(w.text)
+    for (let k = t; k < Math.min(tokens.length, t + 4); k++) {
+      if (bare(tokens[k]) === key) {
+        t = k + 1
+        return { ...w, text: tokens[k] }
+      }
+    }
+    return w
+  })
 }
 
 export interface CaptionLine {
@@ -164,8 +191,8 @@ export function captionLines(words: Word[], opts: LineOptions = {}): CaptionLine
     const atClause = CLAUSE_END.test(w.text)
     const full = cur.length >= max
     const natural = cur.length >= min && (gap >= pause || atSentence || atClause)
-    // A sentence end or a real pause breaks even a one-word line; never run past max.
-    const forced = full || ((atSentence || gap >= pause * 2) && cur.length >= 1)
+    // Never run past max; a sentence end breaks even a one-word line.
+    const forced = full || atSentence
     if (natural || forced) {
       lines.push(cur)
       cur = []
