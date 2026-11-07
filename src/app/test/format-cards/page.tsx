@@ -28,6 +28,8 @@ import { useSearchParams } from "next/navigation"
 import { ChevronRight, Film, Image as ImageIcon, Layers, Smartphone } from "lucide-react"
 import { InfiniteCanvas } from "@/components/infinite-canvas"
 import { MediaPanelFrame } from "@/components/media-panel"
+import { MediaAiChat, type AiEditFormat } from "@/components/media-ai-chat"
+import { ConfirmModal } from "@/components/confirm-modal"
 import { RichBodyEditor } from "@/components/rich-body-editor"
 import { StorySections } from "@/components/story-frames"
 import { AI_HOVER_ZONE, AiHoverEditButton } from "@/components/ai-hover-edit"
@@ -128,6 +130,9 @@ function Preview() {
     state === "panel-create" || state === "panel-media" ? "media" : state === "panel-approved" ? "schedule" : "script",
   )
   const [replacing, setReplacing] = useState(false)
+  // The real page's two follow-ups: the AI panel on the right, and the delete confirm.
+  const [aiFormat, setAiFormat] = useState<AiEditFormat | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null)
   const goTo = (tab: FormatPanelTab) => {
     setStep(tab)
     setReplacing(false)
@@ -238,8 +243,8 @@ function Preview() {
               fid={item.fid}
               media={item.media}
               onOpenMedia={() => setReplacing(true)}
-              onAiEditMedia={() => {}}
-              onDeleteMedia={() => setCardStates((p) => ({ ...p, [item.fid]: "script" }))}
+              onAiEditMedia={() => setAiFormat(item.fid as AiEditFormat)}
+              onDeleteMedia={() => setPendingDelete(item.fid)}
             />
           ) : (
             options
@@ -325,8 +330,8 @@ function Preview() {
           media={item.state === "media" ? item.media : null}
           mediaBusy={item.state === "media-busy"}
           onOpenMedia={() => setStep("media")}
-          onAiEditMedia={() => {}}
-          onDeleteMedia={() => setCardStates((p) => ({ ...p, [item.fid]: "script" }))}
+          onAiEditMedia={() => setAiFormat(item.fid as AiEditFormat)}
+          onDeleteMedia={() => setPendingDelete(item.fid)}
         />
       )
       footer = (
@@ -393,6 +398,32 @@ function Preview() {
       >
         {panelBody}
       </MediaPanelFrame>
+
+      {aiFormat && (
+        <MediaAiChat
+          key={aiFormat}
+          postId="format-cards-preview"
+          format={aiFormat}
+          open
+          onOpenChange={(open) => { if (!open) setAiFormat(null) }}
+          onUpdated={() => {}}
+        />
+      )}
+
+      <ConfirmModal
+        open={!!pendingDelete}
+        onOpenChange={(open) => { if (!open) setPendingDelete(null) }}
+        title="האם למחוק?"
+        description="הפעולה הזו תמחק את המדיה מהפוסט ולא יהיה ניתן לשחזר."
+        confirmLabel="כן, תמחק"
+        cancelLabel="לא, תשאיר מדיה"
+        confirmVariant="destructive"
+        onConfirm={() => {
+          const fid = pendingDelete
+          setPendingDelete(null)
+          if (fid) setCardStates((p) => ({ ...p, [fid]: "script" }))
+        }}
+      />
 
       <InfiniteCanvas>
         <div className="flex items-start pt-28 pr-16" dir="rtl">

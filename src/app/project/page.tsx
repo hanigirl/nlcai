@@ -3319,10 +3319,11 @@ function ProjectPageInner() {
       <ConfirmModal
         open={!!pendingMediaDelete}
         onOpenChange={(open) => { if (!open) setPendingMediaDelete(null) }}
-        title={pendingMediaDelete ? `למחוק את ה${MEDIA_NOUN[pendingMediaDelete]}?` : ""}
-        description="המדיה תוסר מהפוסט, ואפשר יהיה ליצור או להעלות חדשה במקומה."
-        confirmLabel="כן, למחוק"
-        cancelLabel="ביטול"
+        // Hani's words (2026-11-07).
+        title="האם למחוק?"
+        description="הפעולה הזו תמחק את המדיה מהפוסט ולא יהיה ניתן לשחזר."
+        confirmLabel="כן, תמחק"
+        cancelLabel="לא, תשאיר מדיה"
         confirmVariant="destructive"
         onConfirm={async () => {
           const format = pendingMediaDelete
