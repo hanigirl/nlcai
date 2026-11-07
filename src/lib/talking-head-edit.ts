@@ -103,15 +103,23 @@ export async function runTalkingHeadEdit(opts: {
   const source = await originalFor(supabase, userId, postId, current)
 
   // Up front: a clip too long for one run is said so, never failed midway.
-  const { seconds, width: W, height: H } = await probeVideo(source)
-  if (seconds === null) throw new EditError("not_video", "לא הצלחתי לקרוא את הסרטון. נסו שוב.")
-  if (seconds > MAX_TALKING_HEAD_SECONDS + 0.5) throw new EditError("too_long", tooLongMessage(seconds))
-
+  // Download first (a Drive link is a page, not a file ffmpeg can open),
+  // then probe the local copy.
   await fs.mkdir(work, { recursive: true })
   const input = path.join(work, "in.mp4")
-  const res = await fetch(source)
-  if (!res.ok) throw new EditError("video_fetch_failed", "לא הצלחתי לטעון את הסרטון. אם הוא בדרייב, בדקו שהוא משותף ל״כל מי שיש לו הקישור״.")
+  const { isDriveUrl, extractDriveFileId } = await import("@/lib/drive-media")
+  const { fetchDriveFile } = await import("@/lib/drive-fetch")
+  const driveId = isDriveUrl(source) ? extractDriveFileId(source) : null
+  const res = await (driveId ? fetchDriveFile(driveId) : fetch(source)).catch(() => null)
+  const type = (res?.headers.get("content-type") || "").split(";")[0]
+  if (!res?.ok || type.includes("text/html")) {
+    throw new EditError("video_fetch_failed", "לא הצלחתי לטעון את הסרטון. אם הוא בדרייב, בדקו שהוא משותף ל״כל מי שיש לו הקישור״.")
+  }
   await fs.writeFile(input, Buffer.from(await res.arrayBuffer()))
+
+  const { seconds, width: W, height: H } = await probeVideo(input)
+  if (seconds === null) throw new EditError("not_video", "לא הצלחתי לקרוא את הסרטון. נסו שוב.")
+  if (seconds > MAX_TALKING_HEAD_SECONDS + 0.5) throw new EditError("too_long", tooLongMessage(seconds))
 
   // Her face, so nothing covers it (lib/face-boxes). A detector that can't
   // run leaves only the instruction to the engine — never a failed edit.
