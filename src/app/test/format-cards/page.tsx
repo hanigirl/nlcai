@@ -179,6 +179,8 @@ function Preview() {
               onChange={setStyle}
               brandTemplate={brandTile}
               aspect={item.fid === "story" || item.fid === "b_roll" ? "9/16" : "4/5"}
+              // Same as the real panel: "עריכה עם AI" on the picked tile, before any media exists.
+              onAiEdit={() => {}}
             />
             <Button
               className="w-full"
