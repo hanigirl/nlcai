@@ -72,6 +72,8 @@ export interface ChatMessage {
    * its two answers show under it while it's the last turn and still true.
    */
   askEmpty?: boolean
+  /** "תעשה לי כזה": the question how to design the copy — its two answers show under it. */
+  copyAsk?: boolean
 }
 
 /** Panel state kept with the conversation (lib/ai-chat-session-store). */
@@ -80,6 +82,27 @@ interface MediaChatExtra {
   progress: string
   /** A generation waiting for (or running on) her brief — see GenStep. */
   gen?: GenStep | null
+  /**
+   * "תעשה לי כזה" (Hani, 2026-11-07): a carousel to copy the structure of.
+   * await = asked for a link or screenshots; choose = the reference is in
+   * (her storage URLs), waiting for "בשפת המותג שלי" / "בדיוק כמו בקרוסלה".
+   */
+  copy?: { phase: "await" } | { phase: "choose"; refs: string[]; brief: string } | null
+}
+
+export type CopyStep = MediaChatExtra["copy"]
+
+/** She wants a carousel like one she shows ("תעשה לי כזה", "אפשר כמו זה?"). */
+const LIKE_THIS =
+  /(כזה|כזאת|כזו|כמו זה|כמו זו|כמו בזה|כמו בקרוסלה|כמו הקרוסלה|בדיוק כמו|אותו מבנה|באותו מבנה|כמו בצילומ|כמו בלינק|כמו בתמונות)/
+const LINK_RE = /https?:\/\/[^\s"'<>]+/i
+const COPY_COPY = {
+  link: "עכשיו אעקוב אחרי הלינק ששלחתם ואייצר קרוסלה עם הטקסט שלכם. איך לעצב אותה?",
+  shots: "קיבלתי את צילומי המסך. אייצר קרוסלה באותו מבנה עם הטקסט שלכם. איך לעצב אותה?",
+  askFor: "שלחו לי לינק לקרוסלה או צילומי מסך של השקופיות, ואייצר לכם אחת כזאת עם הטקסט שלכם.",
+  reading: "קוראים את הקרוסלה מהלינק...",
+  brand: "בשפת המותג שלי",
+  exact: "בדיוק כמו בקרוסלה",
 }
 
 /**
@@ -316,6 +339,7 @@ export function MediaAiChat({
   seedAttachments,
   seedEmptied,
   seedAskEmpty,
+  seedCopy,
   initialMessages,
   autoSend,
   opening,
@@ -342,6 +366,8 @@ export function MediaAiChat({
   seedEmptied?: number
   /** State previews (/test/*) only: open on the "empty slides — with AI?" question. */
   seedAskEmpty?: boolean
+  /** State previews (/test/*) only: a "תעשה לי כזה" step already under way. */
+  seedCopy?: MediaChatExtra["copy"]
   /** State previews (/test/*) only: start the conversation here. */
   initialMessages?: ChatMessage[]
   /** State previews (/test/*) only: send this request once, on open. */
@@ -369,9 +395,9 @@ export function MediaAiChat({
       messages: initialMessages ?? [{ role: "assistant", content: copy.intro }],
       input: "",
       busy: false,
-      extra: { progress: "" },
+      extra: { progress: "", ...(seedCopy ? { copy: seedCopy } : {}) },
     }),
-    [initialMessages, copy.intro],
+    [initialMessages, copy.intro, seedCopy],
   )
   const empty = useMemo(() => fresh(), [fresh])
   const session = useAiChat<ChatMessage, MediaChatExtra>(chatKey) ?? empty
@@ -407,9 +433,12 @@ export function MediaAiChat({
   // Screenshots waiting to go with the next message; another conversation starts clean.
   // A carousel's slide slots take one attachment per slide (up to 10), sent
   // as storage URLs; everywhere else the 3-reference cap stays.
-  const slotsMax =
-    format === "carousel" &&
-    (!session.extra.gen || session.extra.gen.phase === "running" || !!session.extra.gen.placeRefs)
+  // Waiting for a carousel's screenshots ("תעשה לי כזה"): one per slide, up to 10.
+  const copyWaiting = format === "carousel" && session.extra.copy?.phase === "await"
+  const slotsMax = copyWaiting
+    ? MAX_SLOT_REFERENCES
+    : format === "carousel" &&
+        (!session.extra.gen || session.extra.gen.phase === "running" || !!session.extra.gen.placeRefs)
       ? Math.min(MAX_SLOT_REFERENCES, Math.max(MAX_REFERENCES, currentUrls.length || slideCount || 0))
       : MAX_REFERENCES
   const refs = useReferenceImages(slotsMax)
@@ -710,7 +739,8 @@ export function MediaAiChat({
   const picturesSlot = !genNow || genNow.phase === "running" || !!genNow.placeRefs
   const originOf = (ref: string) => refs.originals([ref])[0]
   const videoRefs = refs.refs.filter((r) => originOf(r)?.kind === "video")
-  const slottable = slotCount
+  // Screenshots of a carousel to copy are a reference — never slides.
+  const slottable = slotCount && !copyWaiting
     ? refs.refs.filter((r) => {
         const o = originOf(r)
         return !!o && (o.kind === "video" || picturesSlot)
@@ -948,6 +978,98 @@ export function MediaAiChat({
     }))
   }
 
+  /**
+   * "תעשה לי כזה" (Hani, 2026-11-07). Handles the message when it asks for a
+   * carousel like one she shows, or when one was asked for and the link /
+   * screenshots arrive. Returns true when it handled it.
+   */
+  const maybeCopy = async (
+    typed: string,
+    cur: MediaChat,
+    patchKey: (fn: (s: MediaChat) => MediaChat) => void,
+  ): Promise<boolean> => {
+    const link = typed.match(LINK_RE)?.[0]?.replace(/[.,;:!?)\]]+$/, "")
+    const shots = refs.split(refs.refs).place.filter((r) => !videoRefs.includes(r))
+    const waiting = cur.extra.copy?.phase === "await"
+    const wants = LIKE_THIS.test(typed)
+    if (!wants && !(waiting && (link || shots.length))) return false
+    const attached = refs.refs
+    const brief = typed.replace(LINK_RE, "").trim()
+    refs.clear()
+    links.reset()
+    setSentAsIs(null)
+    setSlotChoice({})
+    setSlotTarget(null)
+    setEmptied(null)
+    patchKey((s) => ({
+      ...s,
+      input: "",
+      messages: [...s.messages, { role: "user", content: typed || "צילומי מסך", ...(attached.length ? { images: attached } : {}) }],
+    }))
+    const say = (content: string, extra: Partial<ChatMessage> = {}, copy: MediaChatExtra["copy"] = null) =>
+      patchKey((s) => ({
+        ...s,
+        busy: false,
+        extra: { ...s.extra, progress: "", copy },
+        messages: [...s.messages, { role: "assistant", content, ...extra }],
+      }))
+    if (shots.length) {
+      // Her screenshots: a structure to copy, not slides (the slots don't apply).
+      patchKey((s) => ({ ...s, busy: true, extra: { ...s.extra, progress: "מעלים את צילומי המסך..." } }))
+      const up = await Promise.all(shots.map((r) => uploadSlotPicture(r)))
+      if (up.some((u) => !u)) {
+        say("לא הצלחתי להעלות את אחד מצילומי המסך. צרפו אותם שוב.", { error: true }, { phase: "await" })
+        return true
+      }
+      say(COPY_COPY.shots, { copyAsk: true }, { phase: "choose", refs: up as string[], brief })
+      return true
+    }
+    if (link) {
+      patchKey((s) => ({ ...s, busy: true, extra: { ...s.extra, progress: COPY_COPY.reading } }))
+      let slides: string[] = []
+      let message = ""
+      try {
+        const res = await fetch("/api/carousel/reference-slides", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: link }),
+        })
+        const data = (await res.json().catch(() => ({}))) as { slides?: string[]; message?: string }
+        slides = res.ok && Array.isArray(data.slides) ? data.slides : []
+        message = data.message ?? ""
+      } catch {
+        slides = []
+      }
+      if (slides.length < 2) {
+        say(message || "אי אפשר לקרוא לינק מחשבון אישי או לא ציבורי. שימו לי כאן צילומי מסך של השקופיות ואפעל לפיהם.", {}, { phase: "await" })
+        return true
+      }
+      const up = await Promise.all(slides.map((r) => uploadSlotPicture(r)))
+      if (up.some((u) => !u)) {
+        say("לא הצלחתי לשמור את השקופיות מהלינק. שימו לי כאן צילומי מסך של השקופיות ואפעל לפיהם.", {}, { phase: "await" })
+        return true
+      }
+      say(COPY_COPY.link, { copyAsk: true }, { phase: "choose", refs: up as string[], brief })
+      return true
+    }
+    // Asked, nothing to look at yet.
+    say(COPY_COPY.askFor, {}, { phase: "await" })
+    return true
+  }
+  /** Her answer: build it — in her visual language, or as the reference looks. */
+  const runCopy = (mode: "brand" | "exact") => {
+    const c = session.extra.copy
+    if (!c || c.phase !== "choose") return
+    patch((s) => ({ ...s, extra: { ...s.extra, copy: null } }))
+    void generate(
+      c.brief || "קרוסלה באותו מבנה כמו הקרוסלה המצורפת",
+      [],
+      mode === "brand" ? COPY_COPY.brand : COPY_COPY.exact,
+      [],
+      { structure: { refs: c.refs, mode } },
+    )
+  }
+
   const send = async (preset?: string) => {
     // The reply belongs to this conversation even if the panel closes or
     // switches format before it lands.
@@ -959,6 +1081,12 @@ export function MediaAiChat({
     const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, init, fn)
     const cur = getChat<ChatMessage, MediaChatExtra>(key) ?? init()
     if (cur.busy) return
+    // "תעשה לי כזה": a carousel to copy the structure of — before the slots,
+    // since then what she attached is a reference, not slides.
+    if (format === "carousel" && cur.extra.gen && cur.extra.gen.phase !== "running") {
+      const typed = (preset ?? cur.input).trim()
+      if (await maybeCopy(typed, cur, patchKey)) return
+    }
     // Slides still empty in her slots: asked first (Hani, 2026-11-06: "צריך
     // אישור") — nothing is sent until she says yes or adds media.
     if (emptyNeedsAsk && !confirmedEmpty.current) {
@@ -1300,7 +1428,7 @@ export function MediaAiChat({
             )}
             {/* Generate in the picked style as is — under the question; and
                 beside it, while she has media attached, upload it as it is. */}
-            {canSkip && i === messages.length - 1 && !loading && !m.askEmpty && (
+            {canSkip && i === messages.length - 1 && !loading && !m.askEmpty && !m.copyAsk && (
               <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
                 <Chip
                   onClick={() => {
@@ -1311,7 +1439,7 @@ export function MediaAiChat({
                 >
                   {GEN_SKIP}
                 </Chip>
-                {asIsNow.length > 0 && (
+                {asIsNow.length > 0 && !copyWaiting && (
                   <Chip onClick={() => void uploadAsIs(asIsNow, refs.split(refs.refs).place)}>{AS_IS}</Chip>
                 )}
               </div>
@@ -1323,6 +1451,15 @@ export function MediaAiChat({
                   <Chip onClick={() => void uploadAsIs(sentAsIs.items, m.images ?? [])}>{AS_IS}</Chip>
                 </div>
               )}
+            {/* "תעשה לי כזה": how to design the copy — her language first. */}
+            {m.copyAsk && i === messages.length - 1 && session.extra.copy?.phase === "choose" && !loading && (
+              <div className="flex max-w-[85%] flex-wrap items-center justify-end gap-1.5">
+                <Button size="sm" className="h-7 rounded-full px-3 text-xs-body" onClick={() => runCopy("brand")}>
+                  {COPY_COPY.brand}
+                </Button>
+                <Chip onClick={() => runCopy("exact")}>{COPY_COPY.exact}</Chip>
+              </div>
+            )}
             {/* The empty-slides question's answers — while it's the last turn and still true. */}
             {m.askEmpty && i === messages.length - 1 && askNow && !loading && (
               <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
@@ -1412,7 +1549,7 @@ export function MediaAiChat({
           />
         )}
         <LinkReferenceRows l={links} />
-        {asIsNow.length > 0 && !canSkip && !loading && !(askNow && messages[messages.length - 1]?.askEmpty) && (
+        {asIsNow.length > 0 && !canSkip && !loading && !copyWaiting && !(askNow && messages[messages.length - 1]?.askEmpty) && (
           <div className="mb-2 flex flex-wrap gap-1.5">
             <Chip onClick={() => void uploadAsIs(asIsNow, refs.split(refs.refs).place)}>{AS_IS}</Chip>
           </div>

@@ -3,6 +3,7 @@ import { PICTURE_UNCHANGED, adaptPictureForSlide, editPicture, wantsPictureAsIs 
 import { gatePlacement } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
 import { resolveReferences, parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
+import { MAX_STRUCTURE_SLIDES, readCarouselStructure, type StructureMode } from "@/lib/carousel-structure"
 import sharp from "sharp"
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
@@ -124,8 +125,14 @@ function cropToCanvas(imageBase64: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { slides, templateId, postId, brief: mediaBrief, references, place, placeAt: rawPlaceAt } = (await req.json().catch(() => ({}))) as {
+    const { slides: slidesIn, templateId, postId, brief: mediaBrief, references, place, placeAt: rawPlaceAt, structure: rawStructure } = (await req.json().catch(() => ({}))) as {
       slides?: SlideData[]
+      /**
+       * "תעשה לי כזה" (Hani, 2026-11-07): another carousel to copy the
+       * structure of — its slides (data or her storage URLs) and the look:
+       * hers ("brand") or the reference's ("exact"). lib/carousel-structure.
+       */
+      structure?: { refs?: unknown; mode?: unknown }
       templateId?: string
       /** Her own direction for this carousel (lib/media-brief). */
       brief?: unknown
@@ -139,6 +146,7 @@ export async function POST(req: NextRequest) {
       postId?: string
     }
 
+    let slides = slidesIn
     if (!slides || !Array.isArray(slides) || slides.length === 0) {
       return NextResponse.json(
         { error: "slides array is required" },
@@ -191,6 +199,36 @@ export async function POST(req: NextRequest) {
         )
       }
       throw err
+    }
+
+    // Another carousel's structure: read it, and fit the script to its slides.
+    let structure: { images: string[]; analysis: string; mode: StructureMode } | undefined
+    if (rawStructure) {
+      const claude = await getUserApiKey(supabase, "anthropic_api_key").catch(() => null)
+      if (!claude) {
+        return NextResponse.json(
+          { error: "structure_needs_claude", message: "כדי לבנות קרוסלה לפי מבנה של קרוסלה אחרת צריך לחבר מפתח Claude בהגדרות." },
+          { status: 400 },
+        )
+      }
+      const refsIn = await resolveReferences(rawStructure.refs, user.id, MAX_STRUCTURE_SLIDES)
+      if (!refsIn.length) {
+        return NextResponse.json(
+          { error: "structure_unreadable", message: "לא הצלחתי לקרוא את צילומי המסך. צרפו אותם שוב." },
+          { status: 422 },
+        )
+      }
+      try {
+        const read = await readCarouselStructure(claude, refsIn, slides)
+        slides = read.slides
+        structure = { images: refsIn, analysis: read.analysis, mode: rawStructure.mode === "exact" ? "exact" : "brand" }
+      } catch (err) {
+        console.error("[carousel/generate-ai] structure", err)
+        return NextResponse.json(
+          { error: "structure_unread", message: "לא הצלחתי לקרוא את המבנה של הקרוסלה. נסו שוב, או צרפו צילומי מסך ברורים יותר." },
+          { status: 422 },
+        )
+      }
     }
 
     const total = slides.length
@@ -340,7 +378,7 @@ export async function POST(req: NextRequest) {
           rawPlaceAt.every((n) => Number.isInteger(n) && n >= 0 && n < total)
             ? (rawPlaceAt as number[])
             : undefined
-        const layout = await composeCarousel(anthropicKey, brief, refs, placeRefs, pictureEditsOn, placeAt)
+        const layout = await composeCarousel(anthropicKey, brief, refs, placeRefs, pictureEditsOn, placeAt, structure)
         if (placeAt) {
           const forced = forceAttached(layout.html, total, placeAt)
           if (!forced) return NextResponse.json(PLACE_FAILED_GEN, { status: 422 })
@@ -451,6 +489,13 @@ export async function POST(req: NextRequest) {
         console.error("[carousel/generate-ai] layout engine failed", err)
         // The image-model fallback can't put her exact picture in: no stand-in.
         if (placeRefs.length) return NextResponse.json(PLACE_FAILED_GEN, { status: 422 })
+        // A copied structure only the layout engine can build — no stand-in.
+        if (structure) {
+          return NextResponse.json(
+            { error: "structure_failed", message: "לא הצלחתי לבנות את הקרוסלה לפי המבנה. נסו שוב." },
+            { status: 422 },
+          )
+        }
         if (Date.now() - started > 90_000) throw err
         images.fill(undefined as unknown as string)
       }

@@ -1831,7 +1831,12 @@ function CarouselFlow({
     // The toast + module cache outlive this component, so the user can
     // switch panels mid-generation and still get the result.
     const templateName = selectedConfig?.name ?? ""
-    const genId = selectedTemplate
+    // "תעשה לי כזה" (2026-11-07): in her visual language, or the reference's look.
+    const genId = slots?.structure
+      ? slots.structure.mode === "brand"
+        ? BRAND_TEMPLATE_ID
+        : BLANK_TEMPLATE_ID
+      : selectedTemplate
     // Reported directly, not through useReportBusy: this fetch outlives the
     // panel and still lands its slides on the canvas, so the skeleton must
     // too — it comes down in `finally`, whoever is mounted by then.
@@ -1854,7 +1859,7 @@ function CarouselFlow({
       onSlidesChange(parsedSlides)
 
       const res = await fetch(
-        isAiTemplate ? "/api/carousel/generate-ai" : "/api/carousel/generate",
+        isAiTemplate || slots?.structure ? "/api/carousel/generate-ai" : "/api/carousel/generate",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1866,6 +1871,7 @@ function CarouselFlow({
             ...(references.length ? { references } : {}),
             ...(place.length ? { place } : {}),
             ...(place.length && slots?.placeAt?.length === place.length ? { placeAt: slots.placeAt } : {}),
+            ...(slots?.structure ? { structure: slots.structure } : {}),
           }),
         },
       )
