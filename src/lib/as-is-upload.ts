@@ -17,6 +17,8 @@
  * requestDrivePicker(format) → the next AI panel for it opens with Drive up.
  */
 
+import type { GenSlots } from "@/lib/ai-edit-intent"
+
 export type AsIsItem = {
   kind: "image" | "video"
   /** A file from her Drive folder: its view link. */
@@ -47,6 +49,12 @@ export type AsIsOptions = {
    * never a shorter carousel of only her files (live bug, 2026-11-07).
    */
   fill?: number
+  /**
+   * Not an upload: rebuild the carousel through the panel's generation with
+   * these slots (a structure to copy — "תעשה לי כזה" on a carousel that
+   * exists, 2026-11-07). `instruction` is the brief.
+   */
+  regenerate?: GenSlots
   /** The carousel's slides right now, when the caller knows them fresher than the panel (just edited). */
   base?: string[]
 }

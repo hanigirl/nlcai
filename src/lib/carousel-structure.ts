@@ -15,7 +15,12 @@ import type { SlideData } from "@/lib/carousel-templates"
  */
 
 export type StructureMode = "brand" | "exact"
-export type CarouselStructure = { analysis: string; slides: SlideData[] }
+/**
+ * `template`: ONE reference image (a tweet, a single post) — a design to
+ * apply to every slide; the script keeps its own slides (Hani, 2026-11-07:
+ * one tweet screenshot used to make a 1-slide carousel).
+ */
+export type CarouselStructure = { analysis: string; slides: SlideData[]; template: boolean }
 
 const MODEL = "claude-opus-5-5"
 export const MAX_STRUCTURE_SLIDES = 10
@@ -32,6 +37,7 @@ export async function readCarouselStructure(
   script: SlideData[],
 ): Promise<CarouselStructure> {
   const refs = references.slice(0, MAX_STRUCTURE_SLIDES)
+  if (refs.length === 1) return readTemplate(apiKey, refs[0], script)
   const client = new Anthropic({ apiKey })
   const content: Anthropic.ContentBlockParam[] = [
     ...refs.flatMap((r, i): Anthropic.ContentBlockParam[] => [{ type: "text", text: `Reference slide ${i + 1}:` }, imageBlock(r)]),
@@ -65,16 +71,54 @@ export async function readCarouselStructure(
     }))
     .filter((s) => s.title || s.body)
   if (typeof parsed.analysis !== "string" || slides.length < 1) throw new Error("structure_unread")
-  return { analysis: parsed.analysis, slides: slides.slice(0, refs.length) }
+  return { analysis: parsed.analysis, slides: slides.slice(0, refs.length), template: false }
+}
+
+/** One reference: the design every slide takes; her script's slides stay as they are. */
+async function readTemplate(apiKey: string, reference: string, script: SlideData[]): Promise<CarouselStructure> {
+  const client = new Anthropic({ apiKey })
+  const message = await client.messages.create({
+    model: MODEL,
+    max_tokens: 3000,
+    messages: [
+      {
+        role: "user",
+        content: [
+          imageBlock(reference),
+          {
+            type: "text",
+            text: [
+              "Above is ONE design the creator wants every slide of her Instagram carousel to look like (it may be a tweet / X post, a LinkedIn or Threads post, a quote card, a single slide — screenshots may include app chrome: ignore phone status bars and the app's own buttons, keep what makes the card).",
+              "Describe it precisely, in English, for a designer who cannot see it, as a TEMPLATE to apply to every slide of a 4:5 carousel:",
+              "- what it is (e.g. a tweet card) and its overall composition: background, the card (if any) and its size, corner radius, border/shadow, margins;",
+              "- every element and exactly where it sits: avatar (shape, size, position), display name, handle, verified badge, timestamp, the post text (size relative to the frame, weight, alignment, line spacing), any engagement row (icons, counts), dividers;",
+              "- the hierarchy (what's biggest/boldest) and the colours (background, card, text, secondary text, accents) and type style (serif/sans, weights);",
+              "- how a cover vs a content slide vs a closing slide should use it (usually the same card with the slide's title as the post text, body under it).",
+              'Answer with a fenced json block only: {"analysis": "..."}',
+            ].join("\n"),
+          },
+        ],
+      },
+    ],
+  })
+  const text = message.content.map((c) => (c.type === "text" ? c.text : "")).join("")
+  const json = /```json\s*([\s\S]*?)```/i.exec(text)?.[1] ?? /\{[\s\S]*\}/.exec(text)?.[0]
+  const analysis = json ? (JSON.parse(json) as { analysis?: unknown }).analysis : null
+  if (typeof analysis !== "string" || !analysis.trim()) throw new Error("structure_unread")
+  return { analysis, slides: script, template: true }
 }
 
 /** What the layout model is told on top of the brief. */
-export function structureNote(analysis: string, mode: StructureMode, count: number): string {
+export function structureNote(analysis: string, mode: StructureMode, count: number, template = false): string {
   return [
     "",
-    `STRUCTURE TO COPY: the attached reference images are another creator's ${count}-slide carousel. Build this carousel with EXACTLY the same structure: the same number of slides (${count}), and on each slide the same layout, text positions, alignment, proportions, hierarchy and role as the matching reference slide. Her text replaces theirs; never copy their words, handle, logo or photos.`,
+    "THIS OVERRIDES EVERY LAYOUT RULE ABOVE — the layout comes from the STRUCTURE REFERENCE, not from her visual language's usual layout or any template.",
+    template
+      ? `STRUCTURE TO COPY: the STRUCTURE REFERENCE image is ONE design (e.g. a tweet card). EVERY one of the ${count} slides is built as that design: the same composition, elements, positions, proportions and hierarchy on each slide, with that slide's text as the post's text (title first, body after). Where it shows an author's avatar, name and handle, keep those elements in place but never the reference author's — use her name / handle if the brief has them, otherwise a plain avatar circle in her colours and no invented name.`
+      : `STRUCTURE TO COPY: the STRUCTURE REFERENCE images are another creator's ${count}-slide carousel. Build this carousel with EXACTLY the same structure: the same number of slides (${count}), and on each slide the same layout, text positions, alignment, proportions, hierarchy and role as the matching reference slide.`,
+    "Her text replaces theirs; never copy their words, handle, logo or photos.",
     mode === "brand"
-      ? "LOOK: from HER visual language above (her colours, fonts, decoration, usage examples) — NOT the reference's. The reference images are ONLY for structure: ignore their colours, fonts and decoration."
+      ? "LOOK: ONLY her colours and fonts (and her pasted elements) come from her visual language above — applied onto the reference's layout. Everything else — composition, element positions, card, sizes, hierarchy — is the reference's."
       : "LOOK: as close as possible to the reference — its background and text colours, accent colour, type style (choose the closest of the available fonts), weights, case and decorative devices.",
     "",
     "The reference, described:",

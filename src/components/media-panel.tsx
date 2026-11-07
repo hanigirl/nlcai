@@ -2103,6 +2103,13 @@ function CarouselFlow({
   useEffect(() => {
     asIsRef.current = async (items, opts) => {
       if (!postId) return { ok: false, message: "שמרו קודם את הפוסט, ואז אפשר להעלות מדיה." }
+      // "תעשה לי כזה" on a carousel that exists: rebuilt on the reference.
+      if (opts?.regenerate) {
+        const r = await handleGenerate({ brief: opts.instruction, fromPanel: true, slots: opts.regenerate })
+        return r.ok
+          ? { ok: true, message: r.message || "בניתי את הקרוסלה מחדש לפי המבנה של הרפרנס, עם הטקסט שלכם." }
+          : { ok: false, message: r.message }
+      }
       // Her slide slots (Hani, 2026-11-06): each file on the slide she chose,
       // replacing what's there — the slide count stays.
       if (opts?.at && opts.at.length === items.length) {

@@ -213,9 +213,12 @@ async function ask(
   examples: string[] = [],
   refs: string[] = [],
   placeable = false,
+  /** Blocks of their own before everything (a structure to copy). */
+  lead: Anthropic.ContentBlockParam[] = [],
 ) {
   const client = new Anthropic({ apiKey })
   const content: Anthropic.ContentBlockParam[] = [
+    ...lead,
     ...examples.map((url): Anthropic.ContentBlockParam => ({ type: "image", source: { type: "url", url } })),
     ...referenceBlocks(refs, { placeable }),
     { type: "text", text: user },
@@ -269,6 +272,31 @@ export function forceAttached(html: string, count: number, placeAt: number[]): n
   return attached
 }
 
+export type CopiedStructure = { images: string[]; analysis: string; mode: StructureMode; template?: boolean }
+
+/**
+ * What the layout model gets for "תעשה לי כזה" (live bug, Hani 2026-11-07:
+ * a tweet screenshot came back in her visual language with none of its
+ * layout). Her usage examples are NOT attached — the system prompt makes
+ * them THE TEMPLATE, which beat the reference every time; her language
+ * reaches it as words (fonts, colours) only. The reference images go first,
+ * labelled as the structure, never as "a look to match".
+ */
+export function structurePrompt(brief: CarouselBrief, structure: CopiedStructure) {
+  const lead: Anthropic.ContentBlockParam[] = structure.images.flatMap((r, i): Anthropic.ContentBlockParam[] => {
+    const m = r.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,(.+)$/)
+    if (!m) return []
+    return [
+      { type: "text", text: structure.template ? "STRUCTURE REFERENCE (one design, for every slide):" : `STRUCTURE REFERENCE — slide ${i + 1}:` },
+      { type: "image", source: { type: "base64", media_type: m[1] as "image/png", data: m[2] } },
+    ]
+  })
+  const text =
+    briefText({ ...brief, examples: [] }) +
+    structureNote(structure.analysis, structure.mode, brief.slides.length, !!structure.template)
+  return { lead, text }
+}
+
 export function composeCarousel(
   apiKey: string,
   brief: CarouselBrief,
@@ -285,17 +313,11 @@ export function composeCarousel(
    * "תעשה לי כזה" (Hani, 2026-11-07): another carousel's structure to copy
    * (lib/carousel-structure) — its slides as images, read into words.
    */
-  structure?: { images: string[]; analysis: string; mode: StructureMode },
+  structure?: CopiedStructure,
 ) {
   if (structure) {
-    return ask(
-      apiKey,
-      briefText(brief) + structureNote(structure.analysis, structure.mode, brief.slides.length),
-      brief.slides.length,
-      structure.mode === "brand" ? brief.examples : [],
-      structure.images,
-      false,
-    )
+    const p = structurePrompt(brief, structure)
+    return ask(apiKey, p.text, brief.slides.length, [], [], false, p.lead)
   }
   if (!place.length) return ask(apiKey, briefText(brief), brief.slides.length, brief.examples, refs)
   const k = place.length

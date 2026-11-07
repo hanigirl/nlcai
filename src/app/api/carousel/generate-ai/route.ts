@@ -202,7 +202,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Another carousel's structure: read it, and fit the script to its slides.
-    let structure: { images: string[]; analysis: string; mode: StructureMode } | undefined
+    let structure: { images: string[]; analysis: string; mode: StructureMode; template: boolean } | undefined
     if (rawStructure && canCopyStructure(user?.email)) {
       const claude = await getUserApiKey(supabase, "anthropic_api_key").catch(() => null)
       if (!claude) {
@@ -221,7 +221,12 @@ export async function POST(req: NextRequest) {
       try {
         const read = await readCarouselStructure(claude, refsIn, slides)
         slides = read.slides
-        structure = { images: refsIn, analysis: read.analysis, mode: rawStructure.mode === "exact" ? "exact" : "brand" }
+        structure = {
+          images: refsIn,
+          analysis: read.analysis,
+          mode: rawStructure.mode === "exact" ? "exact" : "brand",
+          template: read.template,
+        }
       } catch (err) {
         console.error("[carousel/generate-ai] structure", err)
         return NextResponse.json(
