@@ -1273,14 +1273,14 @@ function TalkingHeadFlow({
               {isDriveUrl(liftedVideoUrl) ? (
                 <DriveVideoPreview url={liftedVideoUrl} label="הסרטון שלכם" />
               ) : (
+                // A real player — it used to be a bare frame (controls off) that
+                // read as a picture (Hani, 2026-11-08).
                 <video
                   src={liftedVideoUrl.startsWith("blob:") ? liftedVideoUrl : `${playableVideoSrc(liftedVideoUrl)}#t=0.001`}
-                  controls={false}
+                  controls
                   playsInline
-                  muted
                   preload="metadata"
-                  className="w-full h-full object-cover cursor-pointer"
-                  onClick={(e) => { const v = e.target as HTMLVideoElement; if (v.paused) v.play(); else v.pause() }}
+                  className="w-full h-full object-cover"
                 />
               )}
             </div>
@@ -1310,11 +1310,14 @@ function TalkingHeadFlow({
           )}
         </div>
 
-        {/* Actions */}
+        {/* The video she has, and what she can do to IT. Making a different
+            one (avatar, another upload) is the creation layout — it comes
+            back only once she chooses to replace this one (Hani, 2026-11-08:
+            "כנ״ל לגבי דיבור למצלמה"). */}
         <div className="flex gap-2">
           <Button variant="outline" onClick={handleStartOver} size="sm" className="flex-1 gap-1.5">
             <RefreshCw className="size-3.5" />
-            החלף מדיה
+            החלפת הסרטון
           </Button>
           {coverImage && (
             <Button onClick={handleDownloadCover} size="sm" className="flex-1 gap-1.5">
@@ -1323,22 +1326,6 @@ function TalkingHeadFlow({
             </Button>
           )}
         </div>
-
-        {/* Divider */}
-        <div className="flex items-center gap-3">
-          <div className="h-px flex-1 bg-border-neutral-default" />
-          <span className="text-xs text-text-neutral-default">או</span>
-          <div className="h-px flex-1 bg-border-neutral-default" />
-        </div>
-
-        {/* Avatar option */}
-        <Button
-          variant="outline"
-          onClick={() => { handleStartOver(); onSourceModeChange("avatar") }}
-          className="w-full gap-2"
-        >
-          טען אווטארים
-        </Button>
       </div>
     )
   }
@@ -1354,18 +1341,17 @@ function TalkingHeadFlow({
           <div className="flex flex-col items-center gap-2 flex-1 min-w-0">
             <p className="text-xs text-text-neutral-default">סרטון</p>
             <div className="w-full aspect-[9/16] rounded-lg overflow-hidden bg-gray-95 relative">
-              {liftedVideoUrl.startsWith("blob:") ? (
-                <video
-                  src={playableVideoSrc(liftedVideoUrl)}
-                  controls={false}
-                  playsInline
-                  muted
-                  className="w-full h-full object-cover cursor-pointer"
-                  onClick={(e) => { const v = e.target as HTMLVideoElement; if (v.paused) v.play(); else v.pause() }}
-                />
+              {isDriveUrl(liftedVideoUrl) ? (
+                <DriveVideoPreview url={liftedVideoUrl} label="הסרטון שלכם" />
               ) : (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={liftedVideoUrl} alt="video" className="w-full h-full object-cover" />
+                // The avatar's video, playable — it was an <img> of the video URL.
+                <video
+                  src={liftedVideoUrl.startsWith("blob:") ? liftedVideoUrl : `${playableVideoSrc(liftedVideoUrl)}#t=0.001`}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  className="w-full h-full object-cover"
+                />
               )}
             </div>
           </div>
@@ -3815,6 +3801,11 @@ function MediaUploadFlow({
   // panel closes, and generation takes up to a minute. Same pattern
   // image_post and story already use.
   const bRollGenerating = bRollState.inFlight > 0
+  // A b-roll that HAS its media shows just that — the clip in a player, with
+  // delete (and ✨ on the canvas card). The creation layout (style tiles,
+  // "יצירת בי-רול עם AI", Google Drive) is for an empty b-roll, or after she
+  // deletes it (Hani, 2026-11-08: "המדיה צריך להיות הבירול עם נגן וזהו").
+  const bRollShowsMedia = isBRoll && !!previewUrl && !bRollGenerating
   const burningText = bRollState.burning > 0
 
   /* ---- still-image caption: fire, pick up, redo ---------------------- */
@@ -4937,7 +4928,7 @@ function MediaUploadFlow({
           {/* Waiting on the OpenAI connection answer. B-roll had no skeleton
               of its own, so this keeps the slot the right height instead of
               letting the AI card render and then flip to the credits card. */}
-          {isBRoll && !hydrating && openAiConnected === null && (
+          {isBRoll && !hydrating && !bRollShowsMedia && openAiConnected === null && (
             <>
               <Skeleton className="h-[190px] w-full rounded-[18px]" />
               <div className="flex items-center gap-3">
@@ -4948,7 +4939,7 @@ function MediaUploadFlow({
             </>
           )}
 
-          {isBRoll && !hydrating && openAiConnected === false && (
+          {isBRoll && !hydrating && !bRollShowsMedia && openAiConnected === false && (
             <>
               <MediaCreditsCard />
 
@@ -4960,7 +4951,7 @@ function MediaUploadFlow({
             </>
           )}
 
-          {isBRoll && !hydrating && openAiConnected === true && (
+          {isBRoll && !hydrating && !bRollShowsMedia && openAiConnected === true && (
             <>
               <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
                 <MediaStylePicker
@@ -5095,7 +5086,7 @@ function MediaUploadFlow({
               open reads as "you still need to paste something" under a video
               that's already there. Collapse it behind a replace button and only
               bring it back when the user asks to swap the clip. */}
-          {drivePick && isBRoll ? (
+          {bRollShowsMedia ? null : drivePick && isBRoll ? (
             <DriveFolderEntry
               format={format}
               pulling={drivePulling}
