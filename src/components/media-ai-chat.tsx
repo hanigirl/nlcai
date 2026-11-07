@@ -1326,7 +1326,10 @@ export function MediaAiChat({
             {/* The empty-slides question's answers — while it's the last turn and still true. */}
             {m.askEmpty && i === messages.length - 1 && askNow && !loading && (
               <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
-                <Chip
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 rounded-full px-3 text-xs-body font-normal"
                   onClick={() => {
                     confirmedEmpty.current = true
                     if (askFor === "asIs") void uploadAsIs(asIsNow, refs.split(refs.refs).place)
@@ -1334,7 +1337,7 @@ export function MediaAiChat({
                   }}
                 >
                   {firstGen ? "כן, ליצור" : "כן, להמשיך"}
-                </Chip>
+                </Button>
                 <Chip
                   onClick={() => {
                     setAskKey(null)
@@ -1493,7 +1496,7 @@ export function MediaAiChat({
           <Button
             size="icon-sm"
             onClick={() => void send()}
-            disabled={(!input.trim() && !refs.refs.length) || loading || links.busy || uploading}
+            disabled={(!input.trim() && !refs.refs.length) || loading || links.busy || uploading || (askNow && messages[messages.length - 1]?.askEmpty)}
             aria-label={gen && gen.phase !== "running" ? "יצירה" : "שליחה"}
             className="shrink-0 rounded-full"
           >
