@@ -40,8 +40,14 @@ const DRIVE_HEADER_TIMEOUT_MS = 12_000
  * Throws a TimeoutError (from AbortSignal.timeout) if Drive doesn't answer
  * within DRIVE_HEADER_TIMEOUT_MS — callers map that to `drive_timeout`.
  */
-export async function fetchDriveFile(id: string): Promise<Response> {
+export async function fetchDriveFile(
+  id: string,
+  /** A byte range ("bytes=0-") — so a player can seek a Drive video through our proxy. */
+  range?: string | null,
+): Promise<Response> {
+  const headers: Record<string, string> = range ? { Range: range } : {}
   const first = await fetch(driveDownloadUrl(id), {
+    headers,
     signal: AbortSignal.timeout(DRIVE_HEADER_TIMEOUT_MS),
   })
   const ct = first.headers.get("content-type") || ""
@@ -61,7 +67,7 @@ export async function fetchDriveFile(id: string): Promise<Response> {
   if (!params.has("confirm")) params.set("confirm", "t")
   return fetch(
     `https://drive.usercontent.google.com/download?${params.toString()}`,
-    { signal: AbortSignal.timeout(DRIVE_HEADER_TIMEOUT_MS) },
+    { headers, signal: AbortSignal.timeout(DRIVE_HEADER_TIMEOUT_MS) },
   )
 }
 

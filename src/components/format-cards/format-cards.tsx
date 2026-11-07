@@ -20,6 +20,7 @@
  * UI only: generation, media flows and approvals are the page's own.
  */
 
+import { playableVideoSrc } from "@/lib/drive-media"
 import { useState, type ReactNode } from "react"
 import {
   Check,
@@ -204,7 +205,7 @@ export function FormatMediaPreview({
         {isVideo(src) ? (
           <video
             key={src}
-            src={`${src}#t=0.001`}
+            src={`${playableVideoSrc(src)}#t=0.001`}
             muted
             playsInline
             preload="metadata"

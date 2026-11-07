@@ -57,6 +57,7 @@
  *     fired up to the Sheet which holds the storage write.
  */
 
+import { playableVideoSrc } from "@/lib/drive-media"
 import { useState } from "react"
 import { ExternalLink, Pencil } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -415,7 +416,7 @@ function MediaPreview({ url, label }: { url: string; label: string }) {
     <div className="rounded-xl overflow-hidden border border-border-neutral-default bg-bg-surface aspect-video">
       {isVideo ? (
         <video
-          src={url}
+          src={playableVideoSrc(url)}
           className="w-full h-full object-cover"
           controls
           playsInline

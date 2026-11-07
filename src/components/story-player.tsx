@@ -30,6 +30,7 @@
  * without restarting — both would break "exactly the seconds".
  */
 
+import { playableVideoSrc } from "@/lib/drive-media"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { ChevronLeft, ChevronRight, Pause, Play, RotateCcw } from "lucide-react"
 import { imageSrc } from "@/lib/image-src"
@@ -187,7 +188,7 @@ export function StoryPlayer({
       {isVideo ? (
         <video
           ref={videoRef}
-          src={frame}
+          src={playableVideoSrc(frame)}
           className="h-full w-full object-cover"
           playsInline
           muted

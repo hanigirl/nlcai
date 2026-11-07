@@ -31,7 +31,7 @@ import {
 } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
 import { DriveVideoPreview } from "@/components/drive-video-preview"
-import { isDriveUrl, isVideoUrl } from "@/lib/drive-media"
+import { isDriveUrl, isVideoUrl, playableVideoSrc } from "@/lib/drive-media"
 import {
   Tooltip,
   TooltipContent,
@@ -490,7 +490,7 @@ function PreviewMediaSlot({
           <DriveVideoPreview url={url} label="מדיה של הפוסט" />
         ) : isVideo ? (
           <video
-            src={url}
+            src={playableVideoSrc(url)}
             className="w-full h-full object-cover"
             playsInline
             muted

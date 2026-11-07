@@ -17,6 +17,7 @@
  * and time — nothing else. A field that isn't sent isn't shown (brief, 16.10).
  */
 
+import { playableVideoSrc } from "@/lib/drive-media"
 import { useState } from "react"
 import {
   AlertCircle,
@@ -338,7 +339,7 @@ export function FormatMedia({
       {showVideo ? (
         <video
           key={slide.url}
-          src={slide.url}
+          src={playableVideoSrc(slide.url)}
           poster={data.coverUrl}
           controls
           playsInline
@@ -438,7 +439,7 @@ export function SlideStrip({
         >
           {s.type === "video" ? (
             // A video slide's thumbnail: its first moment (2026-11-06).
-            <video src={`${s.url}#t=0.1`} muted playsInline preload="metadata" className="size-full object-cover" />
+            <video src={`${playableVideoSrc(s.url)}#t=0.1`} muted playsInline preload="metadata" className="size-full object-cover" />
           ) : (
             /* eslint-disable-next-line @next/next/no-img-element */
             <img src={s.url} alt="" className="size-full object-cover" draggable={false} />
