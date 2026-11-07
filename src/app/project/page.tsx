@@ -869,6 +869,8 @@ function ProjectPageInner() {
           const savedFp = data.post.formatPosts as Record<string, string> | undefined
           if (savedFp && Object.keys(savedFp).length > 0) {
             lastSavedFormatsRef.current = { ...savedFp }
+            // Learning baseline: what the post holds when she opens it.
+            aiFormatRef.current = { ...savedFp }
           }
           if (restoreText) {
           setCorePost(data.post.body)
@@ -1828,6 +1830,7 @@ function ProjectPageInner() {
             .filter(Boolean)
             .join("\n\n")
           results[fid] = text
+          aiFormatRef.current[fid] = text
           setFormatPosts((prev) => ({ ...prev, [fid]: text }))
           return
         }
@@ -1847,6 +1850,7 @@ function ProjectPageInner() {
           }
           const text = data.text || corePost
           results[fid] = text
+          aiFormatRef.current[fid] = text
           setFormatPosts((prev) => ({ ...prev, [fid]: text }))
         } catch (err) {
           console.error("[project][format-variant-generate]", err)
@@ -1883,6 +1887,11 @@ function ProjectPageInner() {
   // restored to (handleFormatBlur), and seeded from the DB load so opening a
   // post doesn't count as editing it.
   const lastSavedFormatsRef = useRef<Record<string, string>>({})
+  // Learning capture for her own typing in a format script (Hani, 2026-11-07):
+  // the last text the AI wrote (or the post held on load) per format, and the
+  // baseline already learned from, so one AI version teaches once.
+  const aiFormatRef = useRef<Record<string, string>>({})
+  const loggedFormatBaselineRef = useRef<Record<string, string>>({})
   const pendingFormatsRef = useRef<Record<string, string> | null>(null)
   const formatsTimerRef = useRef<number | null>(null)
 
@@ -1987,9 +1996,23 @@ function ProjectPageInner() {
   const formatsLocked = duplicatedFormats.length > 0
 
   // "עריכה עם AI" on each format's copy + its writing-style learning.
+  // An AI edit of a script is the AI's text, not hers: it becomes the new
+  // learning baseline instead of being learned as a manual edit.
+  const setFormatPostsFromAi = useCallback(
+    (fn: (prev: Record<string, string>) => Record<string, string>) => {
+      setFormatPosts((prev) => {
+        const next = fn(prev)
+        for (const fid of Object.keys(next)) {
+          if (next[fid] !== prev[fid]) aiFormatRef.current[fid] = next[fid]
+        }
+        return next
+      })
+    },
+    [],
+  )
   const copyEdit = useFormatCopyAiOnPage({
     formatPosts,
-    setFormatPosts,
+    setFormatPosts: setFormatPostsFromAi,
     hook: activeHook,
     scope: savedPostId ?? `draft:${sessionKey}`,
   })
@@ -2127,6 +2150,28 @@ function ProjectPageInner() {
   // Arriving on a post that already has formats lands on them, not on the
   // idea at the top (Hani, 2026-11-07). Once per visit; after that the canvas
   // is hers to move.
+  // Her own typing in a format script teaches the writing style, like the
+  // core post (Hani, 2026-11-07). New canvas only, while it is in trial.
+  useEffect(() => {
+    if (!cardsVariant) return
+    const timer = setTimeout(() => {
+      for (const [fid, text] of Object.entries(formatPosts)) {
+        const baseline = aiFormatRef.current[fid]
+        if (!baseline || !text || text === FORMAT_GENERATING) continue
+        if (text.trim() === baseline.trim()) continue
+        if (loggedFormatBaselineRef.current[fid] === baseline) continue
+        const logged = logLearningEdit({
+          originalText: baseline,
+          editedText: text,
+          contentType: "core_post",
+          source: "manual_edit",
+        })
+        if (logged) loggedFormatBaselineRef.current[fid] = baseline
+      }
+    }, 4000)
+    return () => clearTimeout(timer)
+  }, [formatPosts, cardsVariant])
+
   const focusedFormatsRef = useRef(false)
   useEffect(() => {
     if (focusedFormatsRef.current || savedPostLoading || !cardsVariant || duplicatedFormats.length === 0) return
