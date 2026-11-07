@@ -27,7 +27,7 @@ export type AsIsItem = {
   file?: File
 }
 
-export type AsIsResult = { ok: true; message: string } | { ok: false; message: string }
+export type AsIsResult = { ok: true; message: string } | { ok: false; message: string; needs?: string[] }
 /**
  * `forEdit` (Hani, 2026-11-06 — "אם העלתי סרטון תעשה סרטון"): her video is
  * imported so the own-video AI edit can caption it right after — wait until

@@ -1,6 +1,6 @@
 import { createHash } from "crypto"
 import Anthropic from "@anthropic-ai/sdk"
-import { structureNote, type StructureMode } from "@/lib/carousel-structure"
+import { structureNote, type CardIdentityForPrompt, type StructureMode } from "@/lib/carousel-structure"
 import { referenceBlocks } from "@/lib/ai-edit-references"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { SlideData } from "@/lib/carousel-templates"
@@ -272,7 +272,14 @@ export function forceAttached(html: string, count: number, placeAt: number[]): n
   return attached
 }
 
-export type CopiedStructure = { images: string[]; analysis: string; mode: StructureMode; template?: boolean }
+export type CopiedStructure = {
+  images: string[]
+  analysis: string
+  mode: StructureMode
+  template?: boolean
+  /** Her name / handle / avatar for the card (lib/card-identity); the avatar fills __AVATAR__. */
+  identity?: CardIdentityForPrompt
+}
 
 /**
  * What the layout model gets for "תעשה לי כזה" (live bug, Hani 2026-11-07:
@@ -293,7 +300,7 @@ export function structurePrompt(brief: CarouselBrief, structure: CopiedStructure
   })
   const text =
     briefText({ ...brief, examples: [] }) +
-    structureNote(structure.analysis, structure.mode, brief.slides.length, !!structure.template)
+    structureNote(structure.analysis, structure.mode, brief.slides.length, !!structure.template, structure.identity)
   return { lead, text }
 }
 

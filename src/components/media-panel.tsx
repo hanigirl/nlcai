@@ -1881,7 +1881,10 @@ function CarouselFlow({
       // comes with an error status, and throwing on !res.ok used to turn all
       // of them into a bare "שגיאה ביצירת הקרוסלה".
       const data = await res.json().catch(() => null)
-      if (!res.ok || !data || data.error) {
+      if (data?.error === "needs_info") {
+        // Not a failure: her personal elements first — the AI panel asks.
+        result = { ok: false, message: String(data.message ?? ""), needs: Array.isArray(data.needs) ? data.needs : [] }
+      } else if (!res.ok || !data || data.error) {
         const info = carouselErrorInfo(res.status, data)
         setError(info.message)
         result = { ok: false, message: info.message }
@@ -2108,7 +2111,7 @@ function CarouselFlow({
         const r = await handleGenerate({ brief: opts.instruction, fromPanel: true, slots: opts.regenerate })
         return r.ok
           ? { ok: true, message: r.message || "בניתי את הקרוסלה מחדש לפי המבנה של הרפרנס, עם הטקסט שלכם." }
-          : { ok: false, message: r.message }
+          : { ok: false, message: r.message, ...(r.needs ? { needs: r.needs } : {}) }
       }
       // Her slide slots (Hani, 2026-11-06): each file on the slide she chose,
       // replacing what's there — the slide count stays.

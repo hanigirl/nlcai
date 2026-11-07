@@ -63,7 +63,7 @@ export type GenSlots = {
    * "תעשה לי כזה" (Hani, 2026-11-07): another carousel to copy the structure
    * of — its slides (her storage URLs) and the look: hers or the reference's.
    */
-  structure?: { refs: string[]; mode: "brand" | "exact" }
+  structure?: { refs: string[]; mode: "brand" | "exact"; skipMissing?: boolean }
 }
 
 export interface AiEditRequest {

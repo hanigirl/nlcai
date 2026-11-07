@@ -14,6 +14,9 @@
  *   shots  — she attached screenshots of the slides: the same question.
  *   ask    — she asked for "כזה" with nothing attached: the panel asks for a
  *            link or screenshots.
+ *   needs  — the reference (a tweet) needs her profile picture, name and @
+ *            and some are missing: the panel asks for exactly that, with
+ *            "להוסיף תמונת פרופיל" / "להמשיך בלי". Nothing is built yet.
  *   style  — 3 tweet screenshots attached before the first generation (they
  *            sit in the slide slots); type "תעשה לי את כל הקרוסלה בשפה הזו
  *            בסגנון tweet" and the row turns into a design reference — no
@@ -31,12 +34,14 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { MediaAiChat, type ChatMessage, type CopyStep } from "@/components/media-ai-chat"
 import { openingId, type AiEditOpening } from "@/lib/ai-edit-intent"
+import { missingMessage } from "@/lib/card-identity"
 
 const STATES = [
   { id: "link", label: "לינק שנקרא — השאלה" },
   { id: "failed", label: "לינק שלא נקרא — בקשה לצילומי מסך" },
   { id: "shots", label: "צילומי מסך — השאלה" },
   { id: "ask", label: "ביקשו כזה בלי לצרף" },
+  { id: "needs", label: "חסרים פרטים — תמונת פרופיל ו-@" },
   { id: "style", label: "3 צילומי מסך + בקשת סגנון (להקליד)" },
   { id: "live", label: "לכתוב בעצמכם (״תעשו לי כזה״ + לינק)" },
 ] as const
@@ -70,6 +75,17 @@ function conversation(state: State, origin: string): { messages: ChatMessage[]; 
         { role: "assistant", content: "אי אפשר לקרוא לינק מחשבון אישי או לא ציבורי. שימו לי כאן צילומי מסך של השקופיות ואפעל לפיהם." },
       ],
       copy: { phase: "await" },
+    }
+  if (state === "needs")
+    return {
+      messages: [
+        { role: "assistant", content: OPEN },
+        { role: "user", content: "תעשה לי את כל הקרוסלה בשפה הזו בסגנון tweet", images: shots.slice(0, 3) },
+        { role: "assistant", content: "בונה את הקרוסלה כמו ברפרנס, עם הטקסט שלכם." },
+        { role: "user", content: "בדיוק כמו בקרוסלה" },
+        { role: "assistant", content: missingMessage(["avatar", "name", "handle"]), needInfo: true },
+      ],
+      copy: { phase: "needs", refs: shots.slice(0, 3), brief: "בסגנון tweet", mode: "exact", needs: ["avatar", "name", "handle"] },
     }
   if (state === "shots")
     return {

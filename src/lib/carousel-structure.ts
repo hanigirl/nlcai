@@ -20,7 +20,22 @@ export type StructureMode = "brand" | "exact"
  * apply to every slide; the script keeps its own slides (Hani, 2026-11-07:
  * one tweet screenshot used to make a 1-slide carousel).
  */
-export type CarouselStructure = { analysis: string; slides: SlideData[]; template: boolean }
+export type CarouselStructure = { analysis: string; slides: SlideData[]; template: boolean; needs: StructureNeed[] }
+
+/**
+ * Personal things the reference shows that only she can supply (Hani,
+ * 2026-11-07: a tweet card came back with an empty grey avatar and no name —
+ * "אם חסר לך משהו תבקש מהמשתמש"). The route fills what it already knows
+ * (lib/card-identity) and asks for the rest before building.
+ */
+export type StructureNeed = "avatar" | "name" | "handle" | "logo" | "photo"
+const NEEDS: StructureNeed[] = ["avatar", "name", "handle", "logo", "photo"]
+function parseNeeds(raw: unknown): StructureNeed[] {
+  return Array.isArray(raw) ? NEEDS.filter((n) => raw.includes(n)) : []
+}
+const NEEDS_ASK =
+  'Also list in "needs" every PERSONAL element the reference shows that the creator must supply herself — "avatar" (a profile picture), "name" (a display name), "handle" (an @handle), "logo" (a brand logo), "photo" (a photo of her / her product). Only what is actually visible; [] if none.'
+
 
 const MODEL = "claude-opus-5-5"
 export const MAX_STRUCTURE_SLIDES = 10
@@ -53,7 +68,8 @@ export async function readCarouselStructure(
         "Her script:",
         ...script.map((s) => `- [${s.type}] ${s.title}${s.body ? ` — ${s.body}` : ""}`),
         "",
-        'Answer with a fenced json block only: {"analysis": "...", "slides": [{"type": "cover"|"content"|"cta", "title": "...", "body": "..."}]}',
+        NEEDS_ASK,
+        'Answer with a fenced json block only: {"analysis": "...", "slides": [{"type": "cover"|"content"|"cta", "title": "...", "body": "..."}], "needs": [...]}',
       ].join("\n"),
     },
   ]
@@ -61,7 +77,7 @@ export async function readCarouselStructure(
   const text = message.content.map((c) => (c.type === "text" ? c.text : "")).join("")
   const json = /```json\s*([\s\S]*?)```/i.exec(text)?.[1] ?? /\{[\s\S]*\}/.exec(text)?.[0]
   if (!json) throw new Error("structure_unread")
-  const parsed = JSON.parse(json) as { analysis?: unknown; slides?: { type?: unknown; title?: unknown; body?: unknown }[] }
+  const parsed = JSON.parse(json) as { analysis?: unknown; slides?: { type?: unknown; title?: unknown; body?: unknown }[]; needs?: unknown }
   const slides = (parsed.slides ?? [])
     .map((s, i): SlideData => ({
       slide: i + 1,
@@ -71,7 +87,7 @@ export async function readCarouselStructure(
     }))
     .filter((s) => s.title || s.body)
   if (typeof parsed.analysis !== "string" || slides.length < 1) throw new Error("structure_unread")
-  return { analysis: parsed.analysis, slides: slides.slice(0, refs.length), template: false }
+  return { analysis: parsed.analysis, slides: slides.slice(0, refs.length), template: false, needs: parseNeeds(parsed.needs) }
 }
 
 /** One reference: the design every slide takes; her script's slides stay as they are. */
@@ -94,7 +110,8 @@ async function readTemplate(apiKey: string, reference: string, script: SlideData
               "- every element and exactly where it sits: avatar (shape, size, position), display name, handle, verified badge, timestamp, the post text (size relative to the frame, weight, alignment, line spacing), any engagement row (icons, counts), dividers;",
               "- the hierarchy (what's biggest/boldest) and the colours (background, card, text, secondary text, accents) and type style (serif/sans, weights);",
               "- how a cover vs a content slide vs a closing slide should use it (usually the same card with the slide's title as the post text, body under it).",
-              'Answer with a fenced json block only: {"analysis": "..."}',
+              NEEDS_ASK,
+              'Answer with a fenced json block only: {"analysis": "...", "needs": [...]}',
             ].join("\n"),
           },
         ],
@@ -103,20 +120,39 @@ async function readTemplate(apiKey: string, reference: string, script: SlideData
   })
   const text = message.content.map((c) => (c.type === "text" ? c.text : "")).join("")
   const json = /```json\s*([\s\S]*?)```/i.exec(text)?.[1] ?? /\{[\s\S]*\}/.exec(text)?.[0]
-  const analysis = json ? (JSON.parse(json) as { analysis?: unknown }).analysis : null
+  const parsed = json ? (JSON.parse(json) as { analysis?: unknown; needs?: unknown }) : null
+  const analysis = parsed?.analysis
   if (typeof analysis !== "string" || !analysis.trim()) throw new Error("structure_unread")
-  return { analysis, slides: script, template: true }
+  return { analysis, slides: script, template: true, needs: parseNeeds(parsed?.needs) }
 }
 
 /** What the layout model is told on top of the brief. */
-export function structureNote(analysis: string, mode: StructureMode, count: number, template = false): string {
+/** Her identity for the card's personal elements (lib/card-identity). */
+export type CardIdentityForPrompt = { name?: string; handle?: string; avatar?: boolean }
+
+export function structureNote(
+  analysis: string,
+  mode: StructureMode,
+  count: number,
+  template = false,
+  identity: CardIdentityForPrompt = {},
+): string {
+  const who = [
+    identity.name ? `display name "${identity.name}"` : "",
+    identity.handle ? `handle "@${identity.handle.replace(/^@/, "")}"` : "",
+    identity.avatar ? 'profile picture: <img class="avatar" src="__AVATAR__"> (a circle, object-fit: cover)' : "",
+  ].filter(Boolean)
   return [
     "",
     "THIS OVERRIDES EVERY LAYOUT RULE ABOVE — the layout comes from the STRUCTURE REFERENCE, not from her visual language's usual layout or any template.",
     template
-      ? `STRUCTURE TO COPY: the STRUCTURE REFERENCE image is ONE design (e.g. a tweet card). EVERY one of the ${count} slides is built as that design: the same composition, elements, positions, proportions and hierarchy on each slide, with that slide's text as the post's text (title first, body after). Where it shows an author's avatar, name and handle, keep those elements in place but never the reference author's — use her name / handle if the brief has them, otherwise a plain avatar circle in her colours and no invented name.`
+      ? `STRUCTURE TO COPY: the STRUCTURE REFERENCE image is ONE design (e.g. a tweet card). EVERY one of the ${count} slides is built as that design: the same composition, elements, positions, proportions and hierarchy on each slide, with that slide's text as the post's text (title first, body after). Where it shows an author's avatar, name and handle, those are HERS (below), never the reference author's.`
       : `STRUCTURE TO COPY: the STRUCTURE REFERENCE images are another creator's ${count}-slide carousel. Build this carousel with EXACTLY the same structure: the same number of slides (${count}), and on each slide the same layout, text positions, alignment, proportions, hierarchy and role as the matching reference slide.`,
     "Her text replaces theirs; never copy their words, handle, logo or photos.",
+    who.length
+      ? `HER IDENTITY on the card (use exactly these where the reference shows the author): ${who.join("; ")}.`
+      : "",
+    "Never leave a personal element as an empty placeholder or invent one: an element she didn't supply is left out of the design entirely (the layout closes up around it).",
     mode === "brand"
       ? "LOOK: ONLY her colours and fonts (and her pasted elements) come from her visual language above — applied onto the reference's layout. Everything else — composition, element positions, card, sizes, hierarchy — is the reference's."
       : "LOOK: as close as possible to the reference — its background and text colours, accent colour, type style (choose the closest of the available fonts), weights, case and decorative devices.",
