@@ -27,6 +27,10 @@ const W = 1080
 const H = 1920
 /** The plate's lower edge sits this far above the bottom (reel UI below). */
 const BOTTOM = 470
+/** …or, with her face low in the frame, this far below the top (reel UI above). */
+const TOP = 260
+/** The captions' band in the 1080×1920 canvas, for keeping elements off it. */
+export const CAPTION_BAND = { bottom: { y: 1920 - BOTTOM - 170, h: 170 }, top: { y: TOP, h: 170 } }
 
 function escapeHtml(s: string) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -39,14 +43,20 @@ export function captionFontStack(fonts: BrandFont[]): string {
 }
 
 /** One transparent 1080×1920 PNG per line. */
-export async function renderCaptionLines(lines: CaptionLine[], fonts: BrandFont[], plate: string): Promise<Buffer[]> {
+export async function renderCaptionLines(
+  lines: CaptionLine[],
+  fonts: BrandFont[],
+  plate: string,
+  /** "top" when her face sits in the lower third (lib/face-boxes). */
+  position: "bottom" | "top" = "bottom",
+): Promise<Buffer[]> {
   // Rubik is always loaded (fontHead adds it), so "else Rubik" holds even
   // with no brand font at all.
   const head = fontHead(fonts)
   const stack = captionFontStack(fonts)
   const page = `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8">${head}<style>
 html,body{margin:0;width:${W}px;height:${H}px;background:transparent}
-.line{position:absolute;left:0;right:0;bottom:${BOTTOM}px;display:none;justify-content:center;padding:0 90px}
+.line{position:absolute;left:0;right:0;${position === "top" ? `top:${TOP}px` : `bottom:${BOTTOM}px`};display:none;justify-content:center;padding:0 90px}
 .line.on{display:flex}
 .plate{background:${plate};color:#fff;font-family:${stack};font-weight:700;font-size:64px;line-height:1.25;padding:18px 34px;border-radius:24px;text-align:center;max-width:${W - 180}px}
 </style></head><body>${lines
@@ -98,7 +108,14 @@ function run(args: string[]): Promise<void> {
 }
 
 /** A moment's animated element: its frames (f0000.png…), their rate, and when it shows. */
-export type MomentLayer = { dir: string; fps: number; start: number; duration: number }
+export type MomentLayer = {
+  dir: string
+  fps: number
+  start: number
+  duration: number
+  /** Moved / shrunk off her face (lib/face-boxes → placeClear), in the 1080×1920 canvas. */
+  place?: { scale: number; dx: number; dy: number }
+}
 
 /** Write the captions' timed image track (lines + a transparent blank for the gaps). */
 export async function captionTrack(pngs: string[], lines: CaptionLine[], blank: string, listPath: string): Promise<void> {
@@ -149,8 +166,18 @@ export async function composeTalkingHead(
       // Its last frame holds for the rest of its time, then fades; shifted to its moment.
       `[${idx}:v]format=rgba,tpad=stop_mode=clone:stop_duration=${m.duration.toFixed(2)},trim=duration=${m.duration.toFixed(2)},fade=t=out:st=${fadeAt}:d=0.4:alpha=1,setpts=PTS-STARTPTS+${s}/TB[m${k}]`,
       `[m${k}]${cur}scale2ref=w=main_w:h=main_w*16/9[mS${k}][mB${k}]`,
-      `[mB${k}][mS${k}]overlay=0:(main_h-overlay_h)/2:eof_action=pass:enable='between(t,${s},${(m.start + m.duration).toFixed(2)})'[w${k}]`,
     )
+    const enable = `enable='between(t,${s},${(m.start + m.duration).toFixed(2)})'`
+    if (m.place && (m.place.scale !== 1 || m.place.dx || m.place.dy)) {
+      // Off her face: the layer shrunk and moved (canvas px → her frame via main_w/1080).
+      const p = m.place
+      parts.push(
+        `[mS${k}]scale=iw*${p.scale.toFixed(4)}:ih*${p.scale.toFixed(4)}[mT${k}]`,
+        `[mB${k}][mT${k}]overlay=x='main_w/1080*${p.dx.toFixed(1)}':y='(main_h-main_w*16/9)/2+main_w/1080*${p.dy.toFixed(1)}':eof_action=pass:${enable}[w${k}]`,
+      )
+    } else {
+      parts.push(`[mB${k}][mS${k}]overlay=0:(main_h-overlay_h)/2:eof_action=pass:${enable}[w${k}]`)
+    }
     cur = `[w${k}]`
     idx++
   })
@@ -165,6 +192,66 @@ export async function composeTalkingHead(
     "-movflags", "+faststart",
     output,
   ])
+}
+
+/** Length and frame size from ffmpeg's probe. */
+export function probeVideo(src: string): Promise<{ seconds: number | null; width: number; height: number }> {
+  return new Promise((resolve) => {
+    if (!ffmpegPath) return resolve({ seconds: null, width: 1080, height: 1920 })
+    const proc = spawn(ffmpegPath as unknown as string, ["-i", src])
+    let err = ""
+    proc.stderr.on("data", (d) => (err += d.toString()))
+    proc.on("error", () => resolve({ seconds: null, width: 1080, height: 1920 }))
+    proc.on("close", () => {
+      const d = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(err)
+      const v = /Video:[^\n]*?(\d{2,5})x(\d{2,5})/.exec(err)
+      resolve({
+        seconds: d ? Number(d[1]) * 3600 + Number(d[2]) * 60 + Number(d[3]) : null,
+        width: v ? Number(v[1]) : 1080,
+        height: v ? Number(v[2]) : 1920,
+      })
+    })
+  })
+}
+
+/** Small frames of her video at these times, for the face detector. */
+export async function grabFrames(input: string, times: number[]): Promise<Buffer[]> {
+  const grab = (t: number) =>
+    new Promise<Buffer | null>((resolve) => {
+      if (!ffmpegPath) return resolve(null)
+      const proc = spawn(ffmpegPath as unknown as string, [
+        "-ss", t.toFixed(2), "-i", input, "-frames:v", "1", "-vf", "scale=480:-2", "-f", "image2pipe", "-vcodec", "png", "-",
+      ])
+      const chunks: Buffer[] = []
+      proc.stdout.on("data", (d) => chunks.push(d))
+      proc.on("error", () => resolve(null))
+      proc.on("close", (code) => resolve(code === 0 && chunks.length ? Buffer.concat(chunks) : null))
+    })
+  const out = await Promise.all(times.map(grab))
+  return out.filter((b): b is Buffer => !!b)
+}
+
+/** Where an element sits in its (last) frame: the box of its visible pixels, in canvas px. */
+export async function elementBox(png: string): Promise<{ x: number; y: number; w: number; h: number } | null> {
+  const sharp = (await import("sharp")).default
+  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+  let x0 = info.width
+  let y0 = info.height
+  let x1 = -1
+  let y1 = -1
+  for (let y = 0; y < info.height; y += 2) {
+    for (let x = 0; x < info.width; x += 2) {
+      if (data[(y * info.width + x) * info.channels + 3] > 24) {
+        if (x < x0) x0 = x
+        if (x > x1) x1 = x
+        if (y < y0) y0 = y
+        if (y > y1) y1 = y
+      }
+    }
+  }
+  if (x1 < 0) return null
+  const k = 1080 / info.width
+  return { x: x0 * k, y: y0 * k, w: (x1 - x0 + 2) * k, h: (y1 - y0 + 2) * k }
 }
 
 /** The clip's length from ffmpeg's probe (works on a URL without a full download). */
