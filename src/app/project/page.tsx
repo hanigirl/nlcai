@@ -40,6 +40,7 @@ import {
   FormatPanelMedia,
   FormatPanelNextStep,
   FormatPanelSchedule,
+  FormatPanelScheduleFooter,
   FormatPanelScript,
   FormatPanelScriptFolded,
   FormatPanelTabs,
@@ -2274,13 +2275,10 @@ function ProjectPageInner() {
           tabs,
           hideFlows: true,
           scriptView: (
-            <FormatPanelSchedule
-              fid={fid}
-              hasMedia={hasMedia}
-              approval={approvalProps}
-              onGoToMedia={() => setPanelStep("media")}
-            />
+            <FormatPanelSchedule fid={fid} hasMedia={hasMedia} onGoToMedia={() => setPanelStep("media")} />
           ),
+          footer:
+            hasMedia && approvalProps ? <FormatPanelScheduleFooter fid={fid} approval={approvalProps} /> : undefined,
         }
       }
       return {

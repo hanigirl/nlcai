@@ -41,6 +41,7 @@ import {
   FormatPanelMedia,
   FormatPanelNextStep,
   FormatPanelSchedule,
+  FormatPanelScheduleFooter,
   FormatPanelScript,
   FormatPanelTabs,
   type FormatPanelTab,
@@ -250,23 +251,19 @@ function Preview() {
             options
           )
       } else if (step === "schedule") {
-        panelBody = (
-          <FormatPanelSchedule
-            fid={item.fid}
-            hasMedia={hasMedia}
-            approval={
-              hasMedia && item.approval
-                ? {
-                    status: item.approval,
-                    onApprove: () => setApproval("approved"),
-                    onRevoke: () => setApproval("pending"),
-                    calendarHref: "/test/format-cards",
-                  }
-                : undefined
-            }
-            onGoToMedia={() => goTo("media")}
-          />
-        )
+        panelBody = <FormatPanelSchedule fid={item.fid} hasMedia={hasMedia} onGoToMedia={() => goTo("media")} />
+        if (hasMedia && item.approval)
+          footer = (
+            <FormatPanelScheduleFooter
+              fid={item.fid}
+              approval={{
+                status: item.approval,
+                onApprove: () => setApproval("approved"),
+                onRevoke: () => setApproval("pending"),
+                calendarHref: "/test/format-cards",
+              }}
+            />
+          )
       } else if (item.state === "generating") {
         panelBody = (
           <div className="flex flex-col items-center gap-2 py-16" role="status">

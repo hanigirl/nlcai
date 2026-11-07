@@ -39,6 +39,7 @@ import { ApprovalCardFooter } from "@/components/format-approval/approval-card-f
 import {
   ApprovalHeaderTag,
   ApprovalStatusPill,
+  ApprovedTag,
   FORMAT_NOUN,
   approvalHeaderFill,
 } from "@/components/format-approval/approval-visuals"
@@ -504,27 +505,62 @@ export function FormatPanelMedia({
 }
 
 /**
- * The תזמון tab. No media yet: nothing to schedule, with a way to the media
- * tab. Media: the approval ("אישור הפוסט לתזמון"), and once approved the way
- * to the calendar.
+ * The תזמון tab's picture (Hani, 2026-11-07): the calendar, 7 columns in the
+ * design system's grays, and its side panel on the right where the approved
+ * post waits, green and marked "מאושר", until it is scheduled. Decorative.
+ */
+function ScheduleIllustration() {
+  return (
+    <div
+      aria-hidden
+      className="flex h-[220px] w-full overflow-hidden rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10"
+    >
+      {/* Side panel — first child sits on the right in RTL. */}
+      <div className="flex w-[34%] shrink-0 flex-col gap-2 border-e border-border-neutral-default bg-gray-98 p-2 dark:bg-gray-20">
+        <div className="h-2 w-3/5 rounded-full bg-gray-90" />
+        <div className="flex flex-col gap-1.5 rounded-lg border border-green-success-50 bg-green-success-97 p-1.5">
+          <div className="h-10 rounded-md bg-green-success-70/40" />
+          <ApprovedTag className="h-5 self-start px-1.5 text-[10px]" />
+        </div>
+        <div className="flex flex-col gap-1.5 rounded-lg border border-border-neutral-default bg-white p-1.5 dark:bg-gray-10">
+          <div className="h-6 rounded-md bg-gray-95" />
+          <div className="h-1.5 w-1/2 rounded-full bg-gray-90" />
+        </div>
+      </div>
+      {/* The month: weekday row + 5 weeks × 7 days. */}
+      <div className="flex min-w-0 flex-1 flex-col gap-1 p-2">
+        <div className="grid grid-cols-7 gap-1">
+          {Array.from({ length: 7 }, (_, i) => (
+            <div key={i} className="mx-auto h-1.5 w-3/5 rounded-full bg-gray-90" />
+          ))}
+        </div>
+        <div className="grid flex-1 grid-cols-7 grid-rows-5 gap-1">
+          {Array.from({ length: 35 }, (_, i) => (
+            <div key={i} className="flex flex-col justify-end rounded-[4px] bg-gray-95 p-0.5 dark:bg-gray-20">
+              {[3, 9, 12, 20, 26, 31].includes(i) && <div className="h-1.5 rounded-full bg-gray-80" />}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The תזמון tab's body. No media yet: nothing to schedule, with a way to the
+ * media tab. Media: the calendar picture; the approval itself is the footer
+ * (FormatPanelScheduleFooter), pinned like "השלב הבא" on the other tabs.
  */
 export function FormatPanelSchedule({
   fid,
   hasMedia,
-  approval,
   onGoToMedia,
 }: {
   fid: string
   hasMedia: boolean
-  approval?: {
-    status: ApprovalStatus
-    onApprove: () => void
-    onRevoke: () => void
-    calendarHref?: string
-  }
   onGoToMedia: () => void
 }) {
-  if (!hasMedia || !approval) {
+  if (!hasMedia) {
     return (
       <div className="flex flex-col items-center gap-4 py-12 text-center">
         <p className="text-small text-text-neutral-default">
@@ -536,6 +572,29 @@ export function FormatPanelSchedule({
       </div>
     )
   }
+  return (
+    <div className="flex flex-col gap-3">
+      <ScheduleIllustration />
+      <p className="text-small text-text-neutral-default">
+        אחרי האישור, הפוסט מחכה בפאנל הצד של לוח התזמון עד שמתזמנים אותו.
+      </p>
+    </div>
+  )
+}
+
+/** The תזמון tab's footer: "אישור הפוסט לתזמון", then the way to the calendar. */
+export function FormatPanelScheduleFooter({
+  fid,
+  approval,
+}: {
+  fid: string
+  approval: {
+    status: ApprovalStatus
+    onApprove: () => void
+    onRevoke: () => void
+    calendarHref?: string
+  }
+}) {
   return (
     <ApprovalCardFooter
       status={approval.status}
