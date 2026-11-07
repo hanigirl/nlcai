@@ -38,6 +38,7 @@ import {
   FormatCardsRow,
   FormatPanelFooter,
   FormatPanelMedia,
+  FormatPanelNextStep,
   FormatPanelSchedule,
   FormatPanelScript,
   FormatPanelScriptFolded,
@@ -2245,6 +2246,9 @@ function ProjectPageInner() {
         return {
           tabs,
           hideFlows: true,
+          footer: approveVariant ? (
+            <FormatPanelNextStep label="תזמון" onNext={() => setPanelStep("schedule")} />
+          ) : undefined,
           scriptView: (
             <FormatPanelMedia
               fid={fid}
@@ -2283,13 +2287,12 @@ function ProjectPageInner() {
             <FormatPanelScript fid={fid} editor={editor} onOpenMedia={() => setPanelStep("media")} onDeleteMedia={onDeleteMedia} />
           ),
         footer:
-          // Only a plain script: no delete while media is being made or exists.
-          item.state !== "script" ? undefined : (
-            <FormatPanelFooter
-              fid={fid}
-              hasMedia={false}
-              onCreateMedia={() => setPanelStep("media")}
-              onDelete={() => setPendingCardDelete(fid)}
+          item.state === "generating" ? undefined : (
+            <FormatPanelNextStep
+              label="מדיה"
+              onNext={() => setPanelStep("media")}
+              // Only a plain script: no delete while media is being made or exists.
+              onDelete={item.state === "script" ? () => setPendingCardDelete(fid) : undefined}
             />
           ),
       }

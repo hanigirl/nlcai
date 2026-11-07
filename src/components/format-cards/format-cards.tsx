@@ -423,6 +423,34 @@ export function FormatPanelTabs({
 }
 
 /**
+ * The tab's footer: "השלב הבא: <next tab>" (Hani, 2026-11-07), with the
+ * script's delete beside it when it is offered.
+ */
+export function FormatPanelNextStep({
+  label,
+  onNext,
+  onDelete,
+}: {
+  /** The next tab's name — "מדיה", "תזמון". */
+  label: string
+  onNext: () => void
+  /** Present = "מחיקת הסקריפט" beside it (plain script, no media). */
+  onDelete?: () => void
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <Button onClick={onNext} className="flex-1 gap-2">
+        השלב הבא: {label}
+        <ChevronLeft className="size-4" aria-hidden />
+      </Button>
+      {onDelete && (
+        <IconActionButton label="מחיקת הסקריפט" icon={Trash2} destructive onClick={onDelete} />
+      )}
+    </div>
+  )
+}
+
+/**
  * The media as it is now (or a skeleton while it is made). Hovering it shows
  * the AI sparkle and the delete; a click on it opens the ways to replace it.
  */

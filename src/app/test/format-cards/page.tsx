@@ -37,6 +37,7 @@ import {
   FormatCardsRow,
   FormatPanelFooter,
   FormatPanelMedia,
+  FormatPanelNextStep,
   FormatPanelSchedule,
   FormatPanelScript,
   FormatPanelTabs,
@@ -220,6 +221,7 @@ function Preview() {
       const hasMedia = item.state === "media"
       tabs = <FormatPanelTabs value={step} onChange={goTo} />
       if (step === "media") {
+        if (hasMedia && !replacing) footer = <FormatPanelNextStep label="תזמון" onNext={() => goTo("schedule")} />
         panelBody =
           hasMedia && !replacing ? (
             <FormatPanelMedia
@@ -260,19 +262,20 @@ function Preview() {
         panelBody = (
           <FormatPanelScript fid={item.fid} editor={editor} onOpenMedia={() => goTo("media")} onDeleteMedia={() => {}} />
         )
-        if (item.state === "script") {
-          footer = (
-            <FormatPanelFooter
-              fid={item.fid}
-              hasMedia={false}
-              onCreateMedia={() => goTo("media")}
-              onDelete={() => {
-                setHidden((p) => [...p, item.fid])
-                setSelected(null)
-              }}
-            />
-          )
-        }
+        footer = (
+          <FormatPanelNextStep
+            label="מדיה"
+            onNext={() => goTo("media")}
+            onDelete={
+              item.state === "script"
+                ? () => {
+                    setHidden((p) => [...p, item.fid])
+                    setSelected(null)
+                  }
+                : undefined
+            }
+          />
+        )
       }
     } else if (step === "media") {
       if (variant !== "b") {
