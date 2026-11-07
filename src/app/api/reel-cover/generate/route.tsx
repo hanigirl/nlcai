@@ -7,6 +7,7 @@ import { getAuthUser } from "@/lib/auth-user"
 import { cleanBrandColors, defaultCoverColor, isCoverHex } from "@/lib/cover-brand-color"
 import { canTalkingHeadAi } from "@/lib/feature-access"
 import { coverStyleFromExamples } from "@/lib/cover-from-examples"
+import { loadCoverFont } from "@/lib/cover-font"
 
 const COVER_WIDTH = 1080
 const COVER_HEIGHT = 1920 // 9:16 aspect ratio
@@ -190,6 +191,8 @@ function renderCover(
   style: BrandStyle,
   variation: number,
   thumbnailBase64?: string,
+  /** Her cover font (lib/cover-font) — Rubik when she has none. */
+  fontFamily = "Rubik",
 ): React.ReactElement {
   const positionStyles = getTextPositionStyles(style.text_position)
   const fontSize = style.font_size_px || getTextSize(style.text_size)
@@ -301,7 +304,7 @@ function renderCover(
                 color: style.text_color,
                 fontSize,
                 fontWeight,
-                fontFamily: "Rubik",
+                fontFamily: `${fontFamily}, Rubik`,
                 lineHeight: style.line_height || 1.0,
                 letterSpacing: `${style.letter_spacing ?? 0}em`,
                 marginLeft: isRtl ? `${wordGap}px` : "0",
@@ -374,6 +377,11 @@ export async function POST(req: NextRequest) {
     // for everyone else — the default: Rubik on black, or her main brand colour.
     const fromExamples =
       use_cover_settings && canTalkingHeadAi(user.email) ? await coverStyleFromExamples(supabase, user.id) : null
+    // The font: her examples' font, else her visual language's, else Rubik (gated).
+    const coverFont =
+      use_cover_settings && canTalkingHeadAi(user.email)
+        ? await loadCoverFont(supabase, user.id, fromExamples?.font_name)
+        : null
     const style: BrandStyle = fromExamples
       ? fromExamples
       : pillHex
@@ -407,12 +415,21 @@ export async function POST(req: NextRequest) {
     // Generate 1 cover
     const covers: string[] = []
     {
-      const element = renderCover(title, style, 0, thumbBase64)
+      const element = renderCover(title, style, 0, thumbBase64, coverFont?.name)
 
       const svg = await satori(element, {
         width: COVER_WIDTH,
         height: COVER_HEIGHT,
         fonts: [
+          // Her font first; Rubik after it covers any glyph it lacks (Hebrew).
+          ...(coverFont
+            ? ([700, 800].map((weight) => ({ name: coverFont.name, data: coverFont.data, weight, style: "normal" as const })) as {
+                name: string
+                data: ArrayBuffer
+                weight: 700 | 800
+                style: "normal"
+              }[])
+            : []),
           { name: "Rubik", data: fontData, weight: 400, style: "normal" as const },
           { name: "Rubik", data: boldFontData, weight: 700, style: "normal" as const },
           { name: "Rubik", data: extraBoldFontData, weight: 800, style: "normal" as const },

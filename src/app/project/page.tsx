@@ -1101,8 +1101,7 @@ function ProjectPageInner() {
           if (data.post.videoUrl) {
             const videoUrl = data.post.videoUrl as string
             const hookForCover = (data.post.hook_text as string) || ""
-            // Talking head AI edit (gated): the cover is made on request, not here.
-            const hasSavedCover = !!data.post.coverUrl || thAiOnRef.current
+            const hasSavedCover = !!data.post.coverUrl
 
             // Convert HeyGen embed to stored MP4
             const embedMatch = videoUrl.match(/heygen\.com\/embeds\/([a-f0-9]+)/)
@@ -1126,20 +1125,20 @@ function ProjectPageInner() {
                           body: JSON.stringify({ videoUrl: stored.url }),
                         }).catch(() => {})
                       }
-                      if (hookForCover && !hasSavedCover) generateCoverForPost(hookForCover, stored.url)
+                      if (hookForCover && !hasSavedCover) autoCover(() => generateCoverForPost(hookForCover, stored.url))
                       return
                     }
                   }
                   setThVideoUrl(videoUrl)
-                  if (hookForCover && !hasSavedCover) generateCoverForPost(hookForCover)
+                  if (hookForCover && !hasSavedCover) autoCover(() => generateCoverForPost(hookForCover))
                 })
                 .catch(() => {
                   setThVideoUrl(videoUrl)
-                  if (hookForCover && !hasSavedCover) generateCoverForPost(hookForCover)
+                  if (hookForCover && !hasSavedCover) autoCover(() => generateCoverForPost(hookForCover))
                 })
             } else {
               setThVideoUrl(videoUrl)
-              if (hookForCover && !hasSavedCover) generateCoverForPost(hookForCover, videoUrl)
+              if (hookForCover && !hasSavedCover) autoCover(() => generateCoverForPost(hookForCover, videoUrl))
             }
           }
         }
@@ -2145,12 +2144,26 @@ function ProjectPageInner() {
   // Talking head AI edit (Notion, Hani 2026-11-07 — she picked ✨ → the panel
   // with three chips). Hani + Nataliya only (lib/feature-access); everyone else
   // keeps today's talking head, the automatic cover too.
-  const thAiOn = useTalkingHeadAi() === true
+  const thAiGate = useTalkingHeadAi()
+  const thAiOn = thAiGate === true
   // Read by the post load and the cover request, which run outside render.
   const thAiOnRef = useRef(false)
+  const thGateRef = useRef<boolean | null>(null)
+  // The automatic cover waits for the gate's answer (null = still loading):
+  // Hani + Nataliya make it on request, everyone else gets it as before.
+  const pendingAutoCover = useRef<(() => void) | null>(null)
+  function autoCover(run: () => void) {
+    if (thGateRef.current === null) pendingAutoCover.current = run
+    else if (thGateRef.current === false) run()
+  }
   useEffect(() => {
     thAiOnRef.current = thAiOn
-  }, [thAiOn])
+    thGateRef.current = thAiGate
+    if (thAiGate === null) return
+    const run = pendingAutoCover.current
+    pendingAutoCover.current = null
+    if (run && thAiGate === false) run()
+  }, [thAiOn, thAiGate])
   const hasCoverSettings = useHasCoverSettings(thAiOn)
   const coverDefaultColor = useCoverDefaultColor()
   // "לאשר בלי קאבר" — she saw the reminder and chose to go on.

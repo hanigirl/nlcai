@@ -46,6 +46,7 @@ import { CarouselSlideSlots } from "@/components/carousel-slide-slots"
 import type { ReferenceImages } from "@/components/ai-edit-reference"
 import type { MediaStyle, VisualFormat } from "@/lib/visual-language/types"
 import type { OwnEditFormat } from "@/lib/own-media"
+import { isTalkingHeadRender } from "@/lib/talking-head-original"
 import { TH_EDIT_MODES, TalkingHeadPlanEditor, TalkingHeadTemplateChip, appendToTalkingHeadTemplate, type ThPlanMoment } from "@/components/talking-head-ai"
 import { useCopyStructure } from "@/lib/use-scheduling-access"
 
@@ -80,6 +81,10 @@ export interface ChatMessage {
   /** Talking head: the plan before the paid edit ("כתוביות + אלמנטים תומכים"). */
   thPlan?: ThPlanMoment[]
   thPlanApproved?: boolean
+  /** The plan's edit adds her running captions too. */
+  thPlanCaptions?: boolean
+  /** What she asked, for the edit after "אישור". */
+  thRequest?: string
   /** Talking head: what she asked — offered as her template for every talking head. */
   thTemplate?: string
   /** The ask for her missing personal elements — its chips show under it. */
@@ -134,10 +139,6 @@ function lookFromWords(text: string): "brand" | "exact" | null {
   return null
 }
 const LINK_RE = /https?:\/\/[^\s"'<>]+/i
-/** Talking head while the edit isn't wired: said plainly, nothing paid ran. */
-const TH_PREVIEW_DONE =
-  "בגרסה המלאה הסרטון יחזור כאן עם מה שביקשתם, ומה שצילמתם לא ישתנה. (תצוגת עיצוב: עוד לא נערך סרטון.)"
-
 const COPY_COPY = {
   link: "עכשיו אעקוב אחרי הלינק ששלחתם ואייצר קרוסלה עם הטקסט שלכם. איך לעצב אותה?",
   shots: "קיבלתי את צילומי המסך. אייצר קרוסלה באותו מבנה עם הטקסט שלכם. איך לעצב אותה?",
@@ -1320,37 +1321,86 @@ export function MediaAiChat({
           thTemplate: text,
         })
       }
-      if (mode === "captions_plus") {
-        // The plan first, timed from her transcript — nothing paid is edited yet.
+      // "כתוביות + אלמנטים תומכים" and her own words: the plan first, timed
+      // from her transcript — nothing is edited until she approves it.
+      if (!mode || mode === "captions_plus") {
+        patchKey((s) => ({ ...s, busy: true, extra: { ...s.extra, progress: "מתמללים את הדיבור ומתכננים מה להדגיש..." } }))
         const { ok, data } = await call("/api/talking-head/plan", { postId, url: currentUrls[0], request: text })
         if (!ok || !Array.isArray(data.moments)) return failed(data, "התכנון לא הצליח. נסו שוב.")
-        return reply({ role: "assistant", content: "לפני שאני עורכת, זה מה שאדגיש בסרטון:", thPlan: data.moments as ThPlanMoment[] })
+        return reply({
+          role: "assistant",
+          content: "לפני שאני עורכת, זה מה שאדגיש בסרטון:",
+          thPlan: data.moments as ThPlanMoment[],
+          thPlanCaptions: data.captions !== false,
+          thRequest: text,
+        })
       }
     } catch {
       return failed({}, "משהו השתבש. נסו שוב.")
     }
-    // Her own words: the edit for a free prompt isn't wired yet — said plainly.
-    reply({
-      role: "assistant",
-      content: thTemplateText && text !== thTemplateText ? `${TH_PREVIEW_DONE} העריכה תכלול גם את התבנית שלכם מההגדרות.` : TH_PREVIEW_DONE,
-      noStyle: true,
-      thTemplate: text,
-    })
   }
-  const approveThPlan = (index: number, moments: ThPlanMoment[]) => {
-    const request = TH_EDIT_MODES.find((m) => m.id === "captions_plus")?.request ?? ""
+  /** "חזרה לסרטון המקורי": her video as she brought it, every edit off. */
+  const backToOriginal = async () => {
+    patch((s) => ({ ...s, busy: true, extra: { ...s.extra, progress: "מחזירים את הסרטון המקורי..." } }))
+    try {
+      const res = await fetch("/api/talking-head/original", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId }),
+      })
+      const data = (await res.json().catch(() => ({}))) as { url?: string; message?: string }
+      if (!res.ok || !data.url) throw new Error(data.message || "")
+      onUpdated?.(format, [data.url])
+      patch((s) => ({
+        ...s,
+        busy: false,
+        extra: { ...s.extra, progress: "" },
+        messages: [...s.messages, { role: "assistant", content: "חזרתי לסרטון המקורי שלכם, בלי העריכות.", done: true, noStyle: true }],
+      }))
+    } catch (err) {
+      patch((s) => ({
+        ...s,
+        busy: false,
+        extra: { ...s.extra, progress: "" },
+        messages: [
+          ...s.messages,
+          { role: "assistant", content: (err instanceof Error && err.message) || "לא הצלחתי להחזיר את הסרטון המקורי. נסו שוב.", error: true },
+        ],
+      }))
+    }
+  }
+  const approveThPlan = async (index: number, moments: ThPlanMoment[]) => {
+    const planMsg = messages[index]
+    const request = planMsg?.thRequest ?? TH_EDIT_MODES.find((m) => m.id === "captions_plus")?.request ?? ""
     patch((s) => ({
       ...s,
-      messages: [
-        ...s.messages.map((m, k) => (k === index ? { ...m, thPlan: moments, thPlanApproved: true } : m)),
-        {
-          role: "assistant",
-          content: "התוכנית אושרה. עריכת האלמנטים עצמה עוד לא מחוברת, אז הסרטון עוד לא השתנה. בינתיים ״רק כתוביות״ כבר עובד.",
-          noStyle: true,
-          thTemplate: request,
-        },
-      ],
+      busy: true,
+      extra: { ...s.extra, progress: "עורכים את הסרטון לפי התוכנית... זה יכול לקחת כמה דקות" },
+      messages: s.messages.map((m, k) => (k === index ? { ...m, thPlan: moments, thPlanApproved: true } : m)),
     }))
+    const done = (msg: ChatMessage) =>
+      patch((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" }, messages: [...s.messages, msg] }))
+    try {
+      const res = await fetch("/api/talking-head/edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId, url: currentUrls[0], moments, captions: planMsg?.thPlanCaptions !== false, request }),
+      })
+      const data = (await res.json().catch(() => ({}))) as { url?: string; message?: string }
+      if (!res.ok || !data.url) {
+        return done({ role: "assistant", content: aiErrorMessage(data.message || "העריכה לא הצליחה. נסו שוב."), error: true })
+      }
+      onUpdated?.(format, [data.url])
+      done({
+        role: "assistant",
+        content: "ערכתי את הסרטון לפי התוכנית. מה שצילמתם לא השתנה, והמקורי שמור.",
+        done: true,
+        noStyle: true,
+        thTemplate: request,
+      })
+    } catch {
+      done({ role: "assistant", content: "העריכה לא הצליחה. נסו שוב.", error: true })
+    }
   }
 
   const send = async (preset?: string) => {
@@ -1902,6 +1952,12 @@ export function MediaAiChat({
             format={format as VisualFormat}
             onOutcome={(next) => setMemory(lastEdit.index, next)}
           />
+        )}
+        {/* Talking head: an edit is on — back to her original, every edit off. */}
+        {format === "talking_head" && isTalkingHeadRender(currentUrls[0]) && !loading && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            <Chip onClick={() => void backToOriginal()}>חזרה לסרטון המקורי</Chip>
+          </div>
         )}
         <LinkReferenceRows l={links} />
         {asIsNow.length > 0 && !canSkip && !loading && !referenceMode && !(format === "carousel" && !slotsHere) && !(askNow && messages[messages.length - 1]?.askEmpty) && (

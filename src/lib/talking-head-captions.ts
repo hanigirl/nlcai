@@ -97,20 +97,11 @@ function run(args: string[]): Promise<void> {
   })
 }
 
-/**
- * Her video with the line PNGs on top, each shown between its times. The
- * lines (and a transparent `blank` for the gaps) become ONE timed image
- * track through ffmpeg's concat list, scaled to her frame width and set on
- * the bottom of the frame — one overlay, however many lines she speaks.
- */
-export async function burnCaptionLines(
-  input: string,
-  pngs: string[],
-  lines: CaptionLine[],
-  blank: string,
-  listPath: string,
-  output: string,
-): Promise<void> {
+/** A moment's animated element: its frames (f0000.png…), their rate, and when it shows. */
+export type MomentLayer = { dir: string; fps: number; start: number; duration: number }
+
+/** Write the captions' timed image track (lines + a transparent blank for the gaps). */
+export async function captionTrack(pngs: string[], lines: CaptionLine[], blank: string, listPath: string): Promise<void> {
   const fs = await import("fs/promises")
   const entries: string[] = []
   let t = 0
@@ -123,19 +114,82 @@ export async function burnCaptionLines(
   // The concat demuxer needs the last file once more for its duration to hold.
   entries.push(`file '${blank}'`, "duration 1", `file '${blank}'`)
   await fs.writeFile(listPath, entries.join("\n"))
-  const filter =
-    "[1:v]format=rgba,fps=25[cap];[cap][0:v]scale2ref=w=main_w:h=main_w*16/9[c][base];" +
-    "[base][c]overlay=0:main_h-overlay_h:eof_action=pass[v]"
+}
+
+/**
+ * Her ORIGINAL video with the layers on top: the captions' timed track (in
+ * the lower third) and each moment's animated element (full-frame 9:16
+ * frames, shown from its start for its duration, fading out). Every layer is
+ * scaled to her frame width. Her footage and sound are untouched.
+ */
+export async function composeTalkingHead(
+  input: string,
+  layers: { captionsList?: string; moments: MomentLayer[] },
+  output: string,
+): Promise<void> {
+  const args: string[] = ["-y", "-i", input]
+  const parts: string[] = []
+  let cur = "[0:v]"
+  let idx = 1
+  if (layers.captionsList) {
+    args.push("-f", "concat", "-safe", "0", "-i", layers.captionsList)
+    parts.push(
+      `[${idx}:v]format=rgba,fps=25[cap]`,
+      `[cap]${cur}scale2ref=w=main_w:h=main_w*16/9[capS][capB]`,
+      `[capB][capS]overlay=0:main_h-overlay_h:eof_action=pass[vc]`,
+    )
+    cur = "[vc]"
+    idx++
+  }
+  layers.moments.forEach((m, k) => {
+    args.push("-framerate", String(m.fps), "-start_number", "0", "-i", `${m.dir}/f%04d.png`)
+    const s = m.start.toFixed(2)
+    const fadeAt = Math.max(0, m.duration - 0.4).toFixed(2)
+    parts.push(
+      // Its last frame holds for the rest of its time, then fades; shifted to its moment.
+      `[${idx}:v]format=rgba,tpad=stop_mode=clone:stop_duration=${m.duration.toFixed(2)},trim=duration=${m.duration.toFixed(2)},fade=t=out:st=${fadeAt}:d=0.4:alpha=1,setpts=PTS-STARTPTS+${s}/TB[m${k}]`,
+      `[m${k}]${cur}scale2ref=w=main_w:h=main_w*16/9[mS${k}][mB${k}]`,
+      `[mB${k}][mS${k}]overlay=0:(main_h-overlay_h)/2:eof_action=pass:enable='between(t,${s},${(m.start + m.duration).toFixed(2)})'[w${k}]`,
+    )
+    cur = `[w${k}]`
+    idx++
+  })
+  if (!parts.length) throw new Error("nothing_to_add")
   await run([
-    "-y",
-    "-i", input,
-    "-f", "concat", "-safe", "0", "-i", listPath,
-    "-filter_complex", filter,
-    "-map", "[v]",
+    ...args,
+    "-filter_complex", parts.join(";"),
+    "-map", cur,
     "-map", "0:a?",
     "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
     "-c:a", "copy",
     "-movflags", "+faststart",
     output,
   ])
+}
+
+/** The clip's length from ffmpeg's probe (works on a URL without a full download). */
+export function probeSeconds(src: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    if (!ffmpegPath) return resolve(null)
+    const proc = spawn(ffmpegPath as unknown as string, ["-i", src])
+    let err = ""
+    proc.stderr.on("data", (d) => (err += d.toString()))
+    proc.on("error", () => resolve(null))
+    proc.on("close", () => {
+      const m = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(err)
+      resolve(m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : null)
+    })
+  })
+}
+
+/**
+ * The longest talking head an AI edit takes (transcription + the elements'
+ * design + one encode must fit the route's 800 seconds, with room to spare).
+ */
+export const MAX_TALKING_HEAD_SECONDS = 5 * 60
+
+export function tooLongMessage(seconds: number): string {
+  const min = Math.floor(seconds / 60)
+  const sec = Math.round(seconds % 60)
+  return `הסרטון באורך ${min}:${String(sec).padStart(2, "0")} דקות, ועריכת AI של דיבור למצלמה עובדת על סרטונים של עד ${MAX_TALKING_HEAD_SECONDS / 60} דקות. קצרו אותו ונסו שוב.`
 }

@@ -7,6 +7,8 @@ import { canTalkingHeadAi } from "@/lib/feature-access"
 import { TALKING_HEAD_MODEL, captionLines, transcribeVideo } from "@/lib/transcribe"
 import { talkingHeadVideoUrl } from "@/lib/talking-head-video"
 import { loadTalkingHeadTemplate } from "@/lib/talking-head-template"
+import { originalFor } from "@/lib/talking-head-original"
+import { MAX_TALKING_HEAD_SECONDS, probeSeconds, tooLongMessage } from "@/lib/talking-head-captions"
 
 /**
  * POST { postId, url?, request? } → { moments: { id, at, quote, element }[] }
@@ -33,8 +35,14 @@ export async function POST(req: NextRequest) {
     const { data: post } = await supabase.from("core_posts").select("id").eq("id", postId).eq("user_id", user.id).maybeSingle()
     if (!post) return NextResponse.json({ error: "Post not found" }, { status: 404 })
 
-    const videoUrl = url?.trim() || (await talkingHeadVideoUrl(supabase, postId))
-    if (!videoUrl) return NextResponse.json({ error: "no_video", message: "אין כאן סרטון. העלו או חברו את הסרטון ונסו שוב." }, { status: 400 })
+    const current = url?.trim() || (await talkingHeadVideoUrl(supabase, postId))
+    if (!current) return NextResponse.json({ error: "no_video", message: "אין כאן סרטון. העלו או חברו את הסרטון ונסו שוב." }, { status: 400 })
+    // Planned on her ORIGINAL, and too long a clip is said so up front.
+    const videoUrl = await originalFor(supabase, user.id, postId, current)
+    const seconds = await probeSeconds(videoUrl)
+    if (seconds !== null && seconds > MAX_TALKING_HEAD_SECONDS + 0.5) {
+      return NextResponse.json({ error: "too_long", message: tooLongMessage(seconds) }, { status: 422 })
+    }
     let openaiKey: string
     let claudeKey: string
     try {
@@ -69,7 +77,8 @@ export async function POST(req: NextRequest) {
             template ? `Her standing instructions for every talking-head video: ${template}` : "",
             "",
             "Pick the 3 moments (2–4 if the speech clearly calls for it) most worth highlighting — a key claim, a number, a list, a question to the viewer, the call to action. For each: the line index it starts on, a short quote of HER exact words (Hebrew, 2–8 words), and the element: \"card\" (a card with the point or list), \"highlight\" (the words emphasised in her brand colour), or \"animation\" (a short animated graphic).",
-            'Answer with JSON only: {"moments":[{"line":0,"quote":"...","element":"card"|"highlight"|"animation"}]}',
+            'Also "captions": true when she wants her speech as running captions (she asks for captions, or for "everything"), false when she only asks for elements.',
+            'Answer with JSON only: {"captions": true|false, "moments":[{"line":0,"quote":"...","element":"card"|"highlight"|"animation"}]}',
           ]
             .filter(Boolean)
             .join("\n"),
@@ -78,7 +87,9 @@ export async function POST(req: NextRequest) {
     })
     const text = message.content.map((c) => (c.type === "text" ? c.text : "")).join("")
     const json = /\{[\s\S]*\}/.exec(text)?.[0]
-    const parsed = json ? (JSON.parse(json) as { moments?: { line?: unknown; quote?: unknown; element?: unknown }[] }) : null
+    const parsed = json
+      ? (JSON.parse(json) as { captions?: unknown; moments?: { line?: unknown; quote?: unknown; element?: unknown }[] })
+      : null
     const moments = (parsed?.moments ?? [])
       .map((m, k) => {
         const i = typeof m.line === "number" ? Math.max(0, Math.min(lines.length - 1, Math.round(m.line))) : 0
@@ -88,7 +99,9 @@ export async function POST(req: NextRequest) {
       .filter((m) => m.quote)
       .slice(0, 4)
     if (!moments.length) throw new Error("plan_empty")
-    return NextResponse.json({ moments })
+    // "כתוביות + אלמנטים תומכים" always has captions; her own prompt, as she said.
+    const captions = /כתוביות/.test(request ?? "") || parsed?.captions === true
+    return NextResponse.json({ moments, captions })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("[talking-head/plan]", msg)
