@@ -14,6 +14,10 @@
  *   shots  — she attached screenshots of the slides: the same question.
  *   ask    — she asked for "כזה" with nothing attached: the panel asks for a
  *            link or screenshots.
+ *   style  — 3 tweet screenshots attached before the first generation (they
+ *            sit in the slide slots); type "תעשה לי את כל הקרוסלה בשפה הזו
+ *            בסגנון tweet" and the row turns into a design reference — no
+ *            slots. (Sending needs a login to upload, so here it stops there.)
  *   live   — the real flow from the start: type "תעשו לי כזה" (+ a link) and
  *            send. Here there's no login, so a link always comes back
  *            unreadable and screenshots can't upload — it shows the asks.
@@ -22,7 +26,7 @@
  * generation, no credits, no DB write (the answers do nothing here).
  */
 
-import { Suspense, useMemo, useSyncExternalStore } from "react"
+import { Suspense, useEffect, useMemo, useState, useSyncExternalStore } from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { MediaAiChat, type ChatMessage, type CopyStep } from "@/components/media-ai-chat"
@@ -33,6 +37,7 @@ const STATES = [
   { id: "failed", label: "לינק שלא נקרא — בקשה לצילומי מסך" },
   { id: "shots", label: "צילומי מסך — השאלה" },
   { id: "ask", label: "ביקשו כזה בלי לצרף" },
+  { id: "style", label: "3 צילומי מסך + בקשת סגנון (להקליד)" },
   { id: "live", label: "לכתוב בעצמכם (״תעשו לי כזה״ + לינק)" },
 ] as const
 type State = (typeof STATES)[number]["id"]
@@ -95,9 +100,23 @@ function Page() {
     () => "",
   )
   const seeded = useMemo(() => conversation(state, origin), [state, origin])
+  const [seedFiles, setSeedFiles] = useState<{ preview: File; kind: "image" }[] | null>(null)
+  useEffect(() => {
+    if (state !== "style") return
+    let live = true
+    void Promise.all(
+      SHOTS.slice(0, 3).map(async (p, i) => {
+        const blob = await (await fetch(p)).blob()
+        return { preview: new File([blob], `tweet-${i + 1}.png`, { type: blob.type || "image/png" }), kind: "image" as const }
+      }),
+    ).then((f) => live && setSeedFiles(f))
+    return () => {
+      live = false
+    }
+  }, [state])
   const opening = useMemo<AiEditOpening | null>(
     () =>
-      state === "live"
+      state === "live" || state === "style"
         ? {
             id: openingId(),
             kind: "generate",
@@ -121,17 +140,19 @@ function Page() {
           </Link>
         ))}
       </div>
-      {origin && (
+      {origin && (state !== "style" || seedFiles) && (
         <MediaAiChat
           key={state}
           postId={`test-carousel-copy-${state}`}
           format="carousel"
           open
           currentUrls={[]}
-          slideCount={6}
+          slideCount={state === "style" ? 3 : 6}
           opening={opening}
-          initialMessages={state === "live" ? undefined : seeded.messages}
-          seedCopy={state === "live" ? undefined : seeded.copy}
+          initialMessages={state === "live" || state === "style" ? undefined : seeded.messages}
+          seedCopy={state === "live" || state === "style" ? undefined : seeded.copy}
+          seedAttachments={state === "style" ? seedFiles ?? undefined : undefined}
+          forceCopyStructure
           onOpenChange={() => {}}
         />
       )}
