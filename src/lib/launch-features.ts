@@ -30,6 +30,13 @@ export function canReviewLaunch(email: string | null | undefined): boolean {
   return !!email && LAUNCH_REVIEW_EMAILS.includes(email.toLowerCase())
 }
 
+/**
+ * Until launch day the walkthrough and notes run live only for
+ * LAUNCH_REVIEW_EMAILS (Hani + Nataliya, 2026-11-08). Flip to true at the
+ * launch push to show them to everyone.
+ */
+export const LAUNCH_FOR_EVERYONE = false
+
 /** How long the "פיצ׳ר חדש" notes stay, from the user's first visit after launch. */
 export const NOTE_DAYS = 14
 

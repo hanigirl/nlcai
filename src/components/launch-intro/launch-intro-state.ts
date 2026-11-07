@@ -23,6 +23,7 @@ import { getCurrentUser } from "@/lib/supabase/current-user"
 import { userKey } from "@/lib/user-scoped-storage"
 import {
   canReviewLaunch,
+  LAUNCH_FOR_EVERYONE,
   EMPTY_LAUNCH_STATE,
   isInNoteWindow,
   isLaunched,
@@ -122,6 +123,12 @@ function init() {
         emit({ ready: true, review: true, userId: user.id, state: review.state, ...derive(review.state, true) })
         return
       }
+    }
+
+    // Before the launch push only the review list gets the real thing.
+    if (!LAUNCH_FOR_EVERYONE && !canReviewLaunch(user.email)) {
+      emit({ ready: true, review: false, userId: user.id, state: EMPTY_LAUNCH_STATE, notesOn: false, tourOn: false })
+      return
     }
 
     const local = safeGet(localStorage, userKey(LOCAL_KEY, user.id))
