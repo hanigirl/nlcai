@@ -85,7 +85,7 @@ import { DriveVideoPreview } from "@/components/drive-video-preview"
 import {
   isDriveUrl,
   extractDriveFileId,
-  driveThumbnailUrl, playableVideoSrc } from "@/lib/drive-media"
+  driveThumbnailUrl, playableVideoSrc, videoPreviewSrc } from "@/lib/drive-media"
 import { copyToClipboard } from "@/lib/copy-to-clipboard"
 import { userKey } from "@/lib/user-scoped-storage"
 import { logLearningEdit } from "@/lib/learning-capture"
@@ -4962,7 +4962,7 @@ function VideoPlayer({ url, clickToOpen = false, onOpen }: {
       {skeleton}
       <video
         ref={videoRef}
-        src={playableVideoSrc(url)}
+        src={videoPreviewSrc(url)}
         className="w-full h-full object-cover"
         playsInline
         preload="metadata"

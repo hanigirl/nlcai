@@ -107,3 +107,17 @@ export function playableVideoSrc(url: string): string {
   const id = isDriveUrl(url) ? extractDriveFileId(url) : null
   return id ? `/api/media/drive-video?id=${encodeURIComponent(id)}` : url
 }
+
+/**
+ * A <video src> whose resting frame shows what the clip IS. An edited
+ * talking-head render (captions / elements, lib/talking-head-original) has
+ * no caption on its first frame — the first word starts ~0.5s in — so the
+ * card and panel looked exactly like the original (Hani, 2026-11-08: "לא
+ * רואה את הסרטון עם הכתוביות"). It rests 1.5s in instead; anything else on
+ * its first frame.
+ */
+export function videoPreviewSrc(url: string): string {
+  if (url.startsWith("blob:")) return url
+  const at = /\/video\/(captioned|edited)-th-[^/]+\.mp4/.test(url) ? "1.5" : "0.001"
+  return `${playableVideoSrc(url)}#t=${at}`
+}
