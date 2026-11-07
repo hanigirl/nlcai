@@ -28,6 +28,10 @@ import { userExampleKind } from "@/lib/visual-language/types"
  *   - saving what she asked as her template for "איך לייצר סרטון דיבור
  *     למצלמה" (TalkingHeadTemplateChip).
  *
+ * Captions (and every text element) are set in the font of her visual
+ * language; with none set, Rubik (Hani, 2026-11-07) — the same rule as the
+ * own-video animated captions (lib/broll-animation/compose).
+ *
  * Gated to Hani + Nataliya (lib/feature-access → canTalkingHeadAi).
  */
 
