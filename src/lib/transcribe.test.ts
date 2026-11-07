@@ -74,3 +74,61 @@ test("Whisper verbose_json → words with times", () => {
   assert.deepEqual(t.words.map((w) => w.text), ["שלום", "לכם."])
   assert.equal(t.duration, 1.2)
 })
+
+import { alignToScript, applySpellingFixes, snapWordsToVoice, voiceOnsets } from "./transcribe"
+
+test("script spelling: a misheard word between two exact matches takes the script's spelling", () => {
+  const words = speak("תיק העבודות שלח נקרא כמו דוח")
+  const fixed = alignToScript(words, "תיק העבודות שלך נקרא כמו דוח, ככה תתקנו את זה.")
+  assert.equal(fixed.map((w) => w.text).join(" "), "תיק העבודות שלך נקרא כמו דוח")
+  assert.deepEqual(fixed.map((w) => [w.start, w.end]), words.map((w) => [w.start, w.end]))
+})
+
+test("script spelling: words she said differently from the script are left alone", () => {
+  // Real transcript of post 22fd782d's clip — she talks about a conference, not the script.
+  const said = "והאמת שאני הולכת להראות הרבה מהתהליך הזה בכנס דיזיין היה יקרות דיזיין היה ישמונה, ואז הזל, בבימא הולך להיות מטורף, תבואו להגיד שלום אני הולכת לדבר ממש על זה"
+  const script = "תיק העבודות שלך נקרא כמו דוח? זו בדיוק הבעיה. תיק העבודות שלך נקרא כמו דו\"ח , ככה תתקנו את זה. הבעיה עם הרבה תיקי עבודות היא שאתם רוצים להראות את הפיצ'רים שעשיתם."
+  const words = speak(said)
+  assert.deepEqual(alignToScript(words, script), words)
+})
+
+test("script spelling: no context, no change (הולכת stays even if the script says הולך)", () => {
+  const words = speak("אני הולכת הביתה")
+  assert.deepEqual(alignToScript(words, "מחר הוא הולך לעבודה"), words)
+})
+
+test("Opus fixes are applied safely: only listed words, only spelling", () => {
+  const words = speak("בכנס דיזיין היה יקרות")
+  const out = applySpellingFixes(words, [
+    { i: 1, text: "Design" },
+    { i: 9, text: "x" }, // out of range
+    { i: 2, text: "one two three four" }, // not one word
+    { i: 3, text: "" },
+  ])
+  assert.deepEqual(out.map((w) => w.text), ["בכנס", "Design", "היה", "יקרות"])
+  assert.deepEqual(out.map((w) => w.start), words.map((w) => w.start))
+})
+
+test("voice onsets: speech after a silence, relative to the clip's noise floor", () => {
+  // 20ms frames: 0.4s quiet, 1s speech, 0.6s quiet, 1s speech, a 0.1s dip inside it.
+  const levels = [
+    ...new Array(20).fill(-45),
+    ...new Array(50).fill(-22),
+    ...new Array(30).fill(-42),
+    ...new Array(20).fill(-21),
+    ...new Array(5).fill(-40),
+    ...new Array(25).fill(-23),
+  ]
+  assert.deepEqual(voiceOnsets(levels).map((o) => Number(o.toFixed(2))), [0.4, 2])
+})
+
+test("a word stamped in the silence starts when her voice returns; others don't move", () => {
+  const words: Word[] = [
+    { text: "והאמת", start: 0, end: 0.86 },
+    { text: "יקרות", start: 3.54, end: 4.08 },
+    { text: "דיזיין", start: 4.84, end: 5.4 },
+  ]
+  const snapped = snapWordsToVoice(words, [0.46, 5.2])
+  assert.deepEqual(snapped.map((w) => w.start), [0.46, 3.54, 5.2])
+  assert.deepEqual(snapped.map((w) => w.end), [0.86, 4.08, 5.4])
+})
