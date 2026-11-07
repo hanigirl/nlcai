@@ -2104,9 +2104,8 @@ function ProjectPageInner() {
     setPanelStepFor(selectedFormatCard)
     setPanelStep("script")
   }
-  // "מחיקת הפורמט" — hides the card for this visit only. Removing a format
-  // from the post needs a server action that doesn't exist yet.
-  const [hiddenCards, setHiddenCards] = useState<string[]>([])
+  // "מחיקת הסקריפט": offered only while the format has no media, and removes
+  // the whole format from the post (PATCH deleteFormat, server refuses if media).
   const [pendingCardDelete, setPendingCardDelete] = useState<string | null>(null)
 
   const cardMediaOf = (fid: string): FormatCardMedia | null => {
@@ -2136,7 +2135,7 @@ function ProjectPageInner() {
   type ApprovalFid = Parameters<typeof approvals.statusOf>[0]
   const cardItems: FormatCardItem[] = cardsVariant
     ? duplicatedFormats
-        .filter((fid) => FORMAT_MAP[fid] && !hiddenCards.includes(fid))
+        .filter((fid) => FORMAT_MAP[fid])
         .map((fid) => {
           const media = cardMediaOf(fid)
           const busy = !!mediaBusy[fid] || (fid === "talking_head" && !thVideoUrl && thVideoLoading)
@@ -2342,17 +2341,49 @@ function ProjectPageInner() {
         <ConfirmModal
           open={!!pendingCardDelete}
           onOpenChange={(open) => { if (!open) setPendingCardDelete(null) }}
-          title={pendingCardDelete ? `להסיר את ${FORMAT_NOUN[pendingCardDelete] ?? "הפורמט"} מהקנבס?` : ""}
-          description="בגרסת הסקירה הכרטיס מוסתר רק עד רענון — הסקריפט והמדיה נשארים שמורים."
-          confirmLabel="כן, להסיר"
+          title={pendingCardDelete ? `למחוק את הסקריפט של ה${FORMAT_NOUN[pendingCardDelete] ?? "פורמט"}?` : ""}
+          description="הפורמט יוסר מהפוסט. אפשר לשכפל אותו שוב מהפורמטים."
+          confirmLabel="כן, למחוק"
           cancelLabel="ביטול"
           confirmVariant="destructive"
           onConfirm={() => {
             const fid = pendingCardDelete
             setPendingCardDelete(null)
             if (!fid) return
-            setHiddenCards((prev) => [...prev, fid])
-            if (selectedFormatCard === fid) setSelectedFormatCard(null)
+            const removeLocally = () => {
+              setDuplicatedFormats((prev) => prev.filter((f) => f !== fid))
+              setSelectedFormats((prev) => prev.filter((f) => f !== fid))
+              setFormatPosts((prev) => {
+                const next = { ...prev }
+                delete next[fid]
+                return next
+              })
+              const { [fid]: _gone, ...rest } = lastSavedFormatsRef.current
+              lastSavedFormatsRef.current = rest
+              if (selectedFormatCard === fid) setSelectedFormatCard(null)
+            }
+            if (!savedPostId) {
+              removeLocally()
+              return
+            }
+            fetch(`/api/core-posts/${savedPostId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ deleteFormat: fid }),
+            })
+              .then(async (res) => {
+                if (res.ok) {
+                  removeLocally()
+                  return
+                }
+                const data = await res.json().catch(() => ({}))
+                toast.error(
+                  data.error === "format_has_media"
+                    ? "יש לפורמט מדיה. קודם מוחקים את המדיה, ואז אפשר למחוק את הסקריפט."
+                    : "מחיקת הסקריפט נכשלה, נסו שוב",
+                )
+              })
+              .catch(() => toast.error("מחיקת הסקריפט נכשלה, נסו שוב"))
           }}
         />
       )}

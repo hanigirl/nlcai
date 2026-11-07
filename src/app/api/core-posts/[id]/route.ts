@@ -326,7 +326,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, videoUrl, deleteVideo, coverBase64, coverPillColor, coverText, deleteCover, carouselImages, carouselMeta, carouselDriveLinks, storyImages, storyDriveLinks, bRollDriveLinks } = (await req.json()) as {
+    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, deleteFormat, videoUrl, deleteVideo, coverBase64, coverPillColor, coverText, deleteCover, carouselImages, carouselMeta, carouselDriveLinks, storyImages, storyDriveLinks, bRollDriveLinks } = (await req.json()) as {
       body?: string
       hookText?: string
       hookId?: string
@@ -335,6 +335,9 @@ export async function PATCH(
       triggerWord?: string
       userResponse?: string
       formatPosts?: Record<string, string>
+      // Removes one format from the post (Hani, 2026-11-07). Only allowed while
+      // the format has no media: media is deleted on its own first.
+      deleteFormat?: string
       videoUrl?: string
       deleteVideo?: boolean
       coverBase64?: string
@@ -467,6 +470,36 @@ export async function PATCH(
         .update({ user_response: userResponse } as never)
         .eq("id", id)
         .eq("user_id", user.id)
+    }
+
+    if (deleteFormat) {
+      const { data: owned } = await supabase
+        .from("core_posts")
+        .select("id")
+        .eq("id", id)
+        .eq("user_id", user.id)
+        .maybeSingle()
+      if (!owned) return NextResponse.json({ error: "Not found" }, { status: 404 })
+      const { data: variant } = await supabase
+        .from("format_variants")
+        .select("id")
+        .eq("core_post_id", id)
+        .eq("format", deleteFormat)
+        .maybeSingle()
+      if (variant) {
+        const variantId = (variant as unknown as { id: string }).id
+        const { count, error: countErr } = await supabase
+          .from("media_assets")
+          .select("id", { count: "exact", head: true })
+          .eq("format_variant_id", variantId)
+        if (countErr) return NextResponse.json({ error: countErr.message }, { status: 500 })
+        if ((count ?? 0) > 0) {
+          return NextResponse.json({ error: "format_has_media" }, { status: 409 })
+        }
+        const { error: delErr } = await supabase.from("format_variants").delete().eq("id", variantId)
+        if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 })
+        didIndirectEdit = true
+      }
     }
 
     // Upsert format variants if provided

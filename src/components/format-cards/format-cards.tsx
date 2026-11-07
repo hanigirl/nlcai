@@ -485,9 +485,10 @@ export function FormatPanelScriptFolded({
 }
 
 /**
- * The panel's footer. No media: "צור מדיה" + delete. Media: the existing
- * approval row ("אישור הפוסט לתזמון" — it moved here from the canvas card)
- * with delete in the same row.
+ * The panel's footer. No media: "צור מדיה" + "מחיקת הסקריפט", which removes
+ * the whole format. Media: only the existing approval row ("אישור הפוסט
+ * לתזמון", moved here from the canvas card). There is no format delete while
+ * media exists; the media is deleted on its own first (Hani, 2026-11-07).
  */
 export function FormatPanelFooter({
   fid,
@@ -506,12 +507,12 @@ export function FormatPanelFooter({
     calendarHref?: string
   }
   onCreateMedia: () => void
-  /** Removes the format's card. */
+  /** Deletes the script, which removes the whole format. Only offered without media. */
   onDelete: () => void
   createDisabled?: boolean
 }) {
   const del = (
-    <IconActionButton label="מחיקת הפורמט" icon={Trash2} destructive onClick={onDelete} />
+    <IconActionButton label="מחיקת הסקריפט" icon={Trash2} destructive onClick={onDelete} />
   )
   if (hasMedia && approval) {
     return (
@@ -522,11 +523,10 @@ export function FormatPanelFooter({
         onRevoke={approval.onRevoke}
         calendarHref={approval.calendarHref}
         approveLabel="אישור הפוסט לתזמון"
-        actions={del}
       />
     )
   }
-  if (hasMedia) return <div className="flex items-center gap-3">{del}</div>
+  if (hasMedia) return null
   return (
     <div className="flex items-center gap-3">
       <Button onClick={onCreateMedia} disabled={createDisabled} className="flex-1 gap-2">
