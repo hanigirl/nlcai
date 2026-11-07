@@ -357,10 +357,11 @@ function UniformCard({ item, selected, onSelect }: { item: FormatCardItem; selec
         <Icon className="size-4 text-text-neutral-default" aria-hidden />
         {hasMedia && <ApprovalHeaderTag status={item.approval} />}
       </div>
-      <div className="h-[300px] px-5 pt-4">
+      <div className="h-[300px] overflow-hidden px-5 pt-4">
         {item.state === "generating" && <CardLoader label="מייצר סקריפט" />}
         {item.state === "script" && (
-          <Clamp lines={12}>{scriptExcerpt(item.fid, item.script)}</Clamp>
+          // 9 lines leave room above the status line at any text size (Hani, 2026-11-07).
+          <Clamp lines={9}>{scriptExcerpt(item.fid, item.script)}</Clamp>
         )}
         {item.state === "media-busy" && (
           <div className="flex h-full flex-col items-center gap-3">
