@@ -105,6 +105,18 @@ export type CopyStep = MediaChatExtra["copy"]
 /** She wants a carousel like one she shows ("תעשה לי כזה", "אפשר כמו זה?"). */
 const LIKE_THIS =
   /(כזה|כזאת|כזו|כמו זה|כמו זו|כמו זאת|כמו בזה|כמו בקרוסלה|כמו הקרוסלה|בדיוק כמו|אותו דבר|אותו מבנה|באותו מבנה|באותו עיצוב|באותו סגנון|בסגנון|בשפה הזו|בשפה הזאת|בשפה הזה|רפרנס|השראה|כמו בצילומ|כמו בלינק|כמו בתמונות|בשפת המותג|בצבעים שלי)/
+/**
+ * On a carousel that exists, a picture she wants on every slide — her
+ * profile picture on a card, her logo (Hani, 2026-11-07).
+ */
+const ELEMENT_RE = /(בכל השקופיות|בכל שקופית|בכל אחת מהשקופיות|תמונת ה?פרופיל|לוגו)/
+function elementOf(text: string): { kind: "avatar" | "logo" | "element"; handle?: string } | null {
+  if (!ELEMENT_RE.test(text)) return null
+  const kind = /פרופיל/.test(text) ? "avatar" : /לוגו/.test(text) ? "logo" : "element"
+  const handle = text.match(/@([A-Za-z0-9._]{2,30})/)?.[1] ?? text.match(/(?:^|\s)([a-z0-9_]+\.[a-z0-9_.]+)(?=\s|$|[,.!?])/i)?.[1]
+  return { kind, ...(handle ? { handle: handle.replace(/\.$/, "") } : {}) }
+}
+
 /** Her words say which look (no question then): the reference's… */
 const EXACT_HINT = /(בשפה הזו|בשפה הזאת|בשפה הזה|בדיוק כמו|בדיוק כזה|בדיוק כזאת|אותו דבר|באותו עיצוב|באותו סגנון|באותם צבעים|אותם צבעים)/
 /** …or hers. */
@@ -467,9 +479,14 @@ export function MediaAiChat({
   // into the slots): they're a design reference — shown so while she types.
   const styleTyped = copyAllowed && format === "carousel" && LIKE_THIS.test(session.input)
   const referenceMode = copyWaiting || styleTyped
+  // Slide slots only before the first generation, or on her own slides
+  // (Hani, 2026-11-07: "בפעם השניה אחרי שיש כבר שקופיות זה יכול להיות רק
+  // תמונת רפרנס") — on a carousel the AI made, a picture is a reference or an
+  // element the edit uses as she says, 3 at most.
+  const slotsHere = format === "carousel" && (!currentUrls.length || own)
   const slotsMax = referenceMode
     ? MAX_SLOT_REFERENCES
-    : format === "carousel" &&
+    : slotsHere &&
         (!session.extra.gen || session.extra.gen.phase === "running" || !!session.extra.gen.placeRefs)
       ? Math.min(MAX_SLOT_REFERENCES, Math.max(MAX_REFERENCES, currentUrls.length || slideCount || 0))
       : MAX_REFERENCES
@@ -778,7 +795,7 @@ export function MediaAiChat({
   // ---- Carousel slide slots (Hani, 2026-11-06) ----
   // One slot per slide as soon as she attaches media; each file goes on the
   // slide she chose, empty slots are made by the AI, the count never changes.
-  const slotCount = format === "carousel" ? currentUrls.length || slideCount || 0 : 0
+  const slotCount = slotsHere ? currentUrls.length || slideCount || 0 : 0
   const genNow = session.extra.gen
   // Before the first generation her pictures go IN only on the placing gate
   // (lib/feature-access) — off it they're looks, so only clips get a slot.
@@ -1371,10 +1388,25 @@ export function MediaAiChat({
     const earlier = attached.length
       ? []
       : ([...cur.messages].reverse().find((m) => m.role === "user" && m.images?.length)?.images ?? [])
+    // A picture for every slide (profile picture, logo): placed as that, and
+    // her profile picture / handle kept for the next card (lib/card-identity).
+    const own0 = refs.originals(attached)[0]
+    const el = format === "carousel" && attached.length && own0?.kind === "image" ? elementOf(text) : null
+    const element = el ? { kind: el.kind, ref: 0, ...(el.handle ? { handle: el.handle } : {}) } : undefined
+    if (el?.kind === "avatar" && copyAllowed) {
+      void (async () => {
+        const avatarUrl = await uploadSlotPicture(attached[0])
+        await fetch("/api/profile/card-identity", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...(avatarUrl ? { avatarUrl } : {}), ...(el.handle ? { handle: el.handle } : {}) }),
+        }).catch(() => undefined)
+      })()
+    }
     const run = (
       format === "b_roll"
         ? startBRollEdit(postId, editText, { quiet: true, references: attached, earlierReferences: earlier })
-        : editImages(editText, attached, earlier)
+        : editImages(editText, attached, earlier, undefined, element)
     ).then((r) => {
       if (r.ok && r.unchanged) unchanged = r.unchanged
       return r
@@ -1454,6 +1486,8 @@ export function MediaAiChat({
     earlierReferences: string[] = [],
     /** Carousel slide slots: per reference, its slide (0-based) or -1. */
     placeAt?: number[],
+    /** Carousel: one attached picture as an element on every slide. */
+    element?: { kind: string; ref: number; handle?: string },
   ): Promise<{ ok: true; unchanged?: string; urls?: string[] } | { ok: false; message: string }> {
     try {
       const res = await fetch("/api/media/ai-edit", {
@@ -1466,6 +1500,7 @@ export function MediaAiChat({
           ...(references.length ? { references } : {}),
           ...(earlierReferences.length ? { earlierReferences } : {}),
           ...(placeAt?.some((n) => n >= 0) ? { placeAt } : {}),
+          ...(element ? { element } : {}),
         }),
       })
       const data = (await res.json().catch(() => ({}))) as {
@@ -1714,7 +1749,7 @@ export function MediaAiChat({
           />
         )}
         <LinkReferenceRows l={links} />
-        {asIsNow.length > 0 && !canSkip && !loading && !referenceMode && !(askNow && messages[messages.length - 1]?.askEmpty) && (
+        {asIsNow.length > 0 && !canSkip && !loading && !referenceMode && !(format === "carousel" && !slotsHere) && !(askNow && messages[messages.length - 1]?.askEmpty) && (
           <div className="mb-2 flex flex-wrap gap-1.5">
             <Chip onClick={() => void uploadAsIs(asIsNow, refs.split(refs.refs).place)}>{AS_IS}</Chip>
           </div>
@@ -1740,6 +1775,16 @@ export function MediaAiChat({
             }}
             disabled={loading}
           />
+        )}
+        {/* A carousel the AI made: her pictures are a reference or an element (2026-11-07). */}
+        {format === "carousel" && !slotsHere && !referenceMode && refs.split(refs.refs).place.length > 0 && (
+          <p className="mb-1.5 text-xs-body text-text-neutral-default">
+            {elementOf(session.input)?.kind === "avatar"
+              ? "התמונה תיכנס כתמונת הפרופיל בכל השקופיות."
+              : elementOf(session.input)
+                ? "התמונה תיכנס בכל השקופיות."
+                : "התמונה תשמש לפי מה שתכתבו: כרפרנס, בשקופית מסוימת, או בכל השקופיות."}
+          </p>
         )}
         {/* A style request typed: the pictures are a design reference, not slides. */}
         {referenceMode && refs.split(refs.refs).place.length > 0 && (

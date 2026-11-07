@@ -88,7 +88,7 @@ function toCanvas(base64: string, [w, h]: [number, number]): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { postId, format, instruction, references, earlierReferences, placeAt: rawPlaceAt } = (await req.json().catch(() => ({}))) as {
+    const { postId, format, instruction, references, earlierReferences, placeAt: rawPlaceAt, element: rawElement } = (await req.json().catch(() => ({}))) as {
       postId?: string
       format?: unknown
       instruction?: string
@@ -104,6 +104,12 @@ export async function POST(req: NextRequest) {
        * on in the AI panel's slide slots, or -1 — Hani, 2026-11-06.
        */
       placeAt?: unknown
+      /**
+       * Carousel: attached image `ref` (0-based) is an ELEMENT on every slide
+       * — her profile picture on a card, her logo (Hani, 2026-11-07: "לשים
+       * בכל השקופיות"); `handle` / `name` for the card when she gave them.
+       */
+      element?: { kind?: unknown; ref?: unknown; handle?: unknown; name?: unknown }
     }
     const text = instruction?.trim()
     if (!postId || !text || !isEditableFormat(format)) {
@@ -224,7 +230,43 @@ export async function POST(req: NextRequest) {
       const stored = { ...saved0, brief: current.brief }
       // A change to a picture itself is a real picture edit — Hani only for now (lib/feature-access).
       const pictureEditsOn = canEditPictures(user.email)
-      const revised = await reviseCarousel(anthropicKey, stored, ask!, refs, restyle, pictureEditsOn)
+      // An element on every slide: said plainly to the layout, then enforced.
+      const element =
+        rawElement && Number.isInteger(rawElement.ref) && (rawElement.ref as number) >= 0 && (rawElement.ref as number) < refs.length
+          ? {
+              kind: rawElement.kind === "logo" ? "logo" : rawElement.kind === "avatar" ? "avatar" : "element",
+              ref: rawElement.ref as number,
+              handle: typeof rawElement.handle === "string" ? rawElement.handle.replace(/^@/, "").slice(0, 40) : "",
+              name: typeof rawElement.name === "string" ? rawElement.name.slice(0, 60) : "",
+            }
+          : null
+      const elementNote = element
+        ? [
+            "",
+            element.kind === "avatar"
+              ? `Attached image ${element.ref + 1} is HER PROFILE PICTURE. Put it on EVERY slide as the author's avatar — where the design shows an avatar or an empty avatar placeholder (in a post/tweet card: beside the name), or else small in a consistent corner: <img class="art avatar" src="__SLIDE_IMAGE_N__"> (N = the slide number), a circle, object-fit: cover.`
+              : element.kind === "logo"
+                ? `Attached image ${element.ref + 1} is HER LOGO. Put it on EVERY slide, small, in the same position on each: <img class="art logo" src="__SLIDE_IMAGE_N__"> (N = the slide number), object-fit: contain.`
+                : `Attached image ${element.ref + 1} is an element she wants on EVERY slide, in the same position on each: <img class="art" src="__SLIDE_IMAGE_N__"> (N = the slide number), object-fit: contain.`,
+            `List it in "attached" for every slide (the number ${element.ref + 1} on each). It replaces nothing else on the slide.`,
+            element.handle ? `Her handle on the card: @${element.handle}.` : "",
+            element.name ? `Her display name on the card: ${element.name}.` : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : ""
+      const revised = await reviseCarousel(anthropicKey, stored, `${ask!}${elementNote}`, refs, restyle, pictureEditsOn)
+      if (element) {
+        const count = stored.brief.slides.length
+        const on = Array.from({ length: count }, (_, i) => i).filter((i) => revised.html.includes(`__SLIDE_IMAGE_${i + 1}__`))
+        if (!on.length) {
+          return NextResponse.json(
+            { error: "element_missed", message: "לא הצלחתי לשים את התמונה בשקופיות, אז לא שיניתי כלום. נסו שוב." },
+            { status: 422 },
+          )
+        }
+        revised.attached = Array.from({ length: count }, (_, i) => (on.includes(i) ? element.ref + 1 : (revised.attached[i] ?? 0)))
+      }
       // Her slots, enforced (the layout may still have put a picture elsewhere).
       if (slotted.length) {
         const count = stored.brief.slides.length
@@ -270,7 +312,8 @@ export async function POST(req: NextRequest) {
       // graded into her language, calm under the title. Her exact file only
       // when she says "כמו שהיא" — or when its background is cut out (the
       // subject alone on the slide).
-      const adapt = pictureEditsOn && !wantsPictureAsIs(text)
+      // An element (profile picture, logo) goes in as her file — never re-framed into an illustration slot.
+      const adapt = pictureEditsOn && !wantsPictureAsIs(text) && !element
       const adaptOn = placed.filter(({ i }) => adapt && !cutouts.has(i))
       const slots = adaptOn.length
         ? await measureArtSlots(
