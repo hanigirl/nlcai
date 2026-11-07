@@ -1,5 +1,6 @@
 "use client"
 
+import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { FormatLane, LaneColumn, LaneStem, TreeConnector, newestLaneCard } from "@/components/format-lanes"
 import { useAiEditRequests, type AiEditOpening } from "@/lib/ai-edit-intent"
 import { onAsIsNeedsPanel } from "@/lib/as-is-upload"
@@ -3265,14 +3266,19 @@ function ProjectPageInner() {
 
                   {/* Format lanes */}
                   {duplicatedFormats.length > 0 && cardsVariant && (
-                    <FormatCardsRow
-                      variant={cardsVariant}
-                      items={cardItems}
-                      selected={selectedFormatCard}
-                      onSelect={handleFormatCardClick}
-                    />
+                    <div className="relative shrink-0">
+                      <NewFeatureNote feature="format-lanes" className="absolute bottom-full start-6 z-10 mb-3 max-w-[22rem]" />
+                      <FormatCardsRow
+                        variant={cardsVariant}
+                        items={cardItems}
+                        selected={selectedFormatCard}
+                        onSelect={handleFormatCardClick}
+                      />
+                    </div>
                   )}
                   {duplicatedFormats.length > 0 && !cardsVariant && (
+                    <div className="relative shrink-0">
+                    <NewFeatureNote feature="format-lanes" className="absolute bottom-full start-6 z-10 mb-3 max-w-[22rem]" />
                     <FormatTree
                       formats={duplicatedFormats}
                       formatPosts={formatPosts}
@@ -3372,6 +3378,7 @@ function ProjectPageInner() {
                           : undefined
                       }
                     />
+                    </div>
                   )}
                 </>
               )}

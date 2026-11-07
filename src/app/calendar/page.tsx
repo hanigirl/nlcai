@@ -1,5 +1,6 @@
 "use client"
 
+import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
@@ -1511,6 +1512,9 @@ export default function CalendarPage() {
                 className="w-[48px] h-[48px]"
               />
               <h2 className="text-text-primary-default">תזמון</h2>
+              {/* Launch notes — each only where its feature is on (the same gates). */}
+              {scheduleAllA && <NewFeatureNote feature="posting-routine" compact />}
+              {schedulingOn && multinetwork && <NewFeatureNote feature="real-publishing" compact />}
               {schedulingOn && multinetwork ? (
                 // One marker for every network (Hani, 2026-11-05) in place of
                 // the Instagram-only pill. Each icon opens that network's

@@ -16,6 +16,7 @@
  * page scrolls to that service's card (`connectionAnchorId`).
  */
 
+import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { useState, type ComponentType, type SVGProps } from "react"
 import {
   AlertCircle,
@@ -508,6 +509,8 @@ export function SocialNetworksPanel({
   const soon = SOCIAL_NETWORKS.filter((n) => n.id === "tiktok" || !live.includes(n.id as LiveNetworkId))
   return (
     <div className="flex flex-col gap-4">
+      {/* Launch note: only where YouTube/LinkedIn really connect (the multinetwork gate). */}
+      {multinetwork && !previews && <NewFeatureNote feature="real-publishing" />}
       <p className="text-small text-text-neutral-default">
         חיבור החשבונות מאפשר לפוסטים שתזמנתם ביומן להתפרסם לבד, בשעה שקבעתם.
       </p>

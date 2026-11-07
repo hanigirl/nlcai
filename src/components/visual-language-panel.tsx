@@ -1,5 +1,6 @@
 "use client"
 
+import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { HexColorPicker } from "react-colorful"
 import { AlertTriangle, ChevronDown, Link2, Loader2, Plus, Sparkles, Upload, X } from "lucide-react"
@@ -627,7 +628,10 @@ export function VisualLanguagePanel({
   return (
     <div className="flex flex-col gap-8">
       <div>
-        <h3 className="text-p-bold text-text-primary-default">שפה ויזואלית</h3>
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-p-bold text-text-primary-default">שפה ויזואלית</h3>
+          <NewFeatureNote feature="visual-language" />
+        </div>
         <p className="text-small text-text-neutral-default mt-1">
           ספרו לנו איך המותג שלכם נראה. ננתח את מה שתעלו לשפה ויזואלית אחת, וכל הסטוריז, פוסטי התמונה, קרוסלות ה-AI והבי-רול ייוצרו לפיה.
         </p>

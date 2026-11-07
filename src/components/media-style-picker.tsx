@@ -1,5 +1,6 @@
 "use client"
 
+import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { useEffect, useState } from "react"
 import { Plus } from "lucide-react"
 import { getTemplate, type TemplateConfig } from "@/lib/carousel-templates"
@@ -131,7 +132,10 @@ export function MediaStylePicker({
 
   return (
     <div className="flex w-full flex-col gap-1.5">
-      <p className="text-xs text-text-neutral-default">{label}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-xs text-text-neutral-default">{label}</p>
+        <NewFeatureNote feature="format-style" />
+      </div>
       <div role="radiogroup" aria-label={label} aria-busy={brandLoading && !brandTemplate} className="grid grid-cols-2 gap-1.5 group/ai">
         {brandLoading && !brandTemplate && (
           <div className="flex flex-col gap-1 rounded-lg border border-border-neutral-default p-1" aria-hidden>

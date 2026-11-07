@@ -1,5 +1,6 @@
 "use client"
 
+import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { useState } from "react"
 import { ImageIcon, Play, X } from "lucide-react"
 import { AiSparkle } from "@/components/ai-refine-button"
@@ -47,6 +48,7 @@ export function CarouselSlideSlots({
   if (!slots.length) return null
   return (
     <div className="mb-2 flex flex-col gap-1.5">
+      <NewFeatureNote feature="carousel-video" compact />
       <p className="text-xs-body text-text-neutral-default">
         {target !== null
           ? `הקובץ הבא שתצרפו ייכנס לשקופית ${target + 1}.`

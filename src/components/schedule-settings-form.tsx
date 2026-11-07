@@ -16,6 +16,7 @@
  * hour from its picker; that's an exception, not the way in.
  */
 
+import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { createElement, useState, type ReactNode } from "react"
 import { Check, Plus, Trash2 } from "lucide-react"
 import { Chip } from "@/components/ui/chip"
@@ -324,6 +325,7 @@ export function ScheduleSettingsForm({ draft, onChange }: Edit) {
 
       {formatGapOn && (
         <RuleRow label="כמה ימים בין פורמטים של אותו פוסט ליבה?" hint="למשל רילס וקרוסלה של אותו רעיון">
+          <NewFeatureNote feature="format-gap" className="mb-2" />
           <ChoiceChips
             label="ימים בין פורמטים של אותו פוסט ליבה"
             value={draft.formatGapDays}

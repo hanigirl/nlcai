@@ -1,5 +1,6 @@
 "use client"
 
+import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { Loader2, Link2, Plus, Trash2, Upload, X, Sparkles, Check, Type, Image as ImageIcon, Search, Download, FolderOpen, SlidersHorizontal } from "lucide-react"
@@ -1077,7 +1078,10 @@ function SettingsPageInner() {
       />
 
       <div dir="rtl" className="mx-auto max-w-[1200px] flex flex-col gap-8">
-        <h2 className="text-text-primary-default">הגדרות</h2>
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="text-text-primary-default">הגדרות</h2>
+          <NewFeatureNote feature="settings-split" />
+        </div>
 
         {/* Tabs */}
         <div className="flex gap-6 border-b border-border-neutral-default">

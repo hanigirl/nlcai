@@ -1,5 +1,6 @@
 "use client"
 
+import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { useState } from "react"
 import { Merge, Plus } from "lucide-react"
 import { RichBodyEditor } from "@/components/rich-body-editor"
@@ -56,9 +57,12 @@ export function StorySections({
               className={i > 0 ? "mt-3 border-t border-border-neutral-default pt-3" : undefined}
             >
               {/* Not editable, not part of her text. */}
-              <p className="mb-1 select-none text-xs-body text-text-neutral-default">
-                סטורי {i + 1}
-              </p>
+              <div className="mb-1 flex flex-wrap items-center gap-2">
+                <p className="select-none text-xs-body text-text-neutral-default">
+                  סטורי {i + 1}
+                </p>
+                {i === 0 && <NewFeatureNote feature="story-frames" />}
+              </div>
               <RichBodyEditor
                 value={text}
                 onChange={(t) => set(shown.map((s, j) => (j === i ? t : s)))}

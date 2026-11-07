@@ -1,5 +1,6 @@
 "use client"
 
+import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from "react"
 import { useCoverDefaultColor } from "@/lib/use-cover-brand-colors"
 import Image from "next/image"
@@ -2526,7 +2527,10 @@ function CarouselFlow({
             sample (real gpt-image-2 output is paid, generated only on
             יצירת קרוסלה). */}
       <div className="flex flex-col gap-2">
-        <p className="text-small-bold text-text-primary-default">בחרו טמפלט</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-small-bold text-text-primary-default">בחרו טמפלט</p>
+          <NewFeatureNote feature="format-style" />
+        </div>
         <CarouselTemplateGrid
           templates={templates}
           selected={selectedTemplate}
@@ -4941,6 +4945,7 @@ function MediaUploadFlow({
 
           {isBRoll && !hydrating && !bRollShowsMedia && openAiConnected === true && (
             <>
+              <NewFeatureNote feature="broll-animated" />
               <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
                 <MediaStylePicker
                   value={mediaStyle.style}
