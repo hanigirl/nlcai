@@ -2238,7 +2238,16 @@ function ProjectPageInner() {
     // C (shipped): סקריפט / מדיה / תזמון tabs, each holding only its part.
     if (cardsVariant === "c") {
       const tabs = (
-        <FormatPanelTabs value={panelStep} onChange={setPanelStep} showSchedule={!!approveVariant} />
+        <FormatPanelTabs
+          value={panelStep}
+          onChange={setPanelStep}
+          showSchedule={!!approveVariant}
+          done={{
+            script: item.state !== "generating",
+            media: hasMedia,
+            schedule: item.approval === "approved" || item.approval === "scheduled",
+          }}
+        />
       )
       if (panelStep === "media") {
         // No media (or media being made, or replacing it): the real flows.

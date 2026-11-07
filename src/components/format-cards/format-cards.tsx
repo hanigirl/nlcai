@@ -22,6 +22,7 @@
 
 import { useState, type ReactNode } from "react"
 import {
+  Check,
   ChevronLeft,
   ChevronRight,
   Loader2,
@@ -399,9 +400,12 @@ export function FormatPanelTabs({
   value,
   onChange,
   showSchedule = true,
+  done = {},
 }: {
   value: FormatPanelTab
   onChange: (tab: FormatPanelTab) => void
+  /** Steps already done get a ✓, so the tabs read as progress (Hani, 2026-11-07). */
+  done?: Partial<Record<FormatPanelTab, boolean>>
   /** False for accounts without scheduling — then there is no תזמון tab. */
   showSchedule?: boolean
 }) {
@@ -414,6 +418,7 @@ export function FormatPanelTabs({
             value={t.id}
             className="h-full rounded-lg text-small text-text-neutral-default hover:text-text-primary-default data-[state=active]:bg-white data-[state=active]:text-text-primary-default data-[state=active]:shadow-sm dark:data-[state=active]:bg-gray-10 cursor-pointer"
           >
+            {done[t.id] && <Check className="size-3.5" aria-label="הושלם" />}
             {t.label}
           </TabsTrigger>
         ))}

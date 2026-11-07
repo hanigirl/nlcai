@@ -219,7 +219,17 @@ function Preview() {
     if (variant === "c") {
       // C (shipped): סקריפט / מדיה / תזמון tabs, each holding only its part.
       const hasMedia = item.state === "media"
-      tabs = <FormatPanelTabs value={step} onChange={goTo} />
+      tabs = (
+        <FormatPanelTabs
+          value={step}
+          onChange={goTo}
+          done={{
+            script: item.state !== "generating",
+            media: hasMedia,
+            schedule: item.approval === "approved" || item.approval === "scheduled",
+          }}
+        />
+      )
       if (step === "media") {
         if (hasMedia && !replacing) footer = <FormatPanelNextStep label="תזמון" onNext={() => goTo("schedule")} />
         panelBody =
