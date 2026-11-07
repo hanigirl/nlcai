@@ -75,6 +75,8 @@ export interface ChatMessage {
    * its two answers show under it while it's the last turn and still true.
    */
   askEmpty?: boolean
+  /** The ask for her missing personal elements — its chips show under it. */
+  needInfo?: boolean
   /** "תעשה לי כזה": the question how to design the copy — its two answers show under it. */
   copyAsk?: boolean
 }
@@ -90,7 +92,12 @@ interface MediaChatExtra {
    * await = asked for a link or screenshots; choose = the reference is in
    * (her storage URLs), waiting for "בשפת המותג שלי" / "בדיוק כמו בקרוסלה".
    */
-  copy?: { phase: "await" } | { phase: "choose"; refs: string[]; brief: string } | null
+  copy?:
+    | { phase: "await" }
+    | { phase: "choose"; refs: string[]; brief: string }
+    /** Her personal elements missing for the reference (avatar / name / handle…) — asked in the chat. */
+    | { phase: "needs"; refs: string[]; brief: string; mode: "brand" | "exact"; needs: string[] }
+    | null
 }
 
 export type CopyStep = MediaChatExtra["copy"]
@@ -453,7 +460,8 @@ export function MediaAiChat({
   // Waiting for a carousel's screenshots ("תעשה לי כזה"): one per slide, up to 10.
   const copyGate = useCopyStructure() === true
   const copyAllowed = copyGate || !!forceCopyStructure
-  const copyWaiting = format === "carousel" && session.extra.copy?.phase === "await"
+  const copyWaiting =
+    format === "carousel" && (session.extra.copy?.phase === "await" || session.extra.copy?.phase === "needs")
   // A style request typed with pictures attached (live bug, 2026-11-07:
   // "תעשה לי את כל הקרוסלה בשפה הזו בסגנון tweet" put the tweet screenshots
   // into the slots): they're a design reference — shown so while she types.
@@ -572,6 +580,20 @@ export function MediaAiChat({
           extra: { ...s.extra, gen: null },
         }
       }
+      // Her personal elements are missing for the reference: asked, not failed.
+      const st = slots?.structure
+      if (!result.ok && result.needs?.length && st) {
+        return {
+          ...s,
+          busy: false,
+          messages: [...s.messages, { role: "assistant", content: result.message, needInfo: true }],
+          extra: {
+            ...s.extra,
+            gen: { ...g, phase: "brief", lastBrief: brief },
+            copy: { phase: "needs", refs: st.refs, brief, mode: st.mode, needs: result.needs },
+          },
+        }
+      }
       // Failed: her words (and references) back in the composer — send retries.
       const next: ChatMessage[] = [
         ...s.messages,
@@ -585,7 +607,7 @@ export function MediaAiChat({
         extra: { ...s.extra, gen: { ...g, phase: "brief", lastBrief: brief } },
       }
     })
-    if (!result.ok && (restoreWith ?? bubble).length) restoreRefs(restoreWith ?? bubble, lookRefs)
+    if (!result.ok && !result.needs?.length && (restoreWith ?? bubble).length) restoreRefs(restoreWith ?? bubble, lookRefs)
     revealChatReply(key, result.ok ? away.done : away.failed)
   }
 
@@ -1016,6 +1038,48 @@ export function MediaAiChat({
     const shots = refs.split(refs.refs).place.filter((r) => !videoRefs.includes(r))
     const waiting = cur.extra.copy?.phase === "await"
     if (!copyAllowed) return false
+    // Her personal elements, asked for: a picture = her profile picture, an
+    // @ = her handle, the rest of her words = her name. Kept for next time.
+    const pending = cur.extra.copy
+    if (pending?.phase === "needs" && (typed || shots.length)) {
+      const attached = refs.refs
+      refs.clear()
+      links.reset()
+      patchKey((s) => ({
+        ...s,
+        input: "",
+        busy: true,
+        extra: { ...s.extra, progress: "שומרים את הפרטים שלכם..." },
+        messages: [...s.messages, { role: "user", content: typed || "תמונת פרופיל", ...(attached.length ? { images: attached } : {}) }],
+      }))
+      const handle = typed.match(/@([A-Za-z0-9._]{1,40})/)?.[1]
+      const name = typed
+        .replace(/@[A-Za-z0-9._]+/g, "")
+        .replace(/^(השם|שם|שם העמוד|העמוד)\s*(שלי)?\s*(הוא|:)?\s*/u, "")
+        .replace(/[,.،]+$/, "")
+        .trim()
+      const avatarUrl = shots.length ? await uploadSlotPicture(shots[0]) : null
+      const res = await fetch("/api/profile/card-identity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(pending.needs.includes("name") && name && name.length <= 60 ? { name } : {}),
+          ...(handle ? { handle } : {}),
+          ...(avatarUrl ? { avatarUrl } : {}),
+        }),
+      }).catch(() => null)
+      patchKey((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "", copy: null } }))
+      if (!res?.ok) {
+        patchKey((s) => ({
+          ...s,
+          extra: { ...s.extra, copy: pending },
+          messages: [...s.messages, { role: "assistant", content: "לא הצלחתי לשמור את הפרטים. נסו שוב.", error: true }],
+        }))
+        return true
+      }
+      runCopy(pending.mode, { refs: pending.refs, brief: pending.brief })
+      return true
+    }
     const wants = LIKE_THIS.test(typed)
     if (!wants && !(waiting && (link || shots.length))) return false
     // On a carousel that exists, "כזה" alone may be an ordinary edit ("תעשו את
@@ -1098,14 +1162,18 @@ export function MediaAiChat({
     return true
   }
   /** Her answer: build it — in her visual language, or as the reference looks. */
-  const runCopy = (mode: "brand" | "exact", given?: { refs: string[]; brief: string }) => {
+  const runCopy = (
+    mode: "brand" | "exact",
+    given?: { refs: string[]; brief: string },
+    opts: { skipMissing?: boolean } = {},
+  ) => {
     const c = given ? { phase: "choose" as const, ...given } : session.extra.copy
-    if (!c || c.phase !== "choose") return
+    if (!c || c.phase === "await") return
     patch((s) => ({ ...s, extra: { ...s.extra, copy: null } }))
     const brief = c.brief || "קרוסלה באותו מבנה כמו הקרוסלה המצורפת"
     const label = mode === "brand" ? COPY_COPY.brand : COPY_COPY.exact
     if (session.extra.gen && session.extra.gen.phase !== "running") {
-      void generate(brief, [], label, [], { structure: { refs: c.refs, mode } })
+      void generate(brief, [], label, [], { structure: { refs: c.refs, mode, ...opts } })
       return
     }
     // A carousel that exists: rebuilt on the reference, through the media
@@ -1117,7 +1185,16 @@ export function MediaAiChat({
         extra: { ...s.extra, progress: "בונים את הקרוסלה מחדש לפי המבנה של הרפרנס... זה לוקח כמה דקות" },
         messages: given ? s.messages : [...s.messages, { role: "user", content: label }],
       }))
-      const r = await requestAsIsUpload(format, [], { regenerate: { structure: { refs: c.refs, mode } }, instruction: brief })
+      const r = await requestAsIsUpload(format, [], { regenerate: { structure: { refs: c.refs, mode, ...opts } }, instruction: brief })
+      if (!r.ok && r.needs?.length) {
+        patch((s) => ({
+          ...s,
+          busy: false,
+          extra: { ...s.extra, progress: "", copy: { phase: "needs", refs: c.refs, brief, mode, needs: r.needs! } },
+          messages: [...s.messages, { role: "assistant", content: r.message, needInfo: true }],
+        }))
+        return
+      }
       patch((s) => ({
         ...s,
         busy: false,
@@ -1518,6 +1595,27 @@ export function MediaAiChat({
                   <Chip onClick={() => void uploadAsIs(sentAsIs.items, m.images ?? [])}>{AS_IS}</Chip>
                 </div>
               )}
+            {/* Her missing personal elements: go on without, or add them. */}
+            {m.needInfo && i === messages.length - 1 && session.extra.copy?.phase === "needs" && !loading && (() => {
+              const c = session.extra.copy
+              return (
+                <div className="flex max-w-[85%] flex-wrap items-center justify-end gap-1.5">
+                  {(c.needs.includes("avatar") || c.needs.includes("photo")) && (
+                    <Button size="sm" className="h-7 rounded-full px-3 text-xs-body" onClick={() => setAddMenuOpen(true)}>
+                      {c.needs.includes("avatar") ? "להוסיף תמונת פרופיל" : "להוסיף תמונה"}
+                    </Button>
+                  )}
+                  <Chip
+                    onClick={() => {
+                      patch((s) => ({ ...s, extra: { ...s.extra, copy: null } }))
+                      runCopy(c.mode, { refs: c.refs, brief: c.brief }, { skipMissing: true })
+                    }}
+                  >
+                    להמשיך בלי
+                  </Chip>
+                </div>
+              )
+            })()}
             {/* "תעשה לי כזה": how to design the copy — her language first. */}
             {m.copyAsk && i === messages.length - 1 && session.extra.copy?.phase === "choose" && !loading && (
               <div className="flex max-w-[85%] flex-wrap items-center justify-end gap-1.5">

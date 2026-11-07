@@ -3,7 +3,8 @@ import { PICTURE_UNCHANGED, adaptPictureForSlide, editPicture, wantsPictureAsIs 
 import { canCopyStructure, gatePlacement } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
 import { resolveReferences, parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
-import { MAX_STRUCTURE_SLIDES, readCarouselStructure, type StructureMode } from "@/lib/carousel-structure"
+import { MAX_STRUCTURE_SLIDES, readCarouselStructure, type CardIdentityForPrompt, type StructureMode } from "@/lib/carousel-structure"
+import { avatarDataUrl, loadCardIdentity, missingMessage } from "@/lib/card-identity"
 import sharp from "sharp"
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
@@ -132,7 +133,12 @@ export async function POST(req: NextRequest) {
        * structure of — its slides (data or her storage URLs) and the look:
        * hers ("brand") or the reference's ("exact"). lib/carousel-structure.
        */
-      structure?: { refs?: unknown; mode?: unknown }
+      structure?: {
+        refs?: unknown
+        mode?: unknown
+        /** She chose "להמשיך בלי": build without what's missing (left out, never a placeholder). */
+        skipMissing?: unknown
+      }
       templateId?: string
       /** Her own direction for this carousel (lib/media-brief). */
       brief?: unknown
@@ -202,7 +208,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Another carousel's structure: read it, and fit the script to its slides.
-    let structure: { images: string[]; analysis: string; mode: StructureMode; template: boolean } | undefined
+    let structure:
+      | { images: string[]; analysis: string; mode: StructureMode; template: boolean; identity: CardIdentityForPrompt }
+      | undefined
+    let avatarSrc: string | null = null
     if (rawStructure && canCopyStructure(user?.email)) {
       const claude = await getUserApiKey(supabase, "anthropic_api_key").catch(() => null)
       if (!claude) {
@@ -220,12 +229,27 @@ export async function POST(req: NextRequest) {
       }
       try {
         const read = await readCarouselStructure(claude, refsIn, slides)
+        // Her personal elements: what we know is used; what's missing is
+        // asked for in the chat before anything is built (Hani, 2026-11-07).
+        const who = await loadCardIdentity(supabase, user.id)
+        avatarSrc = read.needs.includes("avatar") && who.avatarUrl ? await avatarDataUrl(who.avatarUrl) : null
+        const missing = read.needs.filter(
+          (n) => (n === "avatar" && !avatarSrc) || (n === "name" && !who.name) || (n === "handle" && !who.handle) || n === "photo",
+        )
+        if (missing.length && !rawStructure.skipMissing) {
+          return NextResponse.json({ error: "needs_info", needs: missing, message: missingMessage(missing) }, { status: 409 })
+        }
         slides = read.slides
         structure = {
           images: refsIn,
           analysis: read.analysis,
           mode: rawStructure.mode === "exact" ? "exact" : "brand",
           template: read.template,
+          identity: {
+            ...(read.needs.includes("name") && who.name ? { name: who.name } : {}),
+            ...(read.needs.includes("handle") && who.handle ? { handle: who.handle } : {}),
+            ...(avatarSrc ? { avatar: true } : {}),
+          },
         }
       } catch (err) {
         console.error("[carousel/generate-ai] structure", err)
@@ -384,6 +408,8 @@ export async function POST(req: NextRequest) {
             ? (rawPlaceAt as number[])
             : undefined
         const layout = await composeCarousel(anthropicKey, brief, refs, placeRefs, pictureEditsOn, placeAt, structure)
+        // Her profile picture where the card shows the author's.
+        layout.html = avatarSrc ? layout.html.split("__AVATAR__").join(avatarSrc) : layout.html.split("__AVATAR__").join("")
         if (placeAt) {
           const forced = forceAttached(layout.html, total, placeAt)
           if (!forced) return NextResponse.json(PLACE_FAILED_GEN, { status: 422 })

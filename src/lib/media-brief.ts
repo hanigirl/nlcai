@@ -33,7 +33,12 @@ export type MediaGenResult =
       /** Said instead of the usual "ready" line (e.g. a video slot that didn't make it). */
       message?: string
     }
-  | { ok: false; message: string }
+  | {
+      ok: false
+      message: string
+      /** A copied structure needs her personal elements first (lib/card-identity). */
+      needs?: string[]
+    }
 
 /** The brief from a request body — trimmed and capped, or undefined. */
 export function normalizeMediaBrief(raw: unknown): string | undefined {
