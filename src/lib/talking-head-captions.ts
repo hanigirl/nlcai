@@ -146,14 +146,19 @@ export async function composeTalkingHead(
 ): Promise<void> {
   const args: string[] = ["-y", "-i", input]
   const parts: string[] = []
+  // Every layer is a 1080×1920 canvas, scaled to HER frame width. Sized from
+  // the probe — scale2ref left a 1080 layer unscaled on a 720×1280 video, so
+  // the captions landed off-frame (live bug, 2026-11-07).
+  const { width: W } = await probeVideo(input)
+  const LW = Math.max(2, Math.round(W / 2) * 2)
+  const LH = Math.max(2, Math.round((W * 16) / 9 / 2) * 2)
   let cur = "[0:v]"
   let idx = 1
   if (layers.captionsList) {
     args.push("-f", "concat", "-safe", "0", "-i", layers.captionsList)
     parts.push(
-      `[${idx}:v]format=rgba,fps=25[cap]`,
-      `[cap]${cur}scale2ref=w=main_w:h=main_w*16/9[capS][capB]`,
-      `[capB][capS]overlay=0:main_h-overlay_h:eof_action=pass[vc]`,
+      `[${idx}:v]format=rgba,fps=25,scale=${LW}:${LH}[capS]`,
+      `${cur}[capS]overlay=0:main_h-overlay_h:eof_action=pass[vc]`,
     )
     cur = "[vc]"
     idx++
@@ -165,7 +170,7 @@ export async function composeTalkingHead(
     parts.push(
       // Its last frame holds for the rest of its time, then fades; shifted to its moment.
       `[${idx}:v]format=rgba,tpad=stop_mode=clone:stop_duration=${m.duration.toFixed(2)},trim=duration=${m.duration.toFixed(2)},fade=t=out:st=${fadeAt}:d=0.4:alpha=1,setpts=PTS-STARTPTS+${s}/TB[m${k}]`,
-      `[m${k}]${cur}scale2ref=w=main_w:h=main_w*16/9[mS${k}][mB${k}]`,
+      `[m${k}]scale=${LW}:${LH}[mS${k}]`,
     )
     const enable = `enable='between(t,${s},${(m.start + m.duration).toFixed(2)})'`
     if (m.place && (m.place.scale !== 1 || m.place.dx || m.place.dy)) {
@@ -173,10 +178,10 @@ export async function composeTalkingHead(
       const p = m.place
       parts.push(
         `[mS${k}]scale=iw*${p.scale.toFixed(4)}:ih*${p.scale.toFixed(4)}[mT${k}]`,
-        `[mB${k}][mT${k}]overlay=x='main_w/1080*${p.dx.toFixed(1)}':y='(main_h-main_w*16/9)/2+main_w/1080*${p.dy.toFixed(1)}':eof_action=pass:${enable}[w${k}]`,
+        `${cur}[mT${k}]overlay=x='main_w/1080*${p.dx.toFixed(1)}':y='(main_h-main_w*16/9)/2+main_w/1080*${p.dy.toFixed(1)}':eof_action=pass:${enable}[w${k}]`,
       )
     } else {
-      parts.push(`[mB${k}][mS${k}]overlay=0:(main_h-overlay_h)/2:eof_action=pass:${enable}[w${k}]`)
+      parts.push(`${cur}[mS${k}]overlay=0:(main_h-overlay_h)/2:eof_action=pass:${enable}[w${k}]`)
     }
     cur = `[w${k}]`
     idx++

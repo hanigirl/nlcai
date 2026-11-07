@@ -3,7 +3,7 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { captionLines, transcribeVideo, type CaptionLine } from "@/lib/transcribe"
 import { renderOwnVideoCaption, OVERLAY_SECONDS } from "@/lib/own-video-captions"
 import { talkingHeadVideoUrl, transcriptionContext } from "@/lib/talking-head-video"
-import { originalFor } from "@/lib/talking-head-original"
+import { editBase, saveApplied, type Applied } from "@/lib/talking-head-original"
 import { loadTalkingHeadTemplate } from "@/lib/talking-head-template"
 import { detectFaces, headZone, intersects, placeClear, type Box } from "@/lib/face-boxes"
 import {
@@ -94,13 +94,19 @@ export async function runTalkingHeadEdit(opts: {
   work: string
   /** Frames of an element, for local tests (no Opus): replaces the engine. */
   designMoment?: (m: PlanMoment, dir: string) => Promise<number>
-}): Promise<{ buffer: Buffer; lines: CaptionLine[] }> {
+}): Promise<{ buffer: Buffer; lines: CaptionLine[]; source: string; applied: Applied }> {
   const fs = await import("fs/promises")
   const path = await import("path")
   const { supabase, userId, postId, work } = opts
   const current = opts.url?.trim() || (await talkingHeadVideoUrl(supabase, postId))
   if (!current) throw new EditError("no_video", "אין כאן סרטון. העלו או חברו את הסרטון ונסו שוב.", 400)
-  const source = await originalFor(supabase, userId, postId, current)
+  // From her ORIGINAL, carrying what the edits so far added — a new request
+  // continues from where it stopped ("אמשיך מאיפה שזה נפסק", 2026-11-08).
+  const { source, applied } = await editBase(supabase, userId, postId, current)
+  const wantCaptions = opts.captions || applied.captions
+  const keyOf = (m: PlanMoment) => `${m.at}|${m.quote}`
+  const newKeys = new Set(opts.moments.map(keyOf))
+  const allMoments: PlanMoment[] = [...applied.moments.filter((m) => !newKeys.has(keyOf(m))), ...opts.moments]
 
   // Up front: a clip too long for one run is said so, never failed midway.
   // Download first (a Drive link is a page, not a file ffmpeg can open),
@@ -138,7 +144,7 @@ export async function runTalkingHeadEdit(opts: {
 
   let lines: CaptionLine[] = []
   let captionsList: string | undefined
-  if (opts.captions) {
+  if (wantCaptions) {
     let openaiKey: string
     try {
       openaiKey = await getUserApiKey(supabase, "openai_api_key")
@@ -166,7 +172,7 @@ export async function runTalkingHeadEdit(opts: {
   }
 
   const layers: MomentLayer[] = []
-  if (opts.moments.length) {
+  if (allMoments.length) {
     let design = opts.designMoment
     if (!design) {
       let claudeKey: string
@@ -176,12 +182,12 @@ export async function runTalkingHeadEdit(opts: {
         throw new EditError("anthropic_not_connected", "כדי לעצב את האלמנטים צריך לחבר מפתח Claude בהגדרות ← חיבורים.", 400)
       }
       const template = await loadTalkingHeadTemplate(supabase, userId)
-      const note = placeNote(head, opts.captions ? captionsAt : null)
+      const note = placeNote(head, wantCaptions ? captionsAt : null)
       design = (m, dir) =>
         renderOwnVideoCaption(supabase, userId, claudeKey, "b_roll", { headline: m.quote, design: elementDesign(m, opts.request, template, note) }, dir)
     }
     // Opus designs each element; up to 3 at a time.
-    const queue = opts.moments.map((m, k) => ({ m, k }))
+    const queue = allMoments.map((m, k) => ({ m, k }))
     const results: (MomentLayer | null)[] = new Array(queue.length).fill(null)
     const worker = async () => {
       for (let item = queue.shift(); item; item = queue.shift()) {
@@ -197,7 +203,7 @@ export async function runTalkingHeadEdit(opts: {
           const box = await elementBox(path.join(dir, `f${String(frames - 1).padStart(4, "0")}.png`))
           const place =
             box && momentHead
-              ? placeClear(box, momentHead, { w: 1080, h: 1920, top: 220, bottom: 420, side: 80 }, opts.captions ? CAPTION_BAND[captionsAt] : null)
+              ? placeClear(box, momentHead, { w: 1080, h: 1920, top: 220, bottom: 420, side: 80 }, wantCaptions ? CAPTION_BAND[captionsAt] : null)
               : undefined
           results[item.k] = { dir, fps: Math.max(1, Math.round(frames / OVERLAY_SECONDS)), start, duration, place }
         } catch (err) {
@@ -213,5 +219,6 @@ export async function runTalkingHeadEdit(opts: {
 
   const output = path.join(work, "out.mp4")
   await composeTalkingHead(input, { captionsList, moments: layers }, output)
-  return { buffer: await fs.readFile(output), lines }
+  const nowApplied: Applied = { captions: wantCaptions && !!captionsList, moments: allMoments }
+  return { buffer: await fs.readFile(output), lines, source, applied: nowApplied }
 }
