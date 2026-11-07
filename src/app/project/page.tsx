@@ -951,7 +951,12 @@ function ProjectPageInner() {
                 reader.onload = () => {
                   const dataUrl = reader.result as string
                   const base64 = dataUrl.split(",")[1]
-                  if (base64) setThCoverImage(base64)
+                  if (base64) {
+                    // Loaded, not made: the auto-save must not store it again as
+                    // a "new" cover (live, 2026-11-07: a reload re-saved it).
+                    loadedCoverRef.current = base64
+                    setThCoverImage(base64)
+                  }
                   setThCoverLoading(false)
                 }
                 reader.onerror = () => setThCoverLoading(false)
@@ -1332,12 +1337,15 @@ function ProjectPageInner() {
   // no-op, and skipping while a cover is still generating stops us persisting a
   // half-finished intermediate.
   const prevCoverSigRef = useRef<string>("")
+  const loadedCoverRef = useRef<string | null>(null)
   useEffect(() => {
     if (!savedPostId || !thCoverImage) return
     if (thCoverLoading) return
     const sig = `${thCoverImage.length}|${thCoverImage.slice(0, 32)}|${pillColor}`
     if (sig === prevCoverSigRef.current) return
     prevCoverSigRef.current = sig
+    // The cover as it came from the DB is already saved.
+    if (thCoverImage === loadedCoverRef.current) return
     void savePatch(
       savedPostId,
       { coverBase64: thCoverImage, coverPillColor: pillColor },
@@ -2507,7 +2515,8 @@ function ProjectPageInner() {
     <AppShell idea={shortenTitle(idea || hookParam || (postId ? "עריכת פוסט" : ""))}>
       {/* Media Panel — sibling to InfiniteCanvas, slides from left */}
       <MediaPanel
-        thAutoCover={!thAiOn}
+        // Only when we KNOW she isn't gated — never while the gate is loading.
+        thAutoCover={thAiGate === false}
         formatId={selectedFormatCard}
         onClose={() => setSelectedFormatCard(null)}
         postId={savedPostId}

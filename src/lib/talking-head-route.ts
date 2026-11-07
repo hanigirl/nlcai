@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
 import { canTalkingHeadAi } from "@/lib/feature-access"
 import { EditError, runTalkingHeadEdit, type PlanMoment } from "@/lib/talking-head-edit"
+import { saveApplied } from "@/lib/talking-head-original"
 
 /** Shared by api/talking-head/captions and /edit: gate, run from the original, store. */
 export async function handleTalkingHeadEdit(body: {
@@ -26,7 +27,7 @@ export async function handleTalkingHeadEdit(body: {
     const { data: post } = await supabase.from("core_posts").select("id").eq("id", body.postId).eq("user_id", user.id).maybeSingle()
     if (!post) return NextResponse.json({ error: "Post not found" }, { status: 404 })
 
-    const { buffer, lines } = await runTalkingHeadEdit({
+    const { buffer, lines, source, applied } = await runTalkingHeadEdit({
       supabase,
       userId: user.id,
       postId: body.postId,
@@ -36,11 +37,13 @@ export async function handleTalkingHeadEdit(body: {
       request: body.request,
       work,
     })
-    const kind = body.moments.length ? "edited" : "captioned"
+    const kind = applied.moments.length ? "edited" : "captioned"
     const storagePath = `${user.id}/video/${kind}-th-${stamp}.mp4`
     const { error: upErr } = await supabase.storage.from("user-media").upload(storagePath, buffer, { contentType: "video/mp4" })
     if (upErr) throw new Error(upErr.message)
     const url = supabase.storage.from("user-media").getPublicUrl(storagePath).data.publicUrl
+    // What's on her video now — the next request continues from it.
+    await saveApplied(supabase, user.id, body.postId, source, applied)
     return NextResponse.json({ url, lines: lines.map(({ text, start, end }) => ({ text, start, end })) })
   } catch (error) {
     if (error instanceof EditError) return NextResponse.json({ error: error.code, message: error.message }, { status: error.status })
