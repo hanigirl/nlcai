@@ -1918,6 +1918,12 @@ function CarouselFlow({
           }
           data.images = made
         }
+        // Her files as they are, in their slots; the AI made the rest.
+        if (slots?.fixed?.length) {
+          const withFixed: string[] = [...data.images]
+          for (const { at, slide } of slots.fixed) if (at >= 0 && at < withFixed.length) withFixed[at] = slide
+          data.images = withFixed
+        }
         if (postId) {
           carouselGenCache.set(postId, {
             ...(carouselGenCache.get(postId) ?? {}),
@@ -2132,6 +2138,26 @@ function CarouselFlow({
               const data = (await res.json().catch(() => ({}))) as { url?: string; kind?: string }
               if (!res.ok || !data.url || data.kind === "video") return { ok: false, message: `טעינת שקופית ${at[i] + 1} מהדרייב נכשלה.` }
               made.push({ at: at[i], slide: data.url })
+            }
+          }
+          // No carousel yet and slots left empty: those are made with AI —
+          // a generation, with her files on their slides (live bug, 2026-11-07).
+          if (!base.length && opts.fill && made.length < opts.fill) {
+            setDriveImportProgress("יוצרים עם AI את השקופיות הריקות...")
+            const gen = await handleGenerate({
+              brief: opts.instruction,
+              fromPanel: true,
+              slots: { fixed: made },
+            })
+            if (!gen.ok) return { ok: false, message: gen.message }
+            const mine = made.map((m) => m.at + 1).sort((a, b) => a - b)
+            const ai = Array.from({ length: opts.fill }, (_, k) => k + 1).filter((n) => !mine.includes(n))
+            const list = (n: number[]) => (n.length === 1 ? `${n[0]}` : `${n.slice(0, -1).join(", ")} ו-${n[n.length - 1]}`)
+            return {
+              ok: true,
+              message:
+                `שמתי את המדיה ${mine.length === 1 ? "בשקופית" : "בשקופיות"} ${list(mine)}, ויצרתי עם AI את ${ai.length === 1 ? "שקופית" : "שקופיות"} ${list(ai)}.` +
+                (gen.message ? ` ${gen.message}` : ""),
             }
           }
           let next: string[]

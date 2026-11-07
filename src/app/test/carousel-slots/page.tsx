@@ -4,7 +4,7 @@
  * State preview for the carousel's slide slots in the AI panel (Hani,
  * 2026-11-06: "תן למשתמש להחליט מתי הוא רוצה סרטון").
  *
- * Route: /test/carousel-slots?state=one|mixed|six|emptied|ask|full|first|none
+ * Route: /test/carousel-slots?state=one|mixed|six|emptied|ask|three|full|first|none
  *   one   — a 6-slide carousel, one picture attached (in slide 1): the panel
  *           says where it went, offers more media, says empty = AI.
  *   mixed — a picture in slide 1 and a video in slide 3 (play mark).
@@ -15,6 +15,9 @@
  *   ask   — before the first generation, she pressed send with slides 2
  *           and 4 still empty: the panel
  *           asks first ("ליצור אותן עם AI?"), nothing is sent yet.
+ *   three — no carousel yet, 3 slides planned, 3 pictures attached: the live
+ *           bug's start (2026-11-07). Remove one with the X, then press send
+ *           or "להעלות כמו שזה" — the panel must ask about the empty slide.
  *   full  — a 3-slide carousel, every slot filled: no line about the AI.
  *   first — no carousel yet (first generation): 6 slots from the script's
  *           planned count, a picture in slide 2.
@@ -37,6 +40,7 @@ const STATES = [
   { id: "six", label: "כל 6 השקופיות בבת אחת" },
   { id: "emptied", label: "אחרי מחיקה משקופית 4" },
   { id: "ask", label: "שאלה לפני יצירה עם AI" },
+  { id: "three", label: "3 תמונות, לפני היצירה (להסיר אחת ולשלוח)" },
   { id: "full", label: "כל השקופיות מלאות" },
   { id: "first", label: "לפני היצירה הראשונה" },
   { id: "none", label: "בלי מדיה" },
@@ -71,6 +75,8 @@ function Panel({ state }: { state: State }) {
       const next: Seed[] =
         state === "six"
           ? six.map((f, i) => ({ preview: f, kind: i === 3 ? "video" : "image", at: i }))
+          : state === "three"
+            ? six.slice(0, 3).map((f, i): Seed => ({ preview: f, kind: "image", at: i }))
           : state === "ask"
             ? six.flatMap((f, i): Seed[] => (i === 1 || i === 3 ? [] : [{ preview: f, kind: "image", at: i }]))
           : state === "emptied"
@@ -100,7 +106,7 @@ function Panel({ state }: { state: State }) {
 
   const opening = useMemo<AiEditOpening | null>(
     () =>
-      state === "first" || state === "ask"
+      state === "first" || state === "ask" || state === "three"
         ? {
             id: openingId(),
             kind: "generate",
@@ -113,7 +119,7 @@ function Panel({ state }: { state: State }) {
     [state],
   )
   if (!seed) return null
-  const current = state === "full" ? SLIDES.slice(0, 3) : state === "first" || state === "ask" ? [] : SLIDES
+  const current = state === "full" ? SLIDES.slice(0, 3) : state === "first" || state === "ask" || state === "three" ? [] : SLIDES
   return (
     <MediaAiChat
       key={state}
@@ -122,7 +128,7 @@ function Panel({ state }: { state: State }) {
       open
       opening={opening}
       currentUrls={current}
-      slideCount={state === "first" || state === "ask" ? 6 : undefined}
+      slideCount={state === "three" ? 3 : state === "first" || state === "ask" ? 6 : undefined}
       seedAttachments={seed}
       seedEmptied={state === "emptied" ? 3 : undefined}
       seedAskEmpty={state === "ask"}

@@ -41,6 +41,12 @@ export type AsIsOptions = {
    * carousel yet, the items become the slides in slot order.
    */
   at?: number[]
+  /**
+   * No carousel yet: the slide count it will have. Her files go in their
+   * slots and the empty slots are generated with AI (she confirmed) —
+   * never a shorter carousel of only her files (live bug, 2026-11-07).
+   */
+  fill?: number
   /** The carousel's slides right now, when the caller knows them fresher than the panel (just edited). */
   base?: string[]
 }
