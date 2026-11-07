@@ -1,5 +1,7 @@
 "use client"
 
+import { BidiText } from "@/components/bidi-text"
+
 import { useEffect, useRef } from "react"
 import { X } from "lucide-react"
 import { AiSparkle } from "@/components/ai-refine-button"
@@ -119,7 +121,7 @@ export function FormatCopyChat({
                   m.role === "user" ? "bg-bg-surface-primary-default rounded-ss-sm" : "bg-bg-surface rounded-se-sm"
                 }`}
               >
-                {m.content}
+                <BidiText text={m.content} />
                 <ReferenceThumbs images={m.images} className="mt-1.5" />
               </div>
             )}

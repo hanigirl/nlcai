@@ -1,5 +1,7 @@
 "use client"
 
+import { BidiText } from "@/components/bidi-text"
+
 import { useEffect, useRef } from "react"
 import { AI_ERROR_BOX, aiErrorMessage } from "@/lib/ai-error-message"
 import { CLAUDE_KEY_INVALID_MESSAGE } from "@/lib/claude-credits"
@@ -309,7 +311,7 @@ export function CorePostChat({
                   : "bg-bg-surface text-text-primary-default rounded-se-sm"
               }`}
             >
-              {m.content}
+              <BidiText text={m.content} />
             </div>
             {m.role === "assistant" && m.revisedPost && (
               m.status === "applied" ? (

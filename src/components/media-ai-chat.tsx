@@ -1,5 +1,7 @@
 "use client"
 
+import { BidiText } from "@/components/bidi-text"
+
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { AI_ERROR_BOX, aiErrorMessage } from "@/lib/ai-error-message"
 import { ArrowUp, Check, Loader2, X } from "lucide-react"
@@ -1270,7 +1272,7 @@ export function MediaAiChat({
                     : "bg-bg-surface text-text-primary-default rounded-se-sm"
               }`}
             >
-              {m.content}
+              <BidiText text={m.content} />
               <ReferenceThumbs images={m.images} className="mt-1.5" />
             </div>
             {/* Own media: what it can do, one tap away — until her first ask. */}
