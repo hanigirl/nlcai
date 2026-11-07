@@ -373,7 +373,9 @@ export function VideoCoverRow({
                   variant="ghost"
                   onClick={() => setConfirmDelete(true)}
                   disabled={coverLoading}
-                  className="gap-1.5 text-button-destructive-default hover:bg-gray-95 dark:hover:bg-gray-20"
+                  // Red at rest AND on hover — the ghost variant's hover colour
+                  // used to turn it grey (Hani, 2026-11-08).
+                  className="gap-1.5 text-button-destructive-default hover:bg-gray-95 hover:text-button-destructive-hover dark:hover:bg-gray-20"
                 >
                   <Trash2 className="size-3.5" aria-hidden />
                   מחיקת הקאבר
