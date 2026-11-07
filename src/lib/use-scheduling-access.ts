@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { canUseFormatCards, canUseFormatGap, canUseMultinetwork, canUsePreview, canUseScheduleAllA, canUseScheduling } from "@/lib/scheduling-access"
-import { canCopyStructure, canPlaceRefs } from "@/lib/feature-access"
+import { canCopyStructure, canTalkingHeadAi, canPlaceRefs } from "@/lib/feature-access"
 
 /** null while the session is read, then true/false. */
 export function useSchedulingAccess(): boolean | null {
@@ -34,6 +34,11 @@ export function useMultinetwork(): boolean | null {
 /** Attached images go INTO the first generation — Hani only (lib/feature-access). */
 export function useRefPlace(): boolean | null {
   return useEmailGate(canPlaceRefs)
+}
+
+/** Talking head AI edit + cover on request (lib/feature-access). */
+export function useTalkingHeadAi(): boolean | null {
+  return useEmailGate(canTalkingHeadAi)
 }
 
 /** "תעשה לי כזה" — copy another carousel's structure (lib/feature-access). */

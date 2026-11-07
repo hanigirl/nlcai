@@ -7,6 +7,8 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { TalkingHeadTemplateSettings } from "@/components/talking-head-ai"
+import { useTalkingHeadAi } from "@/lib/use-scheduling-access"
 import {
   RULE_SCOPES,
   VISUAL_SETTINGS_HREF,
@@ -35,7 +37,9 @@ export function VisualPreferencesPanel() {
   const [prefs, setPrefs] = useState<VisualPreference[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [tab, setTab] = useState<RuleScope>("all")
+  const [tab, setTab] = useState<RuleScope | "talking_head">("all")
+  // "דיבור למצלמה" — her talking-head template (Hani + Nataliya, 2026-11-07).
+  const talkingHead = useTalkingHeadAi() === true
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null)
   const [busy, setBusy] = useState<{ id: string; what: "save" | "delete" } | null>(null)
 
@@ -132,14 +136,20 @@ export function VisualPreferencesPanel() {
           לא הצלחנו לטעון את ההעדפות. {loadError} פתחו את המסך מחדש כדי לנסות שוב.
         </p>
       ) : (
-        <Tabs value={tab} onValueChange={(v) => setTab(v as RuleScope)} dir="rtl">
+        <Tabs value={tab} onValueChange={(v) => setTab(v as RuleScope | "talking_head")} dir="rtl">
           <TabsList className="w-full" aria-label="פורמט">
             {RULE_SCOPES.map((s) => (
               <TabsTrigger key={s.id} value={s.id}>
                 {s.label}
               </TabsTrigger>
             ))}
+            {talkingHead && <TabsTrigger value="talking_head">דיבור למצלמה</TabsTrigger>}
           </TabsList>
+          {talkingHead && (
+            <TabsContent value="talking_head" className="pt-3">
+              <TalkingHeadTemplateSettings />
+            </TabsContent>
+          )}
 
           {RULE_SCOPES.map((s) => {
             const items = prefs.filter((p) => p.scope === s.id)

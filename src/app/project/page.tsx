@@ -26,6 +26,13 @@ import { SelectionCard } from "@/components/selection-card"
 import { Textarea } from "@/components/ui/textarea"
 import { RichBodyEditor } from "@/components/rich-body-editor"
 import { StorySections } from "@/components/story-frames"
+import {
+  TalkingHeadCoverAction,
+  TalkingHeadCoverDone,
+  TalkingHeadCoverReminder,
+  useHasCoverSettings,
+} from "@/components/talking-head-ai"
+import { useCoverDefaultColor } from "@/lib/use-cover-brand-colors"
 import { parseTextToSlides } from "@/lib/carousel-slides"
 import { MAX_CAROUSEL_SLIDES } from "@/lib/carousel-limits"
 import { isVideoSlide } from "@/lib/carousel-video"
@@ -97,7 +104,7 @@ import {
   approvalHeaderFill,
 } from "@/components/format-approval/approval-visuals"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
-import { useFormatCards, usePreviewAccess, useSchedulingAccess } from "@/lib/use-scheduling-access"
+import { useFormatCards, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi } from "@/lib/use-scheduling-access"
 // "עריכה עם AI" on every format's copy (Hani, 2026-10-29).
 import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
 import { useChatRevealer } from "@/lib/ai-chat-reveal"
@@ -370,6 +377,7 @@ function ProjectPageInner() {
       story: (storyImages?.length ?? 0) > 0 || !!storyVideoUrl,
       b_roll: !!bRollUrl,
       carousel: (carouselImages?.length ?? 0) > 0,
+      talking_head: !!thVideoUrl,
     }[req.format]
     if (req.opening.kind === "generate" && req.opening.fromEdit && hasMedia) {
       setAiChatOpening(null)
@@ -789,6 +797,8 @@ function ProjectPageInner() {
           title: hookText,
           thumbnail_url: thumbnailUrl,
           pill_color: colorOverride ?? pillColor,
+          // Talking head AI edit (gated): her cover examples are the style.
+          ...(thAiOnRef.current ? { use_cover_settings: true } : {}),
         }),
       })
       const d = await res.json()
@@ -1115,20 +1125,20 @@ function ProjectPageInner() {
                           body: JSON.stringify({ videoUrl: stored.url }),
                         }).catch(() => {})
                       }
-                      if (hookForCover && !hasSavedCover) generateCoverForPost(hookForCover, stored.url)
+                      if (hookForCover && !hasSavedCover) autoCover(() => generateCoverForPost(hookForCover, stored.url))
                       return
                     }
                   }
                   setThVideoUrl(videoUrl)
-                  if (hookForCover && !hasSavedCover) generateCoverForPost(hookForCover)
+                  if (hookForCover && !hasSavedCover) autoCover(() => generateCoverForPost(hookForCover))
                 })
                 .catch(() => {
                   setThVideoUrl(videoUrl)
-                  if (hookForCover && !hasSavedCover) generateCoverForPost(hookForCover)
+                  if (hookForCover && !hasSavedCover) autoCover(() => generateCoverForPost(hookForCover))
                 })
             } else {
               setThVideoUrl(videoUrl)
-              if (hookForCover && !hasSavedCover) generateCoverForPost(hookForCover, videoUrl)
+              if (hookForCover && !hasSavedCover) autoCover(() => generateCoverForPost(hookForCover, videoUrl))
             }
           }
         }
@@ -2108,11 +2118,14 @@ function ProjectPageInner() {
       ...(storyVideoUrl && !(storyImages ?? []).includes(storyVideoUrl) ? [storyVideoUrl] : []),
     ]
     const urls: Record<AiEditFormat, string[]> = {
+      talking_head: thVideoUrl ? [thVideoUrl] : [],
       story: storyFrames,
       carousel: carouselImages ?? [],
       image_post: imagePostUrl ? [imagePostUrl] : [],
       b_roll: bRollUrl ? [bRollUrl] : [],
     }
+    // A talking head is always her own video (her upload or her avatar).
+    if (aiChatFormat === "talking_head") return true
     return aiChatOpening?.kind !== "generate" && isOwnMediaFormat(aiChatFormat, urls[aiChatFormat], carouselDriveLinks)
   })()
   const aiOwnKey = aiChatFormat ? `${aiChatFormat}:${aiChatOpening?.id ?? "edit"}` : ""
@@ -2128,6 +2141,33 @@ function ProjectPageInner() {
   // C is the shipped design (Hani, 2026-11-07), for FORMAT_CARDS_EMAILS only
   // (Hani + Nataliya); for them ?cards=a|b still opens the review options.
   const formatCardsOn = useFormatCards() === true
+  // Talking head AI edit (Notion, Hani 2026-11-07 — she picked ✨ → the panel
+  // with three chips). Hani + Nataliya only (lib/feature-access); everyone else
+  // keeps today's talking head, the automatic cover too.
+  const thAiGate = useTalkingHeadAi()
+  const thAiOn = thAiGate === true
+  // Read by the post load and the cover request, which run outside render.
+  const thAiOnRef = useRef(false)
+  const thGateRef = useRef<boolean | null>(null)
+  // The automatic cover waits for the gate's answer (null = still loading):
+  // Hani + Nataliya make it on request, everyone else gets it as before.
+  const pendingAutoCover = useRef<(() => void) | null>(null)
+  function autoCover(run: () => void) {
+    if (thGateRef.current === null) pendingAutoCover.current = run
+    else if (thGateRef.current === false) run()
+  }
+  useEffect(() => {
+    thAiOnRef.current = thAiOn
+    thGateRef.current = thAiGate
+    if (thAiGate === null) return
+    const run = pendingAutoCover.current
+    pendingAutoCover.current = null
+    if (run && thAiGate === false) run()
+  }, [thAiOn, thAiGate])
+  const hasCoverSettings = useHasCoverSettings(thAiOn)
+  const coverDefaultColor = useCoverDefaultColor()
+  // "לאשר בלי קאבר" — she saw the reminder and chose to go on.
+  const [thCoverSkipped, setThCoverSkipped] = useState(false)
   const cardsVariant = formatCardsOn ? (parseCardsVariant(searchParams.get("cards")) ?? "c") : null
   const [panelStep, setPanelStepRaw] = useState<FormatPanelTab>("script")
   // מדיה tab with media: the preview, until she clicks it to replace the media.
@@ -2293,7 +2333,7 @@ function ProjectPageInner() {
           }
         : undefined
     const onAiEditMedia =
-      fid !== "talking_head"
+      fid !== "talking_head" || thAiOn
         ? () => {
             setAiChatFormat(fid as AiEditFormat)
             setAiChatOpening(null)
@@ -2325,15 +2365,36 @@ function ProjectPageInner() {
           footer: approveVariant ? (
             <FormatPanelNextStep label="תזמון" onNext={() => setPanelStep("schedule")} />
           ) : undefined,
-          scriptView: (
-            <FormatPanelMedia
-              fid={fid}
-              media={item.media}
-              onOpenMedia={() => setMediaReplacing(true)}
-              onAiEditMedia={onAiEditMedia}
-              onDeleteMedia={onDeleteMedia}
-            />
-          ),
+          scriptView:
+            fid === "talking_head" && thAiOn ? (
+              <div className="flex flex-col gap-4">
+                <FormatPanelMedia
+                  fid={fid}
+                  media={item.media}
+                  onOpenMedia={() => setMediaReplacing(true)}
+                  onAiEditMedia={onAiEditMedia}
+                  onDeleteMedia={onDeleteMedia}
+                />
+                {thCoverImage ? (
+                  <TalkingHeadCoverDone image={thCoverImage} loading={thCoverLoading} onRemake={() => generateCoverForPost(coverText, thVideoUrl || undefined)} />
+                ) : (
+                  <TalkingHeadCoverAction
+                    hasCoverSettings={!!hasCoverSettings}
+                    brandBackground={coverDefaultColor.toLowerCase() !== "#000000"}
+                    loading={thCoverLoading}
+                    onCreate={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
+                  />
+                )}
+              </div>
+            ) : (
+              <FormatPanelMedia
+                fid={fid}
+                media={item.media}
+                onOpenMedia={() => setMediaReplacing(true)}
+                onAiEditMedia={onAiEditMedia}
+                onDeleteMedia={onDeleteMedia}
+              />
+            ),
         }
       }
       if (panelStep === "schedule") {
@@ -2344,7 +2405,21 @@ function ProjectPageInner() {
             <FormatPanelSchedule fid={fid} hasMedia={hasMedia} onGoToMedia={() => setPanelStep("media")} />
           ),
           footer:
-            hasMedia && approvalProps ? <FormatPanelScheduleFooter fid={fid} approval={approvalProps} /> : undefined,
+            hasMedia && approvalProps ? (
+              // A reel with no cover: the reminder comes before the approve (gated).
+              fid === "talking_head" && thAiOn && !thCoverImage && !thCoverSkipped && approvalProps.status !== "approved" && approvalProps.status !== "scheduled" ? (
+                <TalkingHeadCoverReminder
+                  loading={thCoverLoading}
+                  onCreate={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
+                  onApproveWithout={() => {
+                    setThCoverSkipped(true)
+                    approvalProps.onApprove()
+                  }}
+                />
+              ) : (
+                <FormatPanelScheduleFooter fid={fid} approval={approvalProps} />
+              )
+            ) : undefined,
         }
       }
       return {
@@ -2432,6 +2507,7 @@ function ProjectPageInner() {
     <AppShell idea={shortenTitle(idea || hookParam || (postId ? "עריכת פוסט" : ""))}>
       {/* Media Panel — sibling to InfiniteCanvas, slides from left */}
       <MediaPanel
+        thAutoCover={!thAiOn}
         formatId={selectedFormatCard}
         onClose={() => setSelectedFormatCard(null)}
         postId={savedPostId}
@@ -3342,6 +3418,7 @@ function ProjectPageInner() {
           ...(storyVideoUrl && !(storyImages ?? []).includes(storyVideoUrl) ? [storyVideoUrl] : []),
         ]
         const mediaOf: Record<AiEditFormat, string[]> = {
+          talking_head: thVideoUrl ? [thVideoUrl] : [],
           story: storyFrames,
           carousel: carouselImages ?? [],
           image_post: imagePostUrl ? [imagePostUrl] : [],
@@ -3381,6 +3458,17 @@ function ProjectPageInner() {
                 if (own) setStoryVideoUrl(null)
               }
               if (format === "b_roll" && urls[0]) setBRollUrl(urls[0])
+              // Talking head: her video with the captions becomes the post's video.
+              if (format === "talking_head" && urls[0]) {
+                setThVideoUrl(urls[0])
+                if (savedPostId) {
+                  fetch(`/api/core-posts/${savedPostId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ videoUrl: urls[0] }),
+                  }).catch(() => {})
+                }
+              }
             }}
           />
         )
@@ -3523,6 +3611,7 @@ function ProjectPageInner() {
 }
 
 const MEDIA_NOUN: Record<AiEditFormat, string> = {
+  talking_head: "סרטון",
   b_roll: "בי-רול",
   carousel: "קרוסלה",
   story: "סטורי",

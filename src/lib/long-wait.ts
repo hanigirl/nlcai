@@ -138,7 +138,11 @@ export async function saveCarouselIfLeft(
 }
 
 /** What the AI-edit chat says when she left mid-edit (keyed by its format). */
-export const AWAY_COPY: Record<"b_roll" | "carousel" | "story" | "image_post", { done: string; failed: string }> = {
+export const AWAY_COPY: Record<"b_roll" | "carousel" | "story" | "image_post" | "talking_head", { done: string; failed: string }> = {
+  talking_head: {
+    done: "עריכת הסרטון הסתיימה. הסרטון החדש מופיע בפוסט.",
+    failed: "עריכת הסרטון לא הצליחה. נסו שוב מהפוסט.",
+  },
   b_roll: {
     done: "עריכת הבי-רול הסתיימה. הסרטון החדש מופיע בפוסט.",
     failed: "עריכת הבי-רול לא הצליחה. נסו שוב מהפוסט.",

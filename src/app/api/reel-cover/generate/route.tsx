@@ -5,6 +5,9 @@ import { createClient } from "@/lib/supabase/server"
 import type { BrandStyle } from "@/lib/supabase/types"
 import { getAuthUser } from "@/lib/auth-user"
 import { cleanBrandColors, defaultCoverColor, isCoverHex } from "@/lib/cover-brand-color"
+import { canTalkingHeadAi } from "@/lib/feature-access"
+import { coverStyleFromExamples } from "@/lib/cover-from-examples"
+import { loadCoverFont } from "@/lib/cover-font"
 
 const COVER_WIDTH = 1080
 const COVER_HEIGHT = 1920 // 9:16 aspect ratio
@@ -188,6 +191,8 @@ function renderCover(
   style: BrandStyle,
   variation: number,
   thumbnailBase64?: string,
+  /** Her cover font (lib/cover-font) — Rubik when she has none. */
+  fontFamily = "Rubik",
 ): React.ReactElement {
   const positionStyles = getTextPositionStyles(style.text_position)
   const fontSize = style.font_size_px || getTextSize(style.text_size)
@@ -299,7 +304,7 @@ function renderCover(
                 color: style.text_color,
                 fontSize,
                 fontWeight,
-                fontFamily: "Rubik",
+                fontFamily: `${fontFamily}, Rubik`,
                 lineHeight: style.line_height || 1.0,
                 letterSpacing: `${style.letter_spacing ?? 0}em`,
                 marginLeft: isRtl ? `${wordGap}px` : "0",
@@ -331,10 +336,15 @@ function renderCover(
 
 export async function POST(req: NextRequest) {
   try {
-    const { thumbnail_url, title, pill_color } = (await req.json()) as {
+    const { thumbnail_url, title, pill_color, use_cover_settings } = (await req.json()) as {
       thumbnail_url?: string
       title: string
       pill_color?: string
+      /**
+       * Talking head, on request (Hani + Nataliya — lib/feature-access): her
+       * cover examples are the style; without them, the default below.
+       */
+      use_cover_settings?: boolean
     }
 
     if (!title) {
@@ -363,9 +373,20 @@ export async function POST(req: NextRequest) {
       const { data: row } = await supabase.from("users").select("brand_colors").eq("id", user.id).single()
       pillHex = defaultCoverColor(cleanBrandColors((row as { brand_colors?: unknown } | null)?.brand_colors))
     }
-    const style: BrandStyle = pillHex
-      ? { ...DEFAULT_BRAND_STYLE, text_background_color: pillHex }
-      : DEFAULT_BRAND_STYLE
+    // Her cover examples, read into a style (gated). Without examples — or
+    // for everyone else — the default: Rubik on black, or her main brand colour.
+    const fromExamples =
+      use_cover_settings && canTalkingHeadAi(user.email) ? await coverStyleFromExamples(supabase, user.id) : null
+    // The font: her examples' font, else her visual language's, else Rubik (gated).
+    const coverFont =
+      use_cover_settings && canTalkingHeadAi(user.email)
+        ? await loadCoverFont(supabase, user.id, fromExamples?.font_name)
+        : null
+    const style: BrandStyle = fromExamples
+      ? fromExamples
+      : pillHex
+        ? { ...DEFAULT_BRAND_STYLE, text_background_color: pillHex }
+        : DEFAULT_BRAND_STYLE
 
     // Fetch thumbnail if provided (supports data URLs and regular URLs)
     let thumbBase64: string | undefined
@@ -394,12 +415,21 @@ export async function POST(req: NextRequest) {
     // Generate 1 cover
     const covers: string[] = []
     {
-      const element = renderCover(title, style, 0, thumbBase64)
+      const element = renderCover(title, style, 0, thumbBase64, coverFont?.name)
 
       const svg = await satori(element, {
         width: COVER_WIDTH,
         height: COVER_HEIGHT,
         fonts: [
+          // Her font first; Rubik after it covers any glyph it lacks (Hebrew).
+          ...(coverFont
+            ? ([700, 800].map((weight) => ({ name: coverFont.name, data: coverFont.data, weight, style: "normal" as const })) as {
+                name: string
+                data: ArrayBuffer
+                weight: 700 | 800
+                style: "normal"
+              }[])
+            : []),
           { name: "Rubik", data: fontData, weight: 400, style: "normal" as const },
           { name: "Rubik", data: boldFontData, weight: 700, style: "normal" as const },
           { name: "Rubik", data: extraBoldFontData, weight: 800, style: "normal" as const },

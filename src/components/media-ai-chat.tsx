@@ -44,7 +44,10 @@ import { CAROUSEL_VIDEO_MAX_SECONDS } from "@/lib/carousel-video"
 import { uploadSlotPicture } from "@/lib/carousel-video-client"
 import { CarouselSlideSlots } from "@/components/carousel-slide-slots"
 import type { ReferenceImages } from "@/components/ai-edit-reference"
-import type { MediaStyle } from "@/lib/visual-language/types"
+import type { MediaStyle, VisualFormat } from "@/lib/visual-language/types"
+import type { OwnEditFormat } from "@/lib/own-media"
+import { isTalkingHeadRender } from "@/lib/talking-head-original"
+import { TH_EDIT_MODES, TalkingHeadPlanEditor, TalkingHeadTemplateChip, appendToTalkingHeadTemplate, type ThPlanMoment } from "@/components/talking-head-ai"
 import { useCopyStructure } from "@/lib/use-scheduling-access"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
@@ -75,6 +78,15 @@ export interface ChatMessage {
    * its two answers show under it while it's the last turn and still true.
    */
   askEmpty?: boolean
+  /** Talking head: the plan before the paid edit ("כתוביות + אלמנטים תומכים"). */
+  thPlan?: ThPlanMoment[]
+  thPlanApproved?: boolean
+  /** The plan's edit adds her running captions too. */
+  thPlanCaptions?: boolean
+  /** What she asked, for the edit after "אישור". */
+  thRequest?: string
+  /** Talking head: what she asked — offered as her template for every talking head. */
+  thTemplate?: string
   /** The ask for her missing personal elements — its chips show under it. */
   needInfo?: boolean
   /** "תעשה לי כזה": the question how to design the copy — its two answers show under it. */
@@ -180,9 +192,16 @@ function lastLandedEdit(messages: ChatMessage[]) {
   return null
 }
 
-export type AiEditFormat = "b_roll" | "carousel" | "story" | "image_post"
+export type AiEditFormat = "b_roll" | "carousel" | "story" | "image_post" | "talking_head"
 
 const COPY: Record<AiEditFormat, { title: string; intro: string; done: string; busy: string }> = {
+  // A talking head is always her own video (her upload or her avatar) — OWN_COPY.
+  talking_head: {
+    title: "עריכת דיבור למצלמה עם AI",
+    intro: "איך לערוך את הסרטון?",
+    done: "עדכנתי את הסרטון.",
+    busy: "מעדכנים את הסרטון... זה יכול לקחת כמה דקות",
+  },
   b_roll: {
     title: "עריכת בי-רול עם AI",
     intro: "מה לשנות בבי-רול? למשל גודל הכותרת, צבעים, איך המילים נכנסות או התזמון. אעדכן את האנימציה והסרטון יתחלף בכרטיס.",
@@ -211,6 +230,12 @@ const COPY: Record<AiEditFormat, { title: string; intro: string; done: string; b
 
 /** The generate step (Hani, 2026-11-05) — what the panel says per format. */
 const GEN_COPY: Record<AiEditFormat, { title: string; busy: string; done: string; away: { done: string; failed: string } }> = {
+  talking_head: {
+    title: "עריכת דיבור למצלמה עם AI",
+    busy: "מעדכנים את הסרטון...",
+    done: "הסרטון מוכן.",
+    away: { done: "הסרטון מוכן", failed: "עריכת הסרטון לא הצליחה" },
+  },
   image_post: {
     title: "יצירת תמונה עם AI",
     busy: "מייצרים את התמונה... זה יכול לקחת עד דקה",
@@ -244,6 +269,7 @@ const GEN_COPY: Record<AiEditFormat, { title: string; busy: string; done: string
  * לפני?") — her words are an addition, and she can skip them (GEN_SKIP).
  */
 const GEN_NOUN: Record<AiEditFormat, string> = {
+  talking_head: "את הסרטון",
   image_post: "את התמונה",
   story: "את הסטורי",
   b_roll: "את הבי-רול",
@@ -273,6 +299,7 @@ function genAsk(format: AiEditFormat, style: MediaStyle = "blank", placeRefs = f
  * them — per format, since a b-roll is built on the picture itself.
  */
 const PLACE_NOTE: Record<AiEditFormat, string> = {
+  talking_head: "התמונה שצירפתם תשמש בעריכה של הסרטון.",
   image_post: "התמונה שצירפתם תיכנס לתמונה כמו שהיא.",
   story: "התמונה שצירפתם תיכנס כמו שהיא לפריים הראשון של הסטורי.",
   b_roll: "הבי-רול ייבנה על התמונה שצירפתם, כמו שהיא.",
@@ -299,6 +326,14 @@ const GEN_STALE = "הבקשה הזאת כבר לא פעילה. לחצו שוב �
  * filmed. The opening line and the suggestions say exactly that.
  */
 const OWN_COPY: Record<AiEditFormat, { title: string; intro: string; busy: string; suggestions: { label: string; text: string; send: boolean }[] }> = {
+  // Her talking-head video (Hani, 2026-11-07): three ways in, her footage untouched.
+  talking_head: {
+    title: "עריכת דיבור למצלמה עם AI",
+    intro:
+      "זה הסרטון שלכם, אז מה שצילמתם נשאר בדיוק כמו שהוא. איך לערוך אותו? אפשר לבחור, או לכתוב במילים שלכם מה להוסיף.",
+    busy: "עורכים את הסרטון... זה יכול לקחת כמה דקות",
+    suggestions: TH_EDIT_MODES.map((m) => ({ label: m.label, text: m.request, send: m.id !== "prompt" })),
+  },
   story: {
     title: "עריכת סטורי עם AI",
     intro:
@@ -462,6 +497,20 @@ export function MediaAiChat({
   }, [chatKey, opening, fresh, format])
 
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // Talking head: her template ("איך לייצר סרטון דיבור למצלמה") — the next
+  // edit starts from it (gated; the route answers 403 for everyone else).
+  const [thTemplateText, setThTemplateText] = useState("")
+  useEffect(() => {
+    if (format !== "talking_head") return
+    let live = true
+    fetch("/api/visual-language/talking-head-template")
+      .then((r) => (r.ok ? r.json() : { instructions: "" }))
+      .then((d: { instructions?: string }) => live && setThTemplateText(d.instructions?.trim() ?? ""))
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [format])
   // "Watching" = a panel shows this conversation when the reply lands — the
   // one she reopened counts too, so the leave-screen toast only comes when
   // she's really away.
@@ -752,7 +801,7 @@ export function MediaAiChat({
     patchKey((s) => ({ ...s, extra: { ...s.extra, progress: "הסרטון עלה. עכשיו מוסיפים את מה שביקשתם..." } }))
     const r = await runOwnMediaEdit({
       postId,
-      format,
+      format: format as OwnEditFormat,
       instruction: text,
       currentUrls: [],
       onProgress: (p) => patchKey((s) => ({ ...s, extra: { ...s.extra, progress: p } })),
@@ -1226,6 +1275,134 @@ export function MediaAiChat({
     })()
   }
 
+  /**
+   * Talking head: "כתוביות + אלמנטים תומכים" answers with the PLAN first —
+   * the moments it will highlight, each with its time and element — and the
+   * edit runs only after "אישור". Every edit offers saving what she asked as
+   * her template ("איך לייצר סרטון דיבור למצלמה").
+   */
+  const sendTalkingHead = async (text: string, patchKey: (fn: (s: MediaChat) => MediaChat) => void) => {
+    const mode = TH_EDIT_MODES.find((m) => m.request && m.request === text)?.id
+    const reply = (msg: ChatMessage) =>
+      patchKey((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" }, messages: [...s.messages, msg] }))
+    patchKey((s) => ({
+      ...s,
+      input: "",
+      busy: mode === "captions" || mode === "captions_plus",
+      extra: {
+        ...s.extra,
+        progress:
+          mode === "captions"
+            ? "מתמללים את הדיבור ומוסיפים כתוביות... זה יכול לקחת כמה דקות"
+            : mode === "captions_plus"
+              ? "מתמללים את הדיבור ומתכננים מה להדגיש..."
+              : "",
+      },
+      messages: [...s.messages, { role: "user", content: text }],
+    }))
+    const call = async (route: string, body: Record<string, unknown>) => {
+      const res = await fetch(route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+      return { ok: res.ok, data }
+    }
+    const failed = (data: Record<string, unknown>, fallback: string) =>
+      reply({ role: "assistant", content: aiErrorMessage(typeof data.message === "string" ? data.message : fallback), error: true })
+    try {
+      if (mode === "captions") {
+        // Her speech, word by word, as captions in her font (else Rubik).
+        const { ok, data } = await call("/api/talking-head/captions", { postId, url: currentUrls[0] })
+        if (!ok || typeof data.url !== "string") return failed(data, "הוספת הכתוביות לא הצליחה. נסו שוב.")
+        onUpdated?.(format, [data.url])
+        return reply({
+          role: "assistant",
+          content: "הוספתי כתוביות לכל מה שאמרתם, בגופן של השפה הוויזואלית שלכם. מה שצילמתם לא השתנה.",
+          done: true,
+          noStyle: true,
+          thTemplate: text,
+        })
+      }
+      // "כתוביות + אלמנטים תומכים" and her own words: the plan first, timed
+      // from her transcript — nothing is edited until she approves it.
+      if (!mode || mode === "captions_plus") {
+        patchKey((s) => ({ ...s, busy: true, extra: { ...s.extra, progress: "מתמללים את הדיבור ומתכננים מה להדגיש..." } }))
+        const { ok, data } = await call("/api/talking-head/plan", { postId, url: currentUrls[0], request: text })
+        if (!ok || !Array.isArray(data.moments)) return failed(data, "התכנון לא הצליח. נסו שוב.")
+        return reply({
+          role: "assistant",
+          content: "לפני שאני עורכת, זה מה שאדגיש בסרטון:",
+          thPlan: data.moments as ThPlanMoment[],
+          thPlanCaptions: data.captions !== false,
+          thRequest: text,
+        })
+      }
+    } catch {
+      return failed({}, "משהו השתבש. נסו שוב.")
+    }
+  }
+  /** "חזרה לסרטון המקורי": her video as she brought it, every edit off. */
+  const backToOriginal = async () => {
+    patch((s) => ({ ...s, busy: true, extra: { ...s.extra, progress: "מחזירים את הסרטון המקורי..." } }))
+    try {
+      const res = await fetch("/api/talking-head/original", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId }),
+      })
+      const data = (await res.json().catch(() => ({}))) as { url?: string; message?: string }
+      if (!res.ok || !data.url) throw new Error(data.message || "")
+      onUpdated?.(format, [data.url])
+      patch((s) => ({
+        ...s,
+        busy: false,
+        extra: { ...s.extra, progress: "" },
+        messages: [...s.messages, { role: "assistant", content: "חזרתי לסרטון המקורי שלכם, בלי העריכות.", done: true, noStyle: true }],
+      }))
+    } catch (err) {
+      patch((s) => ({
+        ...s,
+        busy: false,
+        extra: { ...s.extra, progress: "" },
+        messages: [
+          ...s.messages,
+          { role: "assistant", content: (err instanceof Error && err.message) || "לא הצלחתי להחזיר את הסרטון המקורי. נסו שוב.", error: true },
+        ],
+      }))
+    }
+  }
+  const approveThPlan = async (index: number, moments: ThPlanMoment[]) => {
+    const planMsg = messages[index]
+    const request = planMsg?.thRequest ?? TH_EDIT_MODES.find((m) => m.id === "captions_plus")?.request ?? ""
+    patch((s) => ({
+      ...s,
+      busy: true,
+      extra: { ...s.extra, progress: "עורכים את הסרטון לפי התוכנית... זה יכול לקחת כמה דקות" },
+      messages: s.messages.map((m, k) => (k === index ? { ...m, thPlan: moments, thPlanApproved: true } : m)),
+    }))
+    const done = (msg: ChatMessage) =>
+      patch((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" }, messages: [...s.messages, msg] }))
+    try {
+      const res = await fetch("/api/talking-head/edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId, url: currentUrls[0], moments, captions: planMsg?.thPlanCaptions !== false, request }),
+      })
+      const data = (await res.json().catch(() => ({}))) as { url?: string; message?: string }
+      if (!res.ok || !data.url) {
+        return done({ role: "assistant", content: aiErrorMessage(data.message || "העריכה לא הצליחה. נסו שוב."), error: true })
+      }
+      onUpdated?.(format, [data.url])
+      done({
+        role: "assistant",
+        content: "ערכתי את הסרטון לפי התוכנית. מה שצילמתם לא השתנה, והמקורי שמור.",
+        done: true,
+        noStyle: true,
+        thTemplate: request,
+      })
+    } catch {
+      done({ role: "assistant", content: "העריכה לא הצליחה. נסו שוב.", error: true })
+    }
+  }
+
   const send = async (preset?: string) => {
     // The reply belongs to this conversation even if the panel closes or
     // switches format before it lands.
@@ -1237,6 +1414,14 @@ export function MediaAiChat({
     const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, init, fn)
     const cur = getChat<ChatMessage, MediaChatExtra>(key) ?? init()
     if (cur.busy) return
+    // Talking head (Hani, 2026-11-07 — gated, lib/feature-access): the
+    // design is in, the edit itself isn't wired yet — nothing paid runs here.
+    if (format === "talking_head") {
+      const text = (preset ?? cur.input).trim()
+      if (!text) return
+      await sendTalkingHead(text, patchKey)
+      return
+    }
     // "תעשה לי כזה": a carousel to copy the structure of — before the slots,
     // since then what she attached is a reference, not slides.
     // Before the first generation AND on a carousel that exists (live bug,
@@ -1346,7 +1531,7 @@ export function MediaAiChat({
     // את זה" doesn't). A failed check never blocks the edit — it says so.
     let triage: TriageResult
     try {
-      triage = await triageMessage({ instruction: text, format, previousInstruction, references: attached })
+      triage = await triageMessage({ instruction: text, format: format as VisualFormat, previousInstruction, references: attached })
     } catch (err) {
       console.error("[media-ai-chat][visual-memory]", err)
       triage = {
@@ -1449,7 +1634,7 @@ export function MediaAiChat({
     let full: Awaited<ReturnType<typeof runOwnMediaEdit>> | null = null
     const run = runOwnMediaEdit({
       postId,
-      format,
+      format: format as OwnEditFormat,
       instruction: text,
       currentUrls,
       currentFrame,
@@ -1583,7 +1768,13 @@ export function MediaAiChat({
             {/* Own media: what it can do, one tap away — until her first ask. */}
             {own && i === 0 && messages.length === 1 && !loading && (
               <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5" role="group" aria-label="הצעות לעריכה">
-                {OWN_COPY[format].suggestions.map((sg) => (
+                {[
+                  // Her template first, when she has one (Settings → דיבור למצלמה).
+                  ...(format === "talking_head" && thTemplateText
+                    ? [{ label: "לפי התבנית שלי", text: thTemplateText, send: true }]
+                    : []),
+                  ...OWN_COPY[format].suggestions,
+                ].map((sg) => (
                   <Chip
                     key={sg.label}
                     onClick={() => {
@@ -1630,6 +1821,20 @@ export function MediaAiChat({
                   <Chip onClick={() => void uploadAsIs(sentAsIs.items, m.images ?? [])}>{AS_IS}</Chip>
                 </div>
               )}
+            {/* Talking head: the plan to approve, then her template. */}
+            {m.thPlan && (
+              <TalkingHeadPlanEditor
+                className="w-[85%]"
+                initial={m.thPlan}
+                approved={!!m.thPlanApproved}
+                onApprove={(moments) => approveThPlan(i, moments)}
+              />
+            )}
+            {m.thTemplate && i === messages.length - 1 && !loading && (
+              <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
+                <TalkingHeadTemplateChip onSave={() => appendToTalkingHeadTemplate(m.thTemplate!)} />
+              </div>
+            )}
             {/* Her missing personal elements: go on without, or add them. */}
             {m.needInfo && i === messages.length - 1 && session.extra.copy?.phase === "needs" && !loading && (() => {
               const c = session.extra.copy
@@ -1744,9 +1949,15 @@ export function MediaAiChat({
           <SaveToVisualLanguageChip
             key={`${chatKey}:${lastEdit.index}`}
             instruction={lastEdit.instruction}
-            format={format}
+            format={format as VisualFormat}
             onOutcome={(next) => setMemory(lastEdit.index, next)}
           />
+        )}
+        {/* Talking head: an edit is on — back to her original, every edit off. */}
+        {format === "talking_head" && isTalkingHeadRender(currentUrls[0]) && !loading && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            <Chip onClick={() => void backToOriginal()}>חזרה לסרטון המקורי</Chip>
+          </div>
         )}
         <LinkReferenceRows l={links} />
         {asIsNow.length > 0 && !canSkip && !loading && !referenceMode && !(format === "carousel" && !slotsHere) && !(askNow && messages[messages.length - 1]?.askEmpty) && (
