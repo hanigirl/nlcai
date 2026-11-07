@@ -75,6 +75,12 @@ export function DriveVideoPreview({
         preload="metadata"
         aria-label={title}
         onError={() => setFailed(true)}
+        // A clip the browser can't decode (iPhone HEVC without HEVC support)
+        // often loads WITHOUT an error and shows only the poster: no picture
+        // track at all means Drive's own player instead.
+        onLoadedMetadata={(e) => {
+          if (e.currentTarget.videoWidth === 0) setFailed(true)
+        }}
         className="size-full object-cover"
       />
     </div>
