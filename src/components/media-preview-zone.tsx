@@ -1,7 +1,8 @@
 "use client"
 
 import type { ReactNode } from "react"
-import { Trash2 } from "lucide-react"
+import { Trash2, type LucideIcon } from "lucide-react"
+import { TooltipLabel } from "@/components/ui/tooltip"
 import { AI_HOVER_ZONE, AiHoverEditButton } from "@/components/ai-hover-edit"
 import { cn } from "@/lib/utils"
 
@@ -100,26 +101,61 @@ export function MediaPreviewZone({
         />
       )}
       {onDelete && (
-        <button
-          type="button"
-          aria-label={deleteLabel}
-          title={deleteLabel}
-          data-media-control=""
-          onMouseDown={(e) => e.stopPropagation()}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete()
-          }}
-          className={cn(
-            "absolute bottom-2 end-2 z-20 flex size-9 items-center justify-center rounded-[10px] bg-white shadow-md transition-[opacity,background-color] hover:bg-gray-95 dark:bg-gray-10 dark:hover:bg-gray-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 cursor-pointer",
-            "opacity-0 group-hover/ai:opacity-100 group-focus-within/ai:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100",
-            aiClassName,
-          )}
-        >
-          <Trash2 className="size-4 text-button-destructive-default" aria-hidden />
-        </button>
+        <HoverMediaIconButton
+          label={deleteLabel}
+          icon={Trash2}
+          destructive
+          onClick={onDelete}
+          className={cn("bottom-2 end-2", aiClassName)}
+        />
       )}
     </div>
+  )
+}
+
+/**
+ * One floating action on a media preview — the same white 36px square as the
+ * ✨ and the delete (shadow, gray hover, shown on hover / focus / touch).
+ * Put it inside an AI_HOVER_ZONE wrapper; `className` sets its corner.
+ */
+export function HoverMediaIconButton({
+  label,
+  icon: Icon,
+  onClick,
+  destructive = false,
+  disabled = false,
+  className,
+}: {
+  /** Tooltip and accessible name (an action noun: "הורדת הקאבר"). */
+  label: string
+  icon: LucideIcon
+  onClick: () => void
+  destructive?: boolean
+  disabled?: boolean
+  /** Position: e.g. "bottom-2 end-2". */
+  className?: string
+}) {
+  return (
+    <TooltipLabel label={label}>
+      <button
+        type="button"
+        aria-label={label}
+        data-media-control=""
+        disabled={disabled}
+        onMouseDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation()
+          onClick()
+        }}
+        className={cn(
+          "absolute z-20 flex size-9 items-center justify-center rounded-[10px] bg-white shadow-md transition-[opacity,background-color] hover:bg-gray-95 dark:bg-gray-10 dark:hover:bg-gray-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 cursor-pointer disabled:cursor-not-allowed",
+          "opacity-0 group-hover/ai:opacity-100 group-focus-within/ai:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100",
+          className,
+        )}
+      >
+        <Icon className={cn("size-4", destructive ? "text-button-destructive-default" : "text-text-primary-default")} aria-hidden />
+      </button>
+    </TooltipLabel>
   )
 }

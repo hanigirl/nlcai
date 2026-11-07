@@ -4,6 +4,8 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { Download, Image as ImageIcon, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { ConfirmModal } from "@/components/confirm-modal"
+import { AI_HOVER_ZONE } from "@/components/ai-hover-edit"
+import { HoverMediaIconButton } from "@/components/media-preview-zone"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { Input } from "@/components/ui/input"
@@ -333,7 +335,10 @@ export function VideoCoverRow({
         <p className="text-xs text-text-neutral-default">קאבר</p>
         {cover ? (
           <>
-            <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-border-neutral-default">
+            {/* The media convention (Hani, 2026-11-08: "באייקונים מרחפים במעבר
+                עכבר"): floating icons on hover — "ליצור מחדש" in the ✨ corner,
+                download and delete in the delete corner. */}
+            <div className={cn(AI_HOVER_ZONE, "aspect-[9/16] w-full overflow-hidden rounded-xl border border-border-neutral-default")}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={coverSrc(cover)} alt="הקאבר של הרילס" className="size-full object-cover" />
               {coverLoading && (
@@ -341,45 +346,19 @@ export function VideoCoverRow({
                   <Loader2 className="size-5 animate-spin text-text-neutral-default" aria-label="יוצרים קאבר" />
                 </div>
               )}
-            </div>
-            <div className="flex w-full flex-wrap justify-center gap-1">
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => downloadCover(cover)}
-                className="gap-1.5 text-text-neutral-default hover:bg-gray-95 dark:hover:bg-gray-20"
-              >
-                <Download className="size-3.5" aria-hidden />
-                הורדה
-              </Button>
-              {onCreateCover && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={onCreateCover}
-                  disabled={coverLoading}
-                  className="gap-1.5 text-text-neutral-default hover:bg-gray-95 dark:hover:bg-gray-20"
-                >
-                  <RefreshCw className="size-3.5" aria-hidden />
-                  ליצור מחדש
-                </Button>
+              {onCreateCover && !coverLoading && (
+                <HoverMediaIconButton label="יצירת קאבר מחדש" icon={RefreshCw} onClick={onCreateCover} className="bottom-2 start-2" />
               )}
+              <HoverMediaIconButton label="הורדת הקאבר" icon={Download} onClick={() => downloadCover(cover)} className="bottom-2 end-[52px]" />
               {onDeleteCover && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setConfirmDelete(true)}
+                <HoverMediaIconButton
+                  label="מחיקת הקאבר"
+                  icon={Trash2}
+                  destructive
                   disabled={coverLoading}
-                  // Red at rest AND on hover — the ghost variant's hover colour
-                  // used to turn it grey (Hani, 2026-11-08).
-                  className="gap-1.5 text-button-destructive-default hover:bg-gray-95 hover:text-button-destructive-hover dark:hover:bg-gray-20"
-                >
-                  <Trash2 className="size-3.5" aria-hidden />
-                  מחיקת הקאבר
-                </Button>
+                  onClick={() => setConfirmDelete(true)}
+                  className="bottom-2 end-2"
+                />
               )}
             </div>
             {onDeleteCover && (
@@ -397,13 +376,11 @@ export function VideoCoverRow({
         ) : (
           <div className="flex aspect-[9/16] w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-border-neutral-default p-3">
             {onCreateCover ? (
-              <TalkingHeadCoverAction
-                hasCoverSettings={hasCoverSettings}
-                brandBackground={brandBackground}
-                loading={coverLoading}
-                onCreate={onCreateCover}
-                className="w-full"
-              />
+              // Only the button (Hani, 2026-11-08: "רק כפתור יצירת קאבר, בלי עוד מידע לא נחוץ").
+              <Button type="button" variant="outline" onClick={onCreateCover} disabled={coverLoading} className="w-full gap-2 rounded-[10px]">
+                {coverLoading ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <ImageIcon className="size-4" aria-hidden />}
+                {coverLoading ? "יוצרים קאבר..." : "יצירת קאבר"}
+              </Button>
             ) : coverLoading ? (
               <Loader2 className="size-5 animate-spin text-text-neutral-default" aria-label="יוצרים קאבר" />
             ) : (
