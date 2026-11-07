@@ -33,6 +33,7 @@ import {
   TalkingHeadCoverDone,
   TalkingHeadCoverReminder,
   VideoCoverRow,
+  COVER_DELETE_COPY,
   useHasCoverSettings,
 } from "@/components/talking-head-ai"
 import { useCoverDefaultColor } from "@/lib/use-cover-brand-colors"
@@ -338,6 +339,8 @@ function ProjectPageInner() {
   const [thVideoUrl, setThVideoUrl] = useState<string | null>(null)
   const [thSourceMode, setThSourceMode] = useState<"choose" | "upload" | "avatar">("choose")
   const [thCoverImage, setThCoverImage] = useState<string | null>(null)
+  // "מחיקת הקאבר" asked for (the warning is open).
+  const [pendingCoverDelete, setPendingCoverDelete] = useState(false)
   const [thCoverLoading, setThCoverLoading] = useState(false)
   // Cover pill colour, picked from the colour wheel next to the cover
   // preview in FormatTree. Defaults to black to match the existing
@@ -764,6 +767,17 @@ function ProjectPageInner() {
   // sidesteps the state-update race when the user picks a new pill colour
   // and we kick off a regenerate before pillColor has flushed through
   // the next render.
+  /** "מחיקת הקאבר" (Hani, 2026-11-08): after her confirm — its row only, and no automatic cover after it. */
+  const deleteThCover = async () => {
+    if (savedPostId) {
+      const ok = await savePatch(savedPostId, { deleteCover: true }, "מחיקת הקאבר")
+      if (!ok) return
+    }
+    loadedCoverRef.current = null
+    prevCoverSigRef.current = ""
+    setThCoverImage(null)
+  }
+
   const generateCoverForPost = async (
     hookText: string,
     videoSrcIn?: string,
@@ -1129,7 +1143,8 @@ function ProjectPageInner() {
           if (data.post.videoUrl) {
             const videoUrl = data.post.videoUrl as string
             const hookForCover = (data.post.hook_text as string) || ""
-            const hasSavedCover = !!data.post.coverUrl
+            // A cover she deleted counts as "no automatic cover" (any user).
+            const hasSavedCover = !!data.post.coverUrl || data.post.coverDeclined === true
 
             // Convert HeyGen embed to stored MP4
             const embedMatch = videoUrl.match(/heygen\.com\/embeds\/([a-f0-9]+)/)
@@ -2418,6 +2433,7 @@ function ProjectPageInner() {
                 cover={thCoverImage}
                 coverLoading={thCoverLoading}
                 onCreateCover={() => generateCoverForPost(coverText, thVideoUrl || undefined, undefined, true)}
+                onDeleteCover={deleteThCover}
                 hasCoverSettings={!!hasCoverSettings}
                 brandBackground={coverDefaultColor.toLowerCase() !== "#000000"}
               />
@@ -2544,6 +2560,7 @@ function ProjectPageInner() {
       <MediaPanel
         // Only when we KNOW she isn't gated — never while the gate is loading.
         onThCreateCover={() => generateCoverForPost(coverText, thVideoUrl || undefined, undefined, true)}
+        onThDeleteCover={deleteThCover}
         thCoverLoading={thCoverLoading}
         thAutoCover={thAiGate === false}
         formatId={selectedFormatCard}
@@ -3334,6 +3351,7 @@ function ProjectPageInner() {
                       coverText={coverText}
                       onCoverTextChange={setCoverText}
                       onCoverRegenerate={() => generateCoverForPost(coverText, thVideoUrl || undefined, undefined, true)}
+                      onCoverDelete={() => setPendingCoverDelete(true)}
                       pillColor={pillColor}
                       onPillColorChange={(next) => {
                         pillTouchedRef.current = true
@@ -3517,6 +3535,14 @@ function ProjectPageInner() {
           />
         )
       })()}
+
+      <ConfirmModal
+        open={pendingCoverDelete}
+        onOpenChange={setPendingCoverDelete}
+        {...COVER_DELETE_COPY}
+        confirmVariant="destructive"
+        onConfirm={deleteThCover}
+      />
 
       <ConfirmModal
         open={!!pendingMediaDelete}
@@ -3718,6 +3744,7 @@ function FormatTree({
   onThReRecord,
   onThDelete,
   thCoverImage,
+  onCoverDelete,
   thCoverLoading,
   coverText,
   onCoverTextChange,
@@ -3771,6 +3798,8 @@ function FormatTree({
   onThReRecord: () => void
   onThDelete: () => void
   thCoverImage: string | null
+  /** "מחיקת הקאבר" on the cover card (opens the warning). */
+  onCoverDelete?: () => void
   thCoverLoading: boolean
   coverText: string
   onCoverTextChange: (text: string) => void
@@ -4215,6 +4244,9 @@ function FormatTree({
                           href={`data:image/png;base64,${thCoverImage}`}
                           download="reel-cover.png"
                         />
+                        {onCoverDelete && (
+                          <IconActionButton label="מחיקת הקאבר" icon={Trash2} destructive onClick={onCoverDelete} />
+                        )}
                       </div>
                     </div>
                   </div>

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { Download, Image as ImageIcon, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react"
+import { ConfirmModal } from "@/components/confirm-modal"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { Input } from "@/components/ui/input"
@@ -261,6 +262,14 @@ export function TalkingHeadCoverAction({
   )
 }
 
+/** "מחיקת הקאבר" — the warning, the same wherever a cover can be deleted. */
+export const COVER_DELETE_COPY = {
+  title: "למחוק את הקאבר?",
+  description: "הקאבר יימחק מהפוסט. תוכלו ליצור חדש בכל רגע.",
+  confirmLabel: "מחיקה",
+  cancelLabel: "ביטול",
+} as const
+
 /** A cover as an <img src>: base64 (the cover route's answer), a data URL or a stored URL. */
 function coverSrc(image: string): string {
   return image.startsWith("data:") || image.startsWith("http") || image.startsWith("/") ? image : `data:image/png;base64,${image}`
@@ -296,10 +305,13 @@ export function VideoCoverRow({
   cover,
   coverLoading = false,
   onCreateCover,
+  onDeleteCover,
   hasCoverSettings,
   brandBackground = false,
   className,
 }: {
+  /** "מחיקת הקאבר" — called after she confirms the warning. */
+  onDeleteCover?: () => void | Promise<void>
   /** The video, already a player (with its own actions). */
   video: React.ReactNode
   /** base64 PNG or URL; null = no cover yet. */
@@ -310,6 +322,7 @@ export function VideoCoverRow({
   brandBackground?: boolean
   className?: string
 }) {
+  const [confirmDelete, setConfirmDelete] = useState(false)
   return (
     <div dir="rtl" className={cn("grid grid-cols-2 items-start gap-3", className)}>
       <div className="flex min-w-0 flex-col items-center gap-2">
@@ -353,7 +366,31 @@ export function VideoCoverRow({
                   ליצור מחדש
                 </Button>
               )}
+              {onDeleteCover && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setConfirmDelete(true)}
+                  disabled={coverLoading}
+                  className="gap-1.5 text-button-destructive-default hover:bg-gray-95 dark:hover:bg-gray-20"
+                >
+                  <Trash2 className="size-3.5" aria-hidden />
+                  מחיקת הקאבר
+                </Button>
+              )}
             </div>
+            {onDeleteCover && (
+              <ConfirmModal
+                open={confirmDelete}
+                onOpenChange={setConfirmDelete}
+                {...COVER_DELETE_COPY}
+                confirmVariant="destructive"
+                onConfirm={async () => {
+                  await onDeleteCover()
+                }}
+              />
+            )}
           </>
         ) : (
           <div className="flex aspect-[9/16] w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-border-neutral-default p-3">

@@ -124,6 +124,8 @@ interface MediaPanelProps {
   onThCreateCover?: () => void
   /** The page's cover is being made (by onThCreateCover). */
   thCoverLoading?: boolean
+  /** "מחיקת הקאבר" in the cover column (after the warning). */
+  onThDeleteCover?: () => void | Promise<void>
   formatId: string | null
   onClose: () => void
   /**
@@ -357,6 +359,7 @@ export function MediaPanel({
   thAutoCover = true,
   onThCreateCover,
   thCoverLoading = false,
+  onThDeleteCover,
   formatId,
   onClose,
   postId,
@@ -511,6 +514,7 @@ export function MediaPanel({
             autoCover={thAutoCover}
             onCreateCover={onThCreateCover}
             externalCoverLoading={thCoverLoading}
+            onDeleteCover={onThDeleteCover}
           />
         )}
 
@@ -592,6 +596,7 @@ function TalkingHeadFlow({
   autoCover = true,
   onCreateCover,
   externalCoverLoading = false,
+  onDeleteCover,
 }: {
   /** false: no cover on its own — "יצירת קאבר" makes it (gated, lib/feature-access). */
   autoCover?: boolean
@@ -599,6 +604,7 @@ function TalkingHeadFlow({
   onCreateCover?: () => void
   /** The page is making the cover (onCreateCover). */
   externalCoverLoading?: boolean
+  onDeleteCover?: () => void | Promise<void>
   avatar: Avatar | null
   audioBlob: Blob | null
   transcript: string
@@ -1302,6 +1308,7 @@ function TalkingHeadFlow({
           cover={coverImage}
           coverLoading={coverLoading || externalCoverLoading}
           onCreateCover={onCreateCover}
+          onDeleteCover={onDeleteCover}
           hasCoverSettings={!!hasCoverSettings}
           brandBackground={coverDefaultColor.toLowerCase() !== "#000000"}
         />
