@@ -24,6 +24,8 @@ const nextConfig: NextConfig = {
   // it explicitly or it's missing from the serverless bundle on Vercel.
   outputFileTracingIncludes: {
     "/api/story/generate-video-media": ["./node_modules/ffmpeg-static/ffmpeg"],
+    // Talking-head transcript: the audio is pulled out with ffmpeg first.
+    "/api/talking-head/transcribe": ["./node_modules/ffmpeg-static/ffmpeg"],
     // The b-roll renders Opus's animation in a headless Chromium and encodes
     // with ffmpeg; both ship as files the tracer can't see.
     "/api/b-roll/generate-media": [
