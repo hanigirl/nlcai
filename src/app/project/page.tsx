@@ -30,6 +30,7 @@ import {
   TalkingHeadCoverAction,
   TalkingHeadCoverDone,
   TalkingHeadCoverReminder,
+  VideoCoverRow,
   useHasCoverSettings,
 } from "@/components/talking-head-ai"
 import { useCoverDefaultColor } from "@/lib/use-cover-brand-colors"
@@ -2171,7 +2172,8 @@ function ProjectPageInner() {
     pendingAutoCover.current = null
     if (run && thAiGate === false) run()
   }, [thAiOn, thAiGate])
-  const hasCoverSettings = useHasCoverSettings(thAiOn)
+  // Read for everyone: the cover column says which settings a cover follows.
+  const hasCoverSettings = useHasCoverSettings(true)
   const coverDefaultColor = useCoverDefaultColor()
   // "לאשר בלי קאבר" — she saw the reminder and chose to go on.
   const [thCoverSkipped, setThCoverSkipped] = useState(false)
@@ -2373,26 +2375,25 @@ function ProjectPageInner() {
             <FormatPanelNextStep label="תזמון" onNext={() => setPanelStep("schedule")} />
           ) : undefined,
           scriptView:
-            fid === "talking_head" && thAiOn ? (
-              <div className="flex flex-col gap-4">
-                <FormatPanelMedia
-                  fid={fid}
-                  media={item.media}
-                  onOpenMedia={() => setMediaReplacing(true)}
-                  onAiEditMedia={onAiEditMedia}
-                  onDeleteMedia={onDeleteMedia}
-                />
-                {thCoverImage ? (
-                  <TalkingHeadCoverDone image={thCoverImage} loading={thCoverLoading} onRemake={() => generateCoverForPost(coverText, thVideoUrl || undefined)} />
-                ) : (
-                  <TalkingHeadCoverAction
-                    hasCoverSettings={!!hasCoverSettings}
-                    brandBackground={coverDefaultColor.toLowerCase() !== "#000000"}
-                    loading={thCoverLoading}
-                    onCreate={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
+            fid === "talking_head" ? (
+              // One row from the start (Hani, 2026-11-08): the video and,
+              // beside it, the cover — an empty state until there is one.
+              <VideoCoverRow
+                video={
+                  <FormatPanelMedia
+                    fid={fid}
+                    media={item.media}
+                    onOpenMedia={() => setMediaReplacing(true)}
+                    onAiEditMedia={onAiEditMedia}
+                    onDeleteMedia={onDeleteMedia}
                   />
-                )}
-              </div>
+                }
+                cover={thCoverImage}
+                coverLoading={thCoverLoading}
+                onCreateCover={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
+                hasCoverSettings={!!hasCoverSettings}
+                brandBackground={coverDefaultColor.toLowerCase() !== "#000000"}
+              />
             ) : (
               <FormatPanelMedia
                 fid={fid}
@@ -2515,6 +2516,8 @@ function ProjectPageInner() {
       {/* Media Panel — sibling to InfiniteCanvas, slides from left */}
       <MediaPanel
         // Only when we KNOW she isn't gated — never while the gate is loading.
+        onThCreateCover={() => generateCoverForPost(coverText, thVideoUrl || undefined)}
+        thCoverLoading={thCoverLoading}
         thAutoCover={thAiGate === false}
         formatId={selectedFormatCard}
         onClose={() => setSelectedFormatCard(null)}

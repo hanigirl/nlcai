@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Image as ImageIcon, Loader2, Plus, Trash2 } from "lucide-react"
+import { Download, Image as ImageIcon, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { Input } from "@/components/ui/input"
@@ -257,6 +257,122 @@ export function TalkingHeadCoverAction({
           </>
         )}
       </p>
+    </div>
+  )
+}
+
+/** A cover as an <img src>: base64 (the cover route's answer), a data URL or a stored URL. */
+function coverSrc(image: string): string {
+  return image.startsWith("data:") || image.startsWith("http") || image.startsWith("/") ? image : `data:image/png;base64,${image}`
+}
+
+function downloadCover(image: string) {
+  const a = document.createElement("a")
+  a.href = coverSrc(image)
+  a.download = "reel-cover.png"
+  a.target = "_blank"
+  a.rel = "noopener"
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
+
+/**
+ * The talking head's media tab, one row from the start (Hani, 2026-11-08:
+ * "לעשות מלכתחילה פיצול באותה שורה לתוצר ולידו קאבר, כאשר הקאבר באמפטי סטייט עד
+ * שאני מבקשת קאבר"): the video (a real player) and, beside it, the cover.
+ *
+ * The cover column at its own 9:16 proportions:
+ *   - no cover yet → an empty state: a dashed frame holding "יצירת קאבר" and
+ *     the line about which settings it follows (TalkingHeadCoverAction);
+ *   - being made → the same frame, with a spinner;
+ *   - made → the cover, with download and "ליצור מחדש".
+ * Without `onCreateCover` (a surface that can't make one) the empty frame
+ * just says there's no cover yet. Gated users get a cover only on request;
+ * everyone else's arrives on its own and simply fills the column.
+ */
+export function VideoCoverRow({
+  video,
+  cover,
+  coverLoading = false,
+  onCreateCover,
+  hasCoverSettings,
+  brandBackground = false,
+  className,
+}: {
+  /** The video, already a player (with its own actions). */
+  video: React.ReactNode
+  /** base64 PNG or URL; null = no cover yet. */
+  cover: string | null
+  coverLoading?: boolean
+  onCreateCover?: () => void
+  hasCoverSettings: boolean
+  brandBackground?: boolean
+  className?: string
+}) {
+  return (
+    <div dir="rtl" className={cn("grid grid-cols-2 items-start gap-3", className)}>
+      <div className="flex min-w-0 flex-col items-center gap-2">
+        <p className="text-xs text-text-neutral-default">סרטון</p>
+        <div className="w-full">{video}</div>
+      </div>
+      <div className="flex min-w-0 flex-col items-center gap-2">
+        <p className="text-xs text-text-neutral-default">קאבר</p>
+        {cover ? (
+          <>
+            <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-border-neutral-default">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={coverSrc(cover)} alt="הקאבר של הרילס" className="size-full object-cover" />
+              {coverLoading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-white/60 dark:bg-gray-10/60">
+                  <Loader2 className="size-5 animate-spin text-text-neutral-default" aria-label="יוצרים קאבר" />
+                </div>
+              )}
+            </div>
+            <div className="flex w-full flex-wrap justify-center gap-1">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => downloadCover(cover)}
+                className="gap-1.5 text-text-neutral-default hover:bg-gray-95 dark:hover:bg-gray-20"
+              >
+                <Download className="size-3.5" aria-hidden />
+                הורדה
+              </Button>
+              {onCreateCover && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={onCreateCover}
+                  disabled={coverLoading}
+                  className="gap-1.5 text-text-neutral-default hover:bg-gray-95 dark:hover:bg-gray-20"
+                >
+                  <RefreshCw className="size-3.5" aria-hidden />
+                  ליצור מחדש
+                </Button>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="flex aspect-[9/16] w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-border-neutral-default p-3">
+            {onCreateCover ? (
+              <TalkingHeadCoverAction
+                hasCoverSettings={hasCoverSettings}
+                brandBackground={brandBackground}
+                loading={coverLoading}
+                onCreate={onCreateCover}
+                className="w-full"
+              />
+            ) : coverLoading ? (
+              <Loader2 className="size-5 animate-spin text-text-neutral-default" aria-label="יוצרים קאבר" />
+            ) : (
+              <p className="text-center text-xs-body text-text-neutral-default">עוד אין קאבר</p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

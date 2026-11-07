@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { DriveVideoPreview } from "@/components/drive-video-preview"
+import { VideoCoverRow, useHasCoverSettings } from "@/components/talking-head-ai"
 import { MediaCreditsCard } from "@/components/media-credits-card"
 import { useOpenAiConnected } from "@/hooks/use-openai-connected"
 import {
@@ -116,6 +117,10 @@ const FORMAT_META: Record<string, { label: string; icon: LucideIcon }> = {
 interface MediaPanelProps {
   /** false: a talking head gets no automatic cover — made on request (lib/feature-access). */
   thAutoCover?: boolean
+  /** Talking head: make the cover now ("יצירת קאבר" in the media tab's cover column). */
+  onThCreateCover?: () => void
+  /** The page's cover is being made (by onThCreateCover). */
+  thCoverLoading?: boolean
   formatId: string | null
   onClose: () => void
   /**
@@ -347,6 +352,8 @@ function useReportBusy(
 
 export function MediaPanel({
   thAutoCover = true,
+  onThCreateCover,
+  thCoverLoading = false,
   formatId,
   onClose,
   postId,
@@ -499,6 +506,8 @@ export function MediaPanel({
             onScrollToVideo={onScrollToVideo}
             onBusyChange={onMediaBusyChange}
             autoCover={thAutoCover}
+            onCreateCover={onThCreateCover}
+            externalCoverLoading={thCoverLoading}
           />
         )}
 
@@ -578,9 +587,15 @@ function TalkingHeadFlow({
   onScrollToVideo,
   onBusyChange,
   autoCover = true,
+  onCreateCover,
+  externalCoverLoading = false,
 }: {
   /** false: no cover on its own — "יצירת קאבר" makes it (gated, lib/feature-access). */
   autoCover?: boolean
+  /** "יצירת קאבר" in the cover column — the page's own cover maker. */
+  onCreateCover?: () => void
+  /** The page is making the cover (onCreateCover). */
+  externalCoverLoading?: boolean
   avatar: Avatar | null
   audioBlob: Blob | null
   transcript: string
@@ -630,6 +645,9 @@ function TalkingHeadFlow({
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // --- video generation state ---
+  // The cover column's line: which settings a cover follows.
+  const hasCoverSettings = useHasCoverSettings(true)
+  const coverDefaultColor = useCoverDefaultColor()
   const [videoPhase, setVideoPhase] = useState<"idle" | "generating" | "done">(liftedVideoUrl ? "done" : "idle")
   useReportBusy(onBusyChange, "talking_head", videoPhase === "generating" || driveLoading)
   const [videoProgress, setVideoProgress] = useState("")
@@ -1260,21 +1278,14 @@ function TalkingHeadFlow({
   if (videoPhase === "done" && liftedVideoUrl && !avatar) {
     return (
       <div className="flex flex-col gap-6">
-        {/* Video + Cover side by side */}
-        <div className="flex gap-3">
-          {/* Video */}
-          <div className="flex flex-col items-center gap-2 flex-1 min-w-0">
-            <p className="text-xs text-text-neutral-default">סרטון</p>
+        {/* One row from the start: the video and, beside it, the cover —
+            an empty state until she asks for one (Hani, 2026-11-08). */}
+        <VideoCoverRow
+          video={
             <div className="w-full aspect-[9/16] rounded-lg overflow-hidden bg-gray-95 relative">
-              {/* A Drive-hosted video plays through Drive's embed player —
-                  it can't back a <video src> (no CORS, virus-scan gate).
-                  Everything else is a blob or a storage URL, where the
-                  `#t=0.001` fragment forces a first-frame poster. */}
               {isDriveUrl(liftedVideoUrl) ? (
                 <DriveVideoPreview url={liftedVideoUrl} label="הסרטון שלכם" />
               ) : (
-                // A real player — it used to be a bare frame (controls off) that
-                // read as a picture (Hani, 2026-11-08).
                 <video
                   src={liftedVideoUrl.startsWith("blob:") ? liftedVideoUrl : `${playableVideoSrc(liftedVideoUrl)}#t=0.001`}
                   controls
@@ -1284,31 +1295,13 @@ function TalkingHeadFlow({
                 />
               )}
             </div>
-          </div>
-
-          {/* Cover */}
-          {coverLoading && (
-            <div className="flex flex-col items-center gap-2 flex-1 min-w-0">
-              <p className="text-xs text-text-neutral-default">קאבר</p>
-              <div className="w-full aspect-[9/16] rounded-lg bg-gray-95 flex items-center justify-center">
-                <Loader2 className="size-4 animate-spin text-text-neutral-default" />
-              </div>
-            </div>
-          )}
-          {coverImage && !coverLoading && (
-            <div className="flex flex-col items-center gap-2 flex-1 min-w-0">
-              <p className="text-xs text-text-neutral-default">קאבר</p>
-              <div className="w-full aspect-[9/16] rounded-lg overflow-hidden">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={`data:image/png;base64,${coverImage}`}
-                  alt="cover"
-                  className="w-full h-full object-cover"
-                />
-              </div>
-            </div>
-          )}
-        </div>
+          }
+          cover={coverImage}
+          coverLoading={coverLoading || externalCoverLoading}
+          onCreateCover={onCreateCover}
+          hasCoverSettings={!!hasCoverSettings}
+          brandBackground={coverDefaultColor.toLowerCase() !== "#000000"}
+        />
 
         {/* The video she has, and what she can do to IT. Making a different
             one (avatar, another upload) is the creation layout — it comes
@@ -1319,12 +1312,6 @@ function TalkingHeadFlow({
             <RefreshCw className="size-3.5" />
             החלפת הסרטון
           </Button>
-          {coverImage && (
-            <Button onClick={handleDownloadCover} size="sm" className="flex-1 gap-1.5">
-              <Download className="size-3.5" />
-              הורד קאבר
-            </Button>
-          )}
         </div>
       </div>
     )
