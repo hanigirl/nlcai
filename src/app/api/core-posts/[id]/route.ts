@@ -200,6 +200,8 @@ export async function GET(
 
     // Load video URL from media_assets for talking_head
     let videoUrl: string | null = null
+    // She deleted this video's cover: no automatic one comes back.
+    let coverDeclined = false
     let coverUrl: string | null = null
     // Pill colour the cover was generated with. Stored in the cover's
     // media_assets.metadata blob so the picker on /project can open with
@@ -221,7 +223,9 @@ export async function GET(
         return undefined
       }
 
-      videoUrl = newest("video")?.url ?? null
+      const newestVideo = newest("video")
+      videoUrl = newestVideo?.url ?? null
+      coverDeclined = newestVideo?.metadata?.cover_declined === true
 
       const cover = newest("cover")
       if (cover?.url) {
@@ -297,6 +301,7 @@ export async function GET(
         formatsWithMedia,
         formatMedia,
         videoUrl,
+        coverDeclined,
         coverUrl,
         coverPillColor,
         carouselImageUrls,
@@ -550,9 +555,35 @@ export async function PATCH(
 
       if (thVariant) {
         const variantRow = thVariant as unknown as { id: string }
-        const cleared = await clearAssetSlot(supabase, variantRow.id, "cover")
-        if (!cleared.ok) {
-          return NextResponse.json({ error: cleared.error }, { status: 500 })
+        // "מחיקת הקאבר" (Hani, 2026-11-08): the cover row(s) of THIS post's
+        // talking head, deleted by their ids — nothing broader.
+        const { data: covers } = await supabase
+          .from("media_assets")
+          .select("id")
+          .eq("format_variant_id", variantRow.id)
+          .eq("asset_type", "cover")
+        const ids = ((covers ?? []) as { id: string }[]).map((c) => c.id)
+        if (ids.length) {
+          const { error: delErr } = await supabase.from("media_assets").delete().in("id", ids)
+          if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 })
+        }
+        // She removed it on purpose: no automatic cover may come back for this
+        // video (any user) — remembered on the video row until a new cover is
+        // made or a new video arrives.
+        const { data: vid } = await supabase
+          .from("media_assets")
+          .select("id, metadata")
+          .eq("format_variant_id", variantRow.id)
+          .eq("asset_type", "video")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        const v = vid as { id: string; metadata: Record<string, unknown> | null } | null
+        if (v) {
+          await supabase
+            .from("media_assets")
+            .update({ metadata: { ...(v.metadata ?? {}), cover_declined: true } } as never)
+            .eq("id", v.id)
         }
         didIndirectEdit = true
       }
@@ -657,6 +688,23 @@ export async function PATCH(
         }
         const coverUrl = supabase.storage.from("user-media").getPublicUrl(storagePath).data.publicUrl
 
+        // A cover again: the "she deleted it" mark on the video is lifted.
+        {
+          const { data: vid } = await supabase
+            .from("media_assets")
+            .select("id, metadata")
+            .eq("format_variant_id", variantRow.id)
+            .eq("asset_type", "video")
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          const v = vid as { id: string; metadata: Record<string, unknown> | null } | null
+          if (v?.metadata?.cover_declined) {
+            const rest = { ...v.metadata }
+            delete rest.cover_declined
+            await supabase.from("media_assets").update({ metadata: rest } as never).eq("id", v.id)
+          }
+        }
         await supabase.from("media_assets").insert({
           format_variant_id: variantRow.id,
           asset_type: "cover",

@@ -48,6 +48,8 @@ function Preview() {
       onThCoverImageChange={setCover}
       thAutoCover={false}
       thCoverLoading={coverLoading}
+      // "מחיקת הקאבר": the column goes back to its empty state (nothing saved here).
+      onThDeleteCover={() => setCover(null)}
       onThCreateCover={() => {
         setCoverLoading(true)
         setTimeout(() => {
