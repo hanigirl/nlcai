@@ -1412,7 +1412,7 @@ export function MediaAiChat({
           />
         )}
         <LinkReferenceRows l={links} />
-        {asIsNow.length > 0 && !canSkip && !loading && (
+        {asIsNow.length > 0 && !canSkip && !loading && !(askNow && messages[messages.length - 1]?.askEmpty) && (
           <div className="mb-2 flex flex-wrap gap-1.5">
             <Chip onClick={() => void uploadAsIs(asIsNow, refs.split(refs.refs).place)}>{AS_IS}</Chip>
           </div>
