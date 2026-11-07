@@ -62,3 +62,16 @@ export const COPY_STRUCTURE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyare
 export function canCopyStructure(email: string | null | undefined): boolean {
   return !!email && COPY_STRUCTURE_EMAILS.includes(email.toLowerCase())
 }
+
+/**
+ * Talking head AI edit (Notion: "עריכת דיבור למצלמה, עריכה עם כתוביות",
+ * Hani, 2026-11-07): ✨ on her talking-head video, captions / supporting
+ * elements / her own prompt, a plan to approve before the paid edit, a cover
+ * made on request (not automatically) with a reminder before approval.
+ * Everyone else keeps today's flow exactly — the automatic cover included.
+ */
+export const TALKING_HEAD_AI_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+
+export function canTalkingHeadAi(email: string | null | undefined): boolean {
+  return !!email && TALKING_HEAD_AI_EMAILS.includes(email.toLowerCase())
+}

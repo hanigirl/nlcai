@@ -113,6 +113,8 @@ const FORMAT_META: Record<string, { label: string; icon: LucideIcon }> = {
 }
 
 interface MediaPanelProps {
+  /** false: a talking head gets no automatic cover — made on request (lib/feature-access). */
+  thAutoCover?: boolean
   formatId: string | null
   onClose: () => void
   /**
@@ -343,6 +345,7 @@ function useReportBusy(
 }
 
 export function MediaPanel({
+  thAutoCover = true,
   formatId,
   onClose,
   postId,
@@ -494,6 +497,7 @@ export function MediaPanel({
             hookText={panelHookText}
             onScrollToVideo={onScrollToVideo}
             onBusyChange={onMediaBusyChange}
+            autoCover={thAutoCover}
           />
         )}
 
@@ -572,7 +576,10 @@ function TalkingHeadFlow({
   hookText,
   onScrollToVideo,
   onBusyChange,
+  autoCover = true,
 }: {
+  /** false: no cover on its own — "יצירת קאבר" makes it (gated, lib/feature-access). */
+  autoCover?: boolean
   avatar: Avatar | null
   audioBlob: Blob | null
   transcript: string
@@ -822,7 +829,7 @@ function TalkingHeadFlow({
           }
           setVideoPhase("done")
           // Auto-generate cover if thumbnail available
-          if (data.thumbnail_url) {
+          if (data.thumbnail_url && autoCover) {
             generateCover(data.thumbnail_url)
           }
         } else if (data.status === "failed" || data.error) {
@@ -1056,6 +1063,9 @@ function TalkingHeadFlow({
       // loading from Drive" — the cover has its own `coverLoading` indicator.
       setDriveLoading(false)
 
+      // No automatic cover (talking head AI edit, Hani 2026-11-07): the cover
+      // is made when she asks — "יצירת קאבר" on the media tab.
+      if (!autoCover) return
       // Cover: we can't read a frame off a Drive-hosted video (canvas would
       // taint — Drive sends no CORS headers), so use Drive's server-rendered
       // poster instead. The cover route fetches remote URLs server-side, so
