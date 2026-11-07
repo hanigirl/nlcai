@@ -15,9 +15,8 @@
  */
 
 import { useState } from "react"
-import { ChevronLeft, ChevronRight, Play } from "lucide-react"
+import { ChevronLeft, ChevronRight } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { getLaunchFeature, type LaunchFeature, type LaunchFeatureId } from "@/lib/launch-features"
 import { useLaunchIntro } from "./launch-intro-state"
@@ -105,17 +104,16 @@ export function NewFeatureNoteView({
 
 /**
  * The features of one spot, one at a time. Used by the tag's card and by the
- * walkthrough step, so both switch the same way. "להדגמה" opens the video
- * inside the card.
+ * walkthrough step, so both switch the same way. The demo video plays by
+ * default, and switching features plays the next one right away (Hani,
+ * 2026-11-08): no "להדגמה" click.
  */
 export function FeatureCarousel({ features, review }: { features: LaunchFeature[]; review: boolean }) {
   const [i, setI] = useState(0)
-  const [playing, setPlaying] = useState<string | null>(null)
   const f = features[Math.min(i, features.length - 1)]
   const video = demoVideoFor(f, review)
   const many = features.length > 1
   const go = (next: number) => {
-    setPlaying(null)
     setI((next + features.length) % features.length)
   }
   const arrow =
@@ -128,9 +126,9 @@ export function FeatureCarousel({ features, review }: { features: LaunchFeature[
         <p className="mt-0.5 text-small text-text-neutral-default">{f.body}</p>
       </div>
 
-      {playing === f.id && video && <DemoVideo feature={f} video={video} className="mt-3" />}
+      {video && <DemoVideo key={video} feature={f} video={video} className="mt-3" />}
 
-      {(many || (video && playing !== f.id)) && (
+      {many && (
         <div className="mt-3 flex items-center gap-2">
           {many && (
             <div className="flex items-center gap-0.5" role="group" aria-label="מעבר בין החידושים">
@@ -144,18 +142,6 @@ export function FeatureCarousel({ features, review }: { features: LaunchFeature[
                 <ChevronLeft className="size-4" aria-hidden />
               </button>
             </div>
-          )}
-          {video && playing !== f.id && (
-            <Button
-              type="button"
-              variant="outline"
-              size="xs"
-              className="ms-auto h-7 rounded-full px-3"
-              onClick={() => setPlaying(f.id)}
-            >
-              <Play className="fill-current" aria-hidden />
-              להדגמה
-            </Button>
           )}
         </div>
       )}
@@ -186,6 +172,7 @@ function DemoVideo({ feature, video, className }: { feature: LaunchFeature; vide
       className={cn("aspect-video w-full rounded-lg bg-gray-10 object-contain", className)}
       controls
       autoPlay
+      loop
       muted
       playsInline
       onError={() => setFailed(true)}
