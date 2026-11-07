@@ -426,18 +426,13 @@ export function FormatPanelScript({
                 onOpen={onOpenMedia}
                 openLabel={`החלפת ${FORMAT_NOUN[fid] ?? "המדיה"}`}
                 onAiEdit={onAiEditMedia}
-                aiVisible
                 aiClassName={media.kind === "slides" && media.items.length > 1 ? "bottom-11" : undefined}
                 className="w-full"
               >
                 <FormatMediaPreview media={media} fid={fid} />
               </MediaPreviewZone>
+              {/* AI edit lives only on the sparkle, shown on hover (Hani, 2026-11-07). */}
               <div className="flex items-center gap-3">
-                {onAiEditMedia && (
-                  <Button variant="outline" className="flex-1 gap-2" onClick={onAiEditMedia}>
-                    עריכה עם AI
-                  </Button>
-                )}
                 <IconActionButton label="מחיקת המדיה" icon={Trash2} destructive onClick={onDeleteMedia} />
               </div>
             </div>
