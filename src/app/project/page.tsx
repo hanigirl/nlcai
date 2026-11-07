@@ -2312,7 +2312,13 @@ function ProjectPageInner() {
               <span className="text-small text-text-neutral-default">מייצר סקריפט</span>
             </div>
           ) : (
-            <FormatPanelScript fid={fid} editor={editor} onOpenMedia={() => setPanelStep("media")} onDeleteMedia={onDeleteMedia} />
+            <FormatPanelScript
+              fid={fid}
+              editor={editor}
+              saveStatus={formatSaveStatus[fid]}
+              onOpenMedia={() => setPanelStep("media")}
+              onDeleteMedia={onDeleteMedia}
+            />
           ),
         footer:
           item.state === "generating" ? undefined : (

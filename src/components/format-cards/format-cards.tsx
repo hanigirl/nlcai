@@ -22,6 +22,7 @@
 
 import { useState, type ReactNode } from "react"
 import {
+  Check,
   ChevronLeft,
   ChevronRight,
   Loader2,
@@ -621,9 +622,12 @@ export function FormatPanelScript({
   onOpenMedia,
   onAiEditMedia,
   onDeleteMedia,
+  saveStatus,
 }: {
   fid: string
   editor: ReactNode
+  /** The script's autosave, as the old canvas card showed it (Hani, 2026-11-07). */
+  saveStatus?: "saving" | "saved" | "error"
   media?: FormatCardMedia | null
   mediaBusy?: boolean
   /** Click on the media — to the ways to replace it. */
@@ -635,7 +639,26 @@ export function FormatPanelScript({
   return (
     <div className="flex flex-col gap-6">
       <section className="flex flex-col gap-2" aria-label="סקריפט">
-        <h3 className="text-small-bold text-text-neutral-default">סקריפט</h3>
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-small-bold text-text-neutral-default">סקריפט</h3>
+          {saveStatus && (
+            <span className="flex items-center gap-1 text-xs text-text-neutral-default" role="status">
+              {saveStatus === "saving" ? (
+                <>
+                  <Loader2 className="size-3 animate-spin" aria-hidden />
+                  שומר...
+                </>
+              ) : saveStatus === "error" ? (
+                <span className="text-button-destructive-default">שגיאה בשמירה</span>
+              ) : (
+                <>
+                  <Check className="size-3" aria-hidden />
+                  נשמר
+                </>
+              )}
+            </span>
+          )}
+        </div>
         {editor}
       </section>
 
