@@ -22,7 +22,6 @@
 
 import { useState, type ReactNode } from "react"
 import {
-  Check,
   ChevronLeft,
   ChevronRight,
   Loader2,
@@ -411,15 +410,23 @@ export function FormatPanelTabs({
 }) {
   return (
     <Tabs value={value} onValueChange={(v) => onChange(v as FormatPanelTab)} dir="rtl">
-      <TabsList className="h-10 w-full rounded-[10px] bg-gray-95 p-1 dark:bg-gray-20">
+      <TabsList className="h-9 w-full rounded-[10px] bg-gray-95 p-1 dark:bg-gray-20">
         {PANEL_TABS.filter((t) => showSchedule || t.id !== "schedule").map((t) => (
           <TabsTrigger
             key={t.id}
             value={t.id}
-            className="h-full rounded-lg text-small text-text-neutral-default hover:text-text-primary-default data-[state=active]:bg-white data-[state=active]:text-text-primary-default data-[state=active]:shadow-sm dark:data-[state=active]:bg-gray-10 cursor-pointer"
+            className="group/tab h-7 gap-1.5 rounded-[10px] px-2 py-1 text-sm font-medium leading-5 text-gray-40 hover:text-text-primary-default data-[state=active]:bg-white data-[state=active]:text-text-primary-default data-[state=active]:shadow-sm dark:data-[state=active]:bg-gray-10 cursor-pointer"
           >
-            {done[t.id] && <Check className="size-3.5" aria-label="הושלם" />}
             {t.label}
+            {/* Done step (Figma 701:1673): green on the active tab, gray on the others. */}
+            {done[t.id] && (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/icons/tab-done-active.svg" alt="הושלם" width={20} height={20} className="hidden size-5 shrink-0 group-data-[state=active]/tab:block" />
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/icons/tab-done.svg" alt="הושלם" width={20} height={20} className="size-5 shrink-0 group-data-[state=active]/tab:hidden" />
+              </>
+            )}
           </TabsTrigger>
         ))}
       </TabsList>
