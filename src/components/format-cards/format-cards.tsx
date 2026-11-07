@@ -427,14 +427,12 @@ export function FormatPanelScript({
                 openLabel={`החלפת ${FORMAT_NOUN[fid] ?? "המדיה"}`}
                 onAiEdit={onAiEditMedia}
                 aiClassName={media.kind === "slides" && media.items.length > 1 ? "bottom-11" : undefined}
+                onDelete={onDeleteMedia}
                 className="w-full"
               >
                 <FormatMediaPreview media={media} fid={fid} />
               </MediaPreviewZone>
-              {/* AI edit lives only on the sparkle, shown on hover (Hani, 2026-11-07). */}
-              <div className="flex items-center gap-3">
-                <IconActionButton label="מחיקת המדיה" icon={Trash2} destructive onClick={onDeleteMedia} />
-              </div>
+              {/* AI edit and delete live only on the media, shown on hover (Hani, 2026-11-07). */}
             </div>
           )}
         </section>

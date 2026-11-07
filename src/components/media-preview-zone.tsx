@@ -1,6 +1,7 @@
 "use client"
 
 import type { ReactNode } from "react"
+import { Trash2 } from "lucide-react"
 import { AI_HOVER_ZONE, AiHoverEditButton } from "@/components/ai-hover-edit"
 import { cn } from "@/lib/utils"
 
@@ -29,6 +30,8 @@ export function MediaPreviewZone({
   aiBusy = false,
   aiVisible = false,
   aiClassName,
+  onDelete,
+  deleteLabel = "מחיקת המדיה",
   className,
   children,
 }: {
@@ -43,6 +46,9 @@ export function MediaPreviewZone({
   aiVisible?: boolean
   /** Moves the sparkle — e.g. above a native video control bar. */
   aiClassName?: string
+  /** Present = a hover delete button at the bottom-left corner (Hani, 2026-11-07). */
+  onDelete?: () => void
+  deleteLabel?: string
   /** Size / shape of the zone — matches the preview it wraps. */
   className?: string
   children: ReactNode
@@ -92,6 +98,27 @@ export function MediaPreviewZone({
           visible={aiVisible}
           className={aiClassName}
         />
+      )}
+      {onDelete && (
+        <button
+          type="button"
+          aria-label={deleteLabel}
+          title={deleteLabel}
+          data-media-control=""
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete()
+          }}
+          className={cn(
+            "absolute bottom-2 end-2 z-20 flex size-9 items-center justify-center rounded-[10px] bg-white shadow-md transition-[opacity,background-color] hover:bg-gray-95 dark:bg-gray-10 dark:hover:bg-gray-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 cursor-pointer",
+            "opacity-0 group-hover/ai:opacity-100 group-focus-within/ai:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100",
+            aiClassName,
+          )}
+        >
+          <Trash2 className="size-4 text-button-destructive-default" aria-hidden />
+        </button>
       )}
     </div>
   )
