@@ -5,7 +5,7 @@ import { renderOwnVideoCaption, OVERLAY_SECONDS } from "@/lib/own-video-captions
 import { talkingHeadVideoUrl, transcriptionContext } from "@/lib/talking-head-video"
 import { editBase, saveApplied, type Applied } from "@/lib/talking-head-original"
 import { loadTalkingHeadTemplate } from "@/lib/talking-head-template"
-import { detectFaces, headZone, intersects, placeClear, type Box } from "@/lib/face-boxes"
+import { detectFaces, faceZone, headZone, placeClear, type Box } from "@/lib/face-boxes"
 import {
   CAPTION_BAND,
   MAX_TALKING_HEAD_SECONDS,
@@ -129,18 +129,30 @@ export async function runTalkingHeadEdit(opts: {
 
   // Her face, so nothing covers it (lib/face-boxes). A detector that can't
   // run leaves only the instruction to the engine — never a failed edit.
-  const faceAt = async (times: number[]): Promise<Box | null> => {
+  const facesAt = async (times: number[]): Promise<Box[][] | null> => {
     try {
-      const zone = headZone(await detectFaces(await grabFrames(input, times)))
-      return zone ? toCanvas(zone, W, H) : null
+      return await detectFaces(await grabFrames(input, times))
     } catch (err) {
       console.error("[talking-head-edit] faces", err instanceof Error ? err.message : err)
       return null
     }
   }
-  const head = await faceAt([0.1, 0.3, 0.5, 0.7, 0.9].map((f) => f * seconds))
-  // Captions in the lower third — at the top when her face is down there.
-  const captionsAt: "bottom" | "top" = head && intersects(head, { x: 0, ...CAPTION_BAND.bottom, w: 1080 }) ? "top" : "bottom"
+  const faceAt = async (times: number[]): Promise<Box | null> => {
+    const found = await facesAt(times)
+    const zone = found ? headZone(found) : null
+    return zone ? toCanvas(zone, W, H) : null
+  }
+  const overall = await facesAt([0.1, 0.3, 0.5, 0.7, 0.9].map((f) => f * seconds))
+  const headRaw = overall ? headZone(overall) : null
+  const head = headRaw ? toCanvas(headRaw, W, H) : null
+  // Captions ALWAYS in the lower third (Hani, 2026-11-08) — moved up only when
+  // her FACE itself is down there. Hair, shoulders and body never move them
+  // (live: a head-and-shoulders zone sent them up to her forehead).
+  const faceRaw = overall ? faceZone(overall) : null
+  const face = faceRaw ? toCanvas(faceRaw, W, H) : null
+  // "Down there" = the middle of her face is at or below the captions' band —
+  // a chin reaching into it doesn't count.
+  const captionsAt: "bottom" | "top" = face && face.y + face.h / 2 >= CAPTION_BAND.bottom.y ? "top" : "bottom"
 
   let lines: CaptionLine[] = []
   let captionsList: string | undefined

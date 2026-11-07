@@ -56,6 +56,22 @@ export async function detectFaces(frames: Buffer[]): Promise<Box[][]> {
 }
 
 /**
+ * Her face as it typically sits — the median box over the frames (no
+ * head-and-shoulders growth, no union of every movement). For decisions like
+ * where the captions go, not for keeping elements clear.
+ */
+export function faceZone(perFrame: Box[][]): Box | null {
+  // The biggest face in each frame (her, not someone behind her).
+  const boxes = perFrame.flatMap((f) => (f.length ? [f.reduce((a, b) => (b.w * b.h > a.w * a.h ? b : a))] : []))
+  if (!boxes.length) return null
+  const med = (vals: number[]) => {
+    const v = [...vals].sort((a, b) => a - b)
+    return v[Math.floor(v.length / 2)]
+  }
+  return { x: med(boxes.map((b) => b.x)), y: med(boxes.map((b) => b.y)), w: med(boxes.map((b) => b.w)), h: med(boxes.map((b) => b.h)) }
+}
+
+/**
  * One box around every face seen across the frames, grown to the head and
  * shoulders (BlazeFace boxes the face only; hair and chin sit outside it).
  */
