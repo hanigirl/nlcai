@@ -1,5 +1,6 @@
 "use client"
 
+import { LaunchBanner } from "@/components/launch-intro/launch-banner"
 import { useEffect, useState, useRef, useCallback, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { toast } from "sonner"
@@ -712,6 +713,9 @@ function HomeContent() {
             <Typewriter className="text-p text-text-primary-default mt-4 h-6" />
           </div>
         </div>
+
+        {/* Launch banner under the title (Figma 702:1705, Hani 2026-11-08). */}
+        <LaunchBanner className="mt-8 max-w-[600px]" />
 
         {/* Onboarding-progress banner — sits BELOW the greeting/title per the
             brief ("באנר מתחת לכותרת"). Only rendered under ?variant=a|b. */}

@@ -420,7 +420,6 @@ export default function CorePostsPage() {
             Hidden when there are no posts (the empty-state speaks for
             itself; the banner would be announcing a feature for posts
             that don't exist yet). */}
-        {!loading && posts.length > 0 && <CalendarFeatureBanner />}
 
         {loading && (
           <div className="flex items-center justify-center gap-2 py-16">
@@ -932,51 +931,3 @@ function CorePostCardMedia({
   )
 }
 
-/**
- * "New: calendar scheduling" announcement banner.
- *
- * Implementation: a full-width PNG provides every visual element
- * (gradient background, dashed motion line, sparkles, calendar
- * illustration). The artwork has no baked text — the right side is
- * intentionally empty so we overlay just the two live lines (title +
- * badge, description) on top. Per Hani 2026-05-14: "שמה לך תמונת
- * png רק תשים עליה את שתי שורות הטקסט".
- *
- * Always-on for now — no dismiss control in the spec. When this feature
- * stops being "new" we can either remove the banner outright or swap it
- * for the same "5 views then auto-hide" pattern QueueHelpCard uses.
- */
-function CalendarFeatureBanner() {
-  return (
-    <div
-      dir="rtl"
-      className="relative mb-6 flex min-h-[90px] items-center overflow-hidden rounded-xl border border-border-neutral-default bg-gradient-to-r from-white from-[31%] to-[#fffcf0] to-[85%]"
-    >
-      {/* Calendar illustration — pinned to the visual right edge,
-          vertically centered. Carries the calendar card + sparkles. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src="/images/banner-calendar.png"
-        alt=""
-        aria-hidden
-        className="pointer-events-none absolute inset-y-0 start-[20px] my-auto h-[68px] w-auto select-none"
-      />
-
-      {/* Text — right-aligned (RTL start). `ps-[150px]` insets from the
-          right so the title + badge clear the calendar illustration. */}
-      <div className="flex w-full flex-col gap-1 ps-[150px] pe-[40px]">
-        <div className="flex items-center justify-start gap-2">
-          <p className="text-small-bold text-text-primary-default whitespace-nowrap">
-            תזמון פורמטים של תוכן בלוח שנה
-          </p>
-          <span className="bg-yellow-60 text-text-primary-default px-2 py-0.5 text-small-bold rounded-full leading-none">
-            חדש!
-          </span>
-        </div>
-        <p className="text-xs-body text-text-neutral-default text-right">
-          כדי לתזמן חייבת להיות מדיה משוייכת לפורמט.
-        </p>
-      </div>
-    </div>
-  )
-}
