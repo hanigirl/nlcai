@@ -19,7 +19,7 @@ import { Dialog, DialogContent, DialogTitle, DialogClose } from "@/components/ui
 import { useLaunchIntro } from "./launch-intro-state"
 
 /** The 15 demo videos cut together (HyperFrames, ~3 min). */
-const ALL_FEATURES_VIDEO = "/launch/all-features.mp4"
+const ALL_FEATURES_VIDEO = "/launch/all-features-v2.mp4"
 
 // Module-level so the shader's identity is stable across renders (the runtime
 // re-runs setup when it changes).
