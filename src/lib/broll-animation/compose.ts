@@ -116,7 +116,7 @@ HARD RULES (the renderer depends on them):
 5. Instagram covers the top ~220px and bottom ~380px with UI. Keep all text inside the safe area between them, with ≥80px side margins. Every element — decorative lines, underlines, shapes — stays fully inside the frame at every moment; nothing stray or cut off at an edge.
 6. By t=${COMPOSITION_SECONDS - 1.5}s everything must have arrived and be fully legible, and it must HOLD — the last frame is used as the cover and gets screenshotted. No exit animations.
 7. Legibility first: strong contrast between text and whatever is behind it at every moment (shadows, scrims, shapes or colour — your call).
-8. Fonts: they are loaded for you in <head> (you'll see a marker to keep). Use the brand fonts by family name, by their role (the primary carries the text; a secondary font is only a small accent); Rubik / Heebo are Hebrew fallbacks. Do not add other font links.
+8. Fonts: they are loaded for you in <head> (you'll see a marker to keep). Use the brand fonts by family name, by their role (the primary carries the text; a secondary font is only a small accent). With no brand font, the text is set in Rubik (Hani, 2026-11-07: the visual language's font, otherwise Rubik); Heebo is only a per-glyph fallback in the font stack, never the chosen face. Do not add other font links.
 9. If the brief has THE CREATOR'S OWN DESIGN INSTRUCTION, follow it exactly — it overrides the visual language and every stylistic default here (colours, sizes, background, how loud or quiet the motion is). Only rules 1, 3, 4, 5 and 6 above stay above it.
 
 Return only the HTML document inside a single \`\`\`html code fence. Keep it tight (well under 300 lines).`
@@ -126,7 +126,7 @@ const FONT_MARKER = "<!--BRAND_FONTS-->"
 function briefText(b: CompositionBrief): string {
   const fonts = b.fonts.length
     ? fontRoleLines(b.fonts)
-    : "- (no brand font set — choose between Rubik and Heebo)"
+    : "- (no brand font set — use Rubik for all the text)"
   const palette = b.palette.length
     ? b.palette.map((p) => `- ${p.hex} — ${p.role}`).join("\n")
     : "- (no brand colours — derive a palette from the background and the visual language)"
