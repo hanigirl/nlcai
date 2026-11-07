@@ -18,6 +18,9 @@
  *   three — no carousel yet, 3 slides planned, 3 pictures attached: the live
  *           bug's start (2026-11-07). Remove one with the X, then press send
  *           or "להעלות כמו שזה" — the panel must ask about the empty slide.
+ *   live  — no carousel yet, 3 slides planned, nothing attached: attach from
+ *           the computer yourself (the real add menu), X one, then
+ *           "להעלות כמו שזה" — the real path of the 2026-11-07 bug.
  *   full  — a 3-slide carousel, every slot filled: no line about the AI.
  *   first — no carousel yet (first generation): 6 slots from the script's
  *           planned count, a picture in slide 2.
@@ -40,6 +43,7 @@ const STATES = [
   { id: "six", label: "כל 6 השקופיות בבת אחת" },
   { id: "emptied", label: "אחרי מחיקה משקופית 4" },
   { id: "ask", label: "שאלה לפני יצירה עם AI" },
+  { id: "live", label: "ריק, לפני היצירה — לצרף בעצמכם מהמחשב" },
   { id: "three", label: "3 תמונות, לפני היצירה (להסיר אחת ולשלוח)" },
   { id: "full", label: "כל השקופיות מלאות" },
   { id: "first", label: "לפני היצירה הראשונה" },
@@ -65,6 +69,7 @@ type Seed = { preview: File; kind: "image" | "video"; at?: number }
 
 function Panel({ state }: { state: State }) {
   const [seed, setSeed] = useState<Seed[] | null>(null)
+  const [loadId] = useState(() => Math.random().toString(36).slice(2, 8))
   useEffect(() => {
     let live = true
     void (async () => {
@@ -106,7 +111,7 @@ function Panel({ state }: { state: State }) {
 
   const opening = useMemo<AiEditOpening | null>(
     () =>
-      state === "first" || state === "ask" || state === "three"
+      state === "first" || state === "ask" || state === "three" || state === "live"
         ? {
             id: openingId(),
             kind: "generate",
@@ -118,20 +123,29 @@ function Panel({ state }: { state: State }) {
         : null,
     [state],
   )
+  // "ask": she pressed send with slides still empty — press it for her once
+  // the seeded attachments are in (the real send, the real question).
+  useEffect(() => {
+    if (state !== "ask" || !seed) return
+    const t = setTimeout(() => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="יצירה"], button[aria-label="שליחה"]')?.click()
+    }, 1500)
+    return () => clearTimeout(t)
+  }, [state, seed])
   if (!seed) return null
-  const current = state === "full" ? SLIDES.slice(0, 3) : state === "first" || state === "ask" || state === "three" ? [] : SLIDES
+  const current = state === "full" ? SLIDES.slice(0, 3) : state === "first" || state === "ask" || state === "three" || state === "live" ? [] : SLIDES
   return (
     <MediaAiChat
       key={state}
-      postId={`test-carousel-slots-${state}`}
+      // A fresh conversation on every load (the chat store keeps threads).
+      postId={`test-carousel-slots-${state}-${loadId}`}
       format="carousel"
       open
       opening={opening}
       currentUrls={current}
-      slideCount={state === "three" ? 3 : state === "first" || state === "ask" ? 6 : undefined}
+      slideCount={state === "three" || state === "live" ? 3 : state === "first" || state === "ask" ? 6 : undefined}
       seedAttachments={seed}
       seedEmptied={state === "emptied" ? 3 : undefined}
-      seedAskEmpty={state === "ask"}
       onOpenChange={() => {}}
     />
   )

@@ -66,6 +66,12 @@ export interface ChatMessage {
   memoryOnly?: boolean
   /** Own media: the edit changed only content (words, slides), nothing to save as a style. */
   noStyle?: boolean
+  /**
+   * The carousel slots' "empty slides — is this what you meant?" question
+   * (Hani, 2026-11-07): a real turn in the thread, so it scrolls into view;
+   * its two answers show under it while it's the last turn and still true.
+   */
+  askEmpty?: boolean
 }
 
 /** Panel state kept with the conversation (lib/ai-chat-session-store). */
@@ -549,8 +555,7 @@ export function MediaAiChat({
     }
     // Empty slides in her slots: asked first, as on send.
     if (emptyNeedsAsk && !confirmedEmpty.current) {
-      setAskFor("asIs")
-      setAskKey(slotsKey)
+      askAboutEmpty("asIs", patchKey)
       return
     }
     confirmedEmpty.current = false
@@ -761,6 +766,41 @@ export function MediaAiChat({
   }
   const listNums = (n: number[]) => (n.length === 1 ? `${n[0]}` : `${n.slice(0, -1).join(", ")} ו-${n[n.length - 1]}`)
   const askNow = emptyNeedsAsk && (askKey === "*" || askKey === slotsKey)
+
+  /**
+   * Her words for the question (Hani, 2026-11-07: "עכשיו אג׳נרט 2 תמונות
+   * מהמחשב שלך ואחת תהיה ai האם לזה התכוונת?") — by source, count and kind.
+   */
+  function emptyQuestion(): string {
+    const items = slotPlacement().map((p) => p.item)
+    const n = items.length
+    const kinds = new Set(items.map((it) => it.kind))
+    const allFile = items.every((it) => !!it.file && !it.drive)
+    const allDrive = items.every((it) => !!it.drive)
+    const from = allFile ? "מהמחשב שלכם" : allDrive ? "מהדרייב שלכם" : "שלכם"
+    const noun =
+      n === 1
+        ? kinds.has("video") ? "הסרטון" : "התמונה"
+        : kinds.size > 1 ? `${n} הקבצים` : kinds.has("video") ? `${n} הסרטונים` : `${n} התמונות`
+    const e = emptyNums.length
+    if (firstGen) {
+      const ai = e === 1 ? "ושקופית אחת תיווצר עם AI" : `ו-${e} שקופיות ייווצרו עם AI`
+      return `עכשיו ניצור קרוסלה עם ${noun} ${from}, ${ai}. לזה התכוונתם?`
+    }
+    const keep = e === 1 ? `ושקופית ${emptyNums[0]} תישאר כמו שהייתה` : `ושקופיות ${listNums(emptyNums)} יישארו כמו שהיו`
+    return `עכשיו נכניס את ${noun} ${from} לשקופיות שבחרתם, ${keep}. לזה התכוונתם?`
+  }
+  /** Ask (once per slot set) as a turn in the thread, and hold the action. */
+  function askAboutEmpty(action: "send" | "asIs", patchKey: (fn: (s: MediaChat) => MediaChat) => void) {
+    const text = emptyQuestion()
+    setAskFor(action)
+    setAskKey(slotsKey)
+    patchKey((s) => {
+      const last = s.messages[s.messages.length - 1]
+      if (last?.askEmpty && last.content === text) return s
+      return { ...s, messages: [...s.messages, { role: "assistant", content: text, askEmpty: true }] }
+    })
+  }
   function slotPlacement(): { i: number; ref: string; item: AsIsItem }[] {
     return slots.flatMap((ref, i) => {
       const item = ref ? originOf(ref) : undefined
@@ -825,6 +865,13 @@ export function MediaAiChat({
       target: null as number | null,
     }
   })()
+
+  // The slots' live line sits under the thread: scrolled to when it changes,
+  // or it was easy to miss below the fold (2026-11-07).
+  const slotLine = slotReply?.text ?? ""
+  useEffect(() => {
+    if (slotLine) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
+  }, [slotLine])
 
   /**
    * A message with media in her slide slots, on a carousel that exists: her
@@ -915,8 +962,7 @@ export function MediaAiChat({
     // Slides still empty in her slots: asked first (Hani, 2026-11-06: "צריך
     // אישור") — nothing is sent until she says yes or adds media.
     if (emptyNeedsAsk && !confirmedEmpty.current) {
-      setAskFor("send")
-      setAskKey(slotsKey)
+      askAboutEmpty("send", patchKey)
       return
     }
     confirmedEmpty.current = false
@@ -1254,7 +1300,7 @@ export function MediaAiChat({
             )}
             {/* Generate in the picked style as is — under the question; and
                 beside it, while she has media attached, upload it as it is. */}
-            {canSkip && i === messages.length - 1 && !loading && (
+            {canSkip && i === messages.length - 1 && !loading && !m.askEmpty && (
               <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
                 <Chip
                   onClick={() => {
@@ -1277,6 +1323,29 @@ export function MediaAiChat({
                   <Chip onClick={() => void uploadAsIs(sentAsIs.items, m.images ?? [])}>{AS_IS}</Chip>
                 </div>
               )}
+            {/* The empty-slides question's answers — while it's the last turn and still true. */}
+            {m.askEmpty && i === messages.length - 1 && askNow && !loading && (
+              <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
+                <Chip
+                  onClick={() => {
+                    confirmedEmpty.current = true
+                    if (askFor === "asIs") void uploadAsIs(asIsNow, refs.split(refs.refs).place)
+                    else void send()
+                  }}
+                >
+                  {firstGen ? "כן, ליצור" : "כן, להמשיך"}
+                </Chip>
+                <Chip
+                  onClick={() => {
+                    setAskKey(null)
+                    setSlotTarget(emptyNums[0] - 1)
+                    if (!refs.full) setAddMenuOpen(true)
+                  }}
+                >
+                  לא, אוסיף תמונה משלי
+                </Chip>
+              </div>
+            )}
             {m.done && (
               <span className="inline-flex items-center gap-1 text-xs-body text-text-neutral-default">
                 <Check className="size-3.5 text-green-success-50" />
@@ -1296,41 +1365,7 @@ export function MediaAiChat({
 
         {/* What she attached to the carousel's slots: where it went, and
             that an empty slot is the AI's (Hani, 2026-11-06). */}
-        {askNow && !loading && (
-          <div className="flex flex-col items-end gap-1.5" role="alert">
-            <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-se-sm bg-bg-surface px-3 py-2 text-small leading-relaxed text-text-primary-default">
-              {emptyNums.length === 1 ? `שקופית ${emptyNums[0]} ריקה` : `שקופיות ${listNums(emptyNums)} ריקות`}
-              {firstGen
-                ? ` — ליצור ${emptyNums.length === 1 ? "אותה" : "אותן"} עם AI?`
-                : own
-                  ? `, אז ${emptyNums.length === 1 ? "תישאר בה השקופית שהייתה" : "יישארו בהן השקופיות שהיו"} שם. להמשיך?`
-                  : `, אז ${emptyNums.length === 1 ? "תישאר בה השקופית" : "יישארו בהן השקופיות"} שה-AI יצר. להמשיך?`}
-            </div>
-            <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
-              <Chip
-                onClick={() => {
-                  confirmedEmpty.current = true
-                  if (askFor === "asIs") void uploadAsIs(asIsNow, refs.split(refs.refs).place)
-                  else void send()
-                }}
-              >
-                {firstGen ? "כן, ליצור עם AI" : "כן, להמשיך"}
-              </Chip>
-              {!refs.full && (
-                <Chip
-                  onClick={() => {
-                    setAskKey(null)
-                    setSlotTarget(emptyNums[0] - 1)
-                    setAddMenuOpen(true)
-                  }}
-                >
-                  אוסיף מדיה
-                </Chip>
-              )}
-            </div>
-          </div>
-        )}
-        {slotReply && !askNow && !loading && (
+        {slotReply && !(askNow && messages[messages.length - 1]?.askEmpty) && !loading && (
           <div className="flex flex-col items-end gap-1.5" aria-live="polite">
             <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-se-sm bg-bg-surface px-3 py-2 text-small leading-relaxed text-text-primary-default">
               {slotReply.text}
