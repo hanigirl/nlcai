@@ -1,5 +1,6 @@
 "use client"
 
+import { Skeleton } from "@/components/ui/skeleton"
 import { playableVideoSrc } from "@/lib/drive-media"
 import { useState, useEffect, useCallback } from "react"
 import {
@@ -8,7 +9,6 @@ import {
   Image as ImageIcon,
   LayoutGrid,
   List,
-  Loader2,
   Search,
   Trash2,
 } from "lucide-react"
@@ -330,8 +330,9 @@ export default function CorePostsPage() {
           </div>
         </div>
 
-        {/* Filter bar + view switcher */}
-        {!loading && posts.length > 0 && (
+        {/* Filter bar + view switcher — shown right away, also while the
+            posts load (Hani, 2026-11-08); hidden only for a real empty list. */}
+        {(loading || posts.length > 0) && (
           <div className="flex items-center gap-2 mb-6">
             {[
               { id: "", label: "הכל" },
@@ -421,10 +422,39 @@ export default function CorePostsPage() {
             itself; the banner would be announcing a feature for posts
             that don't exist yet). */}
 
+        {/* Skeleton cards in the grid's own shape while the posts load,
+            instead of a spinner (Hani, 2026-11-08). */}
         {loading && (
-          <div className="flex items-center justify-center gap-2 py-16">
-            <Loader2 className="size-5 animate-spin text-yellow-50" />
-            <span className="text-small text-text-neutral-default">טוען פוסטים...</span>
+          <div className="flex flex-col gap-8" role="status" aria-label="טוען פוסטים">
+            {[0, 1].map((g) => (
+              <section key={g}>
+                <Skeleton className="mb-4 h-4 w-24" />
+                <div className={viewMode === "grid" ? "grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-4" : "flex flex-col gap-2"}>
+                  {Array.from({ length: viewMode === "grid" ? 5 : 4 }, (_, i) =>
+                    viewMode === "grid" ? (
+                      <div key={i} className="flex flex-col gap-3 rounded-[12px] border border-border-neutral-default bg-white p-4 dark:bg-gray-10">
+                        <Skeleton className="aspect-[4/5] w-full rounded-lg" />
+                        <Skeleton className="h-4 w-4/5" />
+                        <Skeleton className="h-3.5 w-full" />
+                        <Skeleton className="h-3.5 w-3/5" />
+                        <div className="flex gap-1 pt-1">
+                          <Skeleton className="h-6 w-14 rounded-full" />
+                          <Skeleton className="h-6 w-16 rounded-full" />
+                        </div>
+                      </div>
+                    ) : (
+                      <div key={i} className="flex items-center gap-3 rounded-[12px] border border-border-neutral-default bg-white p-3 dark:bg-gray-10">
+                        <Skeleton className="size-12 rounded-lg" />
+                        <div className="flex flex-1 flex-col gap-2">
+                          <Skeleton className="h-4 w-2/5" />
+                          <Skeleton className="h-3.5 w-3/5" />
+                        </div>
+                      </div>
+                    ),
+                  )}
+                </div>
+              </section>
+            ))}
           </div>
         )}
 

@@ -62,18 +62,21 @@ export function LaunchBanner({ className }: { className?: string }) {
         <p className="relative w-full text-right text-[16px] font-semibold leading-6 text-text-primary-default">
           מהיום האפליקציה עובדת מקצה לקצה!
         </p>
-        <p className="relative w-full text-right text-[16px] leading-6 text-text-neutral-default">
-          עיקר החידושים עוסקים בהפעלת המערכת כמקום אחד בו הכל קורה: כתיבה, יצירת מדיה עם AI לכל פורמט,
-          המשך חידודים ותזמון לכל הרשתות החברתיות.
-        </p>
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="relative inline-flex items-center gap-1.5 rounded-md text-[14px] font-medium leading-6 text-text-primary-default underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 cursor-pointer"
-        >
-          <Play className="size-3.5 fill-current" aria-hidden />
-          לסרטון הדגמה של כל החידושים
-        </button>
+        {/* Body + "להדגמה" on one row, the link at the left end (Hani, 2026-11-08). */}
+        <div className="relative flex w-full items-center gap-4">
+          <p className="flex-1 text-right text-[16px] leading-6 text-text-neutral-default">
+            עיקר החידושים עוסקים בהפעלת המערכת כמקום אחד בו הכל קורה: כתיבה, יצירת מדיה ותזמון לכל הרשתות.
+          </p>
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            aria-label="להדגמה של כל החידושים"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md text-[14px] font-medium leading-6 text-text-primary-default underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 cursor-pointer"
+          >
+            להדגמה
+            <Play className="size-3.5 fill-current" aria-hidden />
+          </button>
+        </div>
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>

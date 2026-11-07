@@ -715,7 +715,7 @@ function HomeContent() {
         </div>
 
         {/* Launch banner under the title (Figma 702:1705, Hani 2026-11-08). */}
-        <LaunchBanner className="mt-8 max-w-[600px]" />
+        <LaunchBanner className="mt-8 mb-[72px]" />
 
         {/* Onboarding-progress banner — sits BELOW the greeting/title per the
             brief ("באנר מתחת לכותרת"). Only rendered under ?variant=a|b. */}
