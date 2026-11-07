@@ -11,19 +11,19 @@
  * is saved per feature, so every feature is introduced exactly once, on the
  * first screen where the user meets it.
  *
- *   A — spotlight: the page dims around the feature, a step counter
- *       ("2 מתוך 4"), the page waits until "הבנתי" or "דלגו".
- *   B — quiet: no dim, no counter, the page stays usable; the next feature
- *       is introduced when it scrolls into view.
+ * The page dims around the tag, the card counts the steps on this screen
+ * ("2 מתוך 4"), and the page waits until "הבנתי" or "דלגו על הסיור". A spot
+ * that holds several features is one step; its card is the same carousel as
+ * the tag's, and "הבנתי" marks every feature in it as seen.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Popover as PopoverPrimitive } from "radix-ui"
 import { Popover, PopoverContent } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
 import { getLaunchFeature, launchOrder, type LaunchFeature, type LaunchFeatureId } from "@/lib/launch-features"
-import { useLaunchIntro, type LaunchVariant } from "./launch-intro-state"
+import { FeatureCarousel, NewTag } from "./new-feature-note"
+import { useLaunchIntro } from "./launch-intro-state"
 
 const FIRST_STEP_DELAY_MS = 1200
 const POLL_MS = 700
@@ -35,19 +35,28 @@ function visibleInViewport(el: HTMLElement): boolean {
   return r.bottom > 0 && r.right > 0 && r.top < window.innerHeight && r.left < window.innerWidth
 }
 
-function findAnchors(seen: LaunchFeatureId[]): { id: LaunchFeatureId; el: HTMLElement }[] {
-  const out = new Map<LaunchFeatureId, HTMLElement>()
+function findAnchors(seen: LaunchFeatureId[]): Spot[] {
+  const out = new Map<string, Spot>()
   document.querySelectorAll<HTMLElement>("[data-launch-anchor]").forEach((el) => {
-    const id = el.dataset.launchAnchor as LaunchFeatureId
-    if (seen.includes(id) || out.has(id) || !visibleInViewport(el)) return
-    out.set(id, el)
+    const raw = el.dataset.launchAnchor ?? ""
+    const ids = raw.split(",").filter(Boolean) as LaunchFeatureId[]
+    // A spot is still a step while any of its features is unseen.
+    if (!ids.some((id) => !seen.includes(id)) || out.has(raw) || !visibleInViewport(el)) return
+    out.set(raw, { key: raw, ids, el })
   })
-  return Array.from(out, ([id, el]) => ({ id, el })).sort((a, b) => launchOrder(a.id) - launchOrder(b.id))
+  const first = (s: Spot) => Math.min(...s.ids.map(launchOrder))
+  return Array.from(out.values()).sort((a, b) => first(a) - first(b))
+}
+
+interface Spot {
+  key: string
+  ids: LaunchFeatureId[]
+  el: HTMLElement
 }
 
 export function LaunchTour() {
   const intro = useLaunchIntro()
-  const [step, setStep] = useState<{ id: LaunchFeatureId; el: HTMLElement } | null>(null)
+  const [step, setStep] = useState<Spot | null>(null)
   const [settled, setSettled] = useState(false)
   // Steps acknowledged on this screen — for A's "N מתוך M".
   const [doneHere, setDoneHere] = useState(0)
@@ -69,7 +78,7 @@ export function LaunchTour() {
       const anchors = findAnchors(seen)
       setRemaining(anchors.length)
       setStep((cur) => {
-        if (cur && cur.el.isConnected && !seen.includes(cur.id)) return cur
+        if (cur && cur.el.isConnected && cur.ids.some((id) => !seen.includes(id))) return cur
         return anchors[0] ?? null
       })
     }
@@ -79,17 +88,17 @@ export function LaunchTour() {
   }, [active, settled, seenKey])
 
   if (!step || !active) return null
-  const feature = getLaunchFeature(step.id)
   const ack = () => {
     setDoneHere((n) => n + 1)
     setStep(null)
-    intro.markSeen(step.id)
+    // "הבנתי" on a shared spot covers every feature in it.
+    intro.markSeen(step.ids)
   }
   return (
     <TourStep
-      key={step.id}
-      variant={intro.variant}
-      feature={feature}
+      key={step.key}
+      review={intro.review}
+      features={step.ids.map(getLaunchFeature)}
       anchor={step.el}
       index={doneHere + 1}
       total={doneHere + Math.max(remaining, 1)}
@@ -103,16 +112,16 @@ export function LaunchTour() {
 }
 
 function TourStep({
-  variant,
-  feature,
+  review,
+  features,
   anchor,
   index,
   total,
   onAck,
   onSkip,
 }: {
-  variant: LaunchVariant
-  feature: LaunchFeature
+  review: boolean
+  features: LaunchFeature[]
   anchor: HTMLElement
   index: number
   total: number
@@ -123,83 +132,50 @@ function TourStep({
   const okRef = useRef<HTMLButtonElement>(null)
   return (
     <>
-      {variant === "a" && <Spotlight el={anchor} />}
+      <Spotlight el={anchor} />
       <Popover open>
         <PopoverPrimitive.Anchor virtualRef={anchorRef} />
-        <TourStepCard
-          variant={variant}
-          feature={feature}
-          index={index}
-          total={total}
-          onAck={onAck}
-          onSkip={onSkip}
-          okRef={okRef}
-        />
+        <PopoverContent
+          dir="rtl"
+          side="bottom"
+          align="start"
+          sideOffset={10}
+          role="dialog"
+          aria-label={features.map((f) => f.title).join(", ")}
+          onOpenAutoFocus={(e) => {
+            e.preventDefault()
+            okRef.current?.focus()
+          }}
+          onInteractOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => {
+            e.preventDefault()
+            onAck()
+          }}
+          className="z-[60] w-80"
+        >
+          <PopoverPrimitive.Arrow className="fill-white dark:fill-gray-10" width={14} height={7} />
+          <div className="mb-2 flex items-center gap-2">
+            <NewTag />
+            <span className="text-xs-body text-text-neutral-default">
+              {index} מתוך {total}
+            </span>
+          </div>
+          <FeatureCarousel features={features} review={review} />
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={onSkip}
+              className="rounded-md px-1 text-xs-body text-text-neutral-default transition-colors hover:bg-gray-95 hover:text-text-primary-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 dark:hover:bg-gray-20"
+            >
+              דלגו על הסיור
+            </button>
+            <Button ref={okRef} type="button" size="sm" onClick={onAck}>
+              הבנתי
+            </Button>
+          </div>
+        </PopoverContent>
       </Popover>
     </>
-  )
-}
-
-/** The popover body. Exported pieces stay in one place so A and B share it. */
-function TourStepCard({
-  variant,
-  feature,
-  index,
-  total,
-  onAck,
-  onSkip,
-  okRef,
-}: {
-  variant: LaunchVariant
-  feature: LaunchFeature
-  index: number
-  total: number
-  onAck: () => void
-  onSkip: () => void
-  okRef: React.RefObject<HTMLButtonElement | null>
-}) {
-  return (
-    <PopoverContent
-      dir="rtl"
-      side="bottom"
-      align="start"
-      sideOffset={10}
-      role="dialog"
-      aria-label={feature.title}
-      // A holds focus on "הבנתי"; B never steals focus from what she's doing.
-      onOpenAutoFocus={(e) => {
-        e.preventDefault()
-        if (variant === "a") okRef.current?.focus()
-      }}
-      onInteractOutside={(e) => e.preventDefault()}
-      onEscapeKeyDown={(e) => {
-        e.preventDefault()
-        onAck()
-      }}
-      className={cn("z-[60] w-80", variant === "b" && "shadow-md")}
-    >
-      <PopoverPrimitive.Arrow className="fill-white dark:fill-gray-10" width={14} height={7} />
-      <p className="text-xs-body text-text-neutral-default">
-        {variant === "a" ? `חדש · ${index} מתוך ${total}` : "חדש"}
-      </p>
-      <p className="mt-1 text-p-bold text-text-primary-default">{feature.title}</p>
-      {/* B's note beside the feature already says what changed — the step just points at it. */}
-      <p className="mt-1 text-small text-text-neutral-default">
-        {variant === "a" ? feature.body : "ההסבר נשאר כאן ליד, לשבועיים הקרובים."}
-      </p>
-      <div className="mt-4 flex items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={onSkip}
-          className="rounded-md px-1 text-xs-body text-text-neutral-default underline-offset-4 transition-colors hover:bg-gray-95 hover:text-text-primary-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 dark:hover:bg-gray-20"
-        >
-          {variant === "a" ? "דלגו על הסיור" : "בלי הסברים"}
-        </button>
-        <Button ref={okRef} type="button" size="sm" onClick={onAck}>
-          הבנתי
-        </Button>
-      </div>
-    </PopoverContent>
   )
 }
 

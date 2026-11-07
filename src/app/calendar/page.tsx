@@ -1513,8 +1513,13 @@ export default function CalendarPage() {
               />
               <h2 className="text-text-primary-default">תזמון</h2>
               {/* Launch notes — each only where its feature is on (the same gates). */}
-              {scheduleAllA && <NewFeatureNote feature="posting-routine" compact />}
-              {schedulingOn && multinetwork && <NewFeatureNote feature="real-publishing" compact />}
+              {/* One tag for the scheduling news here (Hani, 2026-11-08) — each only under its own gate. */}
+              <NewFeatureNote
+                feature={[
+                  ...(schedulingOn && multinetwork ? (["real-publishing"] as const) : []),
+                  ...(scheduleAllA ? (["posting-routine"] as const) : []),
+                ]}
+              />
               {schedulingOn && multinetwork ? (
                 // One marker for every network (Hani, 2026-11-05) in place of
                 // the Instagram-only pill. Each icon opens that network's

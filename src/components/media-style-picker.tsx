@@ -1,6 +1,7 @@
 "use client"
 
 import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
+import type { LaunchFeatureId } from "@/lib/launch-features"
 import { useEffect, useState } from "react"
 import { Plus } from "lucide-react"
 import { getTemplate, type TemplateConfig } from "@/lib/carousel-templates"
@@ -72,6 +73,7 @@ export function MediaStylePicker({
   label = "סגנון",
   aspect = "9/16",
   onAiEdit,
+  launchFeatures = ["format-style"],
 }: {
   value: MediaStyle
   onChange: (s: MediaStyle) => void
@@ -88,6 +90,8 @@ export function MediaStylePicker({
    * Always shown on the picked tile, not only on hover.
    */
   onAiEdit?: () => void
+  /** The launch tag here — b-roll adds its own news to the same tag. */
+  launchFeatures?: LaunchFeatureId[]
 }) {
   const dark = getTemplate("ai-dark")
   const light = getTemplate("ai-light")
@@ -134,7 +138,7 @@ export function MediaStylePicker({
     <div className="flex w-full flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-xs text-text-neutral-default">{label}</p>
-        <NewFeatureNote feature="format-style" />
+        <NewFeatureNote feature={launchFeatures} />
       </div>
       <div role="radiogroup" aria-label={label} aria-busy={brandLoading && !brandTemplate} className="grid grid-cols-2 gap-1.5 group/ai">
         {brandLoading && !brandTemplate && (

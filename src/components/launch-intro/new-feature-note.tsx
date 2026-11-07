@@ -1,164 +1,194 @@
 "use client"
 
 /**
- * "פיצ׳ר חדש" — the note that sits beside a new feature for NOTE_DAYS from the
- * user's first visit after launch. It is also the walkthrough's anchor for
- * that feature (`data-launch-anchor`), so a step can only appear where the
- * note is rendered — inside the feature's own (possibly gated) JSX.
+ * "פיצ׳ר חדש" — the yellow "חדש" tag beside new features, for NOTE_DAYS from
+ * the user's first visit after launch. Clicking it opens a card with what
+ * changed and, when the feature has one, its demo video ("להדגמה").
  *
- *   A — a small pill: "חדש" + a play button. Marks; doesn't explain.
- *   B — a callout: "פיצ׳ר חדש" + one line on what changed + "להדגמה".
+ * The tag is also the walkthrough's anchor (`data-launch-anchor`), so a step
+ * can only appear where the tag is rendered — inside the feature's own
+ * (possibly gated) JSX.
  *
- * "להדגמה" only shows when the feature has a video (lib/launch-features).
+ * One spot, one tag (Hani, 2026-11-08): when several new features live in
+ * the same place, the tag takes them all and its card is a carousel
+ * (‹ › + "1/2"), each slide with its own title, line and video.
  */
 
 import { useState } from "react"
-import { Play, Sparkles } from "lucide-react"
+import { ChevronLeft, ChevronRight, Play } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { getLaunchFeature, type LaunchFeature, type LaunchFeatureId } from "@/lib/launch-features"
-import { useLaunchIntro, type LaunchVariant } from "./launch-intro-state"
+import { useLaunchIntro } from "./launch-intro-state"
 
-/** Review only: `&demo=sample` gives every note a sample video so the demo popover can be seen. */
+/** Review only: `&demo=sample` gives every feature a sample video so the demo can be seen. */
 const SAMPLE_VIDEO = "/images/test/carousel-video-slide.mp4"
 
-function useDemoVideo(feature: LaunchFeature, review: boolean): string | null {
+export function demoVideoFor(feature: LaunchFeature, review: boolean): string | null {
   if (feature.video) return feature.video
   if (!review || typeof window === "undefined") return null
   return new URLSearchParams(window.location.search).get("demo") === "sample" ? SAMPLE_VIDEO : null
 }
 
-interface NewFeatureNoteProps {
-  feature: LaunchFeatureId
-  className?: string
-  /** Variant B only: drop the explanation line where there's no room. */
-  compact?: boolean
+/** The anchor attribute: one or more feature ids, comma-separated. */
+export function anchorValue(ids: LaunchFeatureId[]): string {
+  return ids.join(",")
 }
 
-export function NewFeatureNote({ feature: id, className, compact }: NewFeatureNoteProps) {
+interface NewFeatureNoteProps {
+  /** One feature, or every new feature that lives in this spot. */
+  feature: LaunchFeatureId | LaunchFeatureId[]
+  className?: string
+}
+
+export function NewFeatureNote({ feature, className }: NewFeatureNoteProps) {
   const intro = useLaunchIntro()
-  const feature = getLaunchFeature(id)
-  const video = useDemoVideo(feature, intro.review)
-  if (!intro.ready || !intro.notesOn) return null
+  const ids = (Array.isArray(feature) ? feature : [feature]).filter(Boolean)
+  if (!intro.ready || !intro.notesOn || ids.length === 0) return null
   return (
     <NewFeatureNoteView
-      feature={feature}
-      variant={intro.variant}
-      video={video}
+      features={ids.map(getLaunchFeature)}
+      review={intro.review}
       className={className}
-      compact={compact}
     />
   )
 }
 
-/** Presentational — exported so a state can be rendered without the account. */
-export function NewFeatureNoteView({
-  feature,
-  variant,
-  video,
-  className,
-  compact,
-  defaultDemoOpen,
-}: {
-  feature: LaunchFeature
-  variant: LaunchVariant
-  video: string | null
-  className?: string
-  compact?: boolean
-  defaultDemoOpen?: boolean
-}) {
-  if (variant === "a") {
-    return (
-      <span
-        data-launch-anchor={feature.id}
-        dir="rtl"
-        className={cn(
-          "inline-flex h-6 w-fit shrink-0 items-center gap-1 rounded-full border border-border-neutral-default bg-white ps-2 pe-1 text-xs-body text-text-primary-default dark:border-gray-30 dark:bg-gray-10",
-          !video && "pe-2",
-          className,
-        )}
-      >
-        <Sparkles className="size-3 text-text-neutral-default" aria-hidden />
-        <span>חדש</span>
-        {video && (
-          <DemoPopover feature={feature} video={video} defaultOpen={defaultDemoOpen}>
-            <button
-              type="button"
-              aria-label={`הדגמה: ${feature.title}`}
-              className="inline-flex size-4 items-center justify-center rounded-full bg-text-primary-default text-white transition-colors hover:bg-gray-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 dark:bg-gray-90 dark:text-gray-10 dark:hover:bg-gray-70"
-            >
-              <Play className="size-2.5 fill-current" aria-hidden />
-            </button>
-          </DemoPopover>
-        )}
-      </span>
-    )
-  }
-
+/** The yellow "חדש" tag — the same in A and B, light and dark. */
+export function NewTag({ className, ...props }: React.ComponentProps<"span">) {
   return (
-    <div
-      data-launch-anchor={feature.id}
-      dir="rtl"
+    <span
       className={cn(
-        "flex w-fit max-w-full items-center gap-3 rounded-xl border border-border-neutral-default bg-bg-surface px-3 py-2 dark:border-gray-30 dark:bg-gray-20",
+        "inline-flex h-6 w-fit shrink-0 items-center rounded-full bg-yellow-50 px-2.5 text-xs-body font-semibold text-yellow-10",
         className,
       )}
+      {...props}
     >
-      <Sparkles className="size-4 shrink-0 text-text-neutral-default" aria-hidden />
-      <div className="min-w-0 flex-1">
-        <p className="text-xs-body font-semibold text-text-primary-default">פיצ׳ר חדש</p>
-        {!compact && <p className="text-xs-body text-text-neutral-default">{feature.body}</p>}
+      חדש
+    </span>
+  )
+}
+
+export function NewFeatureNoteView({
+  features,
+  review,
+  className,
+}: {
+  features: LaunchFeature[]
+  review: boolean
+  className?: string
+}) {
+  const ids = features.map((f) => f.id)
+  const label = `חדש: ${features.map((f) => f.title).join(", ")}`
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-launch-anchor={anchorValue(ids)}
+          aria-label={label}
+          className={cn(
+            "w-fit shrink-0 rounded-full transition-shadow hover:ring-2 hover:ring-gray-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 dark:hover:ring-gray-40",
+            className,
+          )}
+        >
+          <NewTag />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent dir="rtl" side="bottom" align="start" className="w-80 p-4">
+        <FeatureCarousel features={features} review={review} />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+/**
+ * The features of one spot, one at a time. Used by the tag's card and by the
+ * walkthrough step, so both switch the same way. "להדגמה" opens the video
+ * inside the card.
+ */
+export function FeatureCarousel({ features, review }: { features: LaunchFeature[]; review: boolean }) {
+  const [i, setI] = useState(0)
+  const [playing, setPlaying] = useState<string | null>(null)
+  const f = features[Math.min(i, features.length - 1)]
+  const video = demoVideoFor(f, review)
+  const many = features.length > 1
+  const go = (next: number) => {
+    setPlaying(null)
+    setI((next + features.length) % features.length)
+  }
+  const arrow =
+    "inline-flex size-6 items-center justify-center rounded-md text-text-neutral-default transition-colors hover:bg-gray-95 hover:text-text-primary-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 dark:hover:bg-gray-20"
+
+  return (
+    <div dir="rtl" className="flex flex-col">
+      <div aria-live="polite">
+        <p className="text-p-bold text-text-primary-default">{f.title}</p>
+        <p className="mt-0.5 text-small text-text-neutral-default">{f.body}</p>
       </div>
-      {video && (
-        <DemoPopover feature={feature} video={video} defaultOpen={defaultDemoOpen}>
-          <Button type="button" variant="outline" size="xs" className="h-7 shrink-0 rounded-full px-3">
-            <Play className="fill-current" aria-hidden />
-            להדגמה
-          </Button>
-        </DemoPopover>
+
+      {playing === f.id && video && <DemoVideo feature={f} video={video} className="mt-3" />}
+
+      {(many || (video && playing !== f.id)) && (
+        <div className="mt-3 flex items-center gap-2">
+          {many && (
+            <div className="flex items-center gap-0.5" role="group" aria-label="מעבר בין החידושים">
+              <button type="button" onClick={() => go(i - 1)} aria-label="החידוש הקודם" className={arrow}>
+                <ChevronRight className="size-4" aria-hidden />
+              </button>
+              <span className="min-w-7 text-center text-xs-body tabular-nums text-text-neutral-default" dir="ltr">
+                {i + 1}/{features.length}
+              </span>
+              <button type="button" onClick={() => go(i + 1)} aria-label="החידוש הבא" className={arrow}>
+                <ChevronLeft className="size-4" aria-hidden />
+              </button>
+            </div>
+          )}
+          {video && playing !== f.id && (
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              className="ms-auto h-7 rounded-full px-3"
+              onClick={() => setPlaying(f.id)}
+            >
+              <Play className="fill-current" aria-hidden />
+              להדגמה
+            </Button>
+          )}
+        </div>
       )}
     </div>
   )
 }
 
-function DemoPopover({
-  feature,
-  video,
-  children,
-  defaultOpen,
-}: {
-  feature: LaunchFeature
-  video: string
-  children: React.ReactNode
-  defaultOpen?: boolean
-}) {
-  const [open, setOpen] = useState(!!defaultOpen)
+function DemoVideo({ feature, video, className }: { feature: LaunchFeature; video: string; className?: string }) {
   const [failed, setFailed] = useState(false)
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>{children}</PopoverTrigger>
-      <PopoverContent dir="rtl" side="bottom" align="start" className="w-[22rem] p-3">
-        <p className="mb-2 text-small-bold text-text-primary-default">{feature.title}</p>
-        {failed ? (
-          <div className="flex aspect-video w-full items-center justify-center rounded-lg bg-bg-surface text-xs-body text-text-neutral-default">
-            הסרטון לא נטען. נסו שוב מאוחר יותר.
-          </div>
-        ) : (
-          <video
-            key={video}
-            src={video}
-            poster={feature.poster ?? undefined}
-            className="aspect-video w-full rounded-lg bg-gray-10 object-contain"
-            controls
-            autoPlay
-            muted
-            playsInline
-            onError={() => setFailed(true)}
-          />
+  if (failed) {
+    return (
+      <div
+        className={cn(
+          "flex aspect-video w-full items-center justify-center rounded-lg bg-bg-surface text-xs-body text-text-neutral-default",
+          className,
         )}
-        <p className="mt-2 text-xs-body text-text-neutral-default">{feature.body}</p>
-      </PopoverContent>
-    </Popover>
+      >
+        הסרטון לא נטען. נסו שוב מאוחר יותר.
+      </div>
+    )
+  }
+  return (
+    <video
+      key={video}
+      src={video}
+      poster={feature.poster ?? undefined}
+      aria-label={`הדגמה: ${feature.title}`}
+      className={cn("aspect-video w-full rounded-lg bg-gray-10 object-contain", className)}
+      controls
+      autoPlay
+      muted
+      playsInline
+      onError={() => setFailed(true)}
+    />
   )
 }

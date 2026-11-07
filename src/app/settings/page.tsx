@@ -45,7 +45,7 @@ import {
 } from "@/components/identity-gap-dialog"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { ScheduleSettings } from "@/components/schedule-settings"
-import { useScheduleAllA } from "@/lib/use-scheduling-access"
+import { useMultinetwork, useScheduleAllA } from "@/lib/use-scheduling-access"
 import { DriveFoldersSettings } from "@/components/drive-folder-review"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 
@@ -204,6 +204,7 @@ function SettingsPageInner() {
 
   const searchParams = useSearchParams()
   const scheduleAllA = useScheduleAllA() === true
+  const multinetworkOn = useMultinetwork() === true
   const initialTab = (searchParams.get("tab") as SettingsTab) || "connections"
   // Settings → מדיה → "מדיה מ-Google Drive": one shared folder per kind of
   // media, read on the canvas by "מדיה משלכם מ Google Drive" (Hani, 2026-10-22).
@@ -1080,7 +1081,14 @@ function SettingsPageInner() {
       <div dir="rtl" className="mx-auto max-w-[1200px] flex flex-col gap-8">
         <div className="flex flex-wrap items-center gap-3">
           <h2 className="text-text-primary-default">הגדרות</h2>
-          <NewFeatureNote feature="settings-split" />
+          {/* One tag for everything new in Settings (Hani, 2026-11-08). */}
+          <NewFeatureNote
+            feature={[
+              "settings-split",
+              "visual-language",
+              ...(multinetworkOn ? (["real-publishing"] as const) : []),
+            ]}
+          />
         </div>
 
         {/* Tabs */}

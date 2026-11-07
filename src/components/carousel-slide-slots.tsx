@@ -48,7 +48,7 @@ export function CarouselSlideSlots({
   if (!slots.length) return null
   return (
     <div className="mb-2 flex flex-col gap-1.5">
-      <NewFeatureNote feature="carousel-video" compact />
+      <NewFeatureNote feature="carousel-video" />
       <p className="text-xs-body text-text-neutral-default">
         {target !== null
           ? `הקובץ הבא שתצרפו ייכנס לשקופית ${target + 1}.`

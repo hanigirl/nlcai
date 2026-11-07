@@ -50,7 +50,7 @@ import { isTalkingHeadRender } from "@/lib/talking-head-original"
 import { TH_EDIT_MODES, TalkingHeadPlanEditor, TalkingHeadTemplateChip, appendToTalkingHeadTemplate, type ThPlanMoment } from "@/components/talking-head-ai"
 import { useCopyStructure } from "@/lib/use-scheduling-access"
 import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
-import { useLaunchIntro } from "@/components/launch-intro/launch-intro-state"
+import type { LaunchFeatureId } from "@/lib/launch-features"
 
 /** A clip the Opus engine made — only those have a composition to edit. */
 export function isEditableBRollUrl(url: string | null | undefined): boolean {
@@ -1737,7 +1737,6 @@ export function MediaAiChat({
         <AiSparkle />
         <span className="text-small-bold text-text-primary-default">{title}</span>
         <LaunchPanelNote
-          slot="header"
           brief={gen?.phase === "brief"}
           own={!!own}
           copy={format === "carousel" && copyAllowed && !currentUrls.length}
@@ -1756,14 +1755,6 @@ export function MediaAiChat({
           </button>
         </div>
       </div>
-
-      {/* Launch: what's new in this panel — one note, the one that fits what it's doing now. */}
-      <LaunchPanelNote
-        slot="row"
-        brief={gen?.phase === "brief"}
-        own={!!own}
-        copy={format === "carousel" && copyAllowed && !currentUrls.length}
-      />
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
@@ -2037,7 +2028,7 @@ export function MediaAiChat({
           const { place, looks } = refs.split(refs.refs)
           return (
             <>
-              {place.length > 0 && <NewFeatureNote feature="placed-image" compact className="mb-1.5" />}
+              {place.length > 0 && <NewFeatureNote feature="placed-image" className="mb-1.5" />}
               <p className="mb-2 text-xs-body text-text-neutral-default">
                 {[place.length ? PLACE_NOTE[format] : "", looks.length ? LOOK_NOTE : ""].filter(Boolean).join(" ")}
               </p>
@@ -2090,29 +2081,17 @@ export function MediaAiChat({
 }
 
 /**
- * The launch note at the top of the AI panel (lib/launch-features). One at a
- * time, by what the panel is doing: her own media, a carousel to copy, the
- * brief before a generation, or an edit.
+ * The launch tag at the top of the AI panel (lib/launch-features): one tag,
+ * its card a carousel of what's new in this panel.
  */
-function LaunchPanelNote({
-  slot,
-  brief,
-  own,
-  copy,
-}: {
-  slot: "header" | "row"
-  brief: boolean
-  own: boolean
-  copy: boolean
-}) {
-  const { variant } = useLaunchIntro()
-  // A: a pill beside the title. B: a callout row under the header.
-  if ((variant === "a") !== (slot === "header")) return null
-  const feature = own ? "own-video-edit" : copy ? "copy-structure" : brief ? "media-brief" : "ai-edit-panel"
-  if (slot === "header") return <NewFeatureNote key={feature} feature={feature} />
-  return (
-    <div className="border-b border-border-neutral-default px-4 py-2 empty:hidden">
-      <NewFeatureNote key={feature} feature={feature} className="w-full" />
-    </div>
-  )
+function LaunchPanelNote({ brief, own, copy }: { brief: boolean; own: boolean; copy: boolean }) {
+  // Everything new about this panel in one tag (Hani, 2026-11-08): what it's
+  // doing now first, then the panel itself.
+  const ids: LaunchFeatureId[] = [
+    ...(own ? (["own-video-edit"] as const) : []),
+    ...(copy ? (["copy-structure"] as const) : []),
+    ...(brief ? (["media-brief"] as const) : []),
+    "ai-edit-panel",
+  ]
+  return <NewFeatureNote key={ids.join()} feature={ids} />
 }

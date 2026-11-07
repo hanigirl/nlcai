@@ -20,6 +20,16 @@
 /** Launch day (Israel time). Nothing shows before it. */
 export const LAUNCH_AT = "2026-11-08T00:00:00+02:00"
 
+/**
+ * Who may use the review params (?launch=preview, ?walkthrough=reset,
+ * &demo=sample). Review mode never writes to the account.
+ */
+export const LAUNCH_REVIEW_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+
+export function canReviewLaunch(email: string | null | undefined): boolean {
+  return !!email && LAUNCH_REVIEW_EMAILS.includes(email.toLowerCase())
+}
+
 /** How long the "פיצ׳ר חדש" notes stay, from the user's first visit after launch. */
 export const NOTE_DAYS = 14
 

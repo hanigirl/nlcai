@@ -4945,7 +4945,6 @@ function MediaUploadFlow({
 
           {isBRoll && !hydrating && !bRollShowsMedia && openAiConnected === true && (
             <>
-              <NewFeatureNote feature="broll-animated" />
               <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
                 <MediaStylePicker
                   value={mediaStyle.style}
@@ -4953,6 +4952,7 @@ function MediaUploadFlow({
                   brandTemplate={mediaStyle.brandTemplate}
                   brandLoading={mediaStyle.brandLoading}
                   onAiEdit={postId && !bRollGenerating ? () => handleBRollGenerate(true) : undefined}
+                  launchFeatures={["broll-animated", "format-style"]}
                 />
                 <Button
                   variant="default"

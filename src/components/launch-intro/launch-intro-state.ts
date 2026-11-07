@@ -9,10 +9,12 @@
  * A localStorage copy (user-scoped) paints the right state before the
  * session answers, and keeps a write that's in flight from flashing back.
  *
- * Review mode (`?launch=a|b` on any real page): shows everything as a
- * first-visit-after-launch user would see it, ignoring the launch date —
- * and keeps the "seen" state in sessionStorage only. Nothing is written to
- * the account. `?walkthrough=reset` replays the walkthrough.
+ * Review mode (`?launch=preview` on any real page, LAUNCH_REVIEW_EMAILS only):
+ * shows everything as a first-visit-after-launch user would see it, ignoring
+ * the launch date, and keeps the "seen" state in sessionStorage only —
+ * nothing is written to the account. `?walkthrough=reset` replays the
+ * walkthrough, `&demo=sample` puts a sample video on every feature,
+ * `?launch=off` leaves review mode. For anyone else the params do nothing.
  */
 
 import { useCallback, useEffect, useSyncExternalStore } from "react"
@@ -20,6 +22,7 @@ import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { userKey } from "@/lib/user-scoped-storage"
 import {
+  canReviewLaunch,
   EMPTY_LAUNCH_STATE,
   isInNoteWindow,
   isLaunched,
@@ -28,18 +31,12 @@ import {
   type LaunchIntroState,
 } from "@/lib/launch-features"
 
-export type LaunchVariant = "a" | "b"
-
-/** What ships when no review param is set. */
-export const DEFAULT_LAUNCH_VARIANT: LaunchVariant = "a"
-
 const REVIEW_KEY = "launch-intro-review"
 const LOCAL_KEY = "launch-intro"
 
 interface Snapshot {
   ready: boolean
   review: boolean
-  variant: LaunchVariant
   /** Notes visible (launched, inside the 14-day window). */
   notesOn: boolean
   /** Walkthrough may run. */
@@ -51,7 +48,6 @@ interface Snapshot {
 let snap: Snapshot = {
   ready: false,
   review: false,
-  variant: DEFAULT_LAUNCH_VARIANT,
   notesOn: false,
   tourOn: false,
   state: EMPTY_LAUNCH_STATE,
@@ -100,44 +96,47 @@ function init() {
   const raw = params.get("launch")
   const session = typeof sessionStorage === "undefined" ? undefined : sessionStorage
 
-  // Review mode sticks for the tab, so navigating between pages keeps it.
-  let review: { variant: LaunchVariant; state: LaunchIntroState } | null = null
-  const stored = safeGet(session, REVIEW_KEY)
-  if (stored) {
-    try {
-      review = JSON.parse(stored)
-    } catch {
-      review = null
-    }
-  }
-  if (raw === "a" || raw === "b") {
-    review = { variant: raw, state: review?.state ?? EMPTY_LAUNCH_STATE }
-  } else if (raw === "off") {
-    review = null
-    safeSet(session, REVIEW_KEY, null)
-  }
-  if (review && params.get("walkthrough") === "reset") {
-    review = { ...review, state: EMPTY_LAUNCH_STATE }
-  }
-
-  if (review) {
-    safeSet(session, REVIEW_KEY, JSON.stringify(review))
-    emit({ ready: true, review: true, variant: review.variant, state: review.state, ...derive(review.state, true) })
-    return
-  }
-
   const supabase = createClient()
   getCurrentUser(supabase).then(({ data: { user } }) => {
     if (!user) return
+
+    // Review mode — for the review list only; the params do nothing for anyone else.
+    if (canReviewLaunch(user.email)) {
+      let review: { state: LaunchIntroState } | null = null
+      const stored = safeGet(session, REVIEW_KEY)
+      if (stored) {
+        try {
+          review = JSON.parse(stored)
+        } catch {
+          review = null
+        }
+      }
+      if (raw === "preview") review = { state: review?.state ?? EMPTY_LAUNCH_STATE }
+      else if (raw === "off") {
+        review = null
+        safeSet(session, REVIEW_KEY, null)
+      }
+      if (review && params.get("walkthrough") === "reset") review = { state: EMPTY_LAUNCH_STATE }
+      if (review) {
+        safeSet(session, REVIEW_KEY, JSON.stringify(review))
+        emit({ ready: true, review: true, userId: user.id, state: review.state, ...derive(review.state, true) })
+        return
+      }
+    }
+
     const local = safeGet(localStorage, userKey(LOCAL_KEY, user.id))
     let state = readLaunchState(user.user_metadata)
     if (local) {
       // The local copy can be ahead of a session that hasn't refreshed yet.
-      const l = readLaunchState({ launch_intro: JSON.parse(local) })
-      state = {
-        firstVisitAt: state.firstVisitAt ?? l.firstVisitAt,
-        seen: Array.from(new Set([...state.seen, ...l.seen])),
-        skipped: state.skipped || l.skipped,
+      try {
+        const l = readLaunchState({ launch_intro: JSON.parse(local) })
+        state = {
+          firstVisitAt: state.firstVisitAt ?? l.firstVisitAt,
+          seen: Array.from(new Set([...state.seen, ...l.seen])),
+          skipped: state.skipped || l.skipped,
+        }
+      } catch {
+        /* a broken local copy — the account's copy stands */
       }
     }
     if (isLaunched() && !state.firstVisitAt) {
@@ -151,7 +150,7 @@ function init() {
 function persist(userId: string | null, state: LaunchIntroState) {
   if (snap.review) {
     const session = typeof sessionStorage === "undefined" ? undefined : sessionStorage
-    safeSet(session, REVIEW_KEY, JSON.stringify({ variant: snap.variant, state }))
+    safeSet(session, REVIEW_KEY, JSON.stringify({ state }))
     return
   }
   if (!userId) return
@@ -167,9 +166,10 @@ export function useLaunchIntro() {
   useEffect(init, [])
   const s = useSyncExternalStore(subscribe, () => snap, () => snap)
 
-  const markSeen = useCallback((id: LaunchFeatureId) => {
-    if (snap.state.seen.includes(id)) return
-    const state = { ...snap.state, seen: [...snap.state.seen, id] }
+  const markSeen = useCallback((ids: LaunchFeatureId | LaunchFeatureId[]) => {
+    const fresh = (Array.isArray(ids) ? ids : [ids]).filter((id) => !snap.state.seen.includes(id))
+    if (!fresh.length) return
+    const state = { ...snap.state, seen: [...snap.state.seen, ...fresh] }
     emit({ state })
     persist(snap.userId, state)
   }, [])
