@@ -20,6 +20,7 @@
  * UI only: generation, media flows and approvals are the page's own.
  */
 
+import { VideoWithPlay } from "@/components/video-with-play"
 import { playableVideoSrc, videoPreviewSrc } from "@/lib/drive-media"
 import { useState, type ReactNode } from "react"
 import {
@@ -203,10 +204,11 @@ export function FormatMediaPreview({
     <div className={cn("flex flex-col gap-2", fill && "relative size-full")}>
       <div className={cn("overflow-hidden rounded-xl bg-gray-95 dark:bg-gray-20", fill && "size-full rounded-none", box)}>
         {isVideo(src) ? (
-          <video
+          // A real player with a big play button at rest (Hani, 2026-11-08).
+          <VideoWithPlay
             key={src}
             src={videoPreviewSrc(src)}
-            muted
+            controls
             playsInline
             preload="metadata"
             className={mediaClass}

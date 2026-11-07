@@ -577,7 +577,21 @@ export async function PATCH(
         thVariant = newVariant
       }
 
+      // Already the post's video: nothing to write. A re-save of the same URL
+      // used to add a fresh row each time (2026-11-08, 22:56).
+      let sameVideo = false
       if (thVariant) {
+        const { data: cur } = await supabase
+          .from("media_assets")
+          .select("url")
+          .eq("format_variant_id", (thVariant as unknown as { id: string }).id)
+          .eq("asset_type", "video")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        sameVideo = (cur as { url?: string } | null)?.url === videoUrl
+      }
+      if (thVariant && !sameVideo) {
         const variantRow = thVariant as unknown as { id: string }
         // Replace the existing video asset. The clear MUST be verified before
         // the insert — an unverified delete here is what let the video slot

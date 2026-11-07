@@ -1,5 +1,6 @@
 "use client"
 
+import { VideoWithPlay } from "@/components/video-with-play"
 import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from "react"
 import { useCoverDefaultColor } from "@/lib/use-cover-brand-colors"
@@ -1288,7 +1289,7 @@ function TalkingHeadFlow({
               {isDriveUrl(liftedVideoUrl) ? (
                 <DriveVideoPreview url={liftedVideoUrl} label="הסרטון שלכם" />
               ) : (
-                <video
+                <VideoWithPlay
                   src={videoPreviewSrc(liftedVideoUrl)}
                   controls
                   playsInline
@@ -1334,7 +1335,7 @@ function TalkingHeadFlow({
                 <DriveVideoPreview url={liftedVideoUrl} label="הסרטון שלכם" />
               ) : (
                 // The avatar's video, playable — it was an <img> of the video URL.
-                <video
+                <VideoWithPlay
                   src={videoPreviewSrc(liftedVideoUrl)}
                   controls
                   playsInline
@@ -2625,7 +2626,7 @@ function CarouselFlow({
             <div className="flex flex-col items-center gap-3">
               <div className="relative w-full overflow-hidden rounded-xl border border-border-neutral-default bg-bg-surface">
                 {isVideoSlide(dialogSlides[previewIndex]) ? (
-                  <video
+                  <VideoWithPlay
                     key={dialogSlides[previewIndex]}
                     src={playableVideoSrc(dialogSlides[previewIndex])}
                     controls
@@ -3324,7 +3325,7 @@ function MediaUploadFlow({
         }
         // For images, keep the skeleton on until the <img> actually
         // decodes (the URL being set doesn't mean the bytes are painted
-        // yet). For videos, the <video> element shows its own poster +
+        // yet). For videos, the <VideoWithPlay> element shows its own poster +
         // controls, so we don't need an extra placeholder.
         if (!looksLikeVideo) setImageLoading(true)
       })
@@ -4999,7 +5000,7 @@ function MediaUploadFlow({
                     // Link-mode video — streams from Drive, no copy of ours.
                     <DriveVideoPreview url={previewUrl} label="המדיה שלכם" />
                   ) : previewKind === "video" ? (
-                    <video
+                    <VideoWithPlay
                       src={
                         previewUrl.startsWith("blob:")
                           ? previewUrl
@@ -5263,7 +5264,7 @@ function MediaUploadFlow({
                       className="h-full w-full object-cover"
                     />
                   ) : (
-                    <video
+                    <VideoWithPlay
                       src={
                         previewUrl.startsWith("blob:")
                           ? previewUrl
