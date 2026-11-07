@@ -63,7 +63,7 @@ export function LaunchBanner({ className }: { className?: string }) {
           מהיום האפליקציה עובדת מקצה לקצה!
         </p>
         {/* Body + "להדגמה" on one row, the link at the left end (Hani, 2026-11-08). */}
-        <div className="relative flex w-full items-center gap-4">
+        <div className="relative flex w-full items-end gap-4">
           <p className="flex-1 text-right text-[16px] leading-6 text-text-neutral-default">
             עיקר החידושים עוסקים בהפעלת המערכת כמקום אחד בו הכל קורה: כתיבה, יצירת מדיה ותזמון לכל הרשתות
           </p>
