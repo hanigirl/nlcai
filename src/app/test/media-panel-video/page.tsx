@@ -9,6 +9,8 @@
  *   ?format=talking_head  the same for a talking-head video
  *   ?src=<video URL>      the clip to show (a storage mp4 or a Drive link)
  *   ?empty=1              no media yet — the creation layout
+ *   ?cover=1              talking head with a cover (else the cover column's
+ *                         empty state; "יצירת קאבר" fills it with a sample here)
  * Nothing is saved: the post id is a preview id the server doesn't know.
  */
 
@@ -21,6 +23,9 @@ function Preview() {
   const format = params.get("format") === "talking_head" ? "talking_head" : "b_roll"
   const src = params.get("empty") ? null : params.get("src")
   const [bRollUrl, setBRollUrl] = useState<string | null>(src)
+  // A sample picture stands in for a cover — nothing is generated here.
+  const [cover, setCover] = useState<string | null>(params.get("cover") ? "/images/onboarding-hero.png" : null)
+  const [coverLoading, setCoverLoading] = useState(false)
   const noop = () => undefined
   return (
     <MediaPanel
@@ -39,8 +44,17 @@ function Preview() {
       onThTranscriptChange={noop}
       onThVideoUrlChange={noop}
       onThSourceModeChange={noop}
-      thCoverImage={null}
-      onThCoverImageChange={noop}
+      thCoverImage={cover}
+      onThCoverImageChange={setCover}
+      thAutoCover={false}
+      thCoverLoading={coverLoading}
+      onThCreateCover={() => {
+        setCoverLoading(true)
+        setTimeout(() => {
+          setCover("/images/onboarding-hero.png")
+          setCoverLoading(false)
+        }, 1200)
+      }}
       carouselImages={null}
       carouselSlides={null}
       onCarouselImagesChange={noop}
