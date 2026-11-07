@@ -52,6 +52,7 @@ import {
   extractDriveFileId,
   driveThumbnailUrl,
   playableVideoSrc,
+  videoPreviewSrc,
 } from "@/lib/drive-media"
 import {
   subscribeGeneration,
@@ -1276,7 +1277,7 @@ function TalkingHeadFlow({
                 // A real player — it used to be a bare frame (controls off) that
                 // read as a picture (Hani, 2026-11-08).
                 <video
-                  src={liftedVideoUrl.startsWith("blob:") ? liftedVideoUrl : `${playableVideoSrc(liftedVideoUrl)}#t=0.001`}
+                  src={videoPreviewSrc(liftedVideoUrl)}
                   controls
                   playsInline
                   preload="metadata"
@@ -1346,7 +1347,7 @@ function TalkingHeadFlow({
               ) : (
                 // The avatar's video, playable — it was an <img> of the video URL.
                 <video
-                  src={liftedVideoUrl.startsWith("blob:") ? liftedVideoUrl : `${playableVideoSrc(liftedVideoUrl)}#t=0.001`}
+                  src={videoPreviewSrc(liftedVideoUrl)}
                   controls
                   playsInline
                   preload="metadata"
