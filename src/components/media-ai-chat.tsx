@@ -547,6 +547,14 @@ export function MediaAiChat({
       }))
       return
     }
+    // Empty slides in her slots: asked first, as on send.
+    if (emptyNeedsAsk && !confirmedEmpty.current) {
+      setAskFor("asIs")
+      setAskKey(slotsKey)
+      return
+    }
+    confirmedEmpty.current = false
+    setAskKey(null)
     refs.clear()
     links.reset()
     setSentAsIs(null)
@@ -561,7 +569,11 @@ export function MediaAiChat({
     const placed = slotPlacement()
     const result =
       placed.length && placed.length === items.length
-        ? await requestAsIsUpload(format, placed.map((p) => p.item), { at: placed.map((p) => p.i) })
+        ? await requestAsIsUpload(format, placed.map((p) => p.item), {
+            at: placed.map((p) => p.i),
+            // No carousel yet: the empty slots are made with AI (she said yes).
+            ...(firstGen ? { fill: slotCount } : {}),
+          })
         : await requestAsIsUpload(format, items)
     setSlotChoice({})
     setSlotTarget(null)
@@ -573,7 +585,7 @@ export function MediaAiChat({
       messages: [
         ...s.messages,
         result.ok
-          ? { role: "assistant", content: result.message, done: true, noStyle: true }
+          ? { role: "assistant", content: `${result.message}${placed.length ? keptNote(placed) : ""}`, done: true, noStyle: true }
           : { role: "assistant", content: result.message, error: true },
       ],
     }))
@@ -706,7 +718,10 @@ export function MediaAiChat({
   // (Hani, 2026-11-06: "כשמחקתי שקופית מסוימת הוא לא התריע שחסרה אחת").
   const [emptied, setEmptied] = useState<number | null>(seedEmptied ?? null)
   // The "empty slides — make them with AI?" question: for this exact slot set.
+  // The "empty slides — go on?" question, for this exact slot set, and the
+  // action it holds back (send, or "להעלות כמו שזה") — resumed on "yes".
   const [askKey, setAskKey] = useState<string | null>(seedAskEmpty ? "*" : null)
+  const [askFor, setAskFor] = useState<"send" | "asIs">("send")
   const confirmedEmpty = useRef(false)
   const slots: (string | null)[] = (() => {
     const out: (string | null)[] = new Array(slotCount).fill(null)
@@ -726,9 +741,24 @@ export function MediaAiChat({
   const slotsKey = slots.map((x) => x ?? "").join("|")
   const emptyNums = slots.flatMap((x, i) => (x ? [] : [i + 1]))
   // Her own carousel: an empty slot keeps her slide — nothing is made with AI.
-  const emptyIsAi = !own
-  const emptyNeedsAsk = emptyIsAi && slotted.length > 0 && emptyNums.length > 0
   const firstGen = !currentUrls.length
+  // No carousel yet: an empty slot is made by AI, whoever's media the rest
+  // is. A carousel that exists keeps its slide in an empty slot (her own: her
+  // slide; the AI's: the AI's) — Hani, 2026-11-07.
+  const emptyIsAi = firstGen || !own
+  // Asked on EVERY way in (Enter, the send button, the as-is chips), on the
+  // slots as they are at that moment — live bug 2026-11-07: three attached,
+  // one removed, "להעלות כמו שזה" went straight through and made 2 slides.
+  const emptyNeedsAsk = slotted.length > 0 && emptyNums.length > 0
+  /** After the send, on a carousel that exists: which slides stayed, and why. */
+  function keptNote(placed: { i: number }[]): string {
+    if (firstGen || !slotCount) return ""
+    const left = Array.from({ length: slotCount }, (_, i) => i).filter((i) => !placed.some((p) => p.i === i)).map((i) => i + 1)
+    if (!left.length) return ""
+    return left.length === 1
+      ? ` שקופית ${left[0]} נשארה כמו שהייתה, כי השארתם אותה ריקה.`
+      : ` שקופיות ${listNums(left)} נשארו כמו שהיו, כי השארתם אותן ריקות.`
+  }
   const listNums = (n: number[]) => (n.length === 1 ? `${n[0]}` : `${n.slice(0, -1).join(", ")} ו-${n[n.length - 1]}`)
   const askNow = emptyNeedsAsk && (askKey === "*" || askKey === slotsKey)
   function slotPlacement(): { i: number; ref: string; item: AsIsItem }[] {
@@ -805,8 +835,11 @@ export function MediaAiChat({
   const sendSlotted = async (text: string, attached: string[], placed: { i: number; ref: string; item: AsIsItem }[]) => {
     const key = chatKey
     const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, fresh, fn)
-    const imgs = own ? [] : placed.filter((p) => p.item.kind === "image")
-    const asIs = own ? placed : placed.filter((p) => p.item.kind === "video")
+    // No carousel yet (or her own): every file goes in as it is, in its slot,
+    // and — with no carousel — the empty slots are generated with AI.
+    const whole = own || firstGen
+    const imgs = whole ? [] : placed.filter((p) => p.item.kind === "image")
+    const asIs = whole ? placed : placed.filter((p) => p.item.kind === "video")
     refs.clear()
     links.reset()
     setSentAsIs(null)
@@ -850,7 +883,12 @@ export function MediaAiChat({
       const res = await requestAsIsUpload(
         format,
         asIs.map((p) => p.item),
-        { at: asIs.map((p) => p.i), ...(words ? { forEdit: true, instruction: words } : {}), ...(base ? { base } : {}) },
+        {
+          at: asIs.map((p) => p.i),
+          ...(words ? { forEdit: true, instruction: words } : {}),
+          ...(base ? { base } : {}),
+          ...(firstGen ? { fill: slotCount } : {}),
+        },
       )
       if (!res.ok) return fail(said ? `${said} ${res.message}` : res.message)
       said = said ? `${said} ${res.message}` : res.message
@@ -859,7 +897,7 @@ export function MediaAiChat({
       ...s,
       busy: false,
       extra: { ...s.extra, progress: "" },
-      messages: [...s.messages, { role: "assistant", content: said, done: true, noStyle: true }],
+      messages: [...s.messages, { role: "assistant", content: `${said}${keptNote(placed)}`, done: true, noStyle: true }],
     }))
   }
 
@@ -877,6 +915,7 @@ export function MediaAiChat({
     // Slides still empty in her slots: asked first (Hani, 2026-11-06: "צריך
     // אישור") — nothing is sent until she says yes or adds media.
     if (emptyNeedsAsk && !confirmedEmpty.current) {
+      setAskFor("send")
       setAskKey(slotsKey)
       return
     }
@@ -1263,13 +1302,16 @@ export function MediaAiChat({
               {emptyNums.length === 1 ? `שקופית ${emptyNums[0]} ריקה` : `שקופיות ${listNums(emptyNums)} ריקות`}
               {firstGen
                 ? ` — ליצור ${emptyNums.length === 1 ? "אותה" : "אותן"} עם AI?`
-                : `, אז ${emptyNums.length === 1 ? "תישאר בה השקופית" : "יישארו בהן השקופיות"} שה-AI יצר. להמשיך?`}
+                : own
+                  ? `, אז ${emptyNums.length === 1 ? "תישאר בה השקופית שהייתה" : "יישארו בהן השקופיות שהיו"} שם. להמשיך?`
+                  : `, אז ${emptyNums.length === 1 ? "תישאר בה השקופית" : "יישארו בהן השקופיות"} שה-AI יצר. להמשיך?`}
             </div>
             <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
               <Chip
                 onClick={() => {
                   confirmedEmpty.current = true
-                  void send()
+                  if (askFor === "asIs") void uploadAsIs(asIsNow, refs.split(refs.refs).place)
+                  else void send()
                 }}
               >
                 {firstGen ? "כן, ליצור עם AI" : "כן, להמשיך"}

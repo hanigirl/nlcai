@@ -57,6 +57,8 @@ export interface AiEditGenerateOpening {
 export type GenSlots = {
   placeAt?: number[]
   videos?: { at: number; item: AsIsItem }[]
+  /** Slides already made from her files (as they are): put on their slide over the generated one. */
+  fixed?: { at: number; slide: string }[]
 }
 
 export interface AiEditRequest {
