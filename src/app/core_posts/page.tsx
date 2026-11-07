@@ -1,5 +1,6 @@
 "use client"
 
+import { playableVideoSrc } from "@/lib/drive-media"
 import { useState, useEffect, useCallback } from "react"
 import {
   Copy,
@@ -912,7 +913,7 @@ function CorePostCardMedia({
   }
   return isVideo ? (
     <video
-      src={`${url}#t=0.1`}
+      src={`${playableVideoSrc(url)}#t=0.1`}
       muted
       playsInline
       preload="metadata"

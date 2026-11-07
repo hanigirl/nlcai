@@ -63,7 +63,7 @@ import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { DriveVideoPreview } from "@/components/drive-video-preview"
-import { isDriveUrl, isVideoUrl } from "@/lib/drive-media"
+import { isDriveUrl, isVideoUrl, playableVideoSrc } from "@/lib/drive-media"
 import {
   Tooltip,
   TooltipContent,
@@ -1663,7 +1663,7 @@ function MediaSlot({
           <DriveVideoPreview url={url} label={label} />
         ) : isVideoSlot ? (
           <video
-            src={url}
+            src={playableVideoSrc(url)}
             className="w-full h-full object-cover"
             controls
             playsInline
@@ -1912,7 +1912,7 @@ function MediaPreview({ url, label }: { url: string; label: string }) {
         <DriveVideoPreview url={url} label={label} />
       ) : isVideo ? (
         <video
-          src={url}
+          src={playableVideoSrc(url)}
           className="w-full h-full object-cover"
           controls
           playsInline

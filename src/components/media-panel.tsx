@@ -51,6 +51,7 @@ import {
   isVideoUrl,
   extractDriveFileId,
   driveThumbnailUrl,
+  playableVideoSrc,
 } from "@/lib/drive-media"
 import {
   subscribeGeneration,
@@ -1273,7 +1274,7 @@ function TalkingHeadFlow({
                 <DriveVideoPreview url={liftedVideoUrl} label="הסרטון שלכם" />
               ) : (
                 <video
-                  src={liftedVideoUrl.startsWith("blob:") ? liftedVideoUrl : `${liftedVideoUrl}#t=0.001`}
+                  src={liftedVideoUrl.startsWith("blob:") ? liftedVideoUrl : `${playableVideoSrc(liftedVideoUrl)}#t=0.001`}
                   controls={false}
                   playsInline
                   muted
@@ -1355,7 +1356,7 @@ function TalkingHeadFlow({
             <div className="w-full aspect-[9/16] rounded-lg overflow-hidden bg-gray-95 relative">
               {liftedVideoUrl.startsWith("blob:") ? (
                 <video
-                  src={liftedVideoUrl}
+                  src={playableVideoSrc(liftedVideoUrl)}
                   controls={false}
                   playsInline
                   muted
@@ -2648,7 +2649,7 @@ function CarouselFlow({
                 {isVideoSlide(dialogSlides[previewIndex]) ? (
                   <video
                     key={dialogSlides[previewIndex]}
-                    src={dialogSlides[previewIndex]}
+                    src={playableVideoSrc(dialogSlides[previewIndex])}
                     controls
                     playsInline
                     preload="metadata"
@@ -2875,7 +2876,7 @@ function SlideThumb({
   if (isVideoSlide(slide)) {
     return (
       <video
-        src={`${slide}#t=0.1`}
+        src={`${playableVideoSrc(slide)}#t=0.1`}
         muted
         playsInline
         preload="metadata"
@@ -5018,7 +5019,7 @@ function MediaUploadFlow({
                       src={
                         previewUrl.startsWith("blob:")
                           ? previewUrl
-                          : `${previewUrl}#t=0.001`
+                          : `${playableVideoSrc(previewUrl)}#t=0.001`
                       }
                       controls
                       playsInline
@@ -5282,7 +5283,7 @@ function MediaUploadFlow({
                       src={
                         previewUrl.startsWith("blob:")
                           ? previewUrl
-                          : `${previewUrl}#t=0.001`
+                          : `${playableVideoSrc(previewUrl)}#t=0.001`
                       }
                       controls
                       playsInline

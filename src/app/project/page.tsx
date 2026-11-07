@@ -85,8 +85,7 @@ import { DriveVideoPreview } from "@/components/drive-video-preview"
 import {
   isDriveUrl,
   extractDriveFileId,
-  driveThumbnailUrl,
-} from "@/lib/drive-media"
+  driveThumbnailUrl, playableVideoSrc } from "@/lib/drive-media"
 import { copyToClipboard } from "@/lib/copy-to-clipboard"
 import { userKey } from "@/lib/user-scoped-storage"
 import { logLearningEdit } from "@/lib/learning-capture"
@@ -4294,7 +4293,7 @@ function FormatTree({
                               />
                             ) : (
                               <video
-                                src={`${bRollUrl}#t=0.001`}
+                                src={`${playableVideoSrc(bRollUrl)}#t=0.001`}
                                 controls
                                 playsInline
                                 muted
@@ -4585,7 +4584,7 @@ function CarouselResultCard({
               // control bar takes clicks (MediaPreviewZone skips video[controls]).
               <video
                 key={shownSlides[currentSlide]}
-                src={`${shownSlides[currentSlide]}#t=0.001`}
+                src={`${playableVideoSrc(shownSlides[currentSlide])}#t=0.001`}
                 controls
                 playsInline
                 muted
@@ -4963,7 +4962,7 @@ function VideoPlayer({ url, clickToOpen = false, onOpen }: {
       {skeleton}
       <video
         ref={videoRef}
-        src={url}
+        src={playableVideoSrc(url)}
         className="w-full h-full object-cover"
         playsInline
         preload="metadata"

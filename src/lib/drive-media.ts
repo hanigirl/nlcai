@@ -97,3 +97,13 @@ export function isVideoUrl(url: string | null | undefined): boolean {
   if (isDriveUrl(url)) return true
   return /\.(mp4|webm|mov|m3u8)(\?|#|$)/i.test(url)
 }
+
+/**
+ * A <video src> for any stored video URL: a Drive link goes through our
+ * streaming proxy (Drive itself can't back a <video> — no CORS); anything
+ * else is used as is.
+ */
+export function playableVideoSrc(url: string): string {
+  const id = isDriveUrl(url) ? extractDriveFileId(url) : null
+  return id ? `/api/media/drive-video?id=${encodeURIComponent(id)}` : url
+}
