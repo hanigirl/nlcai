@@ -22,6 +22,7 @@ export function ApprovalCardFooter({
   onRevoke,
   calendarHref,
   actions,
+  approveLabel = "אישור לתזמון",
 }: {
   status: ApprovalStatus
   /** Definite Hebrew noun for the format — "הקרוסלה", "הסטורי". */
@@ -32,6 +33,8 @@ export function ApprovalCardFooter({
   calendarHref?: string
   /** The card's icon actions (IconActionButton), placed in the same row. */
   actions?: ReactNode
+  /** The approve button's words — the panel says "אישור הפוסט לתזמון". */
+  approveLabel?: string
 }) {
   if (status === "no-media") {
     return actions ? <div className="flex w-full items-center gap-3">{actions}</div> : null
@@ -76,7 +79,7 @@ export function ApprovalCardFooter({
           <div className="flex items-center gap-3">
             <Button onClick={onApprove} className="flex-1 gap-2">
               <Check className="size-4" strokeWidth={3} aria-hidden />
-              {status === "edited" ? "אישור מחדש" : "אישור לתזמון"}
+              {status === "edited" ? "אישור מחדש" : approveLabel}
             </Button>
             {actions}
           </div>

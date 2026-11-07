@@ -215,6 +215,69 @@ interface MediaPanelProps {
    * canvas straight from those stores and is NOT reported here.
    */
   onMediaBusyChange?: (format: string, busy: boolean) => void
+  /*
+   * Format cards review (`?cards=a|b`, Hani 2026-11-07). All optional; absent
+   * = the panel exactly as in production.
+   */
+  /** Shown above the flows — the format's script (and its media). */
+  scriptView?: React.ReactNode
+  /** Hide the flows (kept mounted, so work in flight survives going back). */
+  hideFlows?: boolean
+  /** Header back chevron — "חזרה לסקריפט". */
+  onBack?: () => void
+  /** Header title instead of the format's name ("יצירת מדיה"). */
+  headerTitle?: string
+  /** Pinned under the scroll — delete + "צור מדיה" / approval. */
+  footer?: React.ReactNode
+}
+
+/**
+ * The panel's shell: fixed on the left, header with title + close, scrolling
+ * content, optional pinned footer. Exported so the format-cards state preview
+ * (/test/format-cards) draws the very same panel without mounting the flows.
+ */
+export function MediaPanelFrame({
+  open,
+  title,
+  onClose,
+  headerStart,
+  footer,
+  children,
+}: {
+  open: boolean
+  title: React.ReactNode | null
+  onClose: () => void
+  headerStart?: React.ReactNode
+  footer?: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <div
+      className={`fixed left-0 top-14 bottom-0 flex w-[400px] flex-col bg-white dark:bg-gray-10 border-r border-border-neutral-default z-30 transition-transform duration-300 ease-in-out ${
+        open ? "translate-x-0" : "-translate-x-full"
+      }`}
+      dir="rtl"
+    >
+      {title !== null && (
+        <div className="flex shrink-0 items-center justify-between px-6 py-4 border-b border-border-neutral-default">
+          <div className="flex items-center gap-2">
+            {headerStart}
+            <span className="text-p-bold text-text-primary-default">{title}</span>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-lg hover:bg-bg-surface transition-colors"
+          >
+            <X className="size-4 text-text-neutral-default" />
+          </button>
+        </div>
+      )}
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">{children}</div>
+      {footer && (
+        <div className="shrink-0 border-t border-border-neutral-default px-6 py-4">{footer}</div>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -313,6 +376,11 @@ export function MediaPanel({
   onStoryImagesChange,
   onStoryVideoUrlChange,
   onMediaBusyChange,
+  scriptView,
+  hideFlows = false,
+  onBack,
+  headerTitle,
+  footer,
 }: MediaPanelProps) {
   useRefPlaceFlag()
   const isOpen = formatId !== null
@@ -330,16 +398,13 @@ export function MediaPanel({
   }, [formatId])
 
   return (
-    <div
-      className={`fixed left-0 top-14 bottom-0 w-[400px] bg-white dark:bg-gray-10 border-r border-border-neutral-default z-30 transition-transform duration-300 ease-in-out ${
-        isOpen ? "translate-x-0" : "-translate-x-full"
-      }`}
-      dir="rtl"
-    >
-      {/* Header */}
-      {meta && (
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border-neutral-default">
-          <div className="flex items-center gap-2">
+    <MediaPanelFrame
+      open={isOpen}
+      title={meta ? (drivePickerOpen ? `${meta.label} · מהדרייב` : (headerTitle ?? meta.label)) : null}
+      onClose={onClose}
+      footer={drivePickerOpen ? undefined : footer}
+      headerStart={
+        <>
             {drivePickerOpen && (
               <button
                 type="button"
@@ -367,21 +432,20 @@ export function MediaPanel({
                 <ChevronRight className="size-4 text-text-neutral-default" />
               </button>
             )}
-            <span className="text-p-bold text-text-primary-default">
-              {drivePickerOpen ? `${meta.label} · מהדרייב` : meta.label}
-            </span>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-lg hover:bg-bg-surface transition-colors"
-          >
-            <X className="size-4 text-text-neutral-default" />
-          </button>
-        </div>
-      )}
+            {!drivePickerOpen && onBack && (
+              <button
+                type="button"
+                onClick={onBack}
+                aria-label="חזרה לסקריפט"
+                className="p-0.5 rounded-lg hover:bg-gray-95 dark:hover:bg-gray-20 transition-colors cursor-pointer"
+              >
+                <ChevronRight className="size-4 text-text-neutral-default" />
+              </button>
+            )}
+        </>
+      }
+    >
 
-      {/* Content */}
-      <div className="overflow-y-auto h-[calc(100%-57px)] px-6 py-6">
         {/* Sub-title helper — explains the two ways to provide media for the
             format (AI generation or an external Drive / Canva link). Shown for
             every format panel, directly under the header title. Lives inside
@@ -399,9 +463,11 @@ export function MediaPanel({
           />
         )}
 
+        {!drivePickerOpen && scriptView}
+
         {/* The flows stay mounted under the picker so going back finds the
             panel exactly as it was left. */}
-        <div hidden={drivePickerOpen}>
+        <div hidden={drivePickerOpen || hideFlows}>
         {formatId === "talking_head" && (
           <TalkingHeadFlow
             avatar={thAvatar}
@@ -473,8 +539,7 @@ export function MediaPanel({
           />
         )}
         </div>
-      </div>
-    </div>
+    </MediaPanelFrame>
   )
 }
 

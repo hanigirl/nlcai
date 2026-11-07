@@ -35,6 +35,15 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipLabel } from "@/components/ui/tooltip"
 import { MediaPanel } from "@/components/media-panel"
 import {
+  FormatCardsRow,
+  FormatPanelFooter,
+  FormatPanelScript,
+  FormatPanelScriptFolded,
+  parseCardsVariant,
+  type FormatCardItem,
+  type FormatCardMedia,
+} from "@/components/format-cards/format-cards"
+import {
   CLAUDE_BILLING_LABEL,
   CLAUDE_BILLING_URL,
   CLAUDE_CREDITS_MESSAGE,
@@ -1965,6 +1974,7 @@ function ProjectPageInner() {
     setSelectedFormatCard(selectedFormatCard === fid ? null : fid)
   }
 
+
   // Once the post has been duplicated to formats the core post is frozen —
   // further chat edits would silently diverge from the format variants. Lock
   // the "chat about the post" affordance and force the panel shut.
@@ -2081,6 +2091,170 @@ function ProjectPageInner() {
   if (aiOwnKey && aiOwnFrozen?.key !== aiOwnKey) setAiOwnFrozen({ key: aiOwnKey, own: aiOwnNow })
   const aiOwn = aiOwnFrozen?.key === aiOwnKey ? aiOwnFrozen.own : aiOwnNow
 
+  // ---- Format cards review (?cards=a|b — Hani, 2026-11-07) ----------------
+  // The canvas shows one card per format (loader → start of the script →
+  // the media); the script and the way to media move into the left panel.
+  // UI only: every action below is a handler this page already had. With no
+  // param nothing here renders and the canvas is the production one.
+  const cardsVariant = parseCardsVariant(searchParams.get("cards"))
+  const [panelStep, setPanelStep] = useState<"script" | "media">("script")
+  const [panelStepFor, setPanelStepFor] = useState<string | null>(null)
+  if (panelStepFor !== selectedFormatCard) {
+    // A card opens on its script, every time.
+    setPanelStepFor(selectedFormatCard)
+    setPanelStep("script")
+  }
+  // "מחיקת הפורמט" — hides the card for this visit only. Removing a format
+  // from the post needs a server action that doesn't exist yet.
+  const [hiddenCards, setHiddenCards] = useState<string[]>([])
+  const [pendingCardDelete, setPendingCardDelete] = useState<string | null>(null)
+
+  const cardMediaOf = (fid: string): FormatCardMedia | null => {
+    const one = (url: string | null): FormatCardMedia | null => {
+      if (!url) return null
+      if (isDriveUrl(url)) {
+        const id = extractDriveFileId(url)
+        return id ? { kind: "image", url: driveThumbnailUrl(id) } : null
+      }
+      return /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(url) ? { kind: "video", url } : { kind: "image", url }
+    }
+    switch (fid) {
+      case "carousel":
+        return carouselImages?.length ? { kind: "slides", items: carouselImages } : null
+      case "story":
+        return storyVideoUrl ? one(storyVideoUrl) : storyImages?.length ? { kind: "slides", items: storyImages } : null
+      case "image_post":
+        return one(imagePostUrl)
+      case "b_roll":
+        return one(bRollUrl)
+      case "talking_head":
+        return one(thVideoUrl)
+      default:
+        return null
+    }
+  }
+  type ApprovalFid = Parameters<typeof approvals.statusOf>[0]
+  const cardItems: FormatCardItem[] = cardsVariant
+    ? duplicatedFormats
+        .filter((fid) => FORMAT_MAP[fid] && !hiddenCards.includes(fid))
+        .map((fid) => {
+          const media = cardMediaOf(fid)
+          const busy = !!mediaBusy[fid] || (fid === "talking_head" && !thVideoUrl && thVideoLoading)
+          return {
+            fid,
+            label: FORMAT_MAP[fid].label,
+            icon: FORMAT_MAP[fid].icon,
+            script: formatPosts[fid] ?? "",
+            state:
+              formatPosts[fid] === FORMAT_GENERATING
+                ? "generating"
+                : busy
+                  ? "media-busy"
+                  : media
+                    ? "media"
+                    : "script",
+            media,
+            approval: approveVariant ? approvals.statusOf(fid as ApprovalFid) : undefined,
+          } satisfies FormatCardItem
+        })
+    : []
+
+  const cardsPanelProps = (() => {
+    if (!cardsVariant || !selectedFormatCard) return {}
+    const fid = selectedFormatCard
+    const item = cardItems.find((i) => i.fid === fid)
+    if (!item) return {}
+    const copyAi = previewOn ? copyEdit.copyAi : undefined
+    if (panelStep === "media") {
+      return cardsVariant === "a"
+        ? { onBack: () => setPanelStep("script"), headerTitle: "יצירת מדיה" }
+        : {
+            scriptView: (
+              <div className="mb-6">
+                <FormatPanelScriptFolded fid={fid} script={item.script} onUnfold={() => setPanelStep("script")} />
+              </div>
+            ),
+          }
+    }
+    const editor = (
+      <div className={`${AI_HOVER_ZONE} group`}>
+        {fid === "story" ? (
+          <div
+            className={`min-h-[320px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 pt-2 ${copyAi ? "pb-12" : "pb-2"}`}
+          >
+            <StorySections
+              value={item.script}
+              onChange={(text) => setFormatPosts((prev) => ({ ...prev, [fid]: text }))}
+              onBlur={() => handleFormatBlur(fid)}
+              onFocus={() => setActiveCard(`format-${fid}`)}
+              textClassName={`text-small leading-relaxed select-text ${copyAi?.isBusy(fid) ? "ai-text-shimmer pointer-events-none" : ""}`}
+            />
+          </div>
+        ) : (
+          <RichBodyEditor
+            value={item.script}
+            onChange={(text) => setFormatPosts((prev) => ({ ...prev, [fid]: text }))}
+            onBlur={() => handleFormatBlur(fid)}
+            onFocus={() => setActiveCard(`format-${fid}`)}
+            className={`min-h-[320px] rounded-[10px] border border-border-neutral-default bg-white dark:bg-gray-10 px-3 pt-2 ${copyAi ? "pb-12" : "pb-2"} shadow-none text-small leading-relaxed select-text ${copyAi?.isBusy(fid) ? "ai-text-shimmer pointer-events-none" : ""}`}
+          />
+        )}
+        <CopyButton text={fid === "story" ? stripFrameMarkers(item.script) : item.script} />
+        <FormatCopyAiHoverButton ctrl={copyAi} fid={fid} />
+      </div>
+    )
+    const hasMedia = item.state === "media"
+    return {
+      hideFlows: true,
+      scriptView:
+        item.state === "generating" ? (
+          <div className="flex flex-col items-center gap-2 py-16" role="status">
+            <Loader2 className="size-5 animate-spin text-text-neutral-default" aria-hidden />
+            <span className="text-small text-text-neutral-default">מייצר סקריפט</span>
+          </div>
+        ) : (
+          <FormatPanelScript
+            fid={fid}
+            editor={editor}
+            media={hasMedia ? item.media : null}
+            mediaBusy={item.state === "media-busy"}
+            onOpenMedia={() => setPanelStep("media")}
+            onAiEditMedia={
+              fid !== "talking_head"
+                ? () => {
+                    setAiChatFormat(fid as AiEditFormat)
+                    setAiChatOpening(null)
+                  }
+                : undefined
+            }
+            onDeleteMedia={() =>
+              fid === "talking_head" ? setPendingVideoDelete(true) : setPendingMediaDelete(fid as AiEditFormat)
+            }
+          />
+        ),
+      footer:
+        item.state === "generating" ? undefined : (
+          <FormatPanelFooter
+            fid={fid}
+            hasMedia={hasMedia}
+            approval={
+              approveVariant && item.approval
+                ? {
+                    status: item.approval,
+                    onApprove: () => approvals.approve(fid as ApprovalFid),
+                    onRevoke: () => approvals.revoke(fid as ApprovalFid),
+                    calendarHref: savedPostId ? `/calendar?post_id=${savedPostId}` : "/calendar",
+                  }
+                : undefined
+            }
+            onCreateMedia={() => setPanelStep("media")}
+            onDelete={() => setPendingCardDelete(fid)}
+            createDisabled={item.state === "media-busy"}
+          />
+        ),
+    }
+  })()
+
   return (
     <AppShell idea={shortenTitle(idea || hookParam || (postId ? "עריכת פוסט" : ""))}>
       {/* Media Panel — sibling to InfiniteCanvas, slides from left */}
@@ -2161,7 +2335,27 @@ function ProjectPageInner() {
         onStoryImagesChange={setStoryImages}
         onStoryVideoUrlChange={setStoryVideoUrl}
         onMediaBusyChange={onPanelBusyChange}
+        {...cardsPanelProps}
       />
+
+      {cardsVariant && (
+        <ConfirmModal
+          open={!!pendingCardDelete}
+          onOpenChange={(open) => { if (!open) setPendingCardDelete(null) }}
+          title={pendingCardDelete ? `להסיר את ${FORMAT_NOUN[pendingCardDelete] ?? "הפורמט"} מהקנבס?` : ""}
+          description="בגרסת הסקירה הכרטיס מוסתר רק עד רענון — הסקריפט והמדיה נשארים שמורים."
+          confirmLabel="כן, להסיר"
+          cancelLabel="ביטול"
+          confirmVariant="destructive"
+          onConfirm={() => {
+            const fid = pendingCardDelete
+            setPendingCardDelete(null)
+            if (!fid) return
+            setHiddenCards((prev) => [...prev, fid])
+            if (selectedFormatCard === fid) setSelectedFormatCard(null)
+          }}
+        />
+      )}
 
       {previewOn && copyEdit.overlay}
 
@@ -2778,7 +2972,15 @@ function ProjectPageInner() {
                   )}
 
                   {/* Format lanes */}
-                  {duplicatedFormats.length > 0 && (
+                  {duplicatedFormats.length > 0 && cardsVariant && (
+                    <FormatCardsRow
+                      variant={cardsVariant}
+                      items={cardItems}
+                      selected={selectedFormatCard}
+                      onSelect={handleFormatCardClick}
+                    />
+                  )}
+                  {duplicatedFormats.length > 0 && !cardsVariant && (
                     <FormatTree
                       formats={duplicatedFormats}
                       formatPosts={formatPosts}
