@@ -30,6 +30,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { IconActionButton } from "@/components/icon-action-button"
 import { MediaPreviewZone } from "@/components/media-preview-zone"
@@ -380,6 +381,132 @@ function UniformCard({ item, selected, onSelect }: { item: FormatCardItem; selec
 /* ------------------------------------------------------------------ */
 /*  The left panel — script, media, footer                            */
 /* ------------------------------------------------------------------ */
+
+export type FormatPanelTab = "script" | "media" | "schedule"
+
+const PANEL_TABS: { id: FormatPanelTab; label: string }[] = [
+  { id: "script", label: "סקריפט" },
+  { id: "media", label: "מדיה" },
+  { id: "schedule", label: "תזמון" },
+]
+
+/**
+ * The panel's three steps as shadcn tabs (Hani, 2026-11-07): סקריפט, מדיה,
+ * תזמון. Each tab holds only its own part, and she can move between them
+ * freely. A segmented control with soft square corners, not a pill.
+ */
+export function FormatPanelTabs({
+  value,
+  onChange,
+  showSchedule = true,
+}: {
+  value: FormatPanelTab
+  onChange: (tab: FormatPanelTab) => void
+  /** False for accounts without scheduling — then there is no תזמון tab. */
+  showSchedule?: boolean
+}) {
+  return (
+    <Tabs value={value} onValueChange={(v) => onChange(v as FormatPanelTab)} dir="rtl">
+      <TabsList className="h-10 w-full rounded-[10px] bg-gray-95 p-1 dark:bg-gray-20">
+        {PANEL_TABS.filter((t) => showSchedule || t.id !== "schedule").map((t) => (
+          <TabsTrigger
+            key={t.id}
+            value={t.id}
+            className="h-full rounded-lg text-small text-text-neutral-default hover:text-text-primary-default data-[state=active]:bg-white data-[state=active]:text-text-primary-default data-[state=active]:shadow-sm dark:data-[state=active]:bg-gray-10 cursor-pointer"
+          >
+            {t.label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+    </Tabs>
+  )
+}
+
+/**
+ * The media as it is now (or a skeleton while it is made). Hovering it shows
+ * the AI sparkle and the delete; a click on it opens the ways to replace it.
+ */
+export function FormatPanelMedia({
+  fid,
+  media,
+  mediaBusy = false,
+  onOpenMedia,
+  onAiEditMedia,
+  onDeleteMedia,
+}: {
+  fid: string
+  media?: FormatCardMedia | null
+  mediaBusy?: boolean
+  onOpenMedia: () => void
+  onAiEditMedia?: () => void
+  onDeleteMedia: () => void
+}) {
+  if (mediaBusy || !media) {
+    return (
+      <div className="flex flex-col items-center gap-2">
+        <Skeleton className={cn("w-full rounded-xl", MEDIA_ASPECT[fid])} />
+        <span className="text-small text-text-neutral-default" role="status">יוצר מדיה</span>
+      </div>
+    )
+  }
+  return (
+    <MediaPreviewZone
+      onOpen={onOpenMedia}
+      openLabel={`החלפת ${FORMAT_NOUN[fid] ?? "המדיה"}`}
+      onAiEdit={onAiEditMedia}
+      aiClassName={media.kind === "slides" && media.items.length > 1 ? "bottom-11" : undefined}
+      onDelete={onDeleteMedia}
+      className="w-full"
+    >
+      <FormatMediaPreview media={media} fid={fid} />
+    </MediaPreviewZone>
+  )
+}
+
+/**
+ * The תזמון tab. No media yet: nothing to schedule, with a way to the media
+ * tab. Media: the approval ("אישור הפוסט לתזמון"), and once approved the way
+ * to the calendar.
+ */
+export function FormatPanelSchedule({
+  fid,
+  hasMedia,
+  approval,
+  onGoToMedia,
+}: {
+  fid: string
+  hasMedia: boolean
+  approval?: {
+    status: ApprovalStatus
+    onApprove: () => void
+    onRevoke: () => void
+    calendarHref?: string
+  }
+  onGoToMedia: () => void
+}) {
+  if (!hasMedia || !approval) {
+    return (
+      <div className="flex flex-col items-center gap-4 py-12 text-center">
+        <p className="text-small text-text-neutral-default">
+          כדי לתזמן את {FORMAT_NOUN[fid] ?? "הפורמט"} צריך קודם מדיה.
+        </p>
+        <Button variant="outline" onClick={onGoToMedia}>
+          ליצירת מדיה
+        </Button>
+      </div>
+    )
+  }
+  return (
+    <ApprovalCardFooter
+      status={approval.status}
+      formatNoun={FORMAT_NOUN[fid] ?? "הפורמט"}
+      onApprove={approval.onApprove}
+      onRevoke={approval.onRevoke}
+      calendarHref={approval.calendarHref}
+      approveLabel="אישור הפוסט לתזמון"
+    />
+  )
+}
 
 /**
  * The panel's script screen: the full, editable script (the page passes its

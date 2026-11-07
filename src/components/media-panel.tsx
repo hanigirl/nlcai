@@ -229,6 +229,8 @@ interface MediaPanelProps {
   headerTitle?: string
   /** Pinned under the scroll — delete + "צור מדיה" / approval. */
   footer?: React.ReactNode
+  /** Pinned under the header — the סקריפט / מדיה / תזמון tabs (Hani, 2026-11-07). */
+  tabs?: React.ReactNode
 }
 
 /**
@@ -242,6 +244,7 @@ export function MediaPanelFrame({
   onClose,
   headerStart,
   footer,
+  tabs,
   children,
 }: {
   open: boolean
@@ -249,6 +252,7 @@ export function MediaPanelFrame({
   onClose: () => void
   headerStart?: React.ReactNode
   footer?: React.ReactNode
+  tabs?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
@@ -272,6 +276,7 @@ export function MediaPanelFrame({
           </button>
         </div>
       )}
+      {tabs && <div className="shrink-0 px-6 pt-4">{tabs}</div>}
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">{children}</div>
       {footer && (
         <div className="shrink-0 border-t border-border-neutral-default px-6 py-4">{footer}</div>
@@ -381,6 +386,7 @@ export function MediaPanel({
   onBack,
   headerTitle,
   footer,
+  tabs,
 }: MediaPanelProps) {
   useRefPlaceFlag()
   const isOpen = formatId !== null
@@ -403,6 +409,7 @@ export function MediaPanel({
       title={meta ? (drivePickerOpen ? `${meta.label} · מהדרייב` : (headerTitle ?? meta.label)) : null}
       onClose={onClose}
       footer={drivePickerOpen ? undefined : footer}
+      tabs={drivePickerOpen ? undefined : tabs}
       headerStart={
         <>
             {drivePickerOpen && (

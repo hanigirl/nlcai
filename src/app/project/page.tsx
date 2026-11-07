@@ -37,8 +37,12 @@ import { MediaPanel } from "@/components/media-panel"
 import {
   FormatCardsRow,
   FormatPanelFooter,
+  FormatPanelMedia,
+  FormatPanelSchedule,
   FormatPanelScript,
   FormatPanelScriptFolded,
+  FormatPanelTabs,
+  type FormatPanelTab,
   parseCardsVariant,
   type FormatCardItem,
   type FormatCardMedia,
@@ -2096,13 +2100,21 @@ function ProjectPageInner() {
   // the media); the script and the way to media move into the left panel.
   // UI only: every action below is a handler this page already had. With no
   // param nothing here renders and the canvas is the production one.
-  const cardsVariant = parseCardsVariant(searchParams.get("cards"))
-  const [panelStep, setPanelStep] = useState<"script" | "media">("script")
+  // C is the shipped design (Hani, 2026-11-07); ?cards=a|b still opens the review options.
+  const cardsVariant = parseCardsVariant(searchParams.get("cards")) ?? "c"
+  const [panelStep, setPanelStepRaw] = useState<FormatPanelTab>("script")
+  // מדיה tab with media: the preview, until she clicks it to replace the media.
+  const [mediaReplacing, setMediaReplacing] = useState(false)
+  const setPanelStep = (tab: FormatPanelTab) => {
+    setPanelStepRaw(tab)
+    setMediaReplacing(false)
+  }
   const [panelStepFor, setPanelStepFor] = useState<string | null>(null)
   if (panelStepFor !== selectedFormatCard) {
     // A card opens on its script, every time.
     setPanelStepFor(selectedFormatCard)
-    setPanelStep("script")
+    setPanelStepRaw("script")
+    setMediaReplacing(false)
   }
   // "מחיקת הסקריפט": offered only while the format has no media, and removes
   // the whole format from the post (PATCH deleteFormat, server refuses if media).
@@ -2164,7 +2176,7 @@ function ProjectPageInner() {
     const item = cardItems.find((i) => i.fid === fid)
     if (!item) return {}
     const copyAi = previewOn ? copyEdit.copyAi : undefined
-    if (panelStep === "media") {
+    if (panelStep === "media" && cardsVariant !== "c") {
       return cardsVariant !== "b"
         ? { onBack: () => setPanelStep("script"), headerTitle: "יצירת מדיה" }
         : {
@@ -2203,6 +2215,86 @@ function ProjectPageInner() {
       </div>
     )
     const hasMedia = item.state === "media"
+    const approvalProps =
+      approveVariant && item.approval
+        ? {
+            status: item.approval,
+            onApprove: () => approvals.approve(fid as ApprovalFid),
+            onRevoke: () => approvals.revoke(fid as ApprovalFid),
+            calendarHref: savedPostId ? `/calendar?post_id=${savedPostId}` : "/calendar",
+          }
+        : undefined
+    const onAiEditMedia =
+      fid !== "talking_head"
+        ? () => {
+            setAiChatFormat(fid as AiEditFormat)
+            setAiChatOpening(null)
+          }
+        : undefined
+    const onDeleteMedia = () =>
+      fid === "talking_head" ? setPendingVideoDelete(true) : setPendingMediaDelete(fid as AiEditFormat)
+
+    // C (shipped): סקריפט / מדיה / תזמון tabs, each holding only its part.
+    if (cardsVariant === "c") {
+      const tabs = (
+        <FormatPanelTabs value={panelStep} onChange={setPanelStep} showSchedule={!!approveVariant} />
+      )
+      if (panelStep === "media") {
+        // No media (or media being made, or replacing it): the real flows.
+        if (!hasMedia || mediaReplacing) return { tabs }
+        return {
+          tabs,
+          hideFlows: true,
+          scriptView: (
+            <FormatPanelMedia
+              fid={fid}
+              media={item.media}
+              onOpenMedia={() => setMediaReplacing(true)}
+              onAiEditMedia={onAiEditMedia}
+              onDeleteMedia={onDeleteMedia}
+            />
+          ),
+        }
+      }
+      if (panelStep === "schedule") {
+        return {
+          tabs,
+          hideFlows: true,
+          scriptView: (
+            <FormatPanelSchedule
+              fid={fid}
+              hasMedia={hasMedia}
+              approval={approvalProps}
+              onGoToMedia={() => setPanelStep("media")}
+            />
+          ),
+        }
+      }
+      return {
+        tabs,
+        hideFlows: true,
+        scriptView:
+          item.state === "generating" ? (
+            <div className="flex flex-col items-center gap-2 py-16" role="status">
+              <Loader2 className="size-5 animate-spin text-text-neutral-default" aria-hidden />
+              <span className="text-small text-text-neutral-default">מייצר סקריפט</span>
+            </div>
+          ) : (
+            <FormatPanelScript fid={fid} editor={editor} onOpenMedia={() => setPanelStep("media")} onDeleteMedia={onDeleteMedia} />
+          ),
+        footer:
+          // Only a plain script: no delete while media is being made or exists.
+          item.state !== "script" ? undefined : (
+            <FormatPanelFooter
+              fid={fid}
+              hasMedia={false}
+              onCreateMedia={() => setPanelStep("media")}
+              onDelete={() => setPendingCardDelete(fid)}
+            />
+          ),
+      }
+    }
+
     return {
       hideFlows: true,
       scriptView:

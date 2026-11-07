@@ -36,7 +36,11 @@ import { Button } from "@/components/ui/button"
 import {
   FormatCardsRow,
   FormatPanelFooter,
+  FormatPanelMedia,
+  FormatPanelSchedule,
   FormatPanelScript,
+  FormatPanelTabs,
+  type FormatPanelTab,
   FormatPanelScriptFolded,
   type FormatCardItem,
   type FormatCardMedia,
@@ -119,7 +123,14 @@ function Preview() {
   const [approval, setApproval] = useState<ApprovalStatus>(state === "panel-approved" ? "approved" : "pending")
   const [hidden, setHidden] = useState<string[]>([])
   const [selected, setSelected] = useState<string | null>(state.startsWith("panel-") ? "carousel" : null)
-  const [step, setStep] = useState<"script" | "media">(state === "panel-create" ? "media" : "script")
+  const [step, setStep] = useState<FormatPanelTab>(
+    state === "panel-create" || state === "panel-media" ? "media" : state === "panel-approved" ? "schedule" : "script",
+  )
+  const [replacing, setReplacing] = useState(false)
+  const goTo = (tab: FormatPanelTab) => {
+    setStep(tab)
+    setReplacing(false)
+  }
   const [style, setStyle] = useState<MediaStyle>("blank")
 
   const items: FormatCardItem[] = FORMATS.filter((f) => !hidden.includes(f.fid)).map((f) => {
@@ -167,43 +178,103 @@ function Preview() {
   let footer: React.ReactNode = undefined
   let title: string | null = item?.label ?? null
   let headerStart: React.ReactNode = null
+  let tabs: React.ReactNode = undefined
   if (item) {
-    if (step === "media") {
-      // Sample of the existing options. On /project the real flow mounts
-      // here (CarouselFlow / MediaUploadFlow) — same tiles, "או", Drive.
-      const options = (
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white px-6 py-4 dark:bg-gray-10">
-            <MediaStylePicker
-              value={style}
-              onChange={setStyle}
-              brandTemplate={brandTile}
-              aspect={item.fid === "story" || item.fid === "b_roll" ? "9/16" : "4/5"}
-              // Same as the real panel: "עריכה עם AI" on the picked tile, before any media exists.
-              onAiEdit={() => {}}
-            />
-            <Button
-              className="w-full"
-              onClick={() => {
-                setCardStates((p) => ({ ...p, [item.fid]: "media" }))
-                setStep("script")
-              }}
-            >
-              יצירה עם AI
-            </Button>
-          </div>
-          <div className="flex items-center gap-3" role="separator">
-            <span className="h-px flex-1 bg-border-neutral-default" />
-            <span className="text-xs text-text-neutral-default">או</span>
-            <span className="h-px flex-1 bg-border-neutral-default" />
-          </div>
-          <Button variant="outline" className="w-full gap-2">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/images/google-drive.svg" alt="" className="size-4 shrink-0" />
-            המדיה שלכם מ Google Drive
+    // Sample of the existing options. On /project the real flow mounts
+    // here (CarouselFlow / MediaUploadFlow) — same tiles, "או", Drive.
+    const options = (
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white px-6 py-4 dark:bg-gray-10">
+          <MediaStylePicker
+            value={style}
+            onChange={setStyle}
+            brandTemplate={brandTile}
+            aspect={item.fid === "story" || item.fid === "b_roll" ? "9/16" : "4/5"}
+            // Same as the real panel: "עריכה עם AI" on the picked tile, before any media exists.
+            onAiEdit={() => {}}
+          />
+          <Button
+            className="w-full"
+            onClick={() => {
+              setCardStates((p) => ({ ...p, [item.fid]: "media" }))
+              setStep("script")
+            }}
+          >
+            יצירה עם AI
           </Button>
         </div>
-      )
+        <div className="flex items-center gap-3" role="separator">
+          <span className="h-px flex-1 bg-border-neutral-default" />
+          <span className="text-xs text-text-neutral-default">או</span>
+          <span className="h-px flex-1 bg-border-neutral-default" />
+        </div>
+        <Button variant="outline" className="w-full gap-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/images/google-drive.svg" alt="" className="size-4 shrink-0" />
+          המדיה שלכם מ Google Drive
+        </Button>
+      </div>
+    )
+    if (variant === "c") {
+      // C (shipped): סקריפט / מדיה / תזמון tabs, each holding only its part.
+      const hasMedia = item.state === "media"
+      tabs = <FormatPanelTabs value={step} onChange={goTo} />
+      if (step === "media") {
+        panelBody =
+          hasMedia && !replacing ? (
+            <FormatPanelMedia
+              fid={item.fid}
+              media={item.media}
+              onOpenMedia={() => setReplacing(true)}
+              onAiEditMedia={() => {}}
+              onDeleteMedia={() => setCardStates((p) => ({ ...p, [item.fid]: "script" }))}
+            />
+          ) : (
+            options
+          )
+      } else if (step === "schedule") {
+        panelBody = (
+          <FormatPanelSchedule
+            fid={item.fid}
+            hasMedia={hasMedia}
+            approval={
+              hasMedia && item.approval
+                ? {
+                    status: item.approval,
+                    onApprove: () => setApproval("approved"),
+                    onRevoke: () => setApproval("pending"),
+                    calendarHref: "/test/format-cards",
+                  }
+                : undefined
+            }
+            onGoToMedia={() => goTo("media")}
+          />
+        )
+      } else if (item.state === "generating") {
+        panelBody = (
+          <div className="flex flex-col items-center gap-2 py-16" role="status">
+            <span className="text-small text-text-neutral-default">מייצר סקריפט</span>
+          </div>
+        )
+      } else {
+        panelBody = (
+          <FormatPanelScript fid={item.fid} editor={editor} onOpenMedia={() => goTo("media")} onDeleteMedia={() => {}} />
+        )
+        if (item.state === "script") {
+          footer = (
+            <FormatPanelFooter
+              fid={item.fid}
+              hasMedia={false}
+              onCreateMedia={() => goTo("media")}
+              onDelete={() => {
+                setHidden((p) => [...p, item.fid])
+                setSelected(null)
+              }}
+            />
+          )
+        }
+      }
+    } else if (step === "media") {
       if (variant !== "b") {
         title = "יצירת מדיה"
         headerStart = (
@@ -305,6 +376,7 @@ function Preview() {
         onClose={() => setSelected(null)}
         headerStart={headerStart}
         footer={footer}
+        tabs={tabs}
       >
         {panelBody}
       </MediaPanelFrame>
@@ -324,7 +396,7 @@ function Preview() {
             selected={selected}
             onSelect={(fid) => {
               setSelected((cur) => (cur === fid ? null : fid))
-              setStep("script")
+              goTo("script")
             }}
           />
         </div>
