@@ -16,6 +16,7 @@ export async function POST(req: NextRequest) {
     url?: string
     moments?: unknown
     captions?: unknown
+    cuts?: unknown
     request?: string
   }
   return handleTalkingHeadEdit({
@@ -23,6 +24,8 @@ export async function POST(req: NextRequest) {
     url: body.url,
     captions: body.captions !== false,
     moments: parseMoments(body.moments),
+    // Fillers and dead air out first — the plan says so; only when needed.
+    cuts: body.cuts === true,
     request: typeof body.request === "string" ? body.request.slice(0, 1000) : undefined,
   })
 }

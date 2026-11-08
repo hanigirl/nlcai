@@ -15,7 +15,12 @@ const file = (userId: string, postId: string) => `${userId}/talking-head/${postI
 
 export type AppliedMoment = { at: string; quote: string; element: "card" | "highlight" | "animation" }
 /** What the edits so far put on her original. */
-export type Applied = { captions: boolean; moments: AppliedMoment[] }
+export type Applied = {
+  captions: boolean
+  moments: AppliedMoment[]
+  /** Fillers and dead air cut (lib/talking-head-cuts) — kept on the next request. */
+  cuts?: boolean
+}
 type Record_ = { originalUrl: string; applied?: Applied }
 
 /** One of our edits of her video (captions / elements). */

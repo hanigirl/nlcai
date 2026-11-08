@@ -200,7 +200,7 @@ export async function composeTalkingHead(
 }
 
 /** Length and frame size from ffmpeg's probe. */
-export function probeVideo(src: string): Promise<{ seconds: number | null; width: number; height: number }> {
+export function probeVideo(src: string): Promise<{ seconds: number | null; width: number; height: number; hasAudio?: boolean }> {
   return new Promise((resolve) => {
     if (!ffmpegPath) return resolve({ seconds: null, width: 1080, height: 1920 })
     const proc = spawn(ffmpegPath as unknown as string, ["-i", src])
@@ -214,6 +214,7 @@ export function probeVideo(src: string): Promise<{ seconds: number | null; width
         seconds: d ? Number(d[1]) * 3600 + Number(d[2]) * 60 + Number(d[3]) : null,
         width: v ? Number(v[1]) : 1080,
         height: v ? Number(v[2]) : 1920,
+        hasAudio: /Stream[^\n]*Audio:/.test(err),
       })
     })
   })

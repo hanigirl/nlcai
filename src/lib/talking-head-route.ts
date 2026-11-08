@@ -12,6 +12,8 @@ export async function handleTalkingHeadEdit(body: {
   captions: boolean
   moments: PlanMoment[]
   request?: string
+  /** Cut fillers and dead air first, when the video needs it (lib/talking-head-cuts). */
+  cuts?: boolean
 }) {
   const os = await import("os")
   const fs = await import("fs/promises")
@@ -27,7 +29,7 @@ export async function handleTalkingHeadEdit(body: {
     const { data: post } = await supabase.from("core_posts").select("id").eq("id", body.postId).eq("user_id", user.id).maybeSingle()
     if (!post) return NextResponse.json({ error: "Post not found" }, { status: 404 })
 
-    const { buffer, lines, source, applied } = await runTalkingHeadEdit({
+    const { buffer, lines, source, applied, cuts } = await runTalkingHeadEdit({
       supabase,
       userId: user.id,
       postId: body.postId,
@@ -35,16 +37,21 @@ export async function handleTalkingHeadEdit(body: {
       captions: body.captions,
       moments: body.moments,
       request: body.request,
+      cuts: body.cuts,
       work,
     })
-    const kind = applied.moments.length ? "edited" : "captioned"
+    // What the cut pass did, for the chat (undefined: no cut pass).
+    const cutInfo = cuts === undefined ? {} : { cuts: cuts ?? { none: true } }
+    // Only cuts asked, and they were already good: her video stays as it is.
+    if (!buffer) return NextResponse.json({ url: null, lines: [], ...cutInfo })
+    const kind = applied.captions && !applied.moments.length && !applied.cuts ? "captioned" : "edited"
     const storagePath = `${user.id}/video/${kind}-th-${stamp}.mp4`
     const { error: upErr } = await supabase.storage.from("user-media").upload(storagePath, buffer, { contentType: "video/mp4" })
     if (upErr) throw new Error(upErr.message)
     const url = supabase.storage.from("user-media").getPublicUrl(storagePath).data.publicUrl
     // What's on her video now — the next request continues from it.
     await saveApplied(supabase, user.id, body.postId, source, applied)
-    return NextResponse.json({ url, lines: lines.map(({ text, start, end }) => ({ text, start, end })) })
+    return NextResponse.json({ url, lines: lines.map(({ text, start, end }) => ({ text, start, end })), ...cutInfo })
   } catch (error) {
     if (error instanceof EditError) return NextResponse.json({ error: error.code, message: error.message }, { status: error.status })
     const msg = error instanceof Error ? error.message : String(error)
