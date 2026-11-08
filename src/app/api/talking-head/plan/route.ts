@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
             `Her request: ${request?.trim() || "captions, plus supporting elements on the key moments"}`,
             template ? `Her standing instructions for every talking-head video: ${template}` : "",
             "",
-            "Pick the 3 moments (2–4 if the speech clearly calls for it) most worth highlighting — a key claim, a number, a list, a question to the viewer, the call to action. For each: the line index it starts on, a short quote of HER exact words (Hebrew, 2–8 words), and the element: \"card\" (a card with the point or list), \"highlight\" (the words emphasised in her brand colour), or \"animation\" (a short animated graphic).",
+            "If her request is ONLY about cutting (fillers, pauses, pace) or only about captions, return \"moments\": [] — no elements she didn't ask for. Otherwise pick the 3 moments (2–4 if the speech clearly calls for it) most worth highlighting — a key claim, a number, a list, a question to the viewer, the call to action. For each: the line index it starts on, a short quote of HER exact words (Hebrew, 2–8 words), and the element: \"card\" (a card with the point or list), \"highlight\" (the words emphasised in her brand colour), or \"animation\" (a short animated graphic).",
             'Also "captions": true when she wants her speech as running captions (she asks for captions, or for "everything"), false when she only asks for elements.',
             'Answer with JSON only: {"captions": true|false, "moments":[{"line":0,"quote":"...","element":"card"|"highlight"|"animation"}]}',
           ]
@@ -98,10 +98,13 @@ export async function POST(req: NextRequest) {
       })
       .filter((m) => m.quote)
       .slice(0, 4)
-    if (!moments.length) throw new Error("plan_empty")
     // "כתוביות + אלמנטים תומכים" always has captions; her own prompt, as she said.
     const captions = /כתוביות/.test(request ?? "") || parsed?.captions === true
-    return NextResponse.json({ moments, captions })
+    // The AI edit also cuts fillers and dead air — only when the video needs
+    // it (Hani, 2026-11-08) — unless she says not to cut.
+    const cuts = !/(בלי|אל ת|לא ל)\S*\s*(לחתוך|לקצר|קאט|לגעת בקצב)|לא לחתוך|בלי קאטים/.test(request ?? "")
+    if (!moments.length && !captions && !cuts) throw new Error("plan_empty")
+    return NextResponse.json({ moments, captions, cuts })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("[talking-head/plan]", msg)

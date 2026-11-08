@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { getUserApiKey } from "@/lib/api-keys"
-import { captionLines, transcribeVideo, type CaptionLine } from "@/lib/transcribe"
+import { audioLevels, captionLines, extractAudio, transcribeVideo, type CaptionLine, type Word } from "@/lib/transcribe"
+import { cutVideo, planCuts, remapTime, remapWords, type CutStats } from "@/lib/talking-head-cuts"
 import { renderOwnVideoCaption, OVERLAY_SECONDS } from "@/lib/own-video-captions"
 import { talkingHeadVideoUrl, transcriptionContext } from "@/lib/talking-head-video"
 import { editBase, saveApplied, type Applied } from "@/lib/talking-head-original"
@@ -92,9 +93,22 @@ export async function runTalkingHeadEdit(opts: {
   moments: PlanMoment[]
   request?: string
   work: string
+  /**
+   * Cut the "אממ"s, false starts and dead air first — only when the video
+   * needs it (lib/talking-head-cuts). Not for "רק כתוביות" unless she asks.
+   */
+  cuts?: boolean
   /** Frames of an element, for local tests (no Opus): replaces the engine. */
   designMoment?: (m: PlanMoment, dir: string) => Promise<number>
-}): Promise<{ buffer: Buffer; lines: CaptionLine[]; source: string; applied: Applied }> {
+}): Promise<{
+  /** null: nothing to change (asked only for cuts, and the cuts were already good). */
+  buffer: Buffer | null
+  lines: CaptionLine[]
+  source: string
+  applied: Applied
+  /** undefined: no cut pass; null: tried, already tight — untouched; else what was cut. */
+  cuts?: CutStats | null
+}> {
   const fs = await import("fs/promises")
   const path = await import("path")
   const { supabase, userId, postId, work } = opts
@@ -104,6 +118,7 @@ export async function runTalkingHeadEdit(opts: {
   // continues from where it stopped ("אמשיך מאיפה שזה נפסק", 2026-11-08).
   const { source, applied } = await editBase(supabase, userId, postId, current)
   const wantCaptions = opts.captions || applied.captions
+  const wantCuts = !!opts.cuts || !!applied.cuts
   const keyOf = (m: PlanMoment) => `${m.at}|${m.quote}`
   const newKeys = new Set(opts.moments.map(keyOf))
   const allMoments: PlanMoment[] = [...applied.moments.filter((m) => !newKeys.has(keyOf(m))), ...opts.moments]
@@ -112,7 +127,7 @@ export async function runTalkingHeadEdit(opts: {
   // Download first (a Drive link is a page, not a file ffmpeg can open),
   // then probe the local copy.
   await fs.mkdir(work, { recursive: true })
-  const input = path.join(work, "in.mp4")
+  const original = path.join(work, "in.mp4")
   const { isDriveUrl, extractDriveFileId } = await import("@/lib/drive-media")
   const { fetchDriveFile } = await import("@/lib/drive-fetch")
   const driveId = isDriveUrl(source) ? extractDriveFileId(source) : null
@@ -121,11 +136,47 @@ export async function runTalkingHeadEdit(opts: {
   if (!res?.ok || type.includes("text/html")) {
     throw new EditError("video_fetch_failed", "לא הצלחתי לטעון את הסרטון. אם הוא בדרייב, בדקו שהוא משותף ל״כל מי שיש לו הקישור״.")
   }
-  await fs.writeFile(input, Buffer.from(await res.arrayBuffer()))
+  await fs.writeFile(original, Buffer.from(await res.arrayBuffer()))
 
-  const { seconds, width: W, height: H } = await probeVideo(input)
-  if (seconds === null) throw new EditError("not_video", "לא הצלחתי לקרוא את הסרטון. נסו שוב.")
-  if (seconds > MAX_TALKING_HEAD_SECONDS + 0.5) throw new EditError("too_long", tooLongMessage(seconds))
+  const probed = await probeVideo(original)
+  const { width: W, height: H } = probed
+  if (probed.seconds === null) throw new EditError("not_video", "לא הצלחתי לקרוא את הסרטון. נסו שוב.")
+  if (probed.seconds > MAX_TALKING_HEAD_SECONDS + 0.5) throw new EditError("too_long", tooLongMessage(probed.seconds))
+
+  // Her words, once — for the captions and for the cuts.
+  let words: Word[] | null = null
+  if (wantCaptions || wantCuts) {
+    let openaiKey: string
+    try {
+      openaiKey = await getUserApiKey(supabase, "openai_api_key")
+    } catch {
+      throw new EditError("openai_not_connected", "כדי לתמלל את הסרטון צריך לחבר מפתח OpenAI בהגדרות ← חיבורים.", 400)
+    }
+    words = (await transcribeVideo(openaiKey, source, await transcriptionContext(supabase, userId, postId))).words
+  }
+
+  // The cut pass (Hani, 2026-11-08): fillers, repeats and dead air out —
+  // only when the video needs it. Everything after works on the cut.
+  let input = original
+  let seconds = probed.seconds
+  let cuts: CutStats | null | undefined
+  let mapTime = (t: number) => t
+  if (wantCuts && words?.length) {
+    const audio = path.join(work, "audio.mp3")
+    const levels = await extractAudio(original, audio)
+      .then(() => audioLevels(audio))
+      .catch(() => null)
+    const plan = planCuts(words, levels, seconds)
+    cuts = plan?.stats ?? null
+    if (plan) {
+      const cutPath = path.join(work, "cut.mp4")
+      await cutVideo(original, plan.segments, cutPath, probed.hasAudio !== false)
+      input = cutPath
+      seconds = plan.stats.after
+      words = remapWords(words, plan.segments)
+      mapTime = (t) => remapTime(t, plan.segments)
+    }
+  }
 
   // Her face, so nothing covers it (lib/face-boxes). A detector that can't
   // run leaves only the instruction to the engine — never a failed edit.
@@ -156,15 +207,8 @@ export async function runTalkingHeadEdit(opts: {
 
   let lines: CaptionLine[] = []
   let captionsList: string | undefined
-  if (wantCaptions) {
-    let openaiKey: string
-    try {
-      openaiKey = await getUserApiKey(supabase, "openai_api_key")
-    } catch {
-      throw new EditError("openai_not_connected", "כדי לתמלל את הסרטון לכתוביות צריך לחבר מפתח OpenAI בהגדרות ← חיבורים.", 400)
-    }
-    const transcript = await transcribeVideo(openaiKey, source, await transcriptionContext(supabase, userId, postId))
-    lines = captionLines(transcript.words)
+  if (wantCaptions && words) {
+    lines = captionLines(words)
     if (lines.length) {
       const [fonts, plate] = await Promise.all([captionFonts(supabase, userId), captionPlateColor(supabase, userId)])
       const pngs = await renderCaptionLines(lines, fonts, plate, captionsAt)
@@ -207,7 +251,7 @@ export async function runTalkingHeadEdit(opts: {
         await fs.mkdir(dir, { recursive: true })
         try {
           const frames = await design!(item.m, dir)
-          const start = Math.min(Math.max(0, parseAt(item.m.at)), Math.max(0, seconds - 1))
+          const start = Math.min(Math.max(0, mapTime(parseAt(item.m.at))), Math.max(0, seconds - 1))
           const duration = Math.min(MOMENT_SECONDS, Math.max(1, seconds - start))
           // Enforced, not only asked: where her head is during THIS moment,
           // and the element moved / shrunk off it (and off the captions).
@@ -227,10 +271,17 @@ export async function runTalkingHeadEdit(opts: {
     layers.push(...results.filter((r): r is MomentLayer => !!r))
     if (!layers.length && !captionsList) throw new EditError("elements_failed", "לא הצלחתי לעצב את האלמנטים הפעם. נסו שוב.", 500)
   }
-  if (!captionsList && !layers.length) throw new EditError("no_speech", "לא שמעתי דיבור בסרטון, אז אין מה להוסיף.")
+  const nowApplied: Applied = { captions: wantCaptions && !!captionsList, moments: allMoments, cuts: wantCuts }
+  if (!captionsList && !layers.length) {
+    // Only cuts were asked: the cut is the result — or, when the cuts were
+    // already good, nothing changes.
+    if (wantCuts && cuts !== undefined) {
+      return { buffer: cuts ? await fs.readFile(input) : null, lines, source, applied: nowApplied, cuts }
+    }
+    throw new EditError("no_speech", "לא שמעתי דיבור בסרטון, אז אין מה להוסיף.")
+  }
 
   const output = path.join(work, "out.mp4")
   await composeTalkingHead(input, { captionsList, moments: layers }, output)
-  const nowApplied: Applied = { captions: wantCaptions && !!captionsList, moments: allMoments }
-  return { buffer: await fs.readFile(output), lines, source, applied: nowApplied }
+  return { buffer: await fs.readFile(output), lines, source, applied: nowApplied, cuts }
 }

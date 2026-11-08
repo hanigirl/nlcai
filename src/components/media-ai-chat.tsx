@@ -47,6 +47,7 @@ import type { ReferenceImages } from "@/components/ai-edit-reference"
 import type { MediaStyle, VisualFormat } from "@/lib/visual-language/types"
 import type { OwnEditFormat } from "@/lib/own-media"
 import { isTalkingHeadRender } from "@/lib/talking-head-original"
+import { cutMessage, type CutStats } from "@/lib/talking-head-cut-message"
 import { TH_EDIT_MODES, TalkingHeadPlanEditor, TalkingHeadTemplateChip, appendToTalkingHeadTemplate, type ThPlanMoment } from "@/components/talking-head-ai"
 import { useCopyStructure } from "@/lib/use-scheduling-access"
 import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
@@ -85,6 +86,8 @@ export interface ChatMessage {
   thPlanApproved?: boolean
   /** The plan's edit adds her running captions too. */
   thPlanCaptions?: boolean
+  /** The plan's edit cuts fillers and dead air first, when needed. */
+  thPlanCuts?: boolean
   /** What she asked, for the edit after "אישור". */
   thRequest?: string
   /** Talking head: what she asked — offered as her template for every talking head. */
@@ -1329,11 +1332,20 @@ export function MediaAiChat({
         patchKey((s) => ({ ...s, busy: true, extra: { ...s.extra, progress: "מתמללים את הדיבור ומתכננים מה להדגיש..." } }))
         const { ok, data } = await call("/api/talking-head/plan", { postId, url: currentUrls[0], request: text })
         if (!ok || !Array.isArray(data.moments)) return failed(data, "התכנון לא הצליח. נסו שוב.")
+        const cuts = data.cuts === true
+        // Nothing to approve (she asked only for cuts / captions): straight to the edit.
+        if (!data.moments.length) {
+          patchKey((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" } }))
+          return runThEdit({ moments: [], captions: data.captions === true, cuts, request: text })
+        }
         return reply({
           role: "assistant",
-          content: "לפני שאני עורכת, זה מה שאדגיש בסרטון:",
+          content: cuts
+            ? "לפני שאני עורכת, זה מה שאדגיש בסרטון. אוריד גם ״אממ״ ושקטים, רק אם יש כאלה:"
+            : "לפני שאני עורכת, זה מה שאדגיש בסרטון:",
           thPlan: data.moments as ThPlanMoment[],
           thPlanCaptions: data.captions !== false,
+          thPlanCuts: cuts,
           thRequest: text,
         })
       }
@@ -1371,38 +1383,58 @@ export function MediaAiChat({
       }))
     }
   }
+  /**
+   * The edit itself — after "אישור" on the plan, or straight away when there's
+   * nothing to approve (she asked only for cuts / captions). Says what it did,
+   * cuts included ("הורדנו 7 ״אממ״…" / "הקאטים כבר טובים, לא נגענו").
+   */
+  const runThEdit = async (opts: { moments: ThPlanMoment[]; captions: boolean; cuts: boolean; request: string }) => {
+    const done = (msg: ChatMessage) =>
+      patch((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" }, messages: [...s.messages, msg] }))
+    patch((s) => ({
+      ...s,
+      busy: true,
+      extra: {
+        ...s.extra,
+        progress: opts.moments.length ? "עורכים את הסרטון לפי התוכנית... זה יכול לקחת כמה דקות" : "עורכים את הסרטון... זה יכול לקחת כמה דקות",
+      },
+    }))
+    try {
+      const res = await fetch("/api/talking-head/edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId, url: currentUrls[0], moments: opts.moments, captions: opts.captions, cuts: opts.cuts, request: opts.request }),
+      })
+      const data = (await res.json().catch(() => ({}))) as { url?: string | null; message?: string; cuts?: CutStats | { none: true } }
+      const cutLine = data.cuts ? cutMessage("none" in data.cuts ? null : data.cuts) : ""
+      if (res.ok && data.url === null) {
+        // Only cuts were asked, and they were already good.
+        return done({ role: "assistant", content: cutLine || "לא היה מה לשנות.", noStyle: true })
+      }
+      if (!res.ok || !data.url) {
+        return done({ role: "assistant", content: aiErrorMessage(data.message || "העריכה לא הצליחה. נסו שוב."), error: true })
+      }
+      onUpdated?.(format, [data.url])
+      const what = opts.moments.length ? "ערכתי את הסרטון לפי התוכנית." : opts.captions ? "הוספתי כתוביות לכל מה שאמרתם." : ""
+      done({
+        role: "assistant",
+        content: [what, cutLine, "מה שצילמתם לא השתנה, והמקורי שמור."].filter(Boolean).join(" "),
+        done: true,
+        noStyle: true,
+        thTemplate: opts.request,
+      })
+    } catch {
+      done({ role: "assistant", content: "העריכה לא הצליחה. נסו שוב.", error: true })
+    }
+  }
   const approveThPlan = async (index: number, moments: ThPlanMoment[]) => {
     const planMsg = messages[index]
     const request = planMsg?.thRequest ?? TH_EDIT_MODES.find((m) => m.id === "captions_plus")?.request ?? ""
     patch((s) => ({
       ...s,
-      busy: true,
-      extra: { ...s.extra, progress: "עורכים את הסרטון לפי התוכנית... זה יכול לקחת כמה דקות" },
       messages: s.messages.map((m, k) => (k === index ? { ...m, thPlan: moments, thPlanApproved: true } : m)),
     }))
-    const done = (msg: ChatMessage) =>
-      patch((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" }, messages: [...s.messages, msg] }))
-    try {
-      const res = await fetch("/api/talking-head/edit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, url: currentUrls[0], moments, captions: planMsg?.thPlanCaptions !== false, request }),
-      })
-      const data = (await res.json().catch(() => ({}))) as { url?: string; message?: string }
-      if (!res.ok || !data.url) {
-        return done({ role: "assistant", content: aiErrorMessage(data.message || "העריכה לא הצליחה. נסו שוב."), error: true })
-      }
-      onUpdated?.(format, [data.url])
-      done({
-        role: "assistant",
-        content: "ערכתי את הסרטון לפי התוכנית. מה שצילמתם לא השתנה, והמקורי שמור.",
-        done: true,
-        noStyle: true,
-        thTemplate: request,
-      })
-    } catch {
-      done({ role: "assistant", content: "העריכה לא הצליחה. נסו שוב.", error: true })
-    }
+    await runThEdit({ moments, captions: planMsg?.thPlanCaptions !== false, cuts: !!planMsg?.thPlanCuts, request })
   }
 
   const send = async (preset?: string) => {
