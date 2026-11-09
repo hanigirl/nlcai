@@ -109,7 +109,7 @@ import {
   approvalHeaderFill,
 } from "@/components/format-approval/approval-visuals"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
-import { useDescriptionAccess, useFormatCards, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi } from "@/lib/use-scheduling-access"
+import { useDescriptionAccess, useFormatCards, useOwnMediaText, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi } from "@/lib/use-scheduling-access"
 // "עריכה עם AI" on every format's copy (Hani, 2026-10-29).
 import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
 import { useChatRevealer } from "@/lib/ai-chat-reveal"
@@ -789,6 +789,11 @@ function ProjectPageInner() {
     // Hani + Nataliya: a cover is made only when she asks (Hani, 2026-11-08 —
     // one was made on its own at 22:53). The server refuses it too.
     if (thAiOnRef.current && !requested) return
+    // Own media text: the cover's words are her hook — no hook, no invented title.
+    if (ownTextRef.current && !hookText.trim()) {
+      toast.error("לקאבר צריך טקסט: כתבו את ההוק או את טקסט הקאבר, ואז צרו קאבר.")
+      return
+    }
     setThCoverLoading(true)
     let thumbnailUrl: string | undefined
     // The frame comes from her ORIGINAL video — an edited render has captions
@@ -839,9 +844,13 @@ function ProjectPageInner() {
           ...(thAiOnRef.current ? { use_cover_settings: true } : {}),
         }),
       })
-      const d = await res.json()
+      const d = await res.json().catch(() => ({}))
       if (d.covers?.[0]) setThCoverImage(d.covers[0])
-    } catch (err) { console.error("[project][th-cover-generate]", err) }
+      else if (ownTextRef.current) toast.error(typeof d.message === "string" && d.message ? d.message : "לא הצלחתי ליצור קאבר הפעם. נסו שוב.")
+    } catch (err) {
+      console.error("[project][th-cover-generate]", err)
+      if (ownTextRef.current) toast.error("יצירת הקאבר נכשלה. נסו שוב.")
+    }
     finally { setThCoverLoading(false) }
   }
 
@@ -2208,6 +2217,10 @@ function ProjectPageInner() {
   const thAiOn = thAiGate === true
   // Read by the post load and the cover request, which run outside render.
   const thAiOnRef = useRef(false)
+  // Own media text (gated, 2026-11-09): a cover that fails is said, never only logged.
+  const ownTextGate = useOwnMediaText() === true
+  const ownTextRef = useRef(false)
+  ownTextRef.current = ownTextGate
   const thGateRef = useRef<boolean | null>(null)
   // The automatic cover waits for the gate's answer (null = still loading):
   // Hani + Nataliya make it on request, everyone else gets it as before.
