@@ -18,6 +18,10 @@ import { imageHasBakedText } from "@/lib/baked-text"
 import { cleanCaptionSpec, type CaptionSpec } from "@/lib/own-media"
 import { writeCaptionRecord } from "@/lib/caption-record"
 import { guardedFetch } from "@/lib/server-fetch"
+import { canOwnMediaText } from "@/lib/feature-access"
+import { NO_SCRIPT_TEXT, scriptTextFor, type TextSource } from "@/lib/script-text"
+import { captionLookFor } from "@/lib/caption-look"
+import type { CaptionStyle } from "@/lib/own-media"
 
 // One satori render + one Resvg rasterize. No model call, no ffmpeg — this
 // is seconds, not minutes, but a 50MB source still has to be pulled first.
@@ -173,6 +177,12 @@ export async function POST(req: NextRequest) {
     if (postErr || !post) {
       return NextResponse.json({ error: "Post not found" }, { status: 404 })
     }
+    // The image post's fixed path (Hani, 2026-11-09 — lib/feature-access,
+    // Hani only): the words are the script's, verbatim, never the hook; the
+    // look is her brand colours on a solid box (lib/caption-look); a picture
+    // that already has words says so. The other formats on this route are
+    // untouched here.
+    const ownText = format === "image_post" && canOwnMediaText(user.email)
 
     const { data: variantRow } = await supabase
       .from("format_variants")
@@ -223,6 +233,7 @@ export async function POST(req: NextRequest) {
     /* ------------------------- what the caption says ------------------- */
     let overlayHook: string | undefined
     let overlayBody: string | undefined
+    let textSource: TextSource | undefined
 
     if (override) {
       overlayHook = override.headline
@@ -240,6 +251,16 @@ export async function POST(req: NextRequest) {
       if (!overlayHook && !overlayBody) {
         overlayHook = post.hook_text?.trim() || post.title?.trim() || undefined
       }
+    } else if (ownText) {
+      // THE text (lib/script-text): no hook / title fallback. No script text
+      // → a clear "no text" answer, never invented words.
+      const unit = scriptTextFor("image_post", variant.body)
+      if (!unit) {
+        return NextResponse.json({ error: "no_script_text", message: NO_SCRIPT_TEXT }, { status: 400 })
+      }
+      overlayHook = unit.headline
+      overlayBody = unit.body
+      textSource = "script"
     } else if (format === "image_post") {
       // The lines gpt-image-2 would have drawn — same post, same words,
       // whichever way the picture was made.
@@ -307,9 +328,29 @@ export async function POST(req: NextRequest) {
           // No key: caption as before rather than guess.
         }
         if (anthropicKey && (await imageHasBakedText(anthropicKey, sourceBase64))) {
-          return NextResponse.json({ skipped: "has_text", originalUrl: sourceUrl })
+          return NextResponse.json({
+            skipped: "has_text",
+            originalUrl: sourceUrl,
+            ...(ownText
+              ? {
+                  message:
+                    "בתמונה כבר יש טקסט, אז לא שמתי עליה עוד טקסט. רוצים עליה את הטקסט מהסקריפט בכל זאת? הדליקו את הכיתוב בכרטיס של הפוסט.",
+                }
+              : {}),
+          })
         }
       }
+    }
+
+    // Her look on a solid box — readable on dark and light pictures, with or
+    // without a visual language. A look the edit asked for wins.
+    const style: CaptionStyle | undefined = ownText
+      ? (override?.style ?? (await captionLookFor(supabase, user.id)))
+      : override?.style
+    if (ownText && override) {
+      const unit = scriptTextFor("image_post", variant.body)
+      const same = (a?: string, b?: string) => (a ?? "").trim() === (b ?? "").trim()
+      textSource = unit && same(unit.headline, overlayHook) && same(unit.body, overlayBody) ? "script" : "dictated"
     }
 
     const png = await renderCaptionOverImagePng(
@@ -318,7 +359,7 @@ export async function POST(req: NextRequest) {
       overlayBody,
       canvas,
       position,
-      override?.style,
+      style,
     )
 
     // A carousel slide goes back as bytes: the panel holds the whole set and
@@ -361,12 +402,18 @@ export async function POST(req: NextRequest) {
     }
 
     if (sourceUrl) {
-      await writeCaptionRecord(supabase, publicUrl, sourceUrl, {
-        headline: overlayHook,
-        body: overlayBody,
-        position,
-        style: override?.style,
-      })
+      await writeCaptionRecord(
+        supabase,
+        publicUrl,
+        sourceUrl,
+        {
+          headline: overlayHook,
+          body: overlayBody,
+          position,
+          style,
+        },
+        textSource,
+      )
     }
 
     // The ORIGINAL comes back too: both variants let the user fall back to
