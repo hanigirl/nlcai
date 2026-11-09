@@ -376,6 +376,29 @@ function useRefPlaceFlag() {
   }, [on])
 }
 
+/**
+ * The story flow stays mounted (only hidden) under the media the tab shows, so
+ * the page's frames can change under it — the card's trash, an edit from the
+ * chat. Whatever the page holds now is the story: `apply(now, deleted)` runs on
+ * every change after mount, `deleted` when frames there were are gone.
+ */
+export function useFollowPageStoryFrames(
+  enabled: boolean,
+  pageFrames: string[] | null | undefined,
+  apply: (now: string[], deleted: boolean) => void,
+) {
+  const prevRef = useRef(pageFrames)
+  const applyRef = useRef(apply)
+  applyRef.current = apply
+  useEffect(() => {
+    const prev = prevRef.current
+    prevRef.current = pageFrames
+    if (!enabled || prev === pageFrames) return
+    const now = pageFrames && pageFrames.length > 0 ? pageFrames : []
+    applyRef.current(now, !!prev && prev.length > 0 && now.length === 0)
+  }, [enabled, pageFrames])
+}
+
 function useReportBusy(
   report: ((format: string, busy: boolean) => void) | undefined,
   format: string,
@@ -3437,6 +3460,18 @@ function MediaUploadFlow({
       setPreviewKind(null)
     }
   }, [initialMediaUrl, format])
+  // Story: the same, for its frame set. The card's trash clears the page's
+  // frames while this flow stays mounted (only hidden); keeping the old set
+  // here hid both the first step and the media, so the tab went blank
+  // (Nataliya, 2026-11-09). Whatever the page holds now is the story — an
+  // edit from the chat included; its frames going away = deleted.
+  useFollowPageStoryFrames(format === "story", initialStoryFrames, (now, deleted) => {
+    setSavedStorySet(now)
+    if (deleted) {
+      setPreviewUrl(null)
+      setPreviewKind(null)
+    }
+  })
   // Once the replacement actually lands, put the field away again — otherwise
   // swapping a clip leaves the panel permanently back in "paste a link" mode.
   useEffect(() => {
