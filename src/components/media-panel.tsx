@@ -5,11 +5,12 @@ import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from "react"
 import { useCoverDefaultColor } from "@/lib/use-cover-brand-colors"
 import Image from "next/image"
-import { X, Smartphone, Video, Layers, Image as ImageIcon, Film, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, ChevronLeft, ChevronRight, Link2, Trash2, Type, Upload, type LucideIcon } from "lucide-react"
+import { X, Sparkles, Smartphone, Video, Layers, Image as ImageIcon, Film, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, ChevronLeft, ChevronRight, Link2, Trash2, Type, Upload, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { AvatarPicker, type Avatar } from "@/components/avatar-picker"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -306,6 +307,22 @@ export function MediaPanelFrame({
         <div className="shrink-0 border-t border-border-neutral-default px-6 py-4">{footer}</div>
       )}
     </div>
+  )
+}
+
+/**
+ * The second way in on the new media panel (Hani, 2026-11-10): her own media
+ * from Drive with the script's text on it, or a chat for full control. The
+ * chat isn't built yet (lib/edit-agent), so the button is there but off.
+ * Shown only where the Drive-text rules run (OWN_MEDIA_TEXT_EMAILS).
+ */
+function ChatSoonButton() {
+  return (
+    <Button variant="outline" disabled className="w-full gap-2">
+      <Sparkles className="size-4" />
+      צ׳אט לדיוק מירבי
+      <Badge variant="secondary">בקרוב</Badge>
+    </Button>
   )
 }
 
@@ -2792,6 +2809,9 @@ function CarouselFlow({
   //     not displayed in the panel.
   return (
     <div className="flex flex-col gap-5">
+      {/* No style or AI generation on the new panel — Drive + chat only. */}
+      {!ownTextGate && (
+      <>
       {/* 1. Template picker — every tile always shows a real sample slide
             (static PNG shipped with the app). Satori templates then swap
             in a live render of the USER'S actual cover; AI tiles keep the
@@ -2841,6 +2861,9 @@ function CarouselFlow({
             "יצירת קרוסלה עם AI"
           )}
         </Button>
+      )}
+
+      </>
       )}
 
       {error && (
@@ -3017,11 +3040,13 @@ function CarouselFlow({
       />
 
       {/* Divider between "generate here" and "bring a ready-made carousel" */}
+      {!ownTextGate && (
       <div className="flex items-center gap-3" role="separator">
         <span className="h-px flex-1 bg-border-neutral-default" />
         <span className="text-xs text-text-neutral-default">או</span>
         <span className="h-px flex-1 bg-border-neutral-default" />
       </div>
+      )}
 
       {/* 3. Import from Drive — one direct link per slide, in order. We pull
             each image (base64) and assemble the carousel. This matches how
@@ -3029,6 +3054,7 @@ function CarouselFlow({
             images), so a single Canva/folder link is intentionally NOT the
             mechanism here. */}
       {drivePick ? (
+        <>
         <DriveFolderEntry
           format="carousel"
           onImport={requestDriveImport}
@@ -3047,6 +3073,8 @@ function CarouselFlow({
               : undefined
           }
         />
+        {ownTextGate && <ChatSoonButton />}
+        </>
       ) : (
       <div className="flex flex-col gap-2">
         <DriveMediaLinks
@@ -4931,7 +4959,8 @@ function MediaUploadFlow({
           {/* The connection answer is folded into the existing hydration
               skeleton, so the card never flips from "generate" to "connect
               credits" in front of the user. */}
-          {hydrating || openAiConnected === null ? (
+          {/* No style or AI generation on the new panel — Drive + chat only. */}
+          {ownTextImagePost ? null : hydrating || openAiConnected === null ? (
             <Skeleton className="h-[190px] w-full rounded-[18px]" />
           ) : openAiConnected === false ? (
             <MediaCreditsCard />
@@ -4961,7 +4990,7 @@ function MediaUploadFlow({
                   second option and becomes the ONLY way forward, so it gets
                   the "או" divider the other panels have. In the normal state
                   image_post deliberately has no divider. */}
-              {openAiConnected === false && (
+              {openAiConnected === false && !ownTextImagePost && (
                 <div className="flex items-center gap-3" role="separator">
                   <span className="h-px flex-1 bg-border-neutral-default" />
                   <span className="text-xs text-text-neutral-default">או</span>
@@ -4974,6 +5003,7 @@ function MediaUploadFlow({
                   from there, an image is copied over. Canva/other stay as a
                   reference link. Upload-from-computer was removed per Hani. */}
               {drivePick ? (
+                <>
                 <DriveFolderEntry
                   format="image_post"
                   pulling={drivePulling}
@@ -4993,6 +5023,8 @@ function MediaUploadFlow({
                     attachDriveMedia(links[0], "image_post")
                   }}
                 />
+                {ownTextImagePost && <ChatSoonButton />}
+                </>
               ) : (
               <div className="flex flex-col gap-2">
                 <p className="text-small-bold text-text-primary-default">
@@ -5181,7 +5213,8 @@ function MediaUploadFlow({
                  explainer visible rather than collapsing to a bare button
                  once frames exist. With no OpenAI key connected, the same slot
                  holds the "connect credits" card instead. */}
-          {openAiConnected === false ? (
+          {/* No style or AI generation on the new panel — Drive + chat only. */}
+          {ownStoryText ? null : openAiConnected === false ? (
             <MediaCreditsCard />
           ) : (
             <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
@@ -5237,16 +5270,19 @@ function MediaUploadFlow({
           )}
 
           {/* 2. "או" */}
+          {!ownStoryText && (
           <div className="flex items-center gap-3" role="separator">
             <span className="h-px flex-1 bg-border-neutral-default" />
             <span className="text-xs text-text-neutral-default">או</span>
             <span className="h-px flex-1 bg-border-neutral-default" />
           </div>
+          )}
 
           {/* 3. Bring your own frames — behind a button until asked for.
                  Row i is frame i, so dragging a row reorders the story
                  itself, not just the form. */}
           {drivePick ? (
+            <>
             <DriveFolderEntry
               format="story"
               // Gated: the files she picked BECOME the story (none of the old
@@ -5270,6 +5306,8 @@ function MediaUploadFlow({
                   : undefined
               }
             />
+            {ownStoryText && <ChatSoonButton />}
+            </>
           ) : !showStoryDriveLinks ? (
             <Button
               variant="outline"
@@ -5391,7 +5429,7 @@ function MediaUploadFlow({
             </>
           )}
 
-          {isBRoll && !hydrating && !bRollShowsMedia && openAiConnected === false && (
+          {isBRoll && !bRollOwnText && !hydrating && !bRollShowsMedia && openAiConnected === false && (
             <>
               <MediaCreditsCard />
 
@@ -5403,7 +5441,7 @@ function MediaUploadFlow({
             </>
           )}
 
-          {isBRoll && !hydrating && !bRollShowsMedia && openAiConnected === true && (
+          {isBRoll && !bRollOwnText && !hydrating && !bRollShowsMedia && openAiConnected === true && (
             <>
               <div className="flex flex-col items-center gap-3 rounded-[18px] border border-border-neutral-default bg-white dark:bg-gray-10 px-6 py-4">
                 <MediaStylePicker
@@ -5551,6 +5589,7 @@ function MediaUploadFlow({
               that's already there. Collapse it behind a replace button and only
               bring it back when the user asks to swap the clip. */}
           {bRollShowsMedia ? null : drivePick && isBRoll ? (
+            <>
             <DriveFolderEntry
               format={format}
               pulling={drivePulling}
@@ -5570,6 +5609,8 @@ function MediaUploadFlow({
                 attachDriveMedia(links[0], format)
               }}
             />
+            {bRollOwnText && <ChatSoonButton />}
+            </>
           ) : isBRoll && !showBRollDriveField ? (
             // Same door as the story's (Hani, 2026-07-29): one button naming
             // where the media comes from, with the field behind it. Doubles
