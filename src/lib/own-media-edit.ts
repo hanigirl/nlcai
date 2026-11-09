@@ -197,8 +197,17 @@ async function execute(
           problems.push(`אין פריים ${n} בסט הזה.`)
           return
         }
+        // No words in the op (a look / position change, or a bare frame just
+        // imported): the words are the CURRENT script's for this frame — never
+        // a stale caption from before the script was edited, and never empty
+        // (Hani, 2026-11-09). Words she dictated earlier stay hers.
+        const unit = plan.script?.[n - 1]
+        const filled =
+          op.op === "set_caption" && op.headline === undefined && op.body === undefined && unit && item.record?.textSource !== "dictated"
+            ? { ...op, headline: unit.headline ?? "", body: unit.body ?? "" }
+            : op
         const next =
-          op.op === "remove_caption" ? await uncaption(item) : await caption(postId, format, item, op, instruction)
+          filled.op === "remove_caption" ? await uncaption(item) : await caption(postId, format, item, filled, instruction)
         if ("error" in next) problems.push(next.error)
         else original[n - 1] = next.item
       }
