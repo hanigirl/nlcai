@@ -2204,6 +2204,25 @@ function ProjectPageInner() {
   // opens and then held: an as-is upload or a video imported for an edit
   // changes the post's media mid-conversation, and recomputing would switch
   // the panel to another conversation while her reply is on its way.
+  /**
+   * Her own media on a format (from Google Drive or her computer): text on
+   * top only, from the script — no AI edit and no chat, ever (Hani,
+   * 2026-11-09). A talking head keeps its own AI edit.
+   */
+  const ownMediaOn = (fid: string): boolean => {
+    if (fid === "talking_head") return false
+    const frames = [
+      ...(storyImages ?? []),
+      ...(storyVideoUrl && !(storyImages ?? []).includes(storyVideoUrl) ? [storyVideoUrl] : []),
+    ]
+    const urls: Record<string, string[]> = {
+      story: frames,
+      carousel: carouselImages ?? [],
+      image_post: imagePostUrl ? [imagePostUrl] : [],
+      b_roll: bRollUrl ? [bRollUrl] : [],
+    }
+    return isOwnMediaFormat(fid as AiEditFormat, urls[fid] ?? [], carouselDriveLinks, ownTextGate)
+  }
   const aiOwnNow = (() => {
     if (!aiChatFormat) return false
     const storyFrames = [
@@ -2452,7 +2471,7 @@ function ProjectPageInner() {
           }
         : undefined
     const onAiEditMedia =
-      fid !== "talking_head" || thAiOn
+      (fid !== "talking_head" || thAiOn) && !ownMediaOn(fid)
         ? () => {
             setAiChatFormat(fid as AiEditFormat)
             setAiChatOpening(null)
@@ -2589,7 +2608,7 @@ function ProjectPageInner() {
             media={hasMedia ? item.media : null}
             mediaBusy={item.state === "media-busy"}
             onAiEditMedia={
-              fid !== "talking_head"
+              fid !== "talking_head" && !ownMediaOn(fid)
                 ? () => {
                     setAiChatFormat(fid as AiEditFormat)
                     setAiChatOpening(null)
@@ -3474,7 +3493,7 @@ function ProjectPageInner() {
                       bRollUrl={bRollUrl}
                       bRollCardRef={bRollCardRef}
                       onBRollEdit={() => setSelectedFormatCard("b_roll")}
-                      onAiEdit={(f) => { setAiChatFormat(f); setAiChatOpening(null) }}
+                      onAiEdit={(f) => { if (ownMediaOn(f)) return; setAiChatFormat(f); setAiChatOpening(null) }}
                       onDeleteMedia={setPendingMediaDelete}
                       onBRollUrlChange={setBRollUrl}
                       copyAi={previewOn ? copyEdit.copyAi : undefined}
@@ -3560,6 +3579,8 @@ function ProjectPageInner() {
         // and the thread must not switch conversations when the result lands.
         // Held from when the panel opened (aiOwn, above).
         const own = aiOwn
+        // Her own media never opens a chat — only an AI generation does.
+        if (own && aiChatFormat !== "talking_head" && aiChatOpening?.kind !== "generate") return null
         return (
           <MediaAiChat
             // One panel per post + format (+ own media): switching formats

@@ -42,7 +42,18 @@ export function captionLookFromBrand(brand: Partial<BrandStyle> | null | undefin
   return { pill: box, text }
 }
 
+/**
+ * Text on media from Google Drive (Hani, 2026-11-09): white words, each line
+ * on its own rounded box — her primary brand colour, or black. A primary too
+ * light for white words to read on (contrast under 3) falls back to black.
+ */
+export function driveCaptionLook(brandColors: unknown): CaptionStyle {
+  const primary = Array.isArray(brandColors) ? brandColors.find((c) => typeof c === "string" && HEX.test(c)) : undefined
+  const pill = primary && contrast(primary, "#ffffff") >= 3 ? primary : DEFAULT.pill
+  return { pill, text: "#ffffff", perLine: true }
+}
+
 export async function captionLookFor(supabase: SupabaseClient, userId: string): Promise<CaptionStyle> {
-  const { data } = await supabase.from("users").select("brand_style").eq("id", userId).maybeSingle()
-  return captionLookFromBrand((data as { brand_style?: Partial<BrandStyle> | null } | null)?.brand_style ?? null)
+  const { data } = await supabase.from("users").select("brand_colors").eq("id", userId).maybeSingle()
+  return driveCaptionLook((data as { brand_colors?: unknown } | null)?.brand_colors)
 }

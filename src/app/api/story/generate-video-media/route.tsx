@@ -434,7 +434,9 @@ export async function POST(req: NextRequest) {
       isDriveUrl(videoUrl)
         ? fetchDriveFile(extractDriveFileId(videoUrl)!)
         : guardedFetch(videoUrl),
-      renderCaptionOverlayPng(overlayHook, overlayBody, position, brollScript ? { ...(await captionLookFor(supabase, user.id)), ...override?.style } : override?.style),
+      // Her own video: the Drive look always — white words, a box per line,
+      // her primary colour or black (Hani, 2026-11-09).
+      renderCaptionOverlayPng(overlayHook, overlayBody, position, { ...(await captionLookFor(supabase, user.id)), ...override?.style }),
     ])
     const srcContentType = (videoRes.headers.get("content-type") || "")
       .split(";")[0]

@@ -49,6 +49,11 @@ export interface CaptionStyle {
   text?: string
   /** Size relative to the default, 0.6–1.5. */
   scale?: number
+  /**
+   * Drive media (Hani, 2026-11-09): every line on its own rounded box that
+   * hugs that line — never one block around all of them.
+   */
+  perLine?: boolean
 }
 
 export interface CaptionSpec {

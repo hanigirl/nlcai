@@ -174,6 +174,38 @@ function imageMimeFromBase64(base64: string): string {
  * Hebrew). Absent → a transparent PNG for ffmpeg to lay over the user's own
  * footage.
  */
+/**
+ * Lines as they'll be set, so each can get its own box (style.perLine).
+ * satori can't measure text, so this estimates: a Rubik Hebrew glyph runs
+ * ~0.6–0.68 of the font size wide at ExtraBold — on the generous side, so a line
+ * never overflows its box. Her own line breaks are kept.
+ */
+export function wrapCaptionLines(text: string, fontSize: number, maxWidth: number): string[] {
+  const perLine = Math.max(6, Math.floor(maxWidth / (fontSize * 0.68)))
+  const out: string[] = []
+  for (const para of text.split("\n")) {
+    // A dash never starts or ends a line alone: it goes with the word before it.
+    const words = para
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .reduce<string[]>((acc, w) => (/^[—–-]$/.test(w) && acc.length ? [...acc.slice(0, -1), `${acc[acc.length - 1]} ${w}`] : [...acc, w]), [])
+    let line = ""
+    for (const w of words) {
+      const next = line ? `${line} ${w}` : w
+      if (next.length > perLine && line) {
+        out.push(line)
+        line = w
+      } else line = next
+    }
+    if (line) out.push(line)
+  }
+  return out
+}
+
+/** Drive media: at least this far from the picture's sides, always (Hani, 2026-11-09). */
+export const MIN_SIDE_PADDING = 32
+
 async function renderCaption(
   hook: string | undefined,
   body: string | undefined,
@@ -263,7 +295,43 @@ async function renderCaption(
           gap: 20,
         }}
       >
-        {hook && (
+        {style?.perLine && !noBox
+          ? (() => {
+              // One rounded box per line, hugging it (Hani, 2026-11-09: "do"
+              // = a box per line, "don't" = one block around them all).
+              const side = Math.max(canvas.padX, MIN_SIDE_PADDING)
+              const boxPadX = 32
+              const room = W - side * 2 - boxPadX * 2
+              const block = (text: string, size: number, weight: 700 | 800, key: string) =>
+                wrapCaptionLines(text, size, room).map((line, i) => (
+                  <div
+                    key={`${key}-${i}`}
+                    style={{
+                      display: "flex",
+                      backgroundColor: style?.pill ?? "#000000",
+                      borderRadius: Math.round(size * 0.45),
+                      padding: `${Math.round(size * 0.18)}px ${boxPadX}px`,
+                      maxWidth: W - side * 2,
+                    }}
+                  >
+                    <RtlText
+                      text={line}
+                      align="center"
+                      style={{ color: textColor, fontFamily: "Rubik", fontWeight: weight, fontSize: size, lineHeight: 1.2 }}
+                    />
+                  </div>
+                ))
+              return (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                  {hook ? block(hook, hookSize, 800, "h") : null}
+                  {hook && bodyText ? <div style={{ display: "flex", height: 12 }} /> : null}
+                  {bodyText ? block(bodyText, bodySize, hook ? 700 : 800, "b") : null}
+                </div>
+              )
+            })()
+          : null}
+
+        {!(style?.perLine && !noBox) && hook && (
           <div style={{ ...pill, padding: "36px 48px" }}>
             {/* RtlText, NOT a raw string: satori has no BiDi, so bare Hebrew
                 renders mirrored. Same shared helper the carousel uses. */}
@@ -283,7 +351,7 @@ async function renderCaption(
           </div>
         )}
 
-        {bodyText && (
+        {!(style?.perLine && !noBox) && bodyText && (
           <div style={{ ...pill, padding: "24px 40px" }}>
             <RtlText
               text={bodyText}
