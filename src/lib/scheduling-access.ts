@@ -71,3 +71,13 @@ export function canUseFormatCards(email: string | null | undefined): boolean {
   // Open to every signed-in user at launch (Hani, 2026-11-09); FORMAT_CARDS_EMAILS kept for reference.
   return !!email
 }
+
+/**
+ * The post description apart from the script (תיאור הפוסט in the תזמון tab
+ * and the calendar, 045) — Hani only while she tries it (2026-11-09).
+ * Everyone else keeps the calendar's caption = script exactly as before.
+ */
+export const DESCRIPTION_EMAILS = ["hanigirl@gmail.com"]
+export function canUseDescription(email: string | null | undefined): boolean {
+  return !!email && DESCRIPTION_EMAILS.includes(email.toLowerCase())
+}

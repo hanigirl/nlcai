@@ -109,7 +109,7 @@ import {
   approvalHeaderFill,
 } from "@/components/format-approval/approval-visuals"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
-import { useFormatCards, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi } from "@/lib/use-scheduling-access"
+import { useDescriptionAccess, useFormatCards, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi } from "@/lib/use-scheduling-access"
 // "עריכה עם AI" on every format's copy (Hani, 2026-10-29).
 import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
 import { useChatRevealer } from "@/lib/ai-chat-reveal"
@@ -2200,6 +2200,7 @@ function ProjectPageInner() {
   // C is the shipped design (Hani, 2026-11-07), for FORMAT_CARDS_EMAILS only
   // (Hani + Nataliya); for them ?cards=a|b still opens the review options.
   const formatCardsOn = useFormatCards() === true
+  const descriptionOn = useDescriptionAccess() === true
   // Talking head AI edit (Notion, Hani 2026-11-07 — she picked ✨ → the panel
   // with three chips). Hani + Nataliya only (lib/feature-access); everyone else
   // keeps today's talking head, the automatic cover too.
@@ -2485,7 +2486,7 @@ function ProjectPageInner() {
               hasMedia={hasMedia}
               onGoToMedia={() => setPanelStep("media")}
               description={formatDescriptions[fid] ?? ""}
-              onDescriptionChange={(t) => changeDescription(fid, t)}
+              onDescriptionChange={descriptionOn ? (t) => changeDescription(fid, t) : undefined}
             />
           ),
           footer:

@@ -1,3 +1,4 @@
+import { canUseDescription } from "@/lib/scheduling-access"
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
@@ -533,7 +534,8 @@ export async function PATCH(
     }
 
     // The description of an existing format (its script is untouched).
-    if (formatDescriptions) {
+    // Hani only while she tries it (lib/scheduling-access DESCRIPTION_EMAILS).
+    if (formatDescriptions && canUseDescription(user.email)) {
       for (const [format, text] of Object.entries(formatDescriptions)) {
         if (typeof text !== "string") continue
         await supabase
