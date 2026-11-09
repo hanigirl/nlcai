@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
+import { canOwnMediaText } from "@/lib/feature-access"
+import { captionLookFor } from "@/lib/caption-look"
+import { NO_SCRIPT_TEXT, scriptTextFor, type TextSource } from "@/lib/script-text"
 import { createClient } from "@/lib/supabase/server"
 import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
 import { fetchDriveFile } from "@/lib/drive-fetch"
@@ -223,6 +226,11 @@ export async function POST(req: NextRequest) {
     /* ------------------------- what the caption says ------------------- */
     let overlayHook: string | undefined
     let overlayBody: string | undefined
+    // B-roll, own media + script text (Hani, 2026-11-09, gated): the b-roll
+    // script's first line + reading caption (lib/script-text) — no hook /
+    // title fallback, no CTA appended. No script text → she's told.
+    const brollScript = format === "b_roll" && canOwnMediaText(user.email)
+    const brollText = brollScript ? scriptTextFor("b_roll", variant.body) : null
 
     if (override) {
       overlayHook = override.headline
@@ -254,6 +262,12 @@ export async function POST(req: NextRequest) {
           .filter((v) => !!v?.trim())
           .join("\n")
           .trim() || undefined
+    } else if (brollScript) {
+      if (!brollText) {
+        return NextResponse.json({ error: "no_script_text", message: NO_SCRIPT_TEXT }, { status: 400 })
+      }
+      overlayHook = brollText.headline
+      overlayBody = brollText.body
     } else {
       const hook =
         post.hook_text?.trim() ||
@@ -318,7 +332,7 @@ export async function POST(req: NextRequest) {
       overlayBody,
       canvas,
       position,
-      override?.style,
+      brollScript ? { ...(await captionLookFor(supabase, user.id)), ...override?.style } : override?.style,
     )
 
     // A carousel slide goes back as bytes: the panel holds the whole set and
@@ -347,11 +361,13 @@ export async function POST(req: NextRequest) {
     // Carousel renders are never written to the format's single image slot —
     // the caller saves them as part of the set.
     if (persist && format !== "carousel") {
+      // A b-roll is ONE piece (gated): an old clip left in the video slot
+      // would be read back instead of this still.
       await supabase
         .from("media_assets")
         .delete()
         .eq("format_variant_id", variant.id)
-        .eq("asset_type", "image")
+        .in("asset_type", brollScript ? ["image", "video"] : ["image"])
       await supabase.from("media_assets").insert({
         format_variant_id: variant.id,
         asset_type: "image",
@@ -361,12 +377,18 @@ export async function POST(req: NextRequest) {
     }
 
     if (sourceUrl) {
+      const squash = (t?: string) => (t ?? "").replace(/[\s"'״׳.,!?:;—–-]+/g, "")
+      const textSource: TextSource | undefined = brollScript
+        ? !override || (brollText && squash([override.headline, override.body].join("")) === squash([brollText.headline, brollText.body].join("")))
+          ? "script"
+          : "dictated"
+        : undefined
       await writeCaptionRecord(supabase, publicUrl, sourceUrl, {
         headline: overlayHook,
         body: overlayBody,
         position,
         style: override?.style,
-      })
+      }, textSource)
     }
 
     // The ORIGINAL comes back too: both variants let the user fall back to

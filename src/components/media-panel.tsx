@@ -79,7 +79,7 @@ import { makeCarouselVideoSlide, uploadSlotPicture } from "@/lib/carousel-video-
 import { isVideoSlide } from "@/lib/carousel-video"
 import { registerAsIsImporter, requestDrivePicker, type AsIsItem, type AsIsOptions, type AsIsResult } from "@/lib/as-is-upload"
 import { AiHoverEditButton } from "@/components/ai-hover-edit"
-import { useRefPlace } from "@/lib/use-scheduling-access"
+import { useOwnMediaText, useRefPlace } from "@/lib/use-scheduling-access"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import type { AiEditFormat } from "@/components/media-ai-chat"
 import type { MediaGenResult } from "@/lib/media-brief"
@@ -3037,6 +3037,8 @@ function MediaUploadFlow({
   // already pinned `format` to "story", so a literal check for b-roll there
   // reads as unreachable code.
   const isBRoll = format === "b_roll"
+  // B-roll: her own media + the script's text (lib/feature-access, Hani only for now).
+  const bRollOwnText = useOwnMediaText() === true && isBRoll
 
   /* ---- caption on the user's own still -------------------------------- */
   //
@@ -3199,7 +3201,7 @@ function MediaUploadFlow({
   // it under a "burned-" filename, so we can tell a finished clip from a raw
   // source across reloads and avoid double-stacking the text.
   const videoTextBurned =
-    format === "story" &&
+    (format === "story" || bRollOwnText) &&
     previewKind === "video" &&
     !!previewUrl &&
     /\/video\/burned-[^/]+\.mp4/.test(previewUrl)
@@ -3366,6 +3368,8 @@ function MediaUploadFlow({
     file: File,
     /** A b-roll clip from her computer, via the AI panel (lib/as-is-upload). */
     allowVideo = false,
+    /** B-roll, imported for an AI edit that captions it (lib/as-is-upload forEdit): no automatic caption. */
+    skipAutoCaption = false,
   ): Promise<boolean> => {
     if (!postId) {
       toast.error("שמרו קודם את הפוסט כדי להעלות מדיה", { duration: 4000 })
@@ -3536,12 +3540,16 @@ function MediaUploadFlow({
         onImagePostUrlChange?.(publicUrl)
       }
       // Her clip on the card at once, as the Drive path does (2026-11-06).
-      if (isVideo && format === "b_roll") onBRollUrlChange?.(publicUrl)
+      // Gated: her still too — the card and the AI chat route by what's there.
+      if ((isVideo || bRollOwnText) && format === "b_roll") onBRollUrlChange?.(publicUrl)
+      // Gated: a clip from her computer gets the script's text like a Drive
+      // clip does (it used to stay bare) — unless an AI edit captions it next.
+      if (isVideo && bRollOwnText && !skipAutoCaption) handleBurnText()
       if (isVideo && format === "story") onStoryVideoUrlChange?.(publicUrl)
       // Same rule as the Drive path: an image that lands here gets the
       // post's caption laid over it. Where the file came from is not a
       // reason for the result to look different.
-      if (!isVideo && (format === "image_post" || format === "b_roll")) {
+      if (!isVideo && (format === "image_post" || format === "b_roll") && !(skipAutoCaption && format === "b_roll")) {
         runImageCaption(publicUrl)
       }
       toast.success("מדיה נשמרה", { id: uploadToast, duration: 3000 })
@@ -3986,6 +3994,25 @@ function MediaUploadFlow({
   useEffect(() => {
     asIsRef.current = async (items, opts) => {
       if (!postId) return { ok: false, message: "שמרו קודם את הפוסט, ואז אפשר להעלות מדיה." }
+      // B-roll (gated): her picture or clip from the AI chat BECOMES the
+      // b-roll — saved before we answer, without the import's automatic
+      // caption; the AI edit right after puts the script's text on it.
+      if (opts?.forEdit && bRollOwnText) {
+        const it = items.find((x) => x.drive || x.file)
+        if (!it) return { ok: false, message: "אין כאן מדיה להעלות." }
+        const isClip = it.kind === "video"
+        const saved = it.drive
+          ? await attachDriveMedia(it.drive, "b_roll", true)
+          : it.file
+            ? await handleUpload(it.file, true, true)
+            : false
+        return saved
+          ? { ok: true, message: isClip ? "הסרטון עלה." : "התמונה עלתה." }
+          : {
+              ok: false,
+              message: `לא הצלחתי להעלות את ${isClip ? "הסרטון" : "התמונה"}, אז לא ערכתי כלום. נסו שוב, או העלו ${isClip ? "אותו" : "אותה"} מהדרייב.`,
+            }
+      }
       // Her video, imported so the own-video AI edit can work on it: one clip,
       // saved before we answer, without the import's automatic caption.
       if (opts?.forEdit) {
@@ -4002,6 +4029,11 @@ function MediaUploadFlow({
       }
       const drive = items.flatMap((it) => (it.drive ? [it.drive] : []))
       const files = items.flatMap((it) => (it.file ? [it.file] : []))
+      // B-roll (gated): her file as it is, and the script's text on it — the
+      // same as every other way in. Nothing else is added.
+      const asIsLine = bRollOwnText
+        ? "המדיה עולה כמו שהיא, ועליה הטקסט מהסקריפט. ההתקדמות בפאנל המדיה."
+        : "המדיה עולה כמו שהיא, בלי תוספות. ההתקדמות בפאנל המדיה."
       const skippedFiles = drive.length > 0 && files.length > 0
       const tail = skippedFiles ? " הקבצים מהמחשב לא נכללו — מעלים פעם אחת מקור אחד." : ""
       if (drive.length) {
@@ -4017,7 +4049,7 @@ function MediaUploadFlow({
         void attachDriveMedia(drive[0], format)
         return {
           ok: true,
-          message: `${drive.length > 1 ? "בפורמט הזה יש מקום למדיה אחת, אז עולה הראשונה. " : ""}המדיה עולה כמו שהיא, בלי תוספות. ההתקדמות בפאנל המדיה.${tail}`,
+          message: `${drive.length > 1 ? "בפורמט הזה יש מקום למדיה אחת, אז עולה הראשונה. " : ""}${asIsLine}${tail}`,
         }
       }
       if (!files.length) return { ok: false, message: "אין כאן מדיה להעלות." }
@@ -4028,7 +4060,7 @@ function MediaUploadFlow({
       void handleUpload(first, true)
       return {
         ok: true,
-        message: `${files.length > 1 ? "מהמחשב עולה קובץ אחד בכל פעם, אז עולה הראשון. " : ""}המדיה עולה כמו שהיא, בלי תוספות. ההתקדמות בפאנל המדיה.`,
+        message: `${files.length > 1 ? "מהמחשב עולה קובץ אחד בכל פעם, אז עולה הראשון. " : ""}${asIsLine}`,
       }
     }
   })
@@ -4350,6 +4382,9 @@ function MediaUploadFlow({
       // video triggers it.
       if (targetFormat === "b_roll") {
         onBRollDriveLinksChange?.([link])
+        // Gated: what's on the card is what was just attached (a clip stays
+        // the link; a still is our copy), so the AI chat routes by it.
+        if (bRollOwnText) onBRollUrlChange?.(mediaUrl)
       }
       if (targetFormat === "b_roll" && kind === "video" && !skipAutoCaption) {
         void handleBurnText()
@@ -4361,7 +4396,8 @@ function MediaUploadFlow({
       // deliberately.
       if (
         kind === "image" &&
-        (targetFormat === "image_post" || targetFormat === "b_roll")
+        (targetFormat === "image_post" || targetFormat === "b_roll") &&
+        !(skipAutoCaption && targetFormat === "b_roll")
       ) {
         runImageCaption(mediaUrl)
       }
@@ -5076,6 +5112,17 @@ function MediaUploadFlow({
                 <Loader2 className="size-3.5 animate-spin" />
                 מטמיעים את הכיתוב בסרטון...
               </p>
+            ) : bRollOwnText && bRollState.burnError?.format === "b_roll" ? (
+              // The burn failed (gated): said here, with a way to try again —
+              // not a toast that leaves the bare clip looking finished.
+              <div className="flex flex-col gap-2 rounded-lg bg-bg-surface px-3 py-2.5" role="alert">
+                <p className="text-small text-button-destructive-default">
+                  הטקסט לא נכנס על הסרטון. {bRollState.burnError.message}
+                </p>
+                <Button variant="outline" size="sm" className="self-start" onClick={handleBurnText} disabled={!postId}>
+                  לנסות שוב
+                </Button>
+              </div>
             ) : null)}
 
           {/* Bring your own — paste a Drive/Canva link. Drive links are

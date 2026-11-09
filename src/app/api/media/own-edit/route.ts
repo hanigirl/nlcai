@@ -12,7 +12,7 @@ import { applyFixedElements, type ImageRole } from "@/lib/visual-language/fixed-
 import { resolveDesignDirection } from "@/lib/visual-language/direction"
 import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
 import { fetchDriveFile } from "@/lib/drive-fetch"
-import { planOwnMediaEdit, slidePrompt } from "@/lib/own-media-plan"
+import { holdBRollToScript, planOwnMediaEdit, slidePrompt } from "@/lib/own-media-plan"
 import { editAnimatedStoryFrame, isAnimatedFrameUrl, makeAnimatedStoryFrame } from "@/lib/own-media-animated"
 import {
   canAddAnimatedFrame,
@@ -21,9 +21,12 @@ import {
   isVideoMediaUrl,
   type CaptionRecord,
   type OwnEditFormat,
+  type OwnEditPlan,
   type OwnFrameInfo,
 } from "@/lib/own-media"
 import { guardedFetch } from "@/lib/server-fetch"
+import { canOwnMediaText } from "@/lib/feature-access"
+import { scriptTextFor } from "@/lib/script-text"
 
 // Rendering the clip alone takes ~250–270s on our functions (175 frames
 // screenshotted by a Lambda-sized Chromium; the same render is 10–18s on a
@@ -323,14 +326,20 @@ export async function POST(req: NextRequest) {
     else urls = images.slice(-1)
     if (urls.length === 0) return json({ error: "no_media", message: "אין כאן מדיה לערוך." }, 400)
 
-    let anthropicKey: string
+    // B-roll, her own media + the script's text (Hani, 2026-11-09, gated).
+    const brollOwn = format === "b_roll" && canOwnMediaText(user.email)
+    let anthropicKey: string | null = null
     try {
       anthropicKey = await getUserApiKey(supabase, "anthropic_api_key")
     } catch {
-      return json(
-        { error: "anthropic_not_connected", message: "כדי לערוך עם AI צריך לחבר מפתח Claude בהגדרות." },
-        400,
-      )
+      // A new user without a Claude key still gets her file + the script's
+      // words (b-roll, just imported): that needs no model.
+      if (!(brollOwn && input.justImported)) {
+        return json(
+          { error: "anthropic_not_connected", message: "כדי לערוך עם AI צריך לחבר מפתח Claude בהגדרות." },
+          400,
+        )
+      }
     }
 
     const carouselMeta = format === "carousel" ? (rows[0]?.metadata ?? {}) : {}
@@ -378,21 +387,26 @@ export async function POST(req: NextRequest) {
         if (kind === "video") return { url, kind, aiMade, caption: "unknown" }
         // A bare picture of hers: does it already carry words? (Notion P2
         // "מדיה משלי: לזהות טקסט קיים") — one small Haiku look.
-        const b64 = await fetchBase64(url)
-        const has = b64 ? await imageHasBakedText(anthropicKey, b64) : null
+        const b64 = anthropicKey ? await fetchBase64(url) : null
+        const has = b64 && anthropicKey ? await imageHasBakedText(anthropicKey, b64) : null
         return { url, kind, aiMade, caption: has === true ? "baked" : has === false ? "none" : "unknown" }
       }),
     )
 
-    const plan = await planOwnMediaEdit(anthropicKey, {
-      format,
-      instruction,
-      frames,
-      currentFrame: input.currentFrame,
-      post: { title: post.title, hook: post.hook_text, body: post.body, formatBody: variant.body },
-      history: input.history,
-      justImported: input.justImported === true,
-    })
+    const planned: OwnEditPlan = anthropicKey
+      ? await planOwnMediaEdit(anthropicKey, {
+          format,
+          instruction,
+          frames,
+          currentFrame: input.currentFrame,
+          post: { title: post.title, hook: post.hook_text, body: post.body, formatBody: variant.body },
+          history: input.history,
+          justImported: input.justImported === true,
+        })
+      : { reply: "", ops: [] }
+    const plan = brollOwn
+      ? holdBRollToScript(planned, frames, scriptTextFor("b_roll", variant.body), input.justImported === true)
+      : planned
     return json({ plan, frames, driveLinks: linksAligned ? links : null })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)

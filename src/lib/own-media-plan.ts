@@ -1,4 +1,4 @@
-import { scriptTextUnits } from "@/lib/script-text"
+import { NO_SCRIPT_TEXT, scriptTextUnits, type ScriptText } from "@/lib/script-text"
 import { stripFrameMarkers } from "@/lib/story-text-split"
 import Anthropic from "@anthropic-ai/sdk"
 import {
@@ -408,3 +408,58 @@ export function slidePrompt(input: {
     `Do NOT add any text other than the exact Hebrew lines above. ${noExtrasRule(input.direction)}`,
   ].join("\n")
 }
+
+/* ------------------------------ b-roll ------------------------------ */
+
+const squashWords = (t?: string | null) => (t ?? "").replace(/[\s"'״׳.,!?:;—–-]+/g, "")
+const sameWords = (a: ScriptText, b: ScriptText) =>
+  squashWords([a.headline, a.body].join("")) === squashWords([b.headline, b.body].join(""))
+
+const SCRIPT_CHANGED = "הסקריפט השתנה מאז שהטקסט הונח על המדיה, אז הטקסט עליה עכשיו לפי הנוסח הנוכחי."
+const JUST_IMPORTED_DONE = "המדיה שלכם עלתה, ועליה הטקסט מהסקריפט."
+
+/**
+ * B-roll, her own media (Hani, 2026-11-09, gated):
+ *   - a look-only caption change (position / colour / size) takes the
+ *     CURRENT script's words, never the words burned in before — the script
+ *     may have changed since (her data: a word added to the script after the
+ *     render never reached the media). Her own dictated words stay hers.
+ *   - when that changes the words on the media, she's told.
+ *   - her file was just imported and the plan does nothing (or no model
+ *     ran — no Claude key): the script's text goes on it, no questions.
+ *     No script text → nothing invented; she's told.
+ */
+export function holdBRollToScript(
+  plan: OwnEditPlan,
+  frames: OwnFrameInfo[],
+  unit: ScriptText | null,
+  justImported: boolean,
+): OwnEditPlan {
+  const frame = frames[0]
+  if (!frame) return plan
+  let ops = plan.ops.map((op) =>
+    op.op === "set_caption" && op.headline === undefined && op.body === undefined && unit && frame.record?.textSource !== "dictated"
+      ? { ...op, headline: unit.headline ?? "", body: unit.body ?? "" }
+      : op,
+  )
+  let reply = plan.reply
+  if (justImported && ops.length === 0 && !plan.refused && frame.caption !== "baked") {
+    if (!unit) return { ...plan, ops: [], reply: NO_SCRIPT_TEXT }
+    ops = [{ op: "set_caption", frames: [1], headline: unit.headline ?? "", body: unit.body ?? "" }]
+    reply = JUST_IMPORTED_DONE
+  }
+  // The words on the media change because the script did.
+  const prev = frame.record?.caption
+  const rewrites = ops.some(
+    (op) =>
+      op.op === "set_caption" &&
+      unit &&
+      sameWords({ headline: op.headline, body: op.body }, unit) &&
+      prev &&
+      (prev.headline || prev.body) &&
+      !sameWords(prev, unit),
+  )
+  if (rewrites && !reply.includes(SCRIPT_CHANGED)) reply = [reply, SCRIPT_CHANGED].filter(Boolean).join(" ")
+  return { ...plan, ops, reply }
+}
+

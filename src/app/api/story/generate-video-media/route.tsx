@@ -20,6 +20,9 @@ import { getAuthUser } from "@/lib/auth-user"
 import { cleanCaptionSpec, type CaptionSpec } from "@/lib/own-media"
 import { writeCaptionRecord } from "@/lib/caption-record"
 import { guardedFetch } from "@/lib/server-fetch"
+import { canOwnMediaText } from "@/lib/feature-access"
+import { captionLookFor } from "@/lib/caption-look"
+import { NO_SCRIPT_TEXT, scriptTextFor, type TextSource } from "@/lib/script-text"
 
 // Downloading + re-encoding a user video is heavier than an image render;
 // libx264 on a short clip still runs in seconds, but leave generous headroom.
@@ -197,6 +200,13 @@ function burnOverlay(
   })
 }
 
+const squashWords = (t?: string | null) => (t ?? "").replace(/[\s"'״׳.,!?:;—–-]+/g, "")
+
+/** The same words (spacing / punctuation aside). */
+function sameWords(a: { headline?: string; body?: string }, b: { headline?: string; body?: string } | null): boolean {
+  return !!b && squashWords([a.headline, a.body].join("")) === squashWords([b.headline, b.body].join(""))
+}
+
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
   try {
@@ -334,6 +344,16 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // B-roll, own media + script text (Hani, 2026-11-09, gated): the words
+    // on her clip are the b-roll script's — its first line, then the reading
+    // caption (lib/script-text) — never the hook / title, never an added
+    // "קראו בתיאור" plate. No script text → nothing is invented; she's told.
+    const brollScript = format === "b_roll" && canOwnMediaText(user.email)
+    const brollText = brollScript ? scriptTextFor("b_roll", variant.body) : null
+    if (brollScript && !override && !brollText) {
+      return NextResponse.json({ error: "no_script_text", message: NO_SCRIPT_TEXT }, { status: 400 })
+    }
+
     // Overlay text: the hook is the headline (falls back to the title, then
     // the first line of the story script). Matches the reel-cover principle
     // — a short, punchy line, not the whole script.
@@ -342,7 +362,7 @@ export async function POST(req: NextRequest) {
       post.title?.trim() ||
       variant.body?.split(/\n+/)[0]?.trim() ||
       ""
-    if (!hook && !override) {
+    if (!hook && !override && !brollText) {
       return NextResponse.json(
         {
           error: "no_hook",
@@ -357,11 +377,15 @@ export async function POST(req: NextRequest) {
     // coherent piece rather than the same caption repeated N times.
     //
     // Falls back to the hook alone when there's no script body to divide.
-    const caption = variant.body?.trim()
+    const caption = brollText
+      ? brollText
+      : variant.body?.trim()
       ? frameCaption(variant.body, frameIndex, frameCount)
       : { headline: hook, body: undefined }
     const overlayHook = override
       ? override.headline
+      : brollText
+      ? brollText.headline
       : caption.headline ?? (frameIndex === 0 ? hook : undefined)
     const overlayBody = override ? override.body : caption.body
     const position = override?.position ?? "bottom"
@@ -393,7 +417,7 @@ export async function POST(req: NextRequest) {
       isDriveUrl(videoUrl)
         ? fetchDriveFile(extractDriveFileId(videoUrl)!)
         : guardedFetch(videoUrl),
-      renderCaptionOverlayPng(overlayHook, overlayBody, position, override?.style),
+      renderCaptionOverlayPng(overlayHook, overlayBody, position, brollScript ? { ...(await captionLookFor(supabase, user.id)), ...override?.style } : override?.style),
     ])
     const srcContentType = (videoRes.headers.get("content-type") || "")
       .split(";")[0]
@@ -430,7 +454,7 @@ export async function POST(req: NextRequest) {
     // Every b-roll carries the follow-up line; the story doesn't — its frames
     // already end on their own CTA block.
     let secondaryPath: string | undefined
-    if (format === "b_roll" && !hasDescriptionCta(overlayHook, overlayBody)) {
+    if (format === "b_roll" && !brollScript && !hasDescriptionCta(overlayHook, overlayBody)) {
       const fsMod = await import("fs/promises")
       const pathMod = await import("path")
       secondaryPath = pathMod.join(tmp, `story-ovl2-${id}.png`)
@@ -441,8 +465,12 @@ export async function POST(req: NextRequest) {
     // Her own video, edited with AI: the animated caption in her visual
     // language. Any failure on the way falls back to the still plate.
     let animatedDone = false
+    // B-roll (gated): why the animated caption didn't happen, so the chat
+    // can say so instead of "done" over a still plate.
+    let animatedFallback: "no_key" | "failed" | undefined
     if (rawAnimated === true && override) {
       const anthropicKey = await getUserApiKey(supabase, "anthropic_api_key").catch(() => null)
+      if (!anthropicKey && brollScript) animatedFallback = "no_key"
       if (anthropicKey) {
         const framesDir = await fs.mkdtemp(path.join(tmp, `story-anim-${id}-`))
         try {
@@ -451,6 +479,7 @@ export async function POST(req: NextRequest) {
           animatedDone = true
         } catch (err) {
           console.error("[story/generate-video-media] animated caption, falling back to the still plate", err)
+          if (brollScript) animatedFallback = "failed"
         } finally {
           await fs.rm(framesDir, { recursive: true, force: true }).catch(() => undefined)
         }
@@ -480,11 +509,13 @@ export async function POST(req: NextRequest) {
     // writing each one into the single video slot would leave the last frame
     // masquerading as "the story's video".
     if (persist) {
+      // A b-roll is ONE piece (gated): a still left beside the clip would
+      // be read back instead of it, so both slots are cleared.
       await supabase
         .from("media_assets")
         .delete()
         .eq("format_variant_id", variant.id)
-        .eq("asset_type", "video")
+        .in("asset_type", brollScript ? ["video", "image"] : ["video"])
       await supabase.from("media_assets").insert({
         format_variant_id: variant.id,
         asset_type: "video",
@@ -495,15 +526,24 @@ export async function POST(req: NextRequest) {
 
     // Remember what this render was drawn over, and what it says — so the
     // caption can later be rewritten or taken off without stacking.
+    // Where the words came from (b-roll, gated): the script's, or hers.
+    const textSource: TextSource | undefined = brollScript
+      ? !override || sameWords(override, brollText)
+        ? "script"
+        : "dictated"
+      : undefined
     await writeCaptionRecord(supabase, publicUrl, videoUrl, {
       headline: overlayHook,
       body: overlayBody,
       position,
       style: override?.style,
       ...(override?.design ? { design: override.design } : {}),
-    })
+    }, textSource)
 
-    return NextResponse.json({ url: publicUrl })
+    return NextResponse.json({
+      url: publicUrl,
+      ...(animatedFallback ? { animatedFallback } : {}),
+    })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("[story/generate-video-media]", msg)
