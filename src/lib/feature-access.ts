@@ -81,7 +81,7 @@ export function canTalkingHeadAi(email: string | null | undefined): boolean {
  * (Hani, 2026-11-09 — the launch was held back for this). The fixed paths run
  * for her only; everyone else keeps today's paths until she opens it.
  */
-export const OWN_MEDIA_TEXT_EMAILS = ["hanigirl@gmail.com"]
+export const OWN_MEDIA_TEXT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 
 export function canOwnMediaText(email: string | null | undefined): boolean {
   return !!email && OWN_MEDIA_TEXT_EMAILS.includes(email.toLowerCase())
@@ -108,7 +108,7 @@ export function refusesPlacingIntoDesign(email: string | null | undefined, place
  * "עריכה עם AI" on media, no chat panel, and no "חדש לגמרי" tile (it only
  * works by talking first); every other style generates straight away.
  */
-export const NO_AI_CHAT_EMAILS = ["hanigirl@gmail.com"]
+export const NO_AI_CHAT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 export function canUseAiChat(email: string | null | undefined): boolean {
   return !(email && NO_AI_CHAT_EMAILS.includes(email.toLowerCase()))
 }

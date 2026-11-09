@@ -71,7 +71,7 @@ export function canUseFormatCards(email: string | null | undefined): boolean {
  * and the calendar, 045) — Hani only while she tries it (2026-11-09).
  * Everyone else keeps the calendar's caption = script exactly as before.
  */
-export const DESCRIPTION_EMAILS = ["hanigirl@gmail.com"]
+export const DESCRIPTION_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 export function canUseDescription(email: string | null | undefined): boolean {
   return !!email && DESCRIPTION_EMAILS.includes(email.toLowerCase())
 }
