@@ -38,6 +38,7 @@ import {
   resolveDesignDirection,
   type DesignDirection,
 } from "@/lib/visual-language/direction"
+import { guardedFetch } from "@/lib/server-fetch"
 
 // gpt-image-2 takes 30-120s per image; several slides run with limited
 // concurrency, so leave generous headroom.
@@ -476,7 +477,7 @@ export async function POST(req: NextRequest) {
         // Only her placed pictures exist yet to be edited; any miss saves nothing.
         const pictureEdits = pictureEditsOn ? layout.pictureEdits.filter((e) => isPlaced(e.slide)) : []
         for (const { slide: i, edit } of pictureEdits) {
-          const res = await fetch(illustrations[i])
+          const res = await guardedFetch(illustrations[i])
           const out = res.ok
             ? await editPicture(openaiKey, anthropicKey, Buffer.from(await res.arrayBuffer()), edit)
             : ({ ok: false, message: PICTURE_UNCHANGED } as const)

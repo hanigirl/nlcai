@@ -1,4 +1,5 @@
 import sharp from "sharp"
+import { guardedFetch } from "@/lib/server-fetch"
 
 /**
  * Turn a stored image (or a website link) into something both Claude and
@@ -16,7 +17,7 @@ export interface ModelImage {
 }
 
 export async function loadImageForModels(url: string): Promise<ModelImage> {
-  const res = await fetch(url)
+  const res = await guardedFetch(url)
   if (!res.ok) throw new Error(`image fetch ${res.status}`)
   const input = Buffer.from(await res.arrayBuffer())
   return normaliseImage(input)

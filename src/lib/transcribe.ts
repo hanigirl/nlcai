@@ -1,6 +1,7 @@
 import { spawn } from "child_process"
 import ffmpegPath from "ffmpeg-static"
 import { BROLL_MODEL } from "@/lib/broll-animation/compose"
+import { guardedFetch } from "@/lib/server-fetch"
 
 /**
  * Word-level transcription for synced captions on her talking-head video
@@ -256,7 +257,7 @@ export async function transcribeVideo(
   try {
     const video = path.join(dir, "in.mp4")
     const audio = path.join(dir, "audio.mp3")
-    const res = isDriveUrl(videoUrl) ? await fetchDriveFile(extractDriveFileId(videoUrl)!) : await fetch(videoUrl)
+    const res = isDriveUrl(videoUrl) ? await fetchDriveFile(extractDriveFileId(videoUrl)!) : await guardedFetch(videoUrl)
     const type = (res.headers.get("content-type") || "").split(";")[0]
     if (!res.ok || !res.body || type.includes("text/html")) throw new Error(`video_fetch_failed ${res.status}`)
     await pipeline(Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]), createWriteStream(video))

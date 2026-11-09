@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { EMBED_MARKER, embedCookieOptions } from "@/lib/phebe-demo";
 import { isApiPath, maintenanceGate } from "@/lib/maintenance";
+import { isCrossSiteMutation } from "@/lib/csrf";
 
 // Onboarding gate. Two jobs:
 //   1. Send anonymous users to /login.
@@ -63,7 +64,15 @@ export async function middleware(request: NextRequest) {
   // /api/* is in the matcher ONLY so the gate above can refuse it. Past the
   // gate it goes straight through, untouched — no domain redirect, no auth —
   // exactly as when /api was outside the matcher.
-  if (isApiPath(request.nextUrl.pathname)) return NextResponse.next();
+  if (isApiPath(request.nextUrl.pathname)) {
+    // The one thing /api does get: no state-changing request from another
+    // site (lib/csrf.ts). Same-origin app calls and secret-header machine
+    // callers are unaffected.
+    if (isCrossSiteMutation(request)) {
+      return NextResponse.json({ error: "cross_site_request" }, { status: 403 });
+    }
+    return NextResponse.next();
+  }
 
   // Domain cutover (Hani 2026-06-09): nextlevelappai.com is the canonical home.
   // Permanently (301) redirect the legacy Vercel alias to it, preserving the

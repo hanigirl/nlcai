@@ -13,6 +13,7 @@ import {
   type VisualFormat,
   type VisualLanguage,
 } from "@/lib/visual-language/types"
+import { guardedFetch } from "@/lib/server-fetch"
 
 /**
  * Which visual language an AI image follows, in priority order:
@@ -344,7 +345,7 @@ async function loadElements(
     return r ? publicUrl(r.storage_path) : null
   }
   const fetchPng = async (url: string) => {
-    const res = await fetch(url)
+    const res = await guardedFetch(url)
     if (!res.ok) throw new Error(`fetch ${res.status}`)
     // Full resolution, transparency kept (SVG rasterised).
     return sharp(Buffer.from(await res.arrayBuffer()), { density: 300 }).png().toBuffer()

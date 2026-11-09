@@ -3,6 +3,7 @@
 // from ordinary pages. Extracted from parse-product-page so both that route and
 // the business-sources ingestion share one scraper (no divergence).
 
+import { guardedFetch } from "@/lib/server-fetch"
 const MAX_CHARS = 15000
 
 export class ScrapeError extends Error {
@@ -25,7 +26,7 @@ export async function scrapeUrlToText(url: string): Promise<string> {
 
   let res: Response
   try {
-    res = await fetch(fetchUrl, {
+    res = await guardedFetch(fetchUrl, {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (compatible; Postudio/1.0; +https://postudio.app)",

@@ -8,6 +8,7 @@ import { cleanBrandColors, defaultCoverColor, isCoverHex } from "@/lib/cover-bra
 import { canTalkingHeadAi } from "@/lib/feature-access"
 import { coverStyleFromExamples } from "@/lib/cover-from-examples"
 import { loadCoverFont } from "@/lib/cover-font"
+import { guardedFetch } from "@/lib/server-fetch"
 
 const COVER_WIDTH = 1080
 const COVER_HEIGHT = 1920 // 9:16 aspect ratio
@@ -404,7 +405,7 @@ export async function POST(req: NextRequest) {
         thumbBase64 = thumbnail_url
       } else {
         try {
-          const thumbRes = await fetch(thumbnail_url)
+          const thumbRes = await guardedFetch(thumbnail_url)
           if (thumbRes.ok) {
             const thumbBuffer = Buffer.from(await thumbRes.arrayBuffer())
             thumbBase64 = `data:image/jpeg;base64,${thumbBuffer.toString("base64")}`

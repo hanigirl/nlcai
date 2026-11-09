@@ -34,7 +34,7 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { MediaAiChat, type ChatMessage, type CopyStep } from "@/components/media-ai-chat"
 import { openingId, type AiEditOpening } from "@/lib/ai-edit-intent"
-import { missingMessage } from "@/lib/card-identity"
+import { missingMessage } from "@/lib/card-identity-message"
 
 const STATES = [
   { id: "link", label: "לינק שנקרא — השאלה" },

@@ -21,6 +21,7 @@ import {
   tooLongMessage,
   type MomentLayer,
 } from "@/lib/talking-head-captions"
+import { guardedFetch } from "@/lib/server-fetch"
 
 /**
  * The talking-head AI edit itself (Hani, 2026-11-07), from her ORIGINAL
@@ -131,7 +132,7 @@ export async function runTalkingHeadEdit(opts: {
   const { isDriveUrl, extractDriveFileId } = await import("@/lib/drive-media")
   const { fetchDriveFile } = await import("@/lib/drive-fetch")
   const driveId = isDriveUrl(source) ? extractDriveFileId(source) : null
-  const res = await (driveId ? fetchDriveFile(driveId) : fetch(source)).catch(() => null)
+  const res = await (driveId ? fetchDriveFile(driveId) : guardedFetch(source)).catch(() => null)
   const type = (res?.headers.get("content-type") || "").split(";")[0]
   if (!res?.ok || type.includes("text/html")) {
     throw new EditError("video_fetch_failed", "לא הצלחתי לטעון את הסרטון. אם הוא בדרייב, בדקו שהוא משותף ל״כל מי שיש לו הקישור״.")

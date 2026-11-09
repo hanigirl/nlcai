@@ -49,8 +49,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   // Only this page's own button.
+  // Browsers always send Origin on a form POST, so a missing one is refused too.
   const origin = request.headers.get("origin")
-  if (origin && origin !== request.nextUrl.origin) {
+  if (!origin || origin !== request.nextUrl.origin) {
     return NextResponse.json({ error: "cross_site" }, { status: 403 })
   }
   const user = await who()

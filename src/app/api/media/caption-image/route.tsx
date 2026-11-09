@@ -17,6 +17,7 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { imageHasBakedText } from "@/lib/baked-text"
 import { cleanCaptionSpec, type CaptionSpec } from "@/lib/own-media"
 import { writeCaptionRecord } from "@/lib/caption-record"
+import { guardedFetch } from "@/lib/server-fetch"
 
 // One satori render + one Resvg rasterize. No model call, no ffmpeg — this
 // is seconds, not minutes, but a 50MB source still has to be pulled first.
@@ -71,7 +72,7 @@ async function fetchImageBase64(
 ): Promise<{ base64: string } | { error: string; message?: string }> {
   const res = isDriveUrl(url)
     ? await fetchDriveFile(extractDriveFileId(url)!)
-    : await fetch(url)
+    : await guardedFetch(url)
   const contentType = (res.headers.get("content-type") || "")
     .split(";")[0]
     .trim()

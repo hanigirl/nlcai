@@ -23,6 +23,7 @@ import {
   type OwnEditFormat,
   type OwnFrameInfo,
 } from "@/lib/own-media"
+import { guardedFetch } from "@/lib/server-fetch"
 
 // Rendering the clip alone takes ~250–270s on our functions (175 frames
 // screenshotted by a Lambda-sized Chromium; the same render is 10–18s on a
@@ -389,7 +390,7 @@ export async function POST(req: NextRequest) {
 
 async function fetchBase64(url: string): Promise<string | null> {
   try {
-    const res = isDriveUrl(url) ? await fetchDriveFile(extractDriveFileId(url)!) : await fetch(url)
+    const res = isDriveUrl(url) ? await fetchDriveFile(extractDriveFileId(url)!) : await guardedFetch(url)
     if (!res.ok || (res.headers.get("content-type") || "").includes("text/html")) return null
     return Buffer.from(await res.arrayBuffer()).toString("base64")
   } catch {

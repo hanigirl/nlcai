@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { guardedFetch } from "@/lib/server-fetch"
 
 /**
  * Her identity for a card-like design (a tweet card, a post card) built from
@@ -64,7 +65,7 @@ export async function saveCardIdentity(supabase: SupabaseClient, userId: string,
 /** The avatar as a data URL for the renderer (a CDN link may not load headless, or expire). */
 export async function avatarDataUrl(url: string): Promise<string | null> {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+    const res = await guardedFetch(url, { signal: AbortSignal.timeout(8000) })
     const type = (res.headers.get("content-type") ?? "").split(";")[0].trim()
     if (!res.ok || !/^image\/(png|jpeg|webp|gif)$/.test(type)) return null
     const buf = Buffer.from(await res.arrayBuffer())
@@ -75,24 +76,6 @@ export async function avatarDataUrl(url: string): Promise<string | null> {
   }
 }
 
-const NEED_WORDS: Record<string, string> = {
-  avatar: "תמונת פרופיל",
-  name: "השם שיופיע",
-  handle: "ה-@ שלכם באינסטגרם",
-  photo: "תמונה שלכם או של המוצר",
-}
-
-/** The chat's ask for exactly what's missing. */
-export function missingMessage(missing: string[]): string {
-  const words = missing.map((m) => NEED_WORDS[m]).filter(Boolean)
-  const list = words.length === 1 ? words[0] : `${words.slice(0, -1).join(", ")} ו${words[words.length - 1]}`
-  const attach = missing.includes("avatar") || missing.includes("photo")
-  const write = missing.includes("name") || missing.includes("handle")
-  const how = [
-    attach ? `צרפו ${missing.includes("avatar") ? "תמונת פרופיל" : "את התמונה"}` : "",
-    write ? `כתבו ${missing.includes("name") && missing.includes("handle") ? "את השם ואת ה-@" : missing.includes("name") ? "את השם" : "את ה-@"}` : "",
-  ]
-    .filter(Boolean)
-    .join(" ו")
-  return `כדי שזה ייראה כמו ברפרנס חסרים לי ${list}. ${how}, ואמשיך.`
-}
+// Client-safe copy lives apart so pages can import it without pulling in
+// the server-only fetch guard.
+export { missingMessage } from "./card-identity-message"

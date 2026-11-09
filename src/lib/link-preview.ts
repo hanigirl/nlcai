@@ -1,5 +1,6 @@
 import { lookup } from "node:dns/promises"
 import { isIP } from "node:net"
+import { isPrivateAddress } from "@/lib/server-fetch"
 
 /**
  * A public page's share picture (og:image / twitter:image), fetched safely:
@@ -26,27 +27,6 @@ export const BROWSER_UA =
 export const IMAGE_TYPES = /^image\/(png|jpeg|webp|gif)$/
 
 export class LinkError extends Error {}
-
-function isPrivateAddress(ip: string): boolean {
-  if (isIP(ip) === 6) {
-    const v = ip.toLowerCase()
-    if (v === "::1" || v === "::") return true
-    if (v.startsWith("fc") || v.startsWith("fd") || v.startsWith("fe80")) return true
-    const mapped = v.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
-    return mapped ? isPrivateAddress(mapped[1]) : false
-  }
-  const [a, b] = ip.split(".").map(Number)
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    a >= 224
-  )
-}
 
 /** Public http(s) only — checked on every hop of a redirect. */
 async function assertPublic(raw: string): Promise<URL> {

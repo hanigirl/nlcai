@@ -19,6 +19,7 @@ import { hasDescriptionCta } from "@/lib/broll-copy"
 import { getAuthUser } from "@/lib/auth-user"
 import { cleanCaptionSpec, type CaptionSpec } from "@/lib/own-media"
 import { writeCaptionRecord } from "@/lib/caption-record"
+import { guardedFetch } from "@/lib/server-fetch"
 
 // Downloading + re-encoding a user video is heavier than an image render;
 // libx264 on a short clip still runs in seconds, but leave generous headroom.
@@ -391,7 +392,7 @@ export async function POST(req: NextRequest) {
     const [videoRes, overlayPng] = await Promise.all([
       isDriveUrl(videoUrl)
         ? fetchDriveFile(extractDriveFileId(videoUrl)!)
-        : fetch(videoUrl),
+        : guardedFetch(videoUrl),
       renderCaptionOverlayPng(overlayHook, overlayBody, position, override?.style),
     ])
     const srcContentType = (videoRes.headers.get("content-type") || "")

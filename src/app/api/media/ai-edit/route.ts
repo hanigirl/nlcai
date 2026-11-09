@@ -37,6 +37,7 @@ import { canEditPictures } from "@/lib/feature-access"
 import { isVideoSlide } from "@/lib/carousel-video"
 import { PICTURE_MISSING, adaptPictureForSlide, editPicture, wantsPictureAsIs } from "@/lib/picture-edit"
 import type { ModelImage } from "@/lib/visual-language/image-input"
+import { guardedFetch } from "@/lib/server-fetch"
 
 /**
  * The edit ran and the slides came out exactly as they were: nothing is
@@ -378,7 +379,7 @@ export async function POST(req: NextRequest) {
         const outcomes = await Promise.all(
           pictureEdits.map(async ({ slide: i, edit }) => {
             if (!illustrations[i]) return { ok: false as const, message: PICTURE_MISSING }
-            const res = await fetch(illustrations[i])
+            const res = await guardedFetch(illustrations[i])
             if (!res.ok) return { ok: false as const, message: PICTURE_MISSING }
             const out = await editPicture(openaiKey, claudeKey, Buffer.from(await res.arrayBuffer()), edit)
             if (!out.ok) return out

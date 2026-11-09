@@ -35,11 +35,21 @@ export async function GET(req: NextRequest) {
     await res.body?.cancel().catch(() => undefined)
     return new Response("Drive file not available", { status: 404 })
   }
+  // Only ever serve a video type from the app origin. Anything else Drive
+  // reports (svg, xhtml, xml…) could run script on nextlevelappai.com, so it
+  // is refused rather than passed through (security audit 2026-11-09).
+  const safeType = !type || type === "application/octet-stream" ? "video/mp4" : type
+  if (!safeType.startsWith("video/")) {
+    await res.body.cancel().catch(() => undefined)
+    return new Response("Drive file not available", { status: 404 })
+  }
   const headers = new Headers({
     // Drive answers "application/octet-stream" for most uploads; a player wants a video type.
-    "Content-Type": !type || type === "application/octet-stream" ? "video/mp4" : type,
+    "Content-Type": safeType,
     "Accept-Ranges": "bytes",
     "Cache-Control": "private, max-age=3600",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; sandbox",
   })
   for (const h of ["content-length", "content-range"]) {
     const v = res.headers.get(h)

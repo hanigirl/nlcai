@@ -23,6 +23,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { createAdminClient } from "@/lib/supabase/admin"
 import type {
   Database,
   SocialAccountRow,
@@ -375,6 +376,17 @@ export class HighLevelPublisher implements SocialPublisher {
   constructor(private readonly db: SupabaseClient<Database>) {}
 
   /**
+   * Writes to social_tenants / social_accounts go through the service role
+   * only. Those rows decide which HighLevel sub-account the agency credential
+   * mints a token for, so the browser must not be able to write them
+   * (migration 044 drops the user insert/update policies). Callers pass the
+   * session's own userId, never a request field.
+   */
+  private writeDb(): SupabaseClient<Database> {
+    return createAdminClient()
+  }
+
+  /**
    * One HighLevel sub-account per user, created on demand.
    *
    * This is only possible because the founders are on Agency Pro — sub-account
@@ -423,7 +435,7 @@ export class HighLevelPublisher implements SocialPublisher {
     // `as never` per the repo convention (see api/schedule/route.ts) — this
     // supabase-js version widens write payloads to `never` under the
     // Database generic.
-    await this.db.from("social_tenants").insert({
+    await this.writeDb().from("social_tenants").insert({
       user_id: userId,
       provider: this.provider,
       external_tenant_id: created.id,
@@ -619,7 +631,7 @@ export class HighLevelPublisher implements SocialPublisher {
       },
     })
 
-    const { data, error } = await this.db
+    const { data, error } = await this.writeDb()
       .from("social_accounts")
       .upsert(
         {
@@ -666,7 +678,7 @@ export class HighLevelPublisher implements SocialPublisher {
    * already-published posts went.
    */
   async disconnect(userId: string, socialAccountId: string): Promise<void> {
-    await this.db
+    await this.writeDb()
       .from("social_accounts")
       .update({ status: "revoked" } as never)
       .eq("id", socialAccountId)

@@ -7,6 +7,7 @@ import type { SlideData } from "@/lib/carousel-templates"
 import { fontHead, fontRoleLines, type BrandFont } from "@/lib/broll-animation/compose"
 import { launch } from "@/lib/broll-animation/render"
 import type { MediaStyle } from "@/lib/visual-language/types"
+import { guardedFetch } from "@/lib/server-fetch"
 
 /**
  * AI carousel, laid out in code (Hani, 2026-10-22).
@@ -91,7 +92,7 @@ export async function carouselStillMatches(stored: StoredCarousel, urls: string[
   try {
     const actual = await Promise.all(
       urls.map(async (url) => {
-        const res = await fetch(url)
+        const res = await guardedFetch(url)
         if (!res.ok) throw new Error(`slide fetch ${res.status}`)
         return slideHash(Buffer.from(await res.arrayBuffer()))
       }),

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { loadBrandFonts } from "@/lib/broll-animation/brief"
+import { guardedFetch } from "@/lib/server-fetch"
 
 /**
  * The reel cover's font (Hani, 2026-11-07): the font her cover examples were
@@ -13,7 +14,7 @@ const SATORI_OK = /\.(ttf|otf|woff)(\?|$)/i
 
 async function fetchData(url: string): Promise<ArrayBuffer | null> {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+    const res = await guardedFetch(url, { signal: AbortSignal.timeout(8000) })
     return res.ok ? await res.arrayBuffer() : null
   } catch {
     return null

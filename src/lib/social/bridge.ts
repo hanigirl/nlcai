@@ -49,6 +49,7 @@ import type {
 } from "@/lib/supabase/types"
 import { assembleScheduledPost } from "./assemble"
 import { getSocialPublisher } from "./index"
+import { createAdminClient } from "@/lib/supabase/admin"
 import { NETWORK_LABEL, PUBLISH_PLATFORMS, inNetwork, networkFitsFormat, toNetwork } from "./networks"
 import {
   PUBLISH_FLOOR_MS,
@@ -219,11 +220,18 @@ async function loadSlot(
 /**
  * The networks this user may publish to. Instagram for everyone; YouTube and
  * LinkedIn only on the multinetwork gate (lib/scheduling-access). Read from her
- * own `users` row, so every bridge entry point enforces it the same way.
+ * auth record, so every bridge entry point enforces it the same way.
  */
-async function allowedPlatforms(db: Db, userId: string): Promise<Set<SocialPlatform>> {
-  const { data } = await db.from("users").select("email").eq("id", userId).maybeSingle()
-  const email = (data as { email: string | null } | null)?.email
+async function allowedPlatforms(_db: Db, userId: string): Promise<Set<SocialPlatform>> {
+  // The gate keys on the auth email (the same claim the routes check), never
+  // on public.users.email, which used to be writable from the browser.
+  let email: string | null = null
+  try {
+    const { data } = await createAdminClient().auth.admin.getUserById(userId)
+    email = data.user?.email ?? null
+  } catch (err) {
+    console.error("[social/bridge][allowedPlatforms] auth lookup failed", err)
+  }
   return new Set<SocialPlatform>(canUseMultinetwork(email) ? PUBLISH_PLATFORMS : ["instagram"])
 }
 
@@ -408,7 +416,8 @@ const lapsedMessage = (p: SocialPlatform) =>
  * fail the same way, and she should see that now, not one by one.
  */
 async function markAccountLost(db: Db, userId: string, account: Pick<SocialAccountRow, "id" | "platform">) {
-  await db
+  // social_accounts is service-role-write only (migration 044).
+  await createAdminClient()
     .from("social_accounts")
     .update({ status: "needs_reconnect" } as never)
     .eq("id", account.id)

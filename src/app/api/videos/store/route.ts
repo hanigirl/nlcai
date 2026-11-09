@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
+import { guardedFetch } from "@/lib/server-fetch"
 
 // Downloads a video from a URL and stores it in Supabase Storage
 export async function POST(req: NextRequest) {
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Download the video
-    const res = await fetch(video_url)
+    const res = await guardedFetch(video_url)
     if (!res.ok) {
       return NextResponse.json({ error: "Failed to download video" }, { status: 400 })
     }

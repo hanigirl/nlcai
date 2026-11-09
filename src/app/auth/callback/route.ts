@@ -3,12 +3,29 @@ import type { EmailOtpType } from "@supabase/supabase-js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 
+/**
+ * `next` may only be a path on this site. It used to be glued onto the origin
+ * as-is, so "@evil.com" or ".evil.com" sent people off-site right after they
+ * signed in (security audit 2026-11-09). Anything else is ignored and the
+ * normal onboarding routing applies.
+ */
+function safeNext(origin: string, next: string | null): string | null {
+  if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) return null;
+  try {
+    const url = new URL(next, origin);
+    return url.origin === origin ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 async function routeByOnboardingState(
   supabase: SupabaseClient,
   origin: string,
   explicitNext: string | null,
 ): Promise<NextResponse> {
-  if (explicitNext) return NextResponse.redirect(`${origin}${explicitNext}`);
+  const next = safeNext(origin, explicitNext);
+  if (next) return NextResponse.redirect(next);
   const { data: { user } } = await supabase.auth.getUser();
   if (user) {
     const { data: identity } = await supabase
