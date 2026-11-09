@@ -40,6 +40,61 @@ type Job = { id: string; status: "running" | "asking" | "done" | "failed"; progr
 const GREETING =
   "היי, אני כאן בשביל הבי-רול. אפשר לבקש שינויים בעיצוב, בתנועה או ברקע, לשלב תמונה שלכם או רפרנס, או פשוט לשאול למה משהו נראה כמו שהוא נראה."
 
+export const EDIT_AGENT_STARTED = "edit-agent:started"
+
+/**
+ * Follows the agent's run from the PAGE, so the new version lands even when
+ * the chat is closed while it renders. Before this, closing the chat stopped
+ * the polling, and the result only showed after a reload (Hani, 2026-11-10:
+ * "תקוע אפילו 5 דקות... רק כשאני מרפרשת אני רואה אותו").
+ */
+export function useFollowEditAgentRun(
+  postId: string | null,
+  format: string,
+  enabled: boolean,
+  onMediaChanged: (url: string) => void,
+) {
+  const [runningId, setRunningId] = useState<string | null>(null)
+  const applyRef = useRef(onMediaChanged)
+  applyRef.current = onMediaChanged
+
+  const check = useCallback(async () => {
+    if (!enabled || !postId) return
+    const res = await fetch(`/api/edit-agent?postId=${postId}&format=${format}`, { cache: "no-store" }).catch(() => null)
+    if (!res?.ok) return
+    const { job } = (await res.json()) as { job: Job | null }
+    if (!job) return
+    if (job.status === "running") return setRunningId(job.id)
+    setRunningId((prev) => {
+      // Only the run we watched finish — never an old result on page load.
+      if (prev === job.id && job.outcome?.changed && job.outcome.url) applyRef.current(job.outcome.url)
+      return null
+    })
+  }, [enabled, postId, format])
+
+  // On load (a run may already be going), on return to the tab, and when the chat starts one.
+  useEffect(() => {
+    void check()
+    const onStart = (e: Event) => {
+      const d = (e as CustomEvent<{ postId: string; format: string }>).detail
+      if (d?.postId === postId && d.format === format) void check()
+    }
+    const onFocus = () => void check()
+    window.addEventListener(EDIT_AGENT_STARTED, onStart)
+    window.addEventListener("focus", onFocus)
+    return () => {
+      window.removeEventListener(EDIT_AGENT_STARTED, onStart)
+      window.removeEventListener("focus", onFocus)
+    }
+  }, [check, postId, format])
+
+  useEffect(() => {
+    if (!runningId) return
+    const t = setInterval(() => void check(), 3000)
+    return () => clearInterval(t)
+  }, [runningId, check])
+}
+
 export function EditAgentChat({
   postId,
   format,
@@ -126,6 +181,7 @@ export function EditAgentChat({
       if (!res.ok && data.message) {
         setMessages((m) => [...m, { role: "assistant", text: data.message!, error: true }])
       }
+      if (data.jobId) window.dispatchEvent(new CustomEvent(EDIT_AGENT_STARTED, { detail: { postId, format } }))
       await refresh()
     } finally {
       setSending(false)

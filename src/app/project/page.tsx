@@ -114,7 +114,7 @@ import {
 } from "@/components/format-approval/approval-visuals"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
 import { useDescriptionAccess, useFormatCards, useOwnMediaText, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi, useAiChatAccess, useEditAgent } from "@/lib/use-scheduling-access"
-import { EditAgentChat } from "@/components/edit-agent-chat"
+import { EditAgentChat, useFollowEditAgentRun } from "@/components/edit-agent-chat"
 // "עריכה עם AI" on every format's copy (Hani, 2026-10-29).
 import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
 import { useChatRevealer } from "@/lib/ai-chat-reveal"
@@ -499,6 +499,8 @@ function ProjectPageInner() {
 
   // Saved post tracking
   const [savedPostId, setSavedPostId] = useState<string | null>(postId || null)
+  // The agent's b-roll lands even when its chat was closed mid-render.
+  useFollowEditAgentRun(savedPostId, "b_roll", editAgentOn, setBRollUrl)
   // Per-format "media is being made" — drives the skeleton card on the canvas.
   const { busy: mediaBusy, onPanelBusyChange } = useFormatMediaBusy(savedPostId, {
     onStoryImages: setStoryImages,
