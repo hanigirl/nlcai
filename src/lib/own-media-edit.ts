@@ -135,7 +135,25 @@ export async function runOwnMediaEdit(opts: {
         message: plan.reply || "לא הבנתי מה לשנות. אפשר לנסח שוב?",
       }
     }
-    return await execute(postId, format, plan, frames, driveLinks ?? null, opts.onProgress, opts.instruction, ownStory)
+    const done = await execute(postId, format, plan, frames, driveLinks ?? null, opts.onProgress, opts.instruction, ownStory)
+    // Her files just imported (gated): say exactly what happened — the
+    // planner's reply was written before anything ran and can describe frames
+    // that were never made (Hani, 2026-11-09).
+    if (ownText && opts.justImported && done.ok && done.changed && !/\(|לא הצליח/.test(done.message)) {
+      const isSet = format === "story" || format === "carousel"
+      const extraFrames = done.urls.length - frames.length
+      const noun = format === "story" ? "פריימים" : "שקופיות"
+      const tail = done.message.includes(NO_SCRIPT_TEXT) ? ` ${NO_SCRIPT_TEXT}` : ""
+      done.message =
+        !isSet
+          ? "המדיה שלכם עלתה, ועליה הטקסט מהסקריפט."
+          : format === "story" && extraFrames > 0
+            ? `המדיה שלכם עלתה, והיא חוזרת ב-${done.urls.length} ${noun}, כל אחד עם הטקסט שלו מהסקריפט.${tail}`
+            : extraFrames > 0
+              ? `המדיה שלכם עלתה, ועל כל שקופית הטקסט שלה מהסקריפט. הוספתי עוד ${extraFrames === 1 ? "שקופית אחת" : `${extraFrames} שקופיות`} בעיצוב AI לשאר הסקריפט.${tail}`
+              : `המדיה שלכם עלתה, ועל כל ${format === "story" ? "פריים הטקסט שלו" : "שקופית הטקסט שלה"} מהסקריפט.${tail}`
+    }
+    return done
   } catch (err) {
     console.error("[own-media-edit]", err)
     return { ok: false, message: FAIL }
