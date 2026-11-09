@@ -132,3 +132,65 @@ test("a word stamped in the silence starts when her voice returns; others don't 
   assert.deepEqual(snapped.map((w) => w.start), [0.46, 3.54, 5.2])
   assert.deepEqual(snapped.map((w) => w.end), [0.86, 4.08, 5.4])
 })
+
+import { findQuote, strictSpellingFixes } from "./transcribe"
+
+test("strict spelling: the script's spelling of a word she said is kept", () => {
+  const words = speak("אני עובדת עם קלוד קוד כל יום")
+  const r = strictSpellingFixes(words, [{ i: 3, text: "Claude" }], "אני עובדת עם Claude קוד כל יום")
+  assert.deepEqual(r.words.map((w) => w.text), ["אני", "עובדת", "עם", "Claude", "קוד", "כל", "יום"])
+  assert.equal(r.applied, 1)
+  assert.equal(r.rejected, 0)
+  assert.deepEqual(r.words.map((w) => w.start), words.map((w) => w.start))
+})
+
+test("strict spelling: a different word she said is never respelled to the script", () => {
+  // She said "כלב"; the script says "חתול" at the same place.
+  const words = speak("יש לי כלב בבית")
+  const r = strictSpellingFixes(words, [{ i: 2, text: "חתול" }], "יש לי חתול בבית")
+  assert.deepEqual(r.words, words)
+  assert.equal(r.rejected, 1)
+})
+
+test("strict spelling: word count never changes, and a word not in the script is refused", () => {
+  const words = speak("בכנס דיזיין היה יקרות")
+  const r = strictSpellingFixes(
+    words,
+    [
+      { i: 1, text: "Design Week" }, // two words for one
+      { i: 3, text: "יקרים" }, // not in the script
+      { i: 9, text: "x" }, // out of range
+    ],
+    "בכנס דיזיין היה מעולה",
+  )
+  assert.deepEqual(r.words, words)
+  assert.equal(r.rejected, 2)
+})
+
+test("strict spelling: a close typo fix where she follows the script is kept", () => {
+  const words = speak("תיק העבודות שלח נקרא")
+  const r = strictSpellingFixes(words, [{ i: 2, text: "שלך" }], "תיק העבודות שלך נקרא כמו דוח")
+  assert.equal(r.words[2].text, "שלך")
+  assert.equal(r.applied, 1)
+})
+
+test("strict spelling: a script word elsewhere in the script (no alignment) is refused", () => {
+  const words = speak("אני אוהבת קפה בבוקר")
+  const r = strictSpellingFixes(words, [{ i: 2, text: "קפא" }], "קפא הכל בחורף. ומה עוד")
+  assert.deepEqual(r.words, words)
+})
+
+test("quote check: her exact words are found with their time; punctuation aside", () => {
+  const words = speak("הלקוח לא קונה שעות. הוא קונה תוצאה.")
+  const q = findQuote("הוא קונה תוצאה", words)
+  assert.ok(q)
+  assert.equal(q!.text, "הוא קונה תוצאה.")
+  assert.equal(q!.start, words[4].start)
+})
+
+test("quote check: words she never said (or not in that order) are refused", () => {
+  const words = speak("הלקוח לא קונה שעות. הוא קונה תוצאה.")
+  assert.equal(findQuote("שלושה צעדים לתמחור", words), null)
+  assert.equal(findQuote("תוצאה קונה הוא", words), null)
+  assert.equal(findQuote("", words), null)
+})

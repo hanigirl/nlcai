@@ -1,5 +1,34 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
+/**
+ * The finished edit becomes the post's video ON THE SERVER (own media text,
+ * gated — Hani 2026-11-09): a reload while the edit ran used to leave the
+ * paid render orphaned, because only the chat's callback switched the video.
+ * Written only while the post still shows the video the edit started from
+ * (`from`) — a video she brought meanwhile is never replaced. Same
+ * wipe-then-insert as core-posts PATCH videoUrl. False: not written.
+ */
+export async function setTalkingHeadVideo(supabase: SupabaseClient, postId: string, url: string, from: string | null): Promise<boolean> {
+  const { data: variant } = await supabase
+    .from("format_variants")
+    .select("id")
+    .eq("core_post_id", postId)
+    .eq("format", "talking_head")
+    .maybeSingle()
+  const variantId = (variant as { id: string } | null)?.id
+  if (!variantId) return false
+  const current = await talkingHeadVideoUrl(supabase, postId)
+  if (current === url) return true
+  if (from && current && current !== from) return false
+  const { error: wipeErr } = await supabase.from("media_assets").delete().eq("format_variant_id", variantId).eq("asset_type", "video")
+  if (wipeErr) return false
+  const { error } = await supabase
+    .from("media_assets")
+    .insert({ format_variant_id: variantId, asset_type: "video", url, provider: "heygen", status: "completed" } as never)
+  if (error) console.error("[talking-head-video] save", error.message)
+  return !error
+}
+
 /** The post's talking-head video — her latest one (as api/talking-head/transcribe reads it). */
 export async function talkingHeadVideoUrl(supabase: SupabaseClient, postId: string): Promise<string | null> {
   const { data: variant } = await supabase

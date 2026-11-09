@@ -5,7 +5,7 @@ import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from "react"
 import { useCoverDefaultColor } from "@/lib/use-cover-brand-colors"
 import Image from "next/image"
-import { X, Smartphone, Video, Layers, Image as ImageIcon, Film, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, ChevronLeft, ChevronRight, Link2, Trash2, Type, type LucideIcon } from "lucide-react"
+import { X, Smartphone, Video, Layers, Image as ImageIcon, Film, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, ChevronLeft, ChevronRight, Link2, Trash2, Type, Upload, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { AvatarPicker, type Avatar } from "@/components/avatar-picker"
@@ -81,6 +81,7 @@ import { isVideoSlide } from "@/lib/carousel-video"
 import { registerAsIsImporter, requestDrivePicker, type AsIsItem, type AsIsOptions, type AsIsResult } from "@/lib/as-is-upload"
 import { AiHoverEditButton } from "@/components/ai-hover-edit"
 import { useOwnMediaText, useRefPlace } from "@/lib/use-scheduling-access"
+import { uploadTalkingHeadFile } from "@/lib/talking-head-upload"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import type { AiEditFormat } from "@/components/media-ai-chat"
 import type { MediaGenResult } from "@/lib/media-brief"
@@ -628,6 +629,11 @@ function TalkingHeadFlow({
   onBusyChange?: (format: string, busy: boolean) => void
 }) {
   const drivePick = useDrivePickVariant()
+  // Own media text (gated, Hani 2026-11-09): her video from her computer too.
+  const ownText = useOwnMediaText() === true
+  const [fileProgress, setFileProgress] = useState<number | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   // --- Google Drive link state ---
   // The talking_head format takes its media from a Google Drive share link
   // (not a local upload) — we download it server-side and store it, so it
@@ -662,7 +668,7 @@ function TalkingHeadFlow({
   const hasCoverSettings = useHasCoverSettings(true)
   const coverDefaultColor = useCoverDefaultColor()
   const [videoPhase, setVideoPhase] = useState<"idle" | "generating" | "done">(liftedVideoUrl ? "done" : "idle")
-  useReportBusy(onBusyChange, "talking_head", videoPhase === "generating" || driveLoading)
+  useReportBusy(onBusyChange, "talking_head", videoPhase === "generating" || driveLoading || fileProgress !== null)
   const [videoProgress, setVideoProgress] = useState("")
   const [videoError, setVideoError] = useState<string | null>(null)
 
@@ -936,7 +942,8 @@ function TalkingHeadFlow({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           thumbnail_url: thumbnailUrl || undefined,
-          title: customTitle || hookText || transcript || "ריל חדש",
+          // Own media text (gated): the hook only — never her transcript or a placeholder.
+          title: ownText ? customTitle || hookText : customTitle || hookText || transcript || "ריל חדש",
           pill_color: color ?? pillColor,
         }),
       })
@@ -1104,7 +1111,8 @@ function TalkingHeadFlow({
       // handing it the thumbnail URL works exactly like a data URL frame.
       const fileId = extractDriveFileId(link)
       const posterUrl = fileId ? driveThumbnailUrl(fileId) : undefined
-      const coverTitle = hookText || transcript || "ריל חדש"
+      const coverTitle = ownText ? hookText : hookText || transcript || "ריל חדש"
+      if (!coverTitle) return
       setCoverLoading(true)
       onCoverLoadingChange?.(true)
       try {
@@ -1173,6 +1181,53 @@ function TalkingHeadFlow({
     lastDriveRef.current = link
     processDriveLink(link)
   }
+
+  /**
+   * Own media text (gated): her video from her computer becomes the post's
+   * video — stored in user-media, then the page saves it like a Drive link.
+   */
+  const attachFile = async (file: File): Promise<string | null> => {
+    setFileError(null)
+    setFileProgress(0)
+    try {
+      const url = await uploadTalkingHeadFile(file, setFileProgress)
+      replaceWithNewVideo()
+      onVideoUrlChange(url)
+      setVideoPhase("done")
+      toast.success("הסרטון עלה לפוסט")
+      return url
+    } catch (err) {
+      setFileError(err instanceof Error && err.message ? err.message : "העלאת הסרטון נכשלה. נסו שוב.")
+      return null
+    } finally {
+      setFileProgress(null)
+    }
+  }
+
+  // "להעלות כמו שזה" from the AI panel (gated): her clip becomes the video.
+  const thAsIsRef = useRef<((items: AsIsItem[]) => Promise<AsIsResult>) | null>(null)
+  useEffect(() => {
+    thAsIsRef.current = async (items) => {
+      const video = items.find((it) => it.kind === "video")
+      if (!video) return { ok: false, message: "בדיבור למצלמה המדיה היא סרטון. צרפו סרטון." }
+      if (video.drive) {
+        setDriveLink(video.drive)
+        lastDriveRef.current = video.drive
+        await processDriveLink(video.drive)
+        return { ok: true, message: "הסרטון מהדרייב חובר לפוסט כמו שהוא, בלי תוספות." }
+      }
+      if (!video.file) return { ok: false, message: "אין כאן סרטון להעלות." }
+      const url = await attachFile(video.file)
+      return url
+        ? { ok: true, message: "הסרטון עלה לפוסט כמו שהוא, בלי תוספות." }
+        : { ok: false, message: "העלאת הסרטון נכשלה. נסו שוב, או העלו אותו מגוגל דרייב." }
+    }
+  })
+  useEffect(() => {
+    if (!ownText) return
+    registerAsIsImporter("talking_head", (items) => thAsIsRef.current?.(items) ?? Promise.resolve({ ok: false, message: "" }))
+    return () => registerAsIsImporter("talking_head", null)
+  }, [ownText])
 
   // Determine current step for progress bar
   const currentStep = !avatar ? 0 : (videoPhase === "done" && liftedVideoUrl) ? 2 : 1
@@ -1252,6 +1307,34 @@ function TalkingHeadFlow({
             </p>
           )}
         </div>
+        )}
+
+        {/* Own media text (gated): her video from her computer. */}
+        {ownText && (
+          <div className="flex flex-col gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="video/*"
+              className="hidden"
+              aria-label="העלאת סרטון מהמחשב"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                e.target.value = ""
+                if (f) void attachFile(f)
+              }}
+            />
+            <Button
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={fileProgress !== null || driveLoading}
+              className="w-full gap-2"
+            >
+              {fileProgress !== null ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+              {fileProgress !== null ? "מעלה את הסרטון... " + fileProgress + "%" : "העלאה מהמחשב"}
+            </Button>
+            {fileError && <p className="text-xs text-button-destructive-default">{fileError}</p>}
+          </div>
         )}
 
         {/* Divider */}

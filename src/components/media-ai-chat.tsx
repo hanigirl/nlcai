@@ -47,6 +47,7 @@ import type { ReferenceImages } from "@/components/ai-edit-reference"
 import type { MediaStyle, VisualFormat } from "@/lib/visual-language/types"
 import type { OwnEditFormat } from "@/lib/own-media"
 import { isTalkingHeadRender } from "@/lib/talking-head-original"
+import { saveTalkingHeadVideo, uploadTalkingHeadFile } from "@/lib/talking-head-upload"
 import { cutMessage, type CutStats } from "@/lib/talking-head-cut-message"
 import { TH_EDIT_MODES, TalkingHeadPlanEditor, TalkingHeadTemplateChip, appendToTalkingHeadTemplate, type ThPlanMoment } from "@/components/talking-head-ai"
 import { useCopyStructure, useOwnMediaText } from "@/lib/use-scheduling-access"
@@ -354,6 +355,26 @@ const STYLE_ANSWER_LEAD =
   "The attached picture is ONLY a style reference — never put it, or any part of it, into the media. What to take from it:"
 const AS_IS = "להעלות כמו שזה, בלי תוספות"
 const AS_IS_BUSY = "מעלים את המדיה כמו שהיא..."
+/** Talking head, own media text (gated): "ביטול השינוי האחרון" typed in the chat. */
+const TH_UNDO_WORDS = /ביטול השינוי|לבטל את (השינוי|העריכה)|תבטל(י)? את (השינוי|העריכה)|בטל(י)? את (השינוי|העריכה)/
+const SUPERSEDED_NOTE = "בזמן העריכה הסרטון בפוסט הוחלף, אז השארתי את הסרטון החדש ולא החלפתי אותו בעריכה."
+/** What the talking-head edit left out or kept as heard — said, never silent. */
+function thEditNotes(data: { dropped?: unknown; spelling?: unknown }): string {
+  const notes: string[] = []
+  const dropped = Array.isArray(data.dropped) ? data.dropped.filter((q): q is string => typeof q === "string") : []
+  if (dropped.length) {
+    notes.push(
+      dropped.length === 1
+        ? `את האלמנט ״${dropped[0]}״ לא הצלחתי לעצב הפעם, אז הוא לא נכנס. אפשר לבקש אותו שוב.`
+        : `${dropped.length} אלמנטים לא הצלחתי לעצב הפעם (${dropped.map((q) => `״${q}״`).join(", ")}), אז הם לא נכנסו. אפשר לבקש אותם שוב.`,
+    )
+  }
+  const spelling = data.spelling as { rejected?: unknown } | undefined
+  if (typeof spelling?.rejected === "number" && spelling.rejected > 0) {
+    notes.push("בכמה מקומות אמרתם משהו אחר ממה שכתוב בסקריפט, ושם הכתוביות הן בדיוק מה שנשמע בסרטון.")
+  }
+  return notes.join(" ")
+}
 const GEN_STALE = "הבקשה הזאת כבר לא פעילה. לחצו שוב על כפתור היצירה בפאנל המדיה."
 
 /**
@@ -736,6 +757,12 @@ export function MediaAiChat({
     const key = chatKey
     const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, fresh, fn)
     if (getChat<ChatMessage, MediaChatExtra>(key)?.busy) return
+    // Talking head, own media text (gated): her attached clip is saved as the
+    // post's video right here — no media panel needed.
+    if (ownTextGate && format === "talking_head" && refs.originals(refs.refs).some((o) => o.kind === "video")) {
+      await sendThOwnVideo(AS_IS, patchKey)
+      return
+    }
     // A still format can't take a video — at once, before anything starts.
     if (format === "image_post" && items.some((it) => it.kind === "video")) {
       patchKey((s) => ({
@@ -1396,12 +1423,92 @@ export function MediaAiChat({
   }
 
   /**
+   * Own media text (Hani, 2026-11-09 — ~90% of use, gated): she attaches her
+   * video in the chat (computer or Drive) → it BECOMES the post's talking
+   * head, saved before anything runs on it, and then her request runs on it —
+   * captions of her own words when she wrote nothing.
+   */
+  const sendThOwnVideo = async (text: string, patchKey: (fn: (s: MediaChat) => MediaChat) => void) => {
+    const attached = refs.refs
+    const originals = refs.originals(attached)
+    const video = originals.find((o) => o.kind === "video")
+    if (!video) return
+    const extra = originals.length > 1 ? " עבדתי עם הסרטון הראשון; שאר הקבצים לא נכללו." : ""
+    refs.clear()
+    links.reset()
+    setSentAsIs(null)
+    const captionsMode = TH_EDIT_MODES.find((m) => m.id === "captions")!
+    const asIs = text === AS_IS
+    const request = text && !asIs ? text : captionsMode.request
+    patchKey((s) => ({
+      ...s,
+      input: "",
+      busy: true,
+      extra: { ...s.extra, progress: "מעלים את הסרטון שלכם..." },
+      messages: [...s.messages, { role: "user", content: text || captionsMode.label, ...(attached.length ? { images: attached } : {}) }],
+    }))
+    const fail = (content: string) =>
+      patchKey((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" }, messages: [...s.messages, { role: "assistant", content, error: true }] }))
+    let url: string
+    try {
+      url = video.drive
+        ? video.drive
+        : video.file
+          ? await uploadTalkingHeadFile(video.file, (pct) =>
+              patchKey((s) => ({ ...s, extra: { ...s.extra, progress: "מעלים את הסרטון שלכם... " + pct + "%" } })),
+            )
+          : ""
+    } catch (err) {
+      return fail(err instanceof Error && err.message ? err.message : "העלאת הסרטון נכשלה. נסו שוב.")
+    }
+    if (!url) return fail("אין כאן סרטון להעלות.")
+    // A Drive link is checked first (shared, a video) — as the media panel does.
+    if (video.drive) {
+      const info = (await fetch("/api/media/drive-info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+        signal: AbortSignal.timeout(30_000),
+      })
+        .then((r) => r.json())
+        .catch(() => ({ error: "drive_timeout" }))) as { error?: string; kind?: string }
+      if (info.error || info.kind !== "video") {
+        return fail(
+          info.error === "drive_not_public"
+            ? "הסרטון בדרייב לא משותף. שנו את ההרשאה ל„כל מי שיש לו הקישור” ונסו שוב."
+            : info.kind && info.kind !== "video"
+              ? "הקובץ בדרייב הוא לא סרטון. בחרו סרטון."
+              : "לא הצלחתי לטעון את הסרטון מהדרייב. בדקו שהוא משותף ונסו שוב.",
+        )
+      }
+    }
+    if (!postId || !(await saveTalkingHeadVideo(postId, url))) return fail("לא הצלחתי לשמור את הסרטון בפוסט, אז לא ערכתי כלום. נסו שוב.")
+    onUpdated?.(format, [url])
+    if (asIs) {
+      return patchKey((s) => ({
+        ...s,
+        busy: false,
+        extra: { ...s.extra, progress: "" },
+        messages: [...s.messages, { role: "assistant", content: "הסרטון שלכם הוא עכשיו הסרטון של הפוסט, כמו שהוא." + extra, done: true, noStyle: true }],
+      }))
+    }
+    if (extra) patchKey((s) => ({ ...s, messages: [...s.messages, { role: "assistant", content: extra.trim() }] }))
+    await sendTalkingHead(request, patchKey, { url })
+  }
+
+  /**
    * Talking head: "כתוביות + אלמנטים תומכים" answers with the PLAN first —
    * the moments it will highlight, each with its time and element — and the
    * edit runs only after "אישור". Every edit offers saving what she asked as
    * her template ("איך לייצר סרטון דיבור למצלמה").
    */
-  const sendTalkingHead = async (text: string, patchKey: (fn: (s: MediaChat) => MediaChat) => void) => {
+  const sendTalkingHead = async (
+    text: string,
+    patchKey: (fn: (s: MediaChat) => MediaChat) => void,
+    /** Own media text: her just-attached video (the card's props haven't caught up), and her message already in the thread. */
+    own?: { url: string },
+  ) => {
+    const videoUrl = own?.url ?? currentUrls[0]
     const mode = TH_EDIT_MODES.find((m) => m.request && m.request === text)?.id
     const reply = (msg: ChatMessage) =>
       patchKey((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" }, messages: [...s.messages, msg] }))
@@ -1418,7 +1525,7 @@ export function MediaAiChat({
               ? "מתמללים את הדיבור ומתכננים מה להדגיש..."
               : "",
       },
-      messages: [...s.messages, { role: "user", content: text }],
+      messages: own ? s.messages : [...s.messages, { role: "user", content: text }],
     }))
     const call = async (route: string, body: Record<string, unknown>) => {
       const res = await fetch(route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
@@ -1430,12 +1537,18 @@ export function MediaAiChat({
     try {
       if (mode === "captions") {
         // Her speech, word by word, as captions in her font (else Rubik).
-        const { ok, data } = await call("/api/talking-head/captions", { postId, url: currentUrls[0] })
+        const { ok, data } = await call("/api/talking-head/captions", { postId, url: videoUrl })
         if (!ok || typeof data.url !== "string") return failed(data, "הוספת הכתוביות לא הצליחה. נסו שוב.")
+        if (ownTextGate && data.superseded) return reply({ role: "assistant", content: SUPERSEDED_NOTE })
         onUpdated?.(format, [data.url])
         return reply({
           role: "assistant",
-          content: "הוספתי כתוביות לכל מה שאמרתם, בגופן של השפה הוויזואלית שלכם. מה שצילמתם לא השתנה.",
+          content: [
+            "הוספתי כתוביות לכל מה שאמרתם, בגופן של השפה הוויזואלית שלכם. מה שצילמתם לא השתנה.",
+            ownTextGate ? thEditNotes(data) : "",
+          ]
+            .filter(Boolean)
+            .join(" "),
           done: true,
           noStyle: true,
           thTemplate: text,
@@ -1445,13 +1558,13 @@ export function MediaAiChat({
       // from her transcript — nothing is edited until she approves it.
       if (!mode || mode === "captions_plus") {
         patchKey((s) => ({ ...s, busy: true, extra: { ...s.extra, progress: "מתמללים את הדיבור ומתכננים מה להדגיש..." } }))
-        const { ok, data } = await call("/api/talking-head/plan", { postId, url: currentUrls[0], request: text })
+        const { ok, data } = await call("/api/talking-head/plan", { postId, url: videoUrl, request: text })
         if (!ok || !Array.isArray(data.moments)) return failed(data, "התכנון לא הצליח. נסו שוב.")
         const cuts = data.cuts === true
         // Nothing to approve (she asked only for cuts / captions): straight to the edit.
         if (!data.moments.length) {
           patchKey((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" } }))
-          return runThEdit({ moments: [], captions: data.captions === true, cuts, request: text })
+          return runThEdit({ moments: [], captions: data.captions === true, cuts, request: text, url: videoUrl })
         }
         return reply({
           role: "assistant",
@@ -1503,7 +1616,7 @@ export function MediaAiChat({
    * nothing to approve (she asked only for cuts / captions). Says what it did,
    * cuts included ("הורדנו 7 ״אממ״…" / "הקאטים כבר טובים, לא נגענו").
    */
-  const runThEdit = async (opts: { moments: ThPlanMoment[]; captions: boolean; cuts: boolean; request: string }) => {
+  const runThEdit = async (opts: { moments: ThPlanMoment[]; captions: boolean; cuts: boolean; request: string; url?: string }) => {
     const done = (msg: ChatMessage) =>
       patch((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" }, messages: [...s.messages, msg] }))
     patch((s) => ({
@@ -1518,9 +1631,16 @@ export function MediaAiChat({
       const res = await fetch("/api/talking-head/edit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, url: currentUrls[0], moments: opts.moments, captions: opts.captions, cuts: opts.cuts, request: opts.request }),
+        body: JSON.stringify({ postId, url: opts.url ?? currentUrls[0], moments: opts.moments, captions: opts.captions, cuts: opts.cuts, request: opts.request }),
       })
-      const data = (await res.json().catch(() => ({}))) as { url?: string | null; message?: string; cuts?: CutStats | { none: true } }
+      const data = (await res.json().catch(() => ({}))) as {
+        url?: string | null
+        message?: string
+        cuts?: CutStats | { none: true }
+        dropped?: string[]
+        spelling?: { applied: number; rejected: number }
+        superseded?: boolean
+      }
       const cutLine = data.cuts ? cutMessage("none" in data.cuts ? null : data.cuts) : ""
       if (res.ok && data.url === null) {
         // Only cuts were asked, and they were already good.
@@ -1529,11 +1649,12 @@ export function MediaAiChat({
       if (!res.ok || !data.url) {
         return done({ role: "assistant", content: aiErrorMessage(data.message || "העריכה לא הצליחה. נסו שוב."), error: true })
       }
+      if (ownTextGate && data.superseded) return done({ role: "assistant", content: SUPERSEDED_NOTE })
       onUpdated?.(format, [data.url])
       const what = opts.moments.length ? "ערכתי את הסרטון לפי התוכנית." : opts.captions ? "הוספתי כתוביות לכל מה שאמרתם." : ""
       done({
         role: "assistant",
-        content: [what, cutLine, "מה שצילמתם לא השתנה, והמקורי שמור."].filter(Boolean).join(" "),
+        content: [what, cutLine, ownTextGate ? thEditNotes(data) : "", "מה שצילמתם לא השתנה, והמקורי שמור."].filter(Boolean).join(" "),
         done: true,
         noStyle: true,
         thTemplate: opts.request,
@@ -1567,7 +1688,19 @@ export function MediaAiChat({
     // design is in, the edit itself isn't wired yet — nothing paid runs here.
     if (format === "talking_head") {
       const text = (preset ?? cur.input).trim()
+      // Own media text (gated): a video she attached BECOMES the talking
+      // head, and her request (captions when she wrote nothing) runs on it.
+      if (ownTextGate && refs.originals(refs.refs).some((o) => o.kind === "video")) {
+        await sendThOwnVideo(text, patchKey)
+        return
+      }
       if (!text) return
+      if (ownTextGate && TH_UNDO_WORDS.test(text)) {
+        patchKey((s) => ({ ...s, input: "", messages: [...s.messages, { role: "user", content: text }] }))
+        if (isTalkingHeadRender(currentUrls[0])) await backToOriginal()
+        else patchKey((s) => ({ ...s, messages: [...s.messages, { role: "assistant", content: "זה הסרטון המקורי שלכם, אין כאן עריכה לבטל." }] }))
+        return
+      }
       await sendTalkingHead(text, patchKey)
       return
     }

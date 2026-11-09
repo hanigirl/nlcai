@@ -34,6 +34,12 @@ export interface Word {
 
 export interface Transcript {
   words: Word[]
+  /**
+   * The script spelling pass, strict mode only (canOwnMediaText): fixes kept,
+   * and fixes refused because she said something else there — those words
+   * stay exactly as heard.
+   */
+  spelling?: { applied: number; rejected: number }
   /** The whole text, as the model wrote it (with punctuation). */
   text: string
   /** Audio length in seconds. */
@@ -242,6 +248,12 @@ export async function transcribeVideo(
     names?: string[]
     /** Her Claude key: the Opus 5.5 spelling pass against the script. Without it only the deterministic pass runs. */
     anthropicKey?: string | null
+    /**
+     * Spelling only (canOwnMediaText): an Opus fix is kept only when it is the
+     * same spoken word as the script's, where she is saying the script
+     * (strictSpellingFixes). Anything else stays exactly as Whisper heard it.
+     */
+    strict?: boolean
   } = {},
 ): Promise<Transcript> {
   const os = await import("os")
@@ -267,11 +279,20 @@ export async function transcribeVideo(
     // Starts snapped to where her voice really comes back (free — from the same audio).
     let words = snapWordsToVoice(t.words, voiceOnsets(await audioLevels(audio)))
     // Spelling from the script: the safe deterministic pass, then Opus 5.5.
+    let spelling: Transcript["spelling"]
     if (opts.script?.trim()) {
       words = alignToScript(words, opts.script)
-      if (opts.anthropicKey) words = await correctWithScript(opts.anthropicKey, words, opts.script).catch(() => words)
+      if (opts.anthropicKey && opts.strict) {
+        const script = opts.script
+        const heard = words
+        const r = await scriptSpellingFixes(opts.anthropicKey, heard, script)
+          .then((fixes) => strictSpellingFixes(heard, fixes, script))
+          .catch(() => ({ words: heard, applied: 0, rejected: 0 }))
+        words = r.words
+        spelling = { applied: r.applied, rejected: r.rejected }
+      } else if (opts.anthropicKey) words = await correctWithScript(opts.anthropicKey, words, opts.script).catch(() => words)
     }
-    return { ...t, words }
+    return { ...t, words, ...(spelling ? { spelling } : {}) }
   } finally {
     await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -401,6 +422,11 @@ export function applySpellingFixes(words: Word[], fixes: { i: number; text: stri
  * one word out — never times, never order, never a word she didn't say.
  */
 export async function correctWithScript(anthropicKey: string, words: Word[], script: string): Promise<Word[]> {
+  return applySpellingFixes(words, await scriptSpellingFixes(anthropicKey, words, script))
+}
+
+/** The Opus 5.5 answer itself: which words to respell (not yet applied). */
+async function scriptSpellingFixes(anthropicKey: string, words: Word[], script: string): Promise<{ i: number; text: string }[]> {
   const Anthropic = (await import("@anthropic-ai/sdk")).default
   const client = new Anthropic({ apiKey: anthropicKey })
   const msg = await client.messages.create({
@@ -425,5 +451,91 @@ export async function correctWithScript(anthropicKey: string, words: Word[], scr
   })
   const text = msg.content.map((c) => (c.type === "text" ? c.text : "")).join("")
   const json = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)) as { fixes?: { i: number; text: string }[] }
-  return applySpellingFixes(words, json.fixes ?? [])
+  return Array.isArray(json.fixes) ? json.fixes : []
+}
+
+const LATIN = /[A-Za-z]/
+const HEBREW = /[֐-׿]/
+
+/**
+ * Spelling only (Hani, 2026-11-09 — captions are HER words, spelled as in her
+ * script; never a word she didn't say). An Opus fix is kept only when:
+ *   - it is one word for one word (the word count never changes);
+ *   - it is a word of the script, where she is saying the script — a
+ *     neighbour of the heard word matches that script word's neighbour
+ *     (token alignment);
+ *   - and it is the same spoken word: a close spelling, or the same word in
+ *     the other alphabet (קלוד → Claude: a name or an English term).
+ * A punctuation-only change is always fine. Everything else is refused and
+ * the word stays as heard. Times and order never change.
+ */
+export function strictSpellingFixes(
+  words: Word[],
+  fixes: { i: number; text: string }[],
+  script: string,
+): { words: Word[]; applied: number; rejected: number } {
+  const keys = script.split(/\s+/).filter(Boolean).map(letters)
+  const heard = words.map((w) => letters(w.text))
+  const out = words.map((w) => ({ ...w }))
+  let applied = 0
+  let rejected = 0
+  const seen = new Set<number>()
+  for (const f of fixes) {
+    if (!f || !Number.isInteger(f.i) || f.i < 0 || f.i >= out.length || seen.has(f.i)) continue
+    seen.add(f.i)
+    const text = String(f.text ?? "").trim()
+    if (!text || text === out[f.i].text) continue
+    const fix = letters(text)
+    const was = heard[f.i]
+    const ok = (() => {
+      if (/\s/.test(text) || !fix) return false
+      if (fix === was) return true // punctuation only
+      const prev = f.i > 0 ? heard[f.i - 1] : null
+      const next = f.i < heard.length - 1 ? heard[f.i + 1] : null
+      const aligned = keys.some(
+        (k, at) =>
+          k === fix &&
+          ((prev !== null && at > 0 && keys[at - 1] === prev) || (next !== null && at < keys.length - 1 && keys[at + 1] === next)),
+      )
+      if (!aligned) return false
+      const otherAlphabet = (LATIN.test(fix) && HEBREW.test(was)) || (HEBREW.test(fix) && LATIN.test(was))
+      return otherAlphabet || distance(was, fix) <= Math.max(1, Math.floor(Math.max(was.length, fix.length) * 0.4))
+    })()
+    if (ok) {
+      out[f.i].text = text
+      applied++
+    } else rejected++
+  }
+  return { words: out, applied, rejected }
+}
+
+/**
+ * Her own words, found in what she said (Hani, 2026-11-09): a highlighted
+ * moment's quote must be a run of her transcript — the words she spoke, in
+ * order (punctuation aside). Returns that run as heard, with its time, or
+ * null: a quote that isn't in the transcript is refused, never shown.
+ */
+export function findQuote(quote: string, words: Word[]): { text: string; start: number; end: number } | null {
+  const q = quote.split(/\s+/).map(letters).filter(Boolean)
+  if (!q.length) return null
+  const heard = words.map((w) => letters(w.text))
+  for (let i = 0; i + q.length <= heard.length; i++) {
+    if (heard[i] !== q[0]) continue
+    let k = 0
+    let j = i
+    while (k < q.length && j < heard.length) {
+      if (!heard[j]) {
+        j++
+        continue
+      }
+      if (heard[j] !== q[k]) break
+      j++
+      k++
+    }
+    if (k === q.length) {
+      const run = words.slice(i, j)
+      return { text: run.map((w) => w.text).join(" "), start: run[0].start, end: run[run.length - 1].end }
+    }
+  }
+  return null
 }

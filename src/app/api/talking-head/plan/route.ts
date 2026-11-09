@@ -3,8 +3,9 @@ import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
 import { getUserApiKey } from "@/lib/api-keys"
-import { canTalkingHeadAi } from "@/lib/feature-access"
-import { TALKING_HEAD_MODEL, captionLines, transcribeVideo } from "@/lib/transcribe"
+import { canOwnMediaText, canTalkingHeadAi } from "@/lib/feature-access"
+import { TALKING_HEAD_MODEL, captionLines, findQuote, transcribeVideo } from "@/lib/transcribe"
+import { ownTranscript } from "@/lib/talking-head-transcript"
 import { talkingHeadVideoUrl, transcriptionContext } from "@/lib/talking-head-video"
 import { loadTalkingHeadTemplate } from "@/lib/talking-head-template"
 import { originalFor } from "@/lib/talking-head-original"
@@ -57,7 +58,11 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const transcript = await transcribeVideo(openaiKey, videoUrl, await transcriptionContext(supabase, user.id, postId))
+    // Own media text (gated): one transcript, kept for the edit, spelling only.
+    const ownText = canOwnMediaText(user.email)
+    const transcript = ownText
+      ? await ownTranscript(supabase, user.id, postId, openaiKey, videoUrl)
+      : await transcribeVideo(openaiKey, videoUrl, await transcriptionContext(supabase, user.id, postId))
     const lines = captionLines(transcript.words)
     if (!lines.length) return NextResponse.json({ error: "no_speech", message: "לא שמעתי דיבור בסרטון, אז אין מה להדגיש." }, { status: 422 })
     const template = await loadTalkingHeadTemplate(supabase, user.id)
@@ -97,6 +102,14 @@ export async function POST(req: NextRequest) {
         return { id: `m${k + 1}`, at: fmt(lines[i].start), quote: typeof m.quote === "string" ? m.quote.trim() : lines[i].text, element }
       })
       .filter((m) => m.quote)
+      // Own media text (gated): a quote is HER words or nothing — a quote
+      // that isn't in the transcript is dropped, and the one kept is shown as
+      // heard, timed where she says it.
+      .flatMap((m) => {
+        if (!ownText) return [m]
+        const found = findQuote(m.quote, transcript.words)
+        return found ? [{ ...m, quote: found.text, at: fmt(found.start) }] : []
+      })
       .slice(0, 4)
     // "כתוביות + אלמנטים תומכים" always has captions; her own prompt, as she said.
     const captions = /כתוביות/.test(request ?? "") || parsed?.captions === true

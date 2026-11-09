@@ -22,6 +22,7 @@ import {
   type MomentLayer,
 } from "@/lib/talking-head-captions"
 import { guardedFetch } from "@/lib/server-fetch"
+import { ownTranscript } from "@/lib/talking-head-transcript"
 
 /**
  * The talking-head AI edit itself (Hani, 2026-11-07), from her ORIGINAL
@@ -99,6 +100,12 @@ export async function runTalkingHeadEdit(opts: {
    * needs it (lib/talking-head-cuts). Not for "רק כתוביות" unless she asks.
    */
   cuts?: boolean
+  /**
+   * Own media text (canOwnMediaText): the plan's transcript is reused
+   * (lib/talking-head-transcript — one Whisper bill, the same timings she
+   * approved), spelling only against the script.
+   */
+  ownText?: boolean
   /** Frames of an element, for local tests (no Opus): replaces the engine. */
   designMoment?: (m: PlanMoment, dir: string) => Promise<number>
 }): Promise<{
@@ -109,6 +116,10 @@ export async function runTalkingHeadEdit(opts: {
   applied: Applied
   /** undefined: no cut pass; null: tried, already tight — untouched; else what was cut. */
   cuts?: CutStats | null
+  /** Elements that couldn't be designed this time (left out), own media text only. */
+  dropped?: string[]
+  /** The spelling pass: fixes refused because she said something else (words kept as heard). */
+  spelling?: { applied: number; rejected: number }
 }> {
   const fs = await import("fs/promises")
   const path = await import("path")
@@ -146,6 +157,7 @@ export async function runTalkingHeadEdit(opts: {
 
   // Her words, once — for the captions and for the cuts.
   let words: Word[] | null = null
+  let spelling: { applied: number; rejected: number } | undefined
   if (wantCaptions || wantCuts) {
     let openaiKey: string
     try {
@@ -153,7 +165,11 @@ export async function runTalkingHeadEdit(opts: {
     } catch {
       throw new EditError("openai_not_connected", "כדי לתמלל את הסרטון צריך לחבר מפתח OpenAI בהגדרות ← חיבורים.", 400)
     }
-    words = (await transcribeVideo(openaiKey, source, await transcriptionContext(supabase, userId, postId))).words
+    if (opts.ownText) {
+      const t = await ownTranscript(supabase, userId, postId, openaiKey, source)
+      words = t.words
+      spelling = t.spelling
+    } else words = (await transcribeVideo(openaiKey, source, await transcriptionContext(supabase, userId, postId))).words
   }
 
   // The cut pass (Hani, 2026-11-08): fillers, repeats and dead air out —
@@ -229,6 +245,7 @@ export async function runTalkingHeadEdit(opts: {
   }
 
   const layers: MomentLayer[] = []
+  const failed = new Set<number>()
   if (allMoments.length) {
     let design = opts.designMoment
     if (!design) {
@@ -270,19 +287,26 @@ export async function runTalkingHeadEdit(opts: {
     }
     await Promise.all(Array.from({ length: Math.min(3, queue.length) }, worker))
     layers.push(...results.filter((r): r is MomentLayer => !!r))
+    results.forEach((r, k) => {
+      if (!r) failed.add(k)
+    })
     if (!layers.length && !captionsList) throw new EditError("elements_failed", "לא הצלחתי לעצב את האלמנטים הפעם. נסו שוב.", 500)
   }
-  const nowApplied: Applied = { captions: wantCaptions && !!captionsList, moments: allMoments, cuts: wantCuts }
+  // Own media text: an element that failed isn't recorded as on her video.
+  const dropped = allMoments.filter((_, k) => failed.has(k)).map((m) => m.quote)
+  const keptMoments = opts.ownText ? allMoments.filter((_, k) => !failed.has(k)) : allMoments
+  const nowApplied: Applied = { captions: wantCaptions && !!captionsList, moments: keptMoments, cuts: wantCuts }
+  const report = opts.ownText ? { ...(dropped.length ? { dropped } : {}), ...(spelling ? { spelling } : {}) } : {}
   if (!captionsList && !layers.length) {
     // Only cuts were asked: the cut is the result — or, when the cuts were
     // already good, nothing changes.
     if (wantCuts && cuts !== undefined) {
-      return { buffer: cuts ? await fs.readFile(input) : null, lines, source, applied: nowApplied, cuts }
+      return { buffer: cuts ? await fs.readFile(input) : null, lines, source, applied: nowApplied, cuts, ...report }
     }
     throw new EditError("no_speech", "לא שמעתי דיבור בסרטון, אז אין מה להוסיף.")
   }
 
   const output = path.join(work, "out.mp4")
   await composeTalkingHead(input, { captionsList, moments: layers }, output)
-  return { buffer: await fs.readFile(output), lines, source, applied: nowApplied, cuts }
+  return { buffer: await fs.readFile(output), lines, source, applied: nowApplied, cuts, ...report }
 }
