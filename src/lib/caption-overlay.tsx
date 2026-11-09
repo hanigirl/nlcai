@@ -12,8 +12,11 @@
  */
 
 import satori from "satori"
+// satori's own font parser (its dependency) — used to MEASURE a line, since
+// satori lays the words out but can't tell us how wide a line will be.
+import { parse as parseFont } from "@shuding/opentype.js"
 import { Resvg } from "@resvg/resvg-js"
-import { RtlText } from "@/lib/carousel-templates/shared"
+import { RtlText, reverseWord } from "@/lib/carousel-templates/shared"
 import type { CaptionStyle } from "@/lib/own-media"
 import { BROLL_VIDEO_CTA } from "@/lib/broll-copy"
 
@@ -180,8 +183,15 @@ function imageMimeFromBase64(base64: string): string {
  * ~0.6–0.68 of the font size wide at ExtraBold — on the generous side, so a line
  * never overflows its box. Her own line breaks are kept.
  */
-export function wrapCaptionLines(text: string, fontSize: number, maxWidth: number): string[] {
+export function wrapCaptionLines(
+  text: string,
+  fontSize: number,
+  maxWidth: number,
+  /** The line's real width in px (measureLine). Without it, an estimate. */
+  measure?: (line: string) => number,
+): string[] {
   const perLine = Math.max(6, Math.floor(maxWidth / (fontSize * 0.68)))
+  const tooLong = (line: string) => (measure ? measure(line) > maxWidth : line.length > perLine)
   const out: string[] = []
   for (const para of text.split("\n")) {
     // A dash never starts or ends a line alone: it goes with the word before it.
@@ -193,7 +203,7 @@ export function wrapCaptionLines(text: string, fontSize: number, maxWidth: numbe
     let line = ""
     for (const w of words) {
       const next = line ? `${line} ${w}` : w
-      if (next.length > perLine && line) {
+      if (tooLong(next) && line) {
         out.push(line)
         line = w
       } else line = next
@@ -201,6 +211,30 @@ export function wrapCaptionLines(text: string, fontSize: number, maxWidth: numbe
     if (line) out.push(line)
   }
   return out
+}
+
+/**
+ * A caption line's real width as RtlText sets it: each word's advance in the
+ * font, plus RtlText's 0.28em gap between words. satori leaves those gaps out
+ * when it sizes a box to its words, so a box sized by satori comes out too
+ * narrow and its last word drops to a second line inside it — the "don't"
+ * (Hani, 2026-11-10). The per-line boxes get this width set explicitly.
+ */
+type Measurer = (line: string, size: number) => number
+const measurers = new WeakMap<ArrayBuffer, Measurer>()
+function measurerFor(font: ArrayBuffer): Measurer {
+  let m = measurers.get(font)
+  if (!m) {
+    const f = parseFont(font)
+    m = (line, size) => {
+      const words = line.split(" ").filter(Boolean)
+      const glyphs = words.reduce((w, word) => w + f.getAdvanceWidth(word, size), 0)
+      // A little generous: a line must never be wider than its box allows.
+      return Math.ceil((glyphs + Math.max(0, words.length - 1) * 0.28 * size) * 1.06)
+    }
+    measurers.set(font, m)
+  }
+  return m
 }
 
 /** Drive media: at least this far from the picture's sides, always (Hani, 2026-11-09). */
@@ -302,25 +336,47 @@ async function renderCaption(
               const side = Math.max(canvas.padX, MIN_SIDE_PADDING)
               const boxPadX = 32
               const room = W - side * 2 - boxPadX * 2
-              const block = (text: string, size: number, weight: 700 | 800, key: string) =>
-                wrapCaptionLines(text, size, room).map((line, i) => (
+              const block = (text: string, size: number, weight: 700 | 800, key: string) => {
+                const measure = measurerFor(weight === 800 ? extraBold : bold)
+                return wrapCaptionLines(text, size, room, (l) => measure(l, size)).map((line, i) => (
                   <div
                     key={`${key}-${i}`}
                     style={{
                       display: "flex",
+                      justifyContent: "center",
                       backgroundColor: style?.pill ?? "#000000",
                       borderRadius: Math.round(size * 0.45),
                       padding: `${Math.round(size * 0.18)}px ${boxPadX}px`,
-                      maxWidth: W - side * 2,
                     }}
                   >
-                    <RtlText
-                      text={line}
-                      align="center"
-                      style={{ color: textColor, fontFamily: "Rubik", fontWeight: weight, fontSize: size, lineHeight: 1.2 }}
-                    />
+                    {/* One row that can't wrap: the line was already cut to fit
+                        (measured), so the box hugs exactly this line. Spaces
+                        are margins, not `gap` — satori sizes a box without its
+                        gaps, which is what pushed the last word down a line.
+                        Words reversed + row-reverse = RtlText's BiDi. */}
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "row-reverse",
+                        flexWrap: "nowrap",
+                        color: textColor,
+                        fontFamily: "Rubik",
+                        fontWeight: weight,
+                        fontSize: size,
+                        lineHeight: 1.2,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {line.split(" ").filter(Boolean).map((w, wi, all) => (
+                        // row-reverse: the next word sits to this one's left.
+                        <span key={wi} style={{ marginLeft: wi < all.length - 1 ? Math.round(size * 0.28) : 0 }}>
+                          {reverseWord(w)}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 ))
+              }
               return (
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
                   {hook ? block(hook, hookSize, 800, "h") : null}
