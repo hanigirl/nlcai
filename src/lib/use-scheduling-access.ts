@@ -75,12 +75,22 @@ export function usePreviewAccessShared(): boolean {
   return true
 }
 
+/**
+ * The signed-in email, once read in this page session. A panel that mounts
+ * on demand (an AI chat request opening a format's media panel) answers
+ * from it at once — before, its gate was still null at that moment and the
+ * request ran the old, ungated path (Hani, 2026-11-09: "אין כאן סרטון" on
+ * pictures).
+ */
+let knownEmail: string | null = null
+
 function useEmailGate(allowed: (email: string | null | undefined) => boolean): boolean | null {
-  const [on, setOn] = useState<boolean | null>(null)
+  const [on, setOn] = useState<boolean | null>(() => (knownEmail ? allowed(knownEmail) : null))
   useEffect(() => {
     let cancelled = false
     getCurrentUser(createClient())
       .then(({ data }) => {
+        if (data.user?.email) knownEmail = data.user.email
         // No user read (a session hiccup) is "unknown", not "not allowed" — a
         // false here let the automatic talking-head cover run for Hani
         // (2026-11-08). Gated features treat null as off anyway.
