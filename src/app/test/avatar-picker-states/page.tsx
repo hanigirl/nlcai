@@ -16,13 +16,14 @@
  *     empty         — no recorded avatars in the account
  *
  * Renders the real components. No fetches, no DB writes; the arrow and the
- * tabs here only report that they were pressed.
+ * tabs here do nothing; the arrow really goes up one level.
  */
 
 import { Suspense, useState } from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { MediaPanelFrame, PanelBackArrow } from "@/components/media-panel"
+import { Button } from "@/components/ui/button"
 import { FormatPanelTabs } from "@/components/format-cards/format-cards"
 import {
   AvatarsEmpty,
@@ -48,7 +49,8 @@ function Preview() {
   const params = useSearchParams()
   const raw = params.get("state")
   const id: StateId = STATES.some((s) => s.id === raw) ? (raw as StateId) : "not-connected"
-  const [backPressed, setBackPressed] = useState(false)
+  // The real level change: arrow → the Drive / avatar choice, "טען אווטארים" → back here.
+  const [level, setLevel] = useState<"choose" | "avatar">("avatar")
 
   return (
     <div dir="rtl" className="min-h-screen bg-bg-surface p-8">
@@ -66,24 +68,37 @@ function Preview() {
             </Link>
           ))}
         </div>
-        {backPressed && (
-          <p role="status" className="text-small text-text-neutral-default">
-            בפאנל האמיתי החץ מחזיר רמה אחת למעלה: לבחירה בין סרטון מהדרייב לאווטאר.
-          </p>
-        )}
       </div>
 
       <MediaPanelFrame
         open
         title="דיבור למצלמה"
         onClose={() => {}}
-        headerStart={<PanelBackArrow onClick={() => setBackPressed(true)} />}
+        headerStart={level === "avatar" ? <PanelBackArrow onClick={() => setLevel("choose")} /> : undefined}
         tabs={<FormatPanelTabs value="media" onChange={() => {}} done={{ script: true }} />}
       >
-        <div className="flex flex-col gap-3">
-          <p className="text-sm text-text-neutral-default">בחרו אווטאר:</p>
-          <StateBody id={id} />
-        </div>
+        {level === "avatar" ? (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-text-neutral-default">בחרו אווטאר:</p>
+            <StateBody id={id} />
+          </div>
+        ) : (
+          // Stand-in for the level above (the real one lives inside the talking
+          // head flow): the two ways, as the new panel shows them.
+          <div className="flex flex-col gap-3">
+            <Button variant="outline" className="w-full" disabled>
+              סרטון מהדרייב
+            </Button>
+            <div className="flex items-center gap-3" role="separator">
+              <div className="h-px flex-1 bg-border-neutral-default" />
+              <span className="text-xs text-text-neutral-default">או</span>
+              <div className="h-px flex-1 bg-border-neutral-default" />
+            </div>
+            <Button variant="outline" className="w-full gap-2" onClick={() => setLevel("avatar")}>
+              טען אווטארים
+            </Button>
+          </div>
+        )}
       </MediaPanelFrame>
     </div>
   )
