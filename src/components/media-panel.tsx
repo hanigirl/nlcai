@@ -1306,7 +1306,7 @@ function TalkingHeadFlow({
     return (
       // The new panel (gated): two ways only — her video from Drive, or an
       // avatar (Hani, 2026-11-10).
-      <div className={ownText ? "flex flex-col gap-3" : "flex flex-col gap-6"}>
+      <div className={ownText ? "flex flex-col gap-5" : "flex flex-col gap-6"}>
         {drivePick ? (
           <DriveFolderEntry
             format="talking_head"
@@ -1356,14 +1356,12 @@ function TalkingHeadFlow({
         </div>
         )}
 
-        {/* Divider */}
-        {!ownText && (
-        <div className="flex items-center gap-3">
+        {/* Divider — on the new panel the plain "או" the other formats have. */}
+        <div className="flex items-center gap-3" role="separator">
           <div className="h-px flex-1 bg-border-neutral-default" />
-          <span className="text-xs text-text-neutral-default">או בחירת אווטאר</span>
+          <span className="text-xs text-text-neutral-default">{ownText ? "או" : "או בחירת אווטאר"}</span>
           <div className="h-px flex-1 bg-border-neutral-default" />
         </div>
-        )}
 
         {/* Avatar button */}
         <Button
