@@ -2047,6 +2047,13 @@ function ProjectPageInner() {
   useEffect(() => onAsIsNeedsPanel((format) => setSelectedFormatCard(format)), [])
 
   const handleFormatCardClick = (fid: string) => {
+    // Moving to another format's card closes the AI panel of the one she
+    // left; it stays while that format is the one picked (Hani, 2026-11-09).
+    if (aiChatFormat && aiChatFormat !== fid) {
+      setAiChatFormat(null)
+      setAiChatOpening(null)
+    }
+    if (copyEdit.copyAi.activeFid && copyEdit.copyAi.activeFid !== fid) copyEdit.copyAi.close()
     setSelectedFormatCard(selectedFormatCard === fid ? null : fid)
   }
 
