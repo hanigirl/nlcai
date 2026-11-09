@@ -113,7 +113,8 @@ import {
   approvalHeaderFill,
 } from "@/components/format-approval/approval-visuals"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
-import { useDescriptionAccess, useFormatCards, useOwnMediaText, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi, useAiChatAccess } from "@/lib/use-scheduling-access"
+import { useDescriptionAccess, useFormatCards, useOwnMediaText, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi, useAiChatAccess, useEditAgent } from "@/lib/use-scheduling-access"
+import { EditAgentChat } from "@/components/edit-agent-chat"
 // "עריכה עם AI" on every format's copy (Hani, 2026-10-29).
 import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
 import { useChatRevealer } from "@/lib/ai-chat-reveal"
@@ -385,6 +386,10 @@ function ProjectPageInner() {
   const [aiChatFormat, setAiChatFormat] = useState<AiEditFormat | null>(null)
   // The media AI edit chat — off on this account until it's rebuilt (lib/feature-access).
   const aiChatOn = useAiChatAccess() !== false
+  // The AI edit chat as an agent (lib/edit-agent) — b-roll first; on these
+  // accounts it is the chat for that format, even where the old one is off.
+  const editAgentOn = useEditAgent() === true
+  const chatOnFor = (f: string) => aiChatOn || (editAgentOn && f === "b_roll")
   // A generate button opens the AI edit to ask for a brief first (lib/ai-edit-intent).
   const [aiChatOpening, setAiChatOpening] = useState<AiEditOpening | null>(null)
   useAiEditRequests((req) => {
@@ -2474,7 +2479,7 @@ function ProjectPageInner() {
           }
         : undefined
     const onAiEditMedia =
-      aiChatOn && (fid !== "talking_head" || thAiOn) && !ownMediaOn(fid)
+      chatOnFor(fid) && (fid !== "talking_head" || thAiOn) && !ownMediaOn(fid)
         ? () => {
             setAiChatFormat(fid as AiEditFormat)
             setAiChatOpening(null)
@@ -2618,7 +2623,7 @@ function ProjectPageInner() {
             media={hasMedia ? item.media : null}
             mediaBusy={item.state === "media-busy"}
             onAiEditMedia={
-              aiChatOn && fid !== "talking_head" && !ownMediaOn(fid)
+              chatOnFor(fid) && fid !== "talking_head" && !ownMediaOn(fid)
                 ? () => {
                     setAiChatFormat(fid as AiEditFormat)
                     setAiChatOpening(null)
@@ -3504,7 +3509,7 @@ function ProjectPageInner() {
                       bRollUrl={bRollUrl}
                       bRollCardRef={bRollCardRef}
                       onBRollEdit={() => setSelectedFormatCard("b_roll")}
-                      onAiEdit={aiChatOn ? (f) => { if (ownMediaOn(f)) return; setAiChatFormat(f); setAiChatOpening(null) } : undefined}
+                      onAiEdit={aiChatOn || editAgentOn ? (f) => { if (ownMediaOn(f) || !chatOnFor(f)) return; setAiChatFormat(f); setAiChatOpening(null) } : undefined}
                       onDeleteMedia={setPendingMediaDelete}
                       onBRollUrlChange={setBRollUrl}
                       copyAi={previewOn ? copyEdit.copyAi : undefined}
@@ -3592,6 +3597,19 @@ function ProjectPageInner() {
         const own = aiOwn
         // Her own media never opens a chat — only an AI generation does.
         if (ownTextGate && own && aiChatFormat !== "talking_head" && aiChatOpening?.kind !== "generate") return null
+        // The agent (lib/edit-agent): b-roll, never her own media (iron rule).
+        if (editAgentOn && aiChatFormat === "b_roll") {
+          if (own) return null
+          return (
+            <EditAgentChat
+              key={`agent:${savedPostId}:b_roll`}
+              postId={savedPostId}
+              format="b_roll"
+              onClose={() => { setAiChatFormat(null); setAiChatOpening(null) }}
+              onMediaChanged={setBRollUrl}
+            />
+          )
+        }
         // No chat on this account at all.
         if (!aiChatOn) return null
         return (
