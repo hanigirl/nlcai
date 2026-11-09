@@ -54,25 +54,27 @@ let version = 0
 /** Keys moved by moveChat: a reply still on its way follows the conversation. */
 const moved = new Map<string, string>()
 
-/**
- * Said when a conversation comes back with a request that was still running
- * (a reload, or the app opening a new version mid-request — Hani, 2026-11-09:
- * "הוא מתחיל לייצר ואז נעצר, ולא מתריע כלום"). The request's answer is lost
- * with the page, so she's told to send it again instead of silence.
- */
-export const INTERRUPTED_NOTICE = "הבקשה האחרונה נעצרה באמצע כי הדף נטען מחדש, והתוצאה לא נשמרה. שלחו אותה שוב ואמשיך מכאן."
+/** A restored conversation is never busy — its request ended with the page. */
+export function withInterruptedNotice(s: AnySession, _wasBusy: boolean): AnySession {
+  return { ...s, busy: false }
+}
 
-/** A conversation whose request was cut off: busy no more, and it says so. */
-export function withInterruptedNotice(s: AnySession, wasBusy: boolean): AnySession {
-  if (!wasBusy) return { ...s, busy: false }
-  const last = s.messages[s.messages.length - 1]
-  const said = last?.role === "assistant" && last?.content === INTERRUPTED_NOTICE
-  return {
-    ...s,
-    busy: false,
-    extra: { ...s.extra, progress: "" },
-    messages: said ? s.messages : [...s.messages, { role: "assistant", content: INTERRUPTED_NOTICE, error: true }],
-  }
+/**
+ * While any AI edit is still running, leaving or reloading the page asks
+ * first (Hani, 2026-11-09): the edit runs in this tab, so a reload loses it.
+ * Until it runs on the server, this keeps an accidental refresh from
+ * throwing the work away.
+ */
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", (e) => {
+    for (const s of sessions.values()) {
+      if (s?.busy) {
+        e.preventDefault()
+        e.returnValue = ""
+        return
+      }
+    }
+  })
 }
 
 function read(key: string): AnySession | null {

@@ -803,7 +803,7 @@ export function MediaAiChat({
       }))
       return true
     }
-    patchKey((s) => ({ ...s, extra: { ...s.extra, progress: "הסרטון עלה. עכשיו מוסיפים את מה שביקשתם..." } }))
+    patchKey((s) => ({ ...s, extra: { ...s.extra, progress: "הסרטון עלה. עכשיו מוסיפים את מה שביקשתם — זה לוקח כמה דקות, אל תרעננו את הדף..." } }))
     const r = await runOwnMediaEdit({
       postId,
       format: format as OwnEditFormat,
