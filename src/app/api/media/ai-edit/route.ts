@@ -1,3 +1,4 @@
+import { PICTURE_IS_BACKGROUND, refusesPlacingIntoDesign } from "@/lib/feature-access"
 import type { OwnEditFormat } from "@/lib/own-media"
 import { scriptTextNote } from "@/lib/script-text-note"
 import { NextRequest, NextResponse } from "next/server"
@@ -472,6 +473,10 @@ export async function POST(req: NextRequest) {
     // She asked for a specific picture that isn't here: say so, edit nothing.
     // Sending the editor words instead is how an astronaut came back (Hani, 2026-11-05).
     if (needsImage) return NextResponse.json(IMAGE_MISSING, { status: 400 })
+    // Iron rule 1 (gated): her picture is never put INSIDE a design.
+    if (refusesPlacingIntoDesign(user.email, place.map(String))) {
+      return NextResponse.json(PICTURE_IS_BACKGROUND, { status: 409 })
+    }
     // A carousel's VIDEO slides are never repainted by the picture editor —
     // they stay exactly as they are, in their place (2026-11-06).
     const targets = planned.filter((n) => !isVideoSlide(urls[n - 1]))

@@ -86,3 +86,18 @@ export const OWN_MEDIA_TEXT_EMAILS = ["hanigirl@gmail.com"]
 export function canOwnMediaText(email: string | null | undefined): boolean {
   return !!email && OWN_MEDIA_TEXT_EMAILS.includes(email.toLowerCase())
 }
+
+/**
+ * IRON RULE 1 (Hani, 2026-11-09): her picture is ALWAYS the background, the
+ * script's text in front of it — never a small inset inside an AI design.
+ * The generate routes that would place it inside a design refuse instead
+ * (fixed path, gated); her picture + text is "שים טקסט מעל" in the chat.
+ */
+export const PICTURE_IS_BACKGROUND = {
+  error: "picture_is_background",
+  message: 'התמונה שלכם תמיד תהיה הרקע, והטקסט מהסקריפט מעליה. צרפו אותה ולחצו "שים טקסט מעל".',
+}
+
+export function refusesPlacingIntoDesign(email: string | null | undefined, place: string[]): boolean {
+  return canOwnMediaText(email) && place.length > 0
+}

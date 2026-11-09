@@ -1,5 +1,5 @@
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences, withPlacedImages } from "@/lib/media-brief"
-import { canOwnMediaText, gatePlacement } from "@/lib/feature-access"
+import { canOwnMediaText, gatePlacement, PICTURE_IS_BACKGROUND, refusesPlacingIntoDesign } from "@/lib/feature-access"
 import { picturesPlaced, placedImages } from "@/lib/placed-check"
 import { parseReferences } from "@/lib/ai-edit-references"
 import { NextRequest, NextResponse } from "next/server"
@@ -211,6 +211,9 @@ export async function POST(req: NextRequest) {
       .join("\n")
     // Her own pictures go in as they are; a link's picture is a look only.
     // Placing is Hani-only for now (lib/feature-access); off it, all are looks.
+    if (refusesPlacingIntoDesign(user.email, parseReferences(place))) {
+      return NextResponse.json(PICTURE_IS_BACKGROUND, { status: 409 })
+    }
     const gated = gatePlacement(user.email, parseReferences(place), parseReferences(references))
     const placed = await placedImages(gated.place)
     const direction = withMediaReferences(

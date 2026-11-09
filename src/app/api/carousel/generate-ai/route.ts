@@ -1,6 +1,6 @@
 import { canEditPictures } from "@/lib/feature-access"
 import { PICTURE_UNCHANGED, adaptPictureForSlide, editPicture, wantsPictureAsIs } from "@/lib/picture-edit"
-import { canCopyStructure, gatePlacement } from "@/lib/feature-access"
+import { canCopyStructure, gatePlacement, PICTURE_IS_BACKGROUND, refusesPlacingIntoDesign } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
 import { resolveReferences, parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
 import { MAX_STRUCTURE_SLIDES, readCarouselStructure, type CardIdentityForPrompt, type StructureMode } from "@/lib/carousel-structure"
@@ -350,6 +350,9 @@ export async function POST(req: NextRequest) {
         { error: "slot_picture_unreadable", message: "לא הצלחתי לקרוא את אחת התמונות שצירפתם, אז לא יצרתי כלום. נסו לצרף אותה שוב." },
         { status: 422 },
       )
+    }
+    if (refusesPlacingIntoDesign(user.email, placeIn)) {
+      return NextResponse.json(PICTURE_IS_BACKGROUND, { status: 409 })
     }
     const gated = gatePlacement(
       user.email,

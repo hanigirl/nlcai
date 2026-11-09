@@ -1,6 +1,6 @@
 import { canOwnMediaText } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences, withPlacedImages } from "@/lib/media-brief"
-import { gatePlacement } from "@/lib/feature-access"
+import { PICTURE_IS_BACKGROUND, refusesPlacingIntoDesign, gatePlacement } from "@/lib/feature-access"
 import { picturesPlaced, placedImages } from "@/lib/placed-check"
 import { parseReferences } from "@/lib/ai-edit-references"
 import { NextRequest, NextResponse } from "next/server"
@@ -256,6 +256,9 @@ export async function POST(req: NextRequest) {
       normalizeMediaBrief(brief),
     )
     // Placing is Hani-only for now (lib/feature-access); off it, all are looks.
+    if (refusesPlacingIntoDesign(user.email, parseReferences(place))) {
+      return NextResponse.json(PICTURE_IS_BACKGROUND, { status: 409 })
+    }
     const gated = gatePlacement(user.email, parseReferences(place), parseReferences(references))
     const looks = gated.looks
     const direction = withMediaReferences(base, looks)
