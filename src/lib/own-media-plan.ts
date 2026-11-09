@@ -1,4 +1,4 @@
-import { stripFrameMarkers } from "@/lib/story-text-split"
+import { scriptBlocks, storyFrames, stripFrameMarkers } from "@/lib/story-text-split"
 import Anthropic from "@anthropic-ai/sdk"
 import {
   canAddAnimatedFrame,
@@ -73,6 +73,10 @@ export async function planOwnMediaEdit(
 ): Promise<OwnEditPlan> {
   const { format, frames } = input
   const n = frames.length
+  // A story's script is already split into stories (the card's "סטורי 1…"):
+  // each frame carries its own story's words, verbatim (Hani, 2026-11-09 —
+  // three stories in the script came back as one frame with a made-up title).
+  const scriptStories = format === "story" && input.post.formatBody ? storyFrames(input.post.formatBody) : []
   const isSet = isSetFormat(format)
   const animated = canAddAnimatedFrame(format)
   const client = new Anthropic({ apiKey })
@@ -114,6 +118,12 @@ export async function planOwnMediaEdit(
     "Reply with JSON only: {\"reply\": \"one short Hebrew line, plural addressing (אתם), saying what you did / why not\", \"ops\": [...], \"refused\"?: true}.",
     "When you plan ops, the reply states what you changed, in her own words, short and sure (e.g. \"בפריים 3 הורדתי את הרקע הלבן הבומבסטי, והטקסט עכשיו לבן ופשוט.\") — no disclaimers, no promises to retry.",
     "Never stack a second caption over words that are already there: a frame marked as already having its own words gets no caption unless she explicitly asks to put text on it.",
+    ...(scriptStories.length
+      ? [
+          `THE SCRIPT IS THE TEXT. This story's script has ${scriptStories.length} stories, listed below as "Script stories". Frame k carries script story k, word for word — never reword it, shorten it, or invent a title or headline that isn't in it. Use other words only when she dictates them in her request.`,
+          `The set follows the script: ${scriptStories.length} frames, in its order. Her frames take the first stories; when she has fewer frames than the script, add the missing stories as NEW frames after her last one (add_animated_slide when her media is video or she asked for motion, else add_slide), each with its script story's exact text. Never fold several stories into one frame.`,
+        ]
+      : []),
     "Only touch the frames she means: a named one (\"פריים 2\", \"האחרון\", \"השקופית הזאת\" = the one on screen), otherwise all frames her request is about.",
   ].join("\n")
   const user = [
@@ -129,6 +139,9 @@ export async function planOwnMediaEdit(
       formatText: input.post.formatBody ? stripFrameMarkers(input.post.formatBody).slice(0, 1500) : null,
       coreText: input.post.formatBody ? undefined : input.post.body?.slice(0, 1500),
     }),
+    ...(scriptStories.length
+      ? ["", "Script stories (exact text, one per frame, in order):", ...scriptStories.map((t, i) => `${i + 1}. ${JSON.stringify(t)}`)]
+      : []),
     "",
     "Allowed ops:",
     ...ops.map((o) => `- ${o}`),
@@ -151,11 +164,68 @@ export async function planOwnMediaEdit(
     ops?: unknown
     refused?: unknown
   }
+  const sane = sanitiseOps(json.ops, n, isSet, animated)
   return {
     reply: typeof json.reply === "string" && json.reply.trim() ? json.reply.trim() : "",
-    ops: sanitiseOps(json.ops, n, isSet, animated),
+    ops: scriptStories.length ? holdToScript(sane, scriptStories, input.instruction) : sane,
     refused: json.refused === true || undefined,
   }
+}
+
+/** Story k's words as a caption: story 1 leads with its first block as the headline. */
+function storyCaption(stories: string[], k: number): { headline?: string; body?: string } | null {
+  const text = stories[k]
+  if (!text) return null
+  if (k > 0) return { headline: undefined, body: text }
+  const [headline, ...rest] = scriptBlocks(text)
+  return { headline: headline || undefined, body: rest.length ? rest.join("\n\n") : undefined }
+}
+
+const squash = (t: string) => t.replace(/[\s"'״׳.,!?:;—–-]+/g, "")
+
+/**
+ * The model's wording never replaces the script (Hani, 2026-11-09: "it is
+ * reinventing the title, which is a big no-no"). A caption or new frame gets
+ * its script story's exact text — unless the text is hers, dictated in this
+ * request. A caption over several frames becomes one per frame, each with its
+ * own story.
+ */
+export function holdToScript(ops: OwnEditOp[], stories: string[], instruction: string): OwnEditOp[] {
+  const said = squash(instruction)
+  const dictated = (h?: string, b?: string) => {
+    const t = squash([h, b].filter(Boolean).join(""))
+    return !!t && said.includes(t)
+  }
+  const out: OwnEditOp[] = []
+  const added: number[] = []
+  for (const op of ops) {
+    if (op.op === "set_caption") {
+      const wordsChanged = op.headline !== undefined || op.body !== undefined
+      if (!wordsChanged || dictated(op.headline, op.body)) {
+        out.push(op)
+        continue
+      }
+      for (const f of op.frames) {
+        const cap = storyCaption(stories, f - 1)
+        out.push(cap ? { ...op, frames: [f], ...cap } : { ...op, frames: [f] })
+      }
+      continue
+    }
+    if (op.op === "add_slide" || op.op === "add_animated_slide") {
+      // Where it lands: after `after`, past the new frames already put there.
+      const at = op.after + added.filter((a) => a <= op.after).length
+      added.push(op.after)
+      if (dictated(op.headline, op.body)) {
+        out.push(op)
+        continue
+      }
+      const cap = storyCaption(stories, at)
+      out.push(cap ? { ...op, ...cap, headline: cap.headline ?? cap.body, body: cap.headline ? cap.body : undefined } : op)
+      continue
+    }
+    out.push(op)
+  }
+  return out
 }
 
 /** The `design` field, explained to the planner (one place for every op that has it). */
