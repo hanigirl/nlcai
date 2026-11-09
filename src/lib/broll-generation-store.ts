@@ -65,6 +65,12 @@ type BRollState = {
   } | null
   /** Why the last still-caption attempt failed, in Hebrew. */
   captionImageError: string | null
+  /**
+   * Why the last caption burn failed, and for which format — so the panel
+   * can say it and offer to try again (it used to be a toast only, and the
+   * bare clip stayed as if it were done). Cleared when a burn starts.
+   */
+  burnError: { format: string; message: string } | null
 }
 
 const EMPTY: BRollState = {
@@ -81,6 +87,7 @@ const EMPTY: BRollState = {
   captioningFormats: [],
   captionedImage: null,
   captionImageError: null,
+  burnError: null,
 }
 
 const states = new Map<string, BRollState>()
@@ -264,6 +271,7 @@ export function startCaptionBurn(postId: string, format: string): void {
     ...s,
     burning: s.burning + 1,
     burningFormats: [...s.burningFormats, format],
+    burnError: s.burnError?.format === format ? null : s.burnError,
   }))
   const toastId = `caption-burn-${++toastSeq}`
   toast.loading("מטמיעים את הכיתוב בסרטון...", {
@@ -289,10 +297,12 @@ export function startCaptionBurn(postId: string, format: string): void {
         message?: string
       }
       if (!res.ok || !data.url) {
-        toast.error(data.message ?? data.error ?? "הטמעת הכיתוב נכשלה", {
+        const message = data.message ?? data.error ?? "הטמעת הכיתוב נכשלה"
+        toast.error(message, {
           id: toastId,
           duration: 10000,
         })
+        update(postId, (s) => ({ ...s, burnError: { format, message } }))
         return
       }
       update(postId, (s) => ({
@@ -301,10 +311,9 @@ export function startCaptionBurn(postId: string, format: string): void {
       }))
       toast.success("הכיתוב הוטמע בסרטון", { id: toastId, duration: 4000 })
     } catch (err) {
-      toast.error(
-        `הטמעת הכיתוב נכשלה: ${err instanceof Error ? err.message : String(err)}`,
-        { id: toastId, duration: 10000 },
-      )
+      const message = `הטמעת הכיתוב נכשלה: ${err instanceof Error ? err.message : String(err)}`
+      toast.error(message, { id: toastId, duration: 10000 })
+      update(postId, (s) => ({ ...s, burnError: { format, message } }))
     } finally {
       update(postId, (s) => ({
         ...s,

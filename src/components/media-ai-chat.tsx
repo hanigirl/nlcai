@@ -1868,7 +1868,14 @@ export function MediaAiChat({
       return
     }
     const editText = triage.editInstruction.trim() || text
-    if (own || cur.extra.ownMedia) {
+    // B-roll (gated): routed by what IS the b-roll now, not by how the panel
+    // opened or an earlier import — her clip / picture → the own-media edit;
+    // a clip the engine made (it has a composition) → the b-roll edit. A
+    // sticky flag sent "a b-roll with text on it" after her import to the
+    // engine edit ("only engine-made b-roll", Hani, 2026-11-09).
+    const bRollNow = format === "b_roll" && ownTextGate ? currentUrlsRef.current[0] : undefined
+    const ownNow = bRollNow ? !isEditableBRollUrl(bRollNow) : own || cur.extra.ownMedia
+    if (ownNow) {
       await sendOwn(editText, cur.messages, patchKey, isWatching, memory)
       return
     }

@@ -240,7 +240,11 @@ async function execute(
         const next =
           filled.op === "remove_caption" ? await uncaption(item) : await caption(postId, format, item, filled, instruction)
         if ("error" in next) problems.push(next.error)
-        else original[n - 1] = next.item
+        else {
+          original[n - 1] = next.item
+          const note = "note" in next ? (next.note as string | undefined) : undefined
+          if (note && !notes.includes(note)) notes.push(note)
+        }
       }
     }),
   )
@@ -316,7 +320,10 @@ async function execute(
         const unit = script[i]
         const next = await caption(postId, format, it, { op: "set_caption", frames: [i + 1], headline: unit.headline ?? "", body: unit.body ?? "" }, instruction)
         if ("error" in next) problems.push(next.error)
-        else set[i] = { ...next.item, link: it.link }
+        else {
+          set[i] = { ...next.item, link: it.link }
+          if (next.note && !notes.includes(next.note)) notes.push(next.note)
+        }
       }),
     )
   }
@@ -388,6 +395,15 @@ async function uncaption(item: Item): Promise<{ item: Item } | { error: string }
   return { item: { ...item, url: source, caption: "none", record: undefined } }
 }
 
+/**
+ * The animated caption on her clip didn't happen and the still plate went on
+ * instead (b-roll, the route says why) — said, never reported as done.
+ */
+const ANIMATED_FALLBACK: Record<string, string> = {
+  no_key: "הטקסט נכנס על הסרטון כפס קבוע ולא מונפש, כי אין מפתח Claude מחובר. אפשר לחבר אותו בהגדרות ולבקש שוב.",
+  failed: "את הטקסט המונפש לא הצלחתי ליצור הפעם, אז הטקסט נכנס על הסרטון כפס קבוע. אפשר לבקש שוב.",
+}
+
 /** Draw the caption over the original, with the plan's changes. */
 async function caption(
   postId: string,
@@ -396,7 +412,7 @@ async function caption(
   op: Extract<OwnEditOp, { op: "set_caption" }>,
   /** Her words this turn — how the animated caption on a video should look and move. */
   instruction?: string,
-): Promise<{ item: Item } | { error: string }> {
+): Promise<{ item: Item; note?: string } | { error: string }> {
   if (item.aiMade) return { error: "את השקופית שה-AI עיצב אפשר לערוך בבקשה נפרדת." }
   if (item.caption === "ours-legacy") {
     return {
@@ -422,7 +438,7 @@ async function caption(
   if (!source) return { error: "לא הצלחתי לטעון את הקובץ המקורי." }
 
   if (item.kind === "video") {
-    const r = await postJson<{ url?: string; message?: string; error?: string }>("/api/story/generate-video-media", {
+    const r = await postJson<{ url?: string; message?: string; error?: string; animatedFallback?: string }>("/api/story/generate-video-media", {
       postId,
       format: format === "b_roll" ? "b_roll" : "story",
       sourceUrl: source,
@@ -432,7 +448,8 @@ async function caption(
       animated: true,
     })
     if (!r.ok || !r.data.url) return { error: r.data.message ?? r.data.error ?? "הטמעת הכיתוב בסרטון נכשלה." }
-    return { item: { ...item, url: r.data.url, caption: "ours", record: { v: 1, sourceUrl: source, caption: spec } } }
+    const note = r.data.animatedFallback ? ANIMATED_FALLBACK[r.data.animatedFallback] : undefined
+    return { item: { ...item, url: r.data.url, caption: "ours", record: { v: 1, sourceUrl: source, caption: spec } }, ...(note ? { note } : {}) }
   }
   const r = await postJson<{ url?: string; message?: string; error?: string }>("/api/media/caption-image", {
     postId,

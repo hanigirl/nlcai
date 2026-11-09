@@ -25,7 +25,30 @@ import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
 import { changedArea, editPrompt, IMAGE_MISSING, planImageEdit } from "@/lib/ai-edit-plan"
 import { loadImageForModels, normaliseImage } from "@/lib/visual-language/image-input"
 import { picturesPlaced } from "@/lib/placed-check"
-import { canBlendBRoll } from "@/lib/feature-access"
+import { canBlendBRoll, canOwnMediaText } from "@/lib/feature-access"
+import { scriptTextFor, type ScriptText } from "@/lib/script-text"
+
+const squashWords = (t: string) => t.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, "").replace(/[\s"'`״׳.,!?:;—–\-\[\]()+]+/g, "")
+
+/**
+ * Whether the composition carries the script's words, word for word
+ * (spacing, punctuation and markup aside — a per-word span or a JS array of
+ * words still counts).
+ */
+function hasScriptWords(template: string, text: ScriptText): boolean {
+  const page = squashWords(template)
+  return [text.headline, text.body].every((t) => !t || page.includes(squashWords(t)))
+}
+
+/** The fix-up when the composition's words aren't the script's. */
+function scriptWordsFix(text: ScriptText): string {
+  return [
+    "Change ONLY the words on screen, keep the design, layout, colours and motion exactly as they are.",
+    "The words must be EXACTLY these (Hebrew, RTL), word for word, nothing added, nothing left out, no other text (no CTA, no title):",
+    ...(text.headline ? [`- Main line: ${JSON.stringify(text.headline)}`] : []),
+    ...(text.body ? [`- Then: ${JSON.stringify(text.body)}`] : []),
+  ].join("\n")
+}
 
 /**
  * Words that may be about the background PICTURE rather than the text —
@@ -126,6 +149,11 @@ export async function POST(req: NextRequest) {
       .maybeSingle()
     // The script is the text on the clip — the edit brings its words in line.
     ask = `${ask}${scriptTextNote("b_roll", (variant as { body?: string | null } | null)?.body)}`
+    // Own media + script text (Hani, 2026-11-09, gated): not only a note —
+    // the brief carries the script's words, and the result is checked.
+    const scriptText = canOwnMediaText(user.email)
+      ? scriptTextFor("b_roll", (variant as { body?: string | null } | null)?.body)
+      : null
     const { data: asset } = variant
       ? await supabase
           .from("media_assets")
@@ -171,6 +199,15 @@ export async function POST(req: NextRequest) {
     const current = await currentCompositionBrief(supabase, user.id, composition.brief, { format: "b_roll", ownLanguage })
     const restyle = current.changed || ownLanguage
     let brief = current.brief
+    if (scriptText) {
+      brief = {
+        ...brief,
+        hook: scriptText.headline ?? scriptText.body ?? brief.hook,
+        rest: scriptText.headline ? scriptText.body : undefined,
+        // The script holds its own closing line when it has one; nothing is added.
+        cta: null,
+      }
+    }
     const stamp = crypto.randomUUID()
     let backgroundUrl = composition.backgroundUrl
     let ownBackground = hasOwnBackground(composition)
@@ -259,14 +296,22 @@ export async function POST(req: NextRequest) {
       }
     } else {
       template = await reviseBRoll(anthropicKey, brief, composition.template, text, refs)
-      // Opus handed back the same composition: nothing to render or save.
-      if (template.trim() === composition.template.trim()) {
+      // Opus handed back the same composition: nothing to render or save
+      // (unless its words aren't the script's — fixed just below).
+      if (template.trim() === composition.template.trim() && (!scriptText || hasScriptWords(template, scriptText))) {
         return NextResponse.json({
           url: clipUrl,
           unchanged: true,
           message: "הבקשה לא שינתה כלום בבי-רול, אז השארתי אותו כמו שהיה. נסו לכתוב מה בדיוק לשנות, למשל גודל הכותרת, הצבע או איך המילים נכנסות.",
         })
       }
+    }
+
+    // The words on the clip are the script's — whichever branch ran above
+    // (a blend keeps the old composition, a revise may reword).
+    if (scriptText && !hasScriptWords(template, scriptText)) {
+      template = await reviseBRoll(anthropicKey, brief, template, scriptWordsFix(scriptText))
+      if (!hasScriptWords(template, scriptText)) console.warn("[b-roll/edit] words still differ from the script after the fix-up")
     }
 
     const os = await import("os")

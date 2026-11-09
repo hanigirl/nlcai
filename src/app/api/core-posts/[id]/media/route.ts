@@ -1,4 +1,5 @@
 import { isMediaStyle } from "@/lib/visual-language/types"
+import { canOwnMediaText } from "@/lib/feature-access"
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { FORMAT_TYPES, type FormatType } from "@/lib/supabase/types"
@@ -161,11 +162,16 @@ export async function POST(
     // match zero rows — so a silently-failed wipe let the insert below stack a
     // second row in the same slot, and the reader then picked between them
     // arbitrarily. Verify the slot is actually empty before inserting.
+    // A b-roll is ONE piece — a clip or a still (Hani, 2026-11-09, gated):
+    // her picture after a clip used to leave the clip in its slot, and the
+    // clip (video wins on read) came back instead of her picture.
+    const slotTypes =
+      format === "b_roll" && assetType !== "cover" && canOwnMediaText(user.email) ? ["image", "video"] : [assetType]
     const { error: wipeErr } = await supabase
       .from("media_assets")
       .delete()
       .eq("format_variant_id", variantRow.id)
-      .eq("asset_type", assetType)
+      .in("asset_type", slotTypes)
     if (wipeErr) {
       return NextResponse.json(
         { error: `slot_replace_failed: ${wipeErr.message}` },
@@ -176,7 +182,7 @@ export async function POST(
       .from("media_assets")
       .select("id")
       .eq("format_variant_id", variantRow.id)
-      .eq("asset_type", assetType)
+      .in("asset_type", slotTypes)
       .limit(1)
     if (leftover && leftover.length > 0) {
       console.error(
