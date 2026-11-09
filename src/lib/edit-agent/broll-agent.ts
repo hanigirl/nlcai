@@ -317,6 +317,7 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
         out = await runTool(call.name, a)
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
+        console.error(`[edit-agent] tool ${call.name} failed:`, msg)
         out =
           msg === "openai_missing"
             ? "FAILED: changing the picture needs her OpenAI key, which isn't connected (Settings). Tell her."
