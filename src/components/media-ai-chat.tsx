@@ -758,7 +758,12 @@ export function MediaAiChat({
       ...s,
       input: "",
       busy: true,
-      extra: { ...s.extra, progress: AS_IS_BUSY, gen: null },
+      extra: {
+        ...s.extra,
+        // Image post, fixed path: her picture gets the script's text (media-panel importOwnImagePost).
+        progress: format === "image_post" && ownTextGate ? "מעלים את התמונה ושמים עליה את הטקסט מהסקריפט..." : AS_IS_BUSY,
+        gen: null,
+      },
       messages: [...s.messages, { role: "user", content: AS_IS, ...(images.length ? { images } : {}) }],
     }))
     // Carousel slide slots: each file on the slide she chose.
@@ -880,6 +885,10 @@ export function MediaAiChat({
     const originals = refs.originals(attached)
     if (!originals.length || originals.some((o) => o.kind === "video")) return false
     if (STYLE_WORDS.test(text) || COMBINE_WORDS.test(text)) return false
+    // Image post: "תעשה לי כזה" / "רפרנס" with a picture asks for one LIKE it —
+    // a look to take, never her picture as the post's image.
+    // (A picture sent with no words — REFERENCE_ONLY_INSTRUCTION — is the main case: it becomes the media.)
+    if (format === "image_post" && text !== REFERENCE_ONLY_INSTRUCTION && LIKE_THIS.test(text) && !PLACE_WORDS.test(text)) return false
     const isSet = format === "story" || format === "carousel"
     const items = isSet ? originals : originals.slice(0, 1)
     const extra = !isSet && originals.length > 1 ? " עבדתי עם התמונה הראשונה; שאר הקבצים לא נכללו." : ""

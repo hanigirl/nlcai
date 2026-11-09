@@ -105,6 +105,9 @@ import { carouselErrorInfo } from "@/lib/carousel-errors"
 import { imageSrc } from "@/lib/image-src"
 import { longWaitDone, saveCarouselIfLeft, startLongWait } from "@/lib/long-wait"
 import { usePreviewAccess } from "@/lib/use-scheduling-access"
+// Image post: her picture + the script's text (gated, Hani only).
+import { useOwnMediaText as useOwnMediaTextImagePost } from "@/lib/use-scheduling-access"
+import { isCaptionedRender, stillOriginalOf } from "@/lib/still-original"
 
 // Every format the panel can open MUST have an entry here: the header block
 // (title + close button) is gated on `meta`, so a missing key renders a panel
@@ -3045,6 +3048,10 @@ function MediaUploadFlow({
   // longer is — for a feed image post and for a b-roll still alike, since the
   // gap was never about the format, only about which file type was uploaded.
   const captionEnabled = format === "image_post" || format === "b_roll"
+  // Image post, fixed path (Hani, 2026-11-09 — lib/feature-access, Hani
+  // only): her picture gets the script's text from every way in, follows the
+  // card's switch, and is always captioned from the ORIGINAL.
+  const ownTextImagePost = useOwnMediaTextImagePost() === true && format === "image_post"
   // The picture as it arrived, kept alongside the captioned one so "בלי
   // כיתוב" is a real choice and not a second render.
   const [captionOriginalUrl, setCaptionOriginalUrl] = useState<string | null>(
@@ -3366,6 +3373,8 @@ function MediaUploadFlow({
     file: File,
     /** A b-roll clip from her computer, via the AI panel (lib/as-is-upload). */
     allowVideo = false,
+    /** Image post (fixed path): the caller captions it itself, after the save. */
+    noImageCaption = false,
   ): Promise<boolean> => {
     if (!postId) {
       toast.error("שמרו קודם את הפוסט כדי להעלות מדיה", { duration: 4000 })
@@ -3541,7 +3550,7 @@ function MediaUploadFlow({
       // Same rule as the Drive path: an image that lands here gets the
       // post's caption laid over it. Where the file came from is not a
       // reason for the result to look different.
-      if (!isVideo && (format === "image_post" || format === "b_roll")) {
+      if (!isVideo && (format === "image_post" || format === "b_roll") && !(noImageCaption && format === "image_post")) {
         runImageCaption(publicUrl)
       }
       toast.success("מדיה נשמרה", { id: uploadToast, duration: 3000 })
@@ -3824,13 +3833,21 @@ function MediaUploadFlow({
     (sourceUrl: string) => {
       if (!postId || !captionEnabled) return
       setCaptionOriginalUrl(sourceUrl)
-      startImageCaption(postId, format, {
+      if (ownTextImagePost && !captionOn) {
+        // Her switch on the card says no text: the picture stays as she
+        // brought it, remembered as the original so switching on later
+        // draws the script's text over it.
+        setFormatMeta(postId, "image_post", { captionSourceUrl: sourceUrl })
+        return
+      }
+      void startImageCaption(postId, format, {
         sourceUrl,
         position: captionPosition,
         quiet: true,
+        ownText: ownTextImagePost,
       })
     },
-    [postId, captionEnabled, format, captionPosition],
+    [postId, captionEnabled, format, captionPosition, ownTextImagePost, captionOn],
   )
 
   // Pick up a caption render that finished — including one that landed while
@@ -3849,10 +3866,13 @@ function MediaUploadFlow({
       if (postId) {
         setFormatMeta(postId, format as FormatId, {
           captionSourceUrl: captionedImage.originalUrl,
+          // Fixed path: the render IS the post's image now (the route saved
+          // it), so the card's switch says so.
+          ...(ownTextImagePost ? { captionOn: true } : {}),
         })
       }
     }
-    if (captionOn) {
+    if (captionOn || ownTextImagePost) {
       setPreviewUrl(captionedImage.url)
       setPreviewKind("image")
       // Both stills have a card on the canvas now, and the card is where the
@@ -3862,6 +3882,21 @@ function MediaUploadFlow({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [captionEnabled, format, captionedImage])
+
+  // Image post, fixed path: a captioned picture the panel opened on (after a
+  // reload) knows its original from the server's caption record — so "נסו
+  // שוב" and the block's "בלי כיתוב" view work from her picture, never from
+  // the captioned one.
+  useEffect(() => {
+    if (!ownTextImagePost || !previewUrl || !isCaptionedRender(previewUrl)) return
+    let live = true
+    void stillOriginalOf(previewUrl).then((orig) => {
+      if (live && orig) setCaptionOriginalUrl(orig)
+    })
+    return () => {
+      live = false
+    }
+  }, [ownTextImagePost, previewUrl])
 
   const bRollAttemptRef = useRef(0)
 
@@ -3982,10 +4017,49 @@ function MediaUploadFlow({
    * the imports this panel already has — the Drive pull (a video stays the
    * video) and the computer upload. No generation, no style.
    */
+  /**
+   * Image post, fixed path (Hani, 2026-11-09 — gated): her picture from the
+   * AI panel becomes the post's image, and the answer waits for the save.
+   *   - forEdit (an attached picture, lib/media-ai-chat sendOwnPictures):
+   *     imported bare — the own-media edit right after puts the script's
+   *     text on it, from the original.
+   *   - the "להעלות כמו שזה" chip: imported, then the script's text drawn
+   *     on it here, and only then the answer — what actually happened.
+   */
+  const importOwnImagePost = async (items: AsIsItem[], opts?: AsIsOptions): Promise<AsIsResult> => {
+    if (!postId) return { ok: false, message: "שמרו קודם את הפוסט, ואז אפשר להעלות מדיה." }
+    const item = items.find((it) => it.kind === "image")
+    if (!item || (item.file && item.file.type.startsWith("video/"))) {
+      return { ok: false, message: "בפוסט תמונה אפשר להעלות רק תמונה." }
+    }
+    const extra = items.length > 1 ? " בפוסט תמונה יש מקום לתמונה אחת, אז עלתה הראשונה." : ""
+    let saved = false
+    if (item.drive) {
+      setDriveUrl(item.drive)
+      lastDriveRef.current = item.drive
+      saved = await attachDriveMedia(item.drive, "image_post", true)
+    } else if (item.file) {
+      saved = await handleUpload(item.file, false, true)
+    }
+    if (!saved) return { ok: false, message: "לא הצלחתי להעלות את התמונה, אז לא שיניתי כלום. נסו שוב." }
+    if (opts?.forEdit) return { ok: true, message: "התמונה עלתה." }
+    // The chip: the script's text goes on — she asked for her picture as the
+    // post's image, and the post's image carries the post's words.
+    setFormatMeta(postId, "image_post", { captionOn: true })
+    const r = await startImageCaption(postId, "image_post", {
+      position: captionPosition,
+      quiet: true,
+      ownText: true,
+    })
+    if (!r.ok) return { ok: false, message: `התמונה עלתה, אבל הטקסט לא נכנס עליה. ${r.message}` }
+    if ("skipped" in r) return { ok: true, message: `התמונה עלתה. ${r.message}${extra}` }
+    return { ok: true, message: `התמונה שלכם עלתה, ועליה הטקסט מהסקריפט.${extra}` }
+  }
   const asIsRef = useRef<((items: AsIsItem[], opts?: AsIsOptions) => Promise<AsIsResult>) | null>(null)
   useEffect(() => {
     asIsRef.current = async (items, opts) => {
       if (!postId) return { ok: false, message: "שמרו קודם את הפוסט, ואז אפשר להעלות מדיה." }
+      if (ownTextImagePost) return importOwnImagePost(items, opts)
       // Her video, imported so the own-video AI edit can work on it: one clip,
       // saved before we answer, without the import's automatic caption.
       if (opts?.forEdit) {
@@ -4361,7 +4435,9 @@ function MediaUploadFlow({
       // deliberately.
       if (
         kind === "image" &&
-        (targetFormat === "image_post" || targetFormat === "b_roll")
+        (targetFormat === "image_post" || targetFormat === "b_roll") &&
+        // Image post imported for the AI panel: it captions after the save.
+        !(skipAutoCaption && targetFormat === "image_post")
       ) {
         runImageCaption(mediaUrl)
       }
@@ -4665,6 +4741,16 @@ function MediaUploadFlow({
               captionOn={captionOn}
               onRetry={() => {
                 clearImageCaptionError(postId)
+                if (ownTextImagePost) {
+                  // Always from her original — the picture on screen may
+                  // already carry a caption, and a second would stack.
+                  void (async () => {
+                    const source = captionOriginalUrl ?? (await stillOriginalOf(previewUrl))
+                    if (source) runImageCaption(source)
+                    else toast.error("לא מצאתי את התמונה המקורית שלכם. העלו אותה שוב ואשים עליה את הטקסט מהסקריפט.", { duration: 8000 })
+                  })()
+                  return
+                }
                 const source = captionOriginalUrl ?? previewUrl
                 if (source) runImageCaption(source)
               }}

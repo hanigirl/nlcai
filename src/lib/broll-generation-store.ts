@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import { longWaitDone, startLongWait } from "@/lib/long-wait"
 import { flushPendingSaves } from "@/lib/pending-saves"
 import { storyFrames } from "@/lib/story-text-split"
+import { setFormatMeta } from "@/lib/timing-storage"
 
 /**
  * Background b-roll generation, held OUTSIDE React.
@@ -326,6 +327,12 @@ export function startCaptionBurn(postId: string, format: string): void {
  * `position` is what the user picked in the panel; the caption always
  * carries the post's full text.
  */
+/** How a still's caption ended — awaited by the AI panel's import, ignored elsewhere. */
+export type ImageCaptionOutcome =
+  | { ok: true; url: string; originalUrl?: string }
+  | { ok: true; skipped: true; message: string }
+  | { ok: false; message: string }
+
 export function startImageCaption(
   postId: string,
   format: string,
@@ -334,9 +341,16 @@ export function startImageCaption(
     position?: "top" | "center" | "bottom"
     /** Suppress the toast when the caller already shows inline progress. */
     quiet?: boolean
+    /**
+     * The image post's fixed path (lib/feature-access canOwnMediaText, Hani
+     * only): a picture left alone because it already has words is still
+     * remembered as the original, with the caption off — so the card's
+     * switch can put the script's text on it when she wants it.
+     */
+    ownText?: boolean
   },
-): void {
-  if (!postId) return
+): Promise<ImageCaptionOutcome> {
+  if (!postId) return Promise.resolve({ ok: false, message: "" })
   update(postId, (s) => ({
     ...s,
     captioningImage: s.captioningImage + 1,
@@ -351,7 +365,7 @@ export function startImageCaption(
     })
   }
 
-  void (async () => {
+  return (async (): Promise<ImageCaptionOutcome> => {
     try {
       // The route reads the script from the DB: make sure the DB has what
       // the user sees before asking for a picture of it.
@@ -376,17 +390,21 @@ export function startImageCaption(
       // The picture already carries its words — it stays as she brought it,
       // and with no captioned render nothing arms the caption controls.
       if (res.ok && data.skipped === "has_text") {
-        toast.info("בתמונה כבר יש טקסט, אז השארנו אותה כמו שהיא", {
+        const said = (opts?.ownText && data.message) || "בתמונה כבר יש טקסט, אז השארנו אותה כמו שהיא"
+        if (opts?.ownText && format === "image_post" && data.originalUrl) {
+          setFormatMeta(postId, "image_post", { captionSourceUrl: data.originalUrl, captionOn: false })
+        }
+        toast.info(said, {
           id: toastId,
-          duration: 5000,
+          duration: opts?.ownText ? 8000 : 5000,
         })
-        return
+        return { ok: true, skipped: true, message: said }
       }
       if (!res.ok || !data.url) {
         const msg = data.message ?? data.error ?? "הטמעת הכיתוב בתמונה נכשלה"
         update(postId, (s) => ({ ...s, captionImageError: msg }))
         if (!opts?.quiet) toast.error(msg, { id: toastId, duration: 10000 })
-        return
+        return { ok: false, message: msg }
       }
       update(postId, (s) => ({
         ...s,
@@ -399,12 +417,14 @@ export function startImageCaption(
       if (!opts?.quiet) {
         toast.success("הכיתוב הוטמע בתמונה", { id: toastId, duration: 4000 })
       }
+      return { ok: true, url: data.url, originalUrl: data.originalUrl ?? opts?.sourceUrl }
     } catch (err) {
       const msg = `הטמעת הכיתוב בתמונה נכשלה: ${
         err instanceof Error ? err.message : String(err)
       }`
       update(postId, (s) => ({ ...s, captionImageError: msg }))
       if (!opts?.quiet) toast.error(msg, { id: toastId, duration: 10000 })
+      return { ok: false, message: msg }
     } finally {
       update(postId, (s) => ({
         ...s,

@@ -1,5 +1,5 @@
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences, withPlacedImages } from "@/lib/media-brief"
-import { gatePlacement } from "@/lib/feature-access"
+import { canOwnMediaText, gatePlacement } from "@/lib/feature-access"
 import { picturesPlaced, placedImages } from "@/lib/placed-check"
 import { parseReferences } from "@/lib/ai-edit-references"
 import { NextRequest, NextResponse } from "next/server"
@@ -197,7 +197,14 @@ export async function POST(req: NextRequest) {
 
     // Theme context: title + hook carry the essence; the body is truncated
     // so a long post doesn't drown the composition instructions.
-    const context = [post.title, post.hook_text, post.body?.slice(0, 600)]
+    // Fixed path (Hani only, lib/feature-access canOwnMediaText): no title or
+    // hook in the prompt at all — a quoted hook is words the model can draw,
+    // and the only words on the image are the script's (lib/script-text).
+    const context = (
+      canOwnMediaText(user.email)
+        ? [post.body?.slice(0, 600)]
+        : [post.title, post.hook_text, post.body?.slice(0, 600)]
+    )
       .filter(Boolean)
       .join("\n")
     // Her own pictures go in as they are; a link's picture is a look only.

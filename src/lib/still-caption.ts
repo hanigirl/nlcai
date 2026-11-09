@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useState } from "react"
 import { getFormatMeta, setFormatMeta } from "@/lib/timing-storage"
 import type { CaptionPosition } from "@/components/image-caption-block"
+import { toast } from "sonner"
+import { useOwnMediaText } from "@/lib/use-scheduling-access"
+import { isCaptionedRender, stillCaptionRecord } from "@/lib/still-original"
 
 /**
  * The caption on a STILL the user brought — the engine behind the control on
@@ -63,6 +66,44 @@ export function useStillCaption({
   const [settings, setSettings] = useState(read)
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState("")
+  // The image post's fixed path (Hani only, lib/feature-access).
+  const ownText = useOwnMediaText() === true && format === "image_post"
+  // The original as the server recorded it beside the render on the card
+  // (lib/caption-record) — survives a reload and another browser, and is
+  // always the original of THIS picture, never of one she had before.
+  const [recorded, setRecorded] = useState<{ url: string; source: string } | null>(null)
+  useEffect(() => {
+    if (!ownText || !url || !isCaptionedRender(url)) return
+    let live = true
+    void stillCaptionRecord(url).then((rec) => {
+      if (!live || !rec) return
+      setRecorded({ url, source: rec.sourceUrl })
+      if (postId) {
+        setFormatMeta(postId, format, {
+          captionSourceUrl: rec.sourceUrl,
+          captionOn: true,
+          ...(rec.caption.position ? { captionPosition: rec.caption.position } : {}),
+        })
+      }
+    })
+    return () => {
+      live = false
+    }
+  }, [ownText, url, postId, format])
+  // Which original the control works from. Fixed path: a captioned render
+  // answers with its own record (localStorage until it's read, or for a
+  // render older than records); a bare picture is its own original only when
+  // it IS the remembered one — the remembered original of another picture
+  // (an AI image since, an undo) would put the wrong picture back.
+  const source = !ownText
+    ? settings.source
+    : url && isCaptionedRender(url)
+      ? recorded?.url === url
+        ? recorded.source
+        : settings.source
+      : url && settings.source === url
+        ? url
+        : undefined
 
   // The panel records the original the moment a caption lands, and
   // timing-storage fires a synthetic `storage` event on every write — so a
@@ -120,7 +161,11 @@ export function useStillCaption({
           }),
         })
         const data = await res.json().catch(() => ({}))
-        if (!res.ok || !data.url) return null
+        if (!res.ok || !data.url) {
+          // Said, not swallowed — "no script text" above all (lib/script-text).
+          if (ownText) toast.error(data.message ?? data.error ?? "הטמעת הכיתוב בתמונה נכשלה", { duration: 8000 })
+          return null
+        }
         captionedImages.set(cacheKey(postId, format), data.url as string)
         return data.url as string
       } catch (err) {
@@ -130,7 +175,7 @@ export function useStillCaption({
         setProgress("")
       }
     },
-    [postId, format],
+    [postId, format, ownText],
   )
 
   const setPosition = useCallback(
@@ -139,7 +184,7 @@ export function useStillCaption({
       const previous = settings.position
       setSettings((s) => ({ ...s, position: next }))
       setFormatMeta(postId, format, { captionPosition: next })
-      if (!settings.source) return
+      if (!source) return
       if (!settings.captionOn) {
         // The stored render is no longer the one this position asks for.
         captionedImages.delete(cacheKey(postId, format))
@@ -147,7 +192,7 @@ export function useStillCaption({
       }
       setBusy(true)
       try {
-        const drawn = await render(settings.source, next)
+        const drawn = await render(source, next)
         // Snapping back is the honest answer to a render that failed: leaving
         // the control on "top" over a picture still captioned at the bottom
         // would be the card lying about what the post looks like.
@@ -160,7 +205,7 @@ export function useStillCaption({
         setBusy(false)
       }
     },
-    [postId, format, busy, settings, render, applyUrl],
+    [postId, format, busy, settings, source, render, applyUrl],
   )
 
   const setCaptionOn = useCallback(
@@ -168,7 +213,6 @@ export function useStillCaption({
       if (!postId || busy || on === settings.captionOn) return
       setSettings((s) => ({ ...s, captionOn: on }))
       setFormatMeta(postId, format, { captionOn: on })
-      const source = settings.source
       if (!source) return
       setBusy(true)
       try {
@@ -177,7 +221,9 @@ export function useStillCaption({
           await applyUrl(source)
           return
         }
-        const cached = captionedImages.get(cacheKey(postId, format))
+        // Fixed path: no cache — a render remembered from another original
+        // (a picture she replaced since) would put the wrong picture back.
+        const cached = ownText ? undefined : captionedImages.get(cacheKey(postId, format))
         if (cached) {
           await applyUrl(cached)
           return
@@ -192,7 +238,7 @@ export function useStillCaption({
         setBusy(false)
       }
     },
-    [postId, format, busy, settings, render, applyUrl],
+    [postId, format, busy, settings, source, ownText, render, applyUrl],
   )
 
   return {
@@ -200,7 +246,7 @@ export function useStillCaption({
     // back to, so there is no control to offer. It is recorded the moment a
     // picture is captioned; an AI-generated image post never has one, and
     // correctly gets no control.
-    available: !!postId && !!url && !!settings.source,
+    available: !!postId && !!url && !!source,
     captionOn: settings.captionOn,
     position: settings.position,
     setCaptionOn,
