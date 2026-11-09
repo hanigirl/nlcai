@@ -101,3 +101,14 @@ export const PICTURE_IS_BACKGROUND = {
 export function refusesPlacingIntoDesign(email: string | null | undefined, place: string[]): boolean {
   return canOwnMediaText(email) && place.length > 0
 }
+
+/**
+ * The AI edit chat is off for these accounts (Hani, 2026-11-09: "the chat is
+ * deleted for me until we rebuild it smart enough" — lib/edit-agent). No
+ * "עריכה עם AI" on media, no chat panel, and no "חדש לגמרי" tile (it only
+ * works by talking first); every other style generates straight away.
+ */
+export const NO_AI_CHAT_EMAILS = ["hanigirl@gmail.com"]
+export function canUseAiChat(email: string | null | undefined): boolean {
+  return !(email && NO_AI_CHAT_EMAILS.includes(email.toLowerCase()))
+}

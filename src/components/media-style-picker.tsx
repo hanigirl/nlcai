@@ -1,5 +1,6 @@
 "use client"
 
+import { useAiChatAccess } from "@/lib/use-scheduling-access"
 import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import type { LaunchFeatureId } from "@/lib/launch-features"
 import { useEffect, useState } from "react"
@@ -35,7 +36,10 @@ export function useMediaStyle(postId?: string | null, format?: FormatId): {
     const s = postId && format ? getFormatMeta(postId, format).mediaStyle : undefined
     return isMediaStyle(s) ? s : null
   }
-  const [picked, setPicked] = useState<MediaStyle | null>(remembered)
+  const [picked0, setPicked] = useState<MediaStyle | null>(remembered)
+  // No chat, no "חדש לגמרי" (it designs from what she says first).
+  const chatOff = useAiChatAccess() === false
+  const picked = chatOff && picked0 === "blank" ? null : picked0
   useEffect(() => {
     setPicked(remembered())
     // A different post / format: its own remembered style.
@@ -95,9 +99,12 @@ export function MediaStylePicker({
 }) {
   const dark = getTemplate("ai-dark")
   const light = getTemplate("ai-light")
+  const chatOff = useAiChatAccess() === false
+  if (chatOff) onAiEdit = undefined
   const options: { id: MediaStyle; name: string; thumb: React.ReactNode }[] = [
     // "חדש לגמרי" first (Hani, 2026-11-05): from her brief, no style at all.
-    { id: "blank", name: "חדש לגמרי", thumb: <BlankTileThumb className="size-full" /> },
+    // Not while the chat is off — it only works by talking first.
+    ...(chatOff ? [] : [{ id: "blank" as const, name: "חדש לגמרי", thumb: <BlankTileThumb className="size-full" /> }]),
     ...(brandTemplate
       ? [
           {

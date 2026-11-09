@@ -113,7 +113,7 @@ import {
   approvalHeaderFill,
 } from "@/components/format-approval/approval-visuals"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
-import { useDescriptionAccess, useFormatCards, useOwnMediaText, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi } from "@/lib/use-scheduling-access"
+import { useDescriptionAccess, useFormatCards, useOwnMediaText, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi, useAiChatAccess } from "@/lib/use-scheduling-access"
 // "עריכה עם AI" on every format's copy (Hani, 2026-10-29).
 import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
 import { useChatRevealer } from "@/lib/ai-chat-reveal"
@@ -383,10 +383,12 @@ function ProjectPageInner() {
   // "עריכה עם AI" / trash on the result cards (Hani, 2026-10-22).
   const [pendingMediaDelete, setPendingMediaDelete] = useState<AiEditFormat | null>(null)
   const [aiChatFormat, setAiChatFormat] = useState<AiEditFormat | null>(null)
+  // The media AI edit chat — off on this account until it's rebuilt (lib/feature-access).
+  const aiChatOn = useAiChatAccess() !== false
   // A generate button opens the AI edit to ask for a brief first (lib/ai-edit-intent).
   const [aiChatOpening, setAiChatOpening] = useState<AiEditOpening | null>(null)
   useAiEditRequests((req) => {
-    if (req.postId !== savedPostId) return
+    if (req.postId !== savedPostId || !aiChatOn) return
     setAiChatFormat(req.format)
     // "עריכה עם AI" on a style tile (Hani, 2026-11-05): before there is media
     // it asks first and generates in that style; once the format has media
@@ -2471,7 +2473,7 @@ function ProjectPageInner() {
           }
         : undefined
     const onAiEditMedia =
-      (fid !== "talking_head" || thAiOn) && !ownMediaOn(fid)
+      aiChatOn && (fid !== "talking_head" || thAiOn) && !ownMediaOn(fid)
         ? () => {
             setAiChatFormat(fid as AiEditFormat)
             setAiChatOpening(null)
@@ -2608,7 +2610,7 @@ function ProjectPageInner() {
             media={hasMedia ? item.media : null}
             mediaBusy={item.state === "media-busy"}
             onAiEditMedia={
-              fid !== "talking_head" && !ownMediaOn(fid)
+              aiChatOn && fid !== "talking_head" && !ownMediaOn(fid)
                 ? () => {
                     setAiChatFormat(fid as AiEditFormat)
                     setAiChatOpening(null)
@@ -3493,7 +3495,7 @@ function ProjectPageInner() {
                       bRollUrl={bRollUrl}
                       bRollCardRef={bRollCardRef}
                       onBRollEdit={() => setSelectedFormatCard("b_roll")}
-                      onAiEdit={(f) => { if (ownMediaOn(f)) return; setAiChatFormat(f); setAiChatOpening(null) }}
+                      onAiEdit={aiChatOn ? (f) => { if (ownMediaOn(f)) return; setAiChatFormat(f); setAiChatOpening(null) } : undefined}
                       onDeleteMedia={setPendingMediaDelete}
                       onBRollUrlChange={setBRollUrl}
                       copyAi={previewOn ? copyEdit.copyAi : undefined}
@@ -3581,6 +3583,8 @@ function ProjectPageInner() {
         const own = aiOwn
         // Her own media never opens a chat — only an AI generation does.
         if (own && aiChatFormat !== "talking_head" && aiChatOpening?.kind !== "generate") return null
+        // No chat on this account at all.
+        if (!aiChatOn) return null
         return (
           <MediaAiChat
             // One panel per post + format (+ own media): switching formats
@@ -3926,7 +3930,8 @@ function FormatTree({
   bRollCardRef: React.RefObject<HTMLDivElement | null>
   onBRollEdit: () => void
   /** "עריכה עם AI" on a result card — opens that format's AI side panel. */
-  onAiEdit: (format: AiEditFormat) => void
+  /** Absent = no AI edit chat on this account. */
+  onAiEdit?: (format: AiEditFormat) => void
   /** Trash on a result card — confirm, then remove that format's media. */
   onDeleteMedia: (format: AiEditFormat) => void
   /** Media approval (design review ?approve=a|b). Absent = feature off. */
@@ -4362,7 +4367,7 @@ function FormatTree({
                   images={carouselImages}
                   cardRef={carouselCardRef}
                   onEdit={onCarouselEdit}
-                  onAiEdit={() => onAiEdit("carousel")}
+                  onAiEdit={onAiEdit ? () => onAiEdit("carousel") : undefined}
                   onDelete={() => onDeleteMedia("carousel")}
                   postId={savedPostId}
                   driveLinks={carouselDriveLinks}
@@ -4398,7 +4403,7 @@ function FormatTree({
                     frames={frames}
                     cardRef={storyCardRef}
                     onEdit={onStoryEdit}
-                    onAiEdit={() => onAiEdit("story")}
+                    onAiEdit={onAiEdit ? () => onAiEdit("story") : undefined}
                     onDelete={() => onDeleteMedia("story")}
                     approvalStatus={approvalStatus}
                     footer={mediaFooter}
@@ -4446,7 +4451,7 @@ function FormatTree({
                           // Any b-roll: one the Opus engine made gets its
                           // composition revised; her own clip or still gets
                           // the caption / add-on edits (Hani, 2026-10-29).
-                          onAiEdit={() => onAiEdit("b_roll")}
+                          onAiEdit={onAiEdit ? () => onAiEdit("b_roll") : undefined}
                           // Above the clip's native control bar.
                           aiClassName={isStillUrl(bRollUrl) ? undefined : "bottom-12"}
                         >
@@ -4530,7 +4535,7 @@ function FormatTree({
                         <MediaPreviewZone
                           onOpen={onImagePostEdit}
                           openLabel="החלפת התמונה"
-                          onAiEdit={isStoredImageUrl(imagePostUrl) || isOwnMediaUrl(imagePostUrl) ? () => onAiEdit("image_post") : undefined}
+                          onAiEdit={onAiEdit && (isStoredImageUrl(imagePostUrl) || isOwnMediaUrl(imagePostUrl)) ? () => onAiEdit("image_post") : undefined}
                         >
                           <div className="relative w-[200px] aspect-[4/5] rounded-xl overflow-hidden bg-bg-surface border border-border-neutral-default">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -4673,7 +4678,7 @@ function CarouselResultCard({
   /** Click on the slide — opens the media panel. Non-destructive — see `onCarouselEdit`. */
   onEdit: () => void
   /** The hover ✨ on the slide — the carousel's AI side panel. */
-  onAiEdit: () => void
+  onAiEdit?: () => void
   /** Trash — confirm, then remove the slides. */
   onDelete: () => void
   postId: string | null
@@ -4867,7 +4872,7 @@ function StoryResultCard({
   /** Click on the story — opens the media panel. */
   onEdit: () => void
   /** The hover ✨ on the story — the story's AI side panel. */
-  onAiEdit: () => void
+  onAiEdit?: () => void
   /** Trash — confirm, then remove the frames. */
   onDelete: () => void
 }) {

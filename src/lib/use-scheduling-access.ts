@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { canUseDescription, canUseFormatCards, canUseFormatGap, canUseMultinetwork, canUsePreview, canUseScheduleAllA, canUseScheduling } from "@/lib/scheduling-access"
-import { canCopyStructure, canOwnMediaText, canTalkingHeadAi, canPlaceRefs } from "@/lib/feature-access"
+import { canCopyStructure, canOwnMediaText, canTalkingHeadAi, canPlaceRefs, canUseAiChat } from "@/lib/feature-access"
 
 /** null while the session is read, then true/false. */
 export function useSchedulingAccess(): boolean | null {
@@ -46,6 +46,10 @@ export function useTalkingHeadAi(): boolean | null {
   return useEmailGate(canTalkingHeadAi)
 }
 
+/** The AI edit chat — off for NO_AI_CHAT_EMAILS until it's rebuilt (null while loading = treat as on). */
+export function useAiChatAccess(): boolean | null {
+  return useEmailGate(canUseAiChat)
+}
 /** "תעשה לי כזה" — copy another carousel's structure (lib/feature-access). */
 export function useCopyStructure(): boolean | null {
   return useEmailGate(canCopyStructure)

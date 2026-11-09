@@ -80,7 +80,7 @@ import { makeCarouselVideoSlide, uploadSlotPicture } from "@/lib/carousel-video-
 import { isVideoSlide } from "@/lib/carousel-video"
 import { registerAsIsImporter, requestDrivePicker, type AsIsItem, type AsIsOptions, type AsIsResult } from "@/lib/as-is-upload"
 import { AiHoverEditButton } from "@/components/ai-hover-edit"
-import { useOwnMediaText, useRefPlace } from "@/lib/use-scheduling-access"
+import { useOwnMediaText, useRefPlace, useAiChatAccess } from "@/lib/use-scheduling-access"
 import { uploadTalkingHeadFile } from "@/lib/talking-head-upload"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import type { AiEditFormat } from "@/components/media-ai-chat"
@@ -335,11 +335,26 @@ function openGenerateBrief(
   /** Came from "עריכה עם AI" — with media already there it is a plain edit. */
   fromEdit = false,
 ) {
+  // No chat on this account: no talking first — generate straight away
+  // (an edit press on a tile does nothing).
+  if (!aiChatNow) {
+    if (!fromEdit) void run("", [], [])
+    return
+  }
   requestAiEdit({
     postId,
     format,
     opening: { id: openingId(), kind: "generate", run, style, fromEdit, placeRefs: refPlaceNow },
   })
+}
+
+/** The AI edit chat is on for this account (lib/feature-access NO_AI_CHAT_EMAILS). */
+let aiChatNow = true
+function useAiChatFlag() {
+  const on = useAiChatAccess()
+  useEffect(() => {
+    aiChatNow = on !== false
+  }, [on])
 }
 
 /**
@@ -349,6 +364,7 @@ function openGenerateBrief(
  */
 let refPlaceNow = false
 function useRefPlaceFlag() {
+  useAiChatFlag()
   const on = useRefPlace()
   useEffect(() => {
     refPlaceNow = on === true
