@@ -224,6 +224,15 @@ async function execute(
     }
   }
 
+  // A story always has the script's number of stories (Hani, 2026-11-09:
+  // "if there are three stories, duplicate it to three, no matter what"):
+  // fewer frames than stories → her last frame again for each missing one.
+  if (format === "story" && plan.script && set.length > 0 && set.length < plan.script.length) {
+    const last = set[set.length - 1]
+    const source = last.copyOf ?? last
+    while (set.length < plan.script.length) set.push({ ...last, copyOf: source })
+  }
+
   // A copy of a captioned frame carries ITS OWN script text (frame k = the
   // script's unit k), burned over the same original — never the caption of
   // the frame it was copied from.
@@ -231,7 +240,9 @@ async function execute(
     for (let i = 0; i < set.length; i++) {
       const it = set[i]
       const unit = plan.script[i]
-      if (!it.copyOf || !unit || it.caption !== "ours") continue
+      if (!it.copyOf || !unit) continue
+      // A copy of a frame that carries its own words (baked in) stays as is.
+      if (it.caption !== "ours" && it.caption !== "none") continue
       onProgress?.(`מעדכנים את הכיתוב (${i + 1} מתוך ${set.length})...`)
       const next = await caption(postId, format, it, { op: "set_caption", frames: [i + 1], headline: unit.headline ?? "", body: unit.body ?? "" }, instruction)
       if ("error" in next) problems.push(next.error)

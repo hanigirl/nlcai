@@ -3,6 +3,7 @@ import type { MediaStyle } from "@/lib/visual-language/types"
 import { toast } from "sonner"
 import { longWaitDone, startLongWait } from "@/lib/long-wait"
 import { flushPendingSaves } from "@/lib/pending-saves"
+import { storyFrames } from "@/lib/story-text-split"
 
 /**
  * Background b-roll generation, held OUTSIDE React.
@@ -512,13 +513,28 @@ export function startStoryDriveImport(
       const frames: string[] = []
       let pulled = 0
       const toPull = links.length
+      // The script's stories set the story's length (Hani, 2026-11-09): three
+      // stories = three frames, no matter how many files she brought. With
+      // fewer files, her last one is the picture for every story after it.
+      await flushPendingSaves()
+      const scriptStories = await (async () => {
+        try {
+          const r = await fetch(`/api/core-posts/${postId}`)
+          const body = r.ok ? ((await r.json()) as { post?: { formatPosts?: Record<string, string> } }).post?.formatPosts?.story : null
+          return body?.trim() ? storyFrames(body).length : 0
+        } catch {
+          return 0
+        }
+      })()
       // How many frames the finished story will have — the script is split
       // across this many, so it counts every row that ends up carrying a
       // frame, not just the ones being pulled now.
       const totalFrames = Math.max(
         rows.filter((r, i) => !!r || !!existing[i]).length,
         existing.length,
+        scriptStories,
       )
+      let lastPulled: string | null = null
 
       for (let i = 0; i < rows.length; i++) {
         const link = rows[i]
@@ -548,6 +564,17 @@ export function startStoryDriveImport(
         // even when earlier rows were left blank.
         const burned = await burnFrame(data.url as string, i, totalFrames)
         frames.push(burned ?? (data.url as string))
+        lastPulled = data.url as string
+      }
+
+      // Stories the script has and her files don't: her last file again,
+      // each with its own story's caption.
+      if (lastPulled && existing.length <= rows.length) {
+        for (let i = frames.length; i < scriptStories; i++) {
+          setProgress(`מטמיעים כיתוב בפריים ${i + 1} מתוך ${scriptStories}...`)
+          const burned = await burnFrame(lastPulled, i, totalFrames)
+          frames.push(burned ?? lastPulled)
+        }
       }
 
       // Frames beyond the rows on screen are still part of the story — keep
