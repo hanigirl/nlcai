@@ -18,6 +18,8 @@ import { imageHasBakedText } from "@/lib/baked-text"
 import { cleanCaptionSpec, type CaptionSpec } from "@/lib/own-media"
 import { writeCaptionRecord } from "@/lib/caption-record"
 import { guardedFetch } from "@/lib/server-fetch"
+import { canOwnMediaText } from "@/lib/feature-access"
+import { captionLookFor } from "@/lib/caption-look"
 
 // One satori render + one Resvg rasterize. No model call, no ffmpeg — this
 // is seconds, not minutes, but a 50MB source still has to be pulled first.
@@ -220,6 +222,12 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Story frames of her own (gated, story only — Hani, 2026-11-09): the
+    // script's words on a solid box in her brand colours, or white on black,
+    // so they read on dark and light pictures alike.
+    const ownStory = format === "story" && !!override && canOwnMediaText(user.email)
+    const storyLook = ownStory && !override?.style ? await captionLookFor(supabase, user.id) : undefined
+
     /* ------------------------- what the caption says ------------------- */
     let overlayHook: string | undefined
     let overlayBody: string | undefined
@@ -318,7 +326,7 @@ export async function POST(req: NextRequest) {
       overlayBody,
       canvas,
       position,
-      override?.style,
+      override?.style ?? storyLook,
     )
 
     // A carousel slide goes back as bytes: the panel holds the whole set and
@@ -365,7 +373,7 @@ export async function POST(req: NextRequest) {
         headline: overlayHook,
         body: overlayBody,
         position,
-        style: override?.style,
+        style: override?.style ?? storyLook,
       })
     }
 

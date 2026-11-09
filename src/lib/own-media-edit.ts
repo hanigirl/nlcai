@@ -4,6 +4,7 @@ import { flushPendingSaves } from "@/lib/pending-saves"
 import { getFormatMeta, setFormatMeta } from "@/lib/timing-storage"
 import { forgetCarouselSlides } from "@/lib/carousel-caption"
 import { isDriveUrl } from "@/lib/drive-media"
+import { NO_SCRIPT_TEXT } from "@/lib/script-text"
 import type { CaptionSpec, OwnEditFormat, OwnEditOp, OwnEditPlan, OwnFrameInfo } from "@/lib/own-media"
 
 /**
@@ -84,6 +85,8 @@ export async function runOwnMediaEdit(opts: {
       plan?: OwnEditPlan
       frames?: OwnFrameInfo[]
       driveLinks?: string[] | null
+      /** The fixed story text paths (gated, story only). */
+      ownStoryText?: boolean
       message?: string
       error?: string
     }>("/api/media/own-edit", {
@@ -100,6 +103,18 @@ export async function runOwnMediaEdit(opts: {
       return { ok: false, message: planned.data.message ?? FAIL }
     }
     const { plan, frames, driveLinks } = planned.data
+    const ownStory = format === "story" && planned.data.ownStoryText === true
+    // Her files just became the story (gated): the script's text goes on
+    // them, no questions — even when the planner came back with nothing.
+    if (ownStory && opts.justImported && plan.ops.length === 0 && !plan.refused && plan.script?.length) {
+      const script = plan.script
+      plan.ops = frames.flatMap((_, i) =>
+        // A frame past the script: an empty op, which execute turns into the NO_SCRIPT_TEXT note.
+        script[i]
+          ? [{ op: "set_caption" as const, frames: [i + 1], headline: script[i].headline ?? "", body: script[i].body ?? "" }]
+          : [{ op: "set_caption" as const, frames: [i + 1] }],
+      )
+    }
     if (plan.ops.length === 0) {
       return {
         ok: true,
@@ -108,7 +123,7 @@ export async function runOwnMediaEdit(opts: {
         message: plan.reply || "לא הבנתי מה לשנות. אפשר לנסח שוב?",
       }
     }
-    return await execute(postId, format, plan, frames, driveLinks ?? null, opts.onProgress, opts.instruction)
+    return await execute(postId, format, plan, frames, driveLinks ?? null, opts.onProgress, opts.instruction, ownStory)
   } catch (err) {
     console.error("[own-media-edit]", err)
     return { ok: false, message: FAIL }
@@ -127,6 +142,8 @@ async function execute(
   onProgress?: (text: string) => void,
   /** Her words this turn — the animated caption on a video follows them. */
   instruction?: string,
+  /** The fixed story text paths (gated, story only). */
+  ownStory = false,
 ): Promise<OwnEditResult> {
   // Ops address frames by their number in the set she was looking at, so
   // caption ops resolve against `original`; structure ops then rebuild `set`.
@@ -197,6 +214,20 @@ async function execute(
           problems.push(`אין פריים ${n} בסט הזה.`)
           return
         }
+        // Gated story: a frame the script has no story for gets no text —
+        // said plainly, not reported as a failed edit.
+        if (
+          ownStory &&
+          op.op === "set_caption" &&
+          !plan.script?.[n - 1] &&
+          !op.headline &&
+          !op.body &&
+          !item.record?.caption.headline &&
+          !item.record?.caption.body
+        ) {
+          if (!notes.includes(NO_SCRIPT_TEXT)) notes.push(NO_SCRIPT_TEXT)
+          continue
+        }
         const next =
           op.op === "remove_caption" ? await uncaption(item) : await caption(postId, format, item, op, instruction)
         if ("error" in next) problems.push(next.error)
@@ -259,7 +290,15 @@ async function execute(
     const script = plan.script
     // A copy of a frame that carries its own words (baked in) stays as is.
     const todo = set.flatMap((it, i) =>
-      it.copyOf && script[i] && (it.caption === "ours" || it.caption === "none") ? [i] : [],
+      it.copyOf &&
+      script[i] &&
+      (it.caption === "ours" ||
+        it.caption === "none" ||
+        // Gated story: a copy of her clip (always "unknown") or of a frame
+        // whose own caption failed must still get its story's text, not stay bare.
+        (ownStory && it.caption === "unknown" && !it.aiMade))
+        ? [i]
+        : [],
     )
     if (todo.length) onProgress?.(`מעדכנים את הכיתוב (${todo.length} ${todo.length === 1 ? "פריים" : "פריימים"} במקביל)...`)
     await Promise.all(
@@ -278,7 +317,7 @@ async function execute(
   if (!changed) {
     return problems.length
       ? { ok: false, message: problems[0] }
-      : { ok: true, changed: false, message: plan.reply || "לא היה מה לשנות." }
+      : { ok: true, changed: false, message: (ownStory && notes.length ? notes.join(" ") : plan.reply) || "לא היה מה לשנות." }
   }
   if (urls.length === 0) return { ok: false, message: "לא אשאיר את הסטורי בלי פריימים. כדי למחוק הכל השתמשו במחיקה." }
 

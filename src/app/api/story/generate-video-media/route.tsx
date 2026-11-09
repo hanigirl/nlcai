@@ -20,6 +20,9 @@ import { getAuthUser } from "@/lib/auth-user"
 import { cleanCaptionSpec, type CaptionSpec } from "@/lib/own-media"
 import { writeCaptionRecord } from "@/lib/caption-record"
 import { guardedFetch } from "@/lib/server-fetch"
+import { canOwnMediaText } from "@/lib/feature-access"
+import { NO_SCRIPT_TEXT, scriptTextFor } from "@/lib/script-text"
+import { captionLookFor } from "@/lib/caption-look"
 
 // Downloading + re-encoding a user video is heavier than an image render;
 // libx264 on a short clip still runs in seconds, but leave generous headroom.
@@ -248,7 +251,7 @@ export async function POST(req: NextRequest) {
        */
       caption?: unknown
     }
-    const override: CaptionSpec | null = rawCaption ? cleanCaptionSpec(rawCaption) : null
+    let override: CaptionSpec | null = rawCaption ? cleanCaptionSpec(rawCaption) : null
     if (override && !override.headline && !override.body) {
       return NextResponse.json({ error: "caption_empty", message: "אין טקסט לכיתוב." }, { status: 400 })
     }
@@ -334,6 +337,23 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Her own media + the script's text (Hani, 2026-11-09 — gated, story
+    // only): the words are the script's story for THIS frame, verbatim — never
+    // the hook or title, never the script re-split across the file count. A
+    // frame the script has no story for gets no text, and the caller is told.
+    const ownStory = format === "story" && canOwnMediaText(user.email)
+    if (ownStory) {
+      if (!override) {
+        const unit = scriptTextFor("story", variant.body, frameIndex)
+        if (!unit) {
+          return NextResponse.json({ error: "no_script_text", message: NO_SCRIPT_TEXT }, { status: 400 })
+        }
+        override = { headline: unit.headline, body: unit.body, position: "bottom" }
+      }
+      // Reads on dark and light footage alike: her brand box, or white on black.
+      if (!override.style) override = { ...override, style: await captionLookFor(supabase, user.id) }
+    }
+
     // Overlay text: the hook is the headline (falls back to the title, then
     // the first line of the story script). Matches the reel-cover principle
     // — a short, punchy line, not the whole script.
@@ -414,6 +434,16 @@ export async function POST(req: NextRequest) {
           message:
             'הסרטון בדרייב כבר לא משותף. שנו את ההרשאה ל„כל מי שיש לו הקישור” ונסו שוב.',
         },
+        { status: 400 },
+      )
+    }
+
+    // A picture is not a clip: through ffmpeg it came back as a near
+    // single-frame mp4. Stills take the still caption path (api/media/caption-image).
+    if (ownStory && srcContentType.startsWith("image/")) {
+      await videoRes.body.cancel().catch(() => {})
+      return NextResponse.json(
+        { error: "not_a_video", message: "זו תמונה ולא סרטון — הטקסט על תמונה נכנס בדרך של התמונות." },
         { status: 400 },
       )
     }
@@ -501,7 +531,7 @@ export async function POST(req: NextRequest) {
       position,
       style: override?.style,
       ...(override?.design ? { design: override.design } : {}),
-    })
+    }, ownStory && !rawCaption ? "script" : undefined)
 
     return NextResponse.json({ url: publicUrl })
   } catch (error) {
