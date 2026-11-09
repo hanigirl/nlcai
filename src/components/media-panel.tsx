@@ -3465,7 +3465,9 @@ function MediaUploadFlow({
   // here hid both the first step and the media, so the tab went blank
   // (Nataliya, 2026-11-09). Whatever the page holds now is the story — an
   // edit from the chat included; its frames going away = deleted.
-  useFollowPageStoryFrames(format === "story", initialStoryFrames, (now, deleted) => {
+  // Hani + Nataliya only (the new panel keeps the flow mounted under the media).
+  const followStory = useOwnMediaText() === true && format === "story"
+  useFollowPageStoryFrames(followStory, initialStoryFrames, (now, deleted) => {
     setSavedStorySet(now)
     if (deleted) {
       setPreviewUrl(null)
