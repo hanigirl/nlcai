@@ -494,6 +494,7 @@ export function MediaPanel({
                     onThSourceModeChange("choose")
                   }
                 }}
+                aria-label="חזרה"
                 className="p-0.5 rounded-lg hover:bg-bg-surface transition-colors cursor-pointer"
               >
                 <ChevronRight className="size-4 text-text-neutral-default" />
@@ -1383,8 +1384,8 @@ function TalkingHeadFlow({
   if (!avatar && sourceMode === "avatar" && !(videoPhase === "done" && liftedVideoUrl)) {
     return (
       <div className="flex flex-col gap-3">
-        <p className="text-sm text-text-neutral-default">בחר אווטאר:</p>
-        <AvatarPicker onSelect={(a) => onAvatarChange(a)} />
+        <p className="text-sm text-text-neutral-default">בחרו אווטאר:</p>
+        <AvatarPicker onSelect={(a) => onAvatarChange(a)} onBack={() => onSourceModeChange("choose")} />
       </div>
     )
   }

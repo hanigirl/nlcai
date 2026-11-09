@@ -24,6 +24,93 @@ export interface Avatar {
 
 interface AvatarPickerProps {
   onSelect: (avatar: Avatar) => void
+  /**
+   * Back to where the picker was opened from ("טענו אווטארים" on the talking
+   * head panel). Every state that has no avatar to pick — not connected, a
+   * load error, an empty account — offers it in place, so the message is never
+   * a dead end (Nataliya, 2026-11-09).
+   */
+  onBack?: () => void
+}
+
+/** Where HeyGen is connected: Settings → חיבורים → מדיה, scrolled to its card. */
+export const HEYGEN_SETTINGS_HREF = "/settings?tab=connections&sub=heygen"
+
+const LINK_CLASS = "text-small font-semibold text-text-primary-default hover:underline"
+
+/** "חזרה" — the same text link as the state's own action, beside it. */
+function BackLink({ onBack }: { onBack?: () => void }) {
+  if (!onBack) return null
+  return (
+    <button type="button" onClick={onBack} className={`${LINK_CLASS} cursor-pointer`}>
+      חזרה
+    </button>
+  )
+}
+
+/** No HeyGen key: connect it in settings, or go back. */
+export function AvatarsNotConnected({ onBack }: { onBack?: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
+      <p className="text-small text-text-neutral-default">
+        חברו את חשבון ה-HeyGen שלכם כדי להשתמש באווטארים
+      </p>
+      <div className="flex items-center gap-4">
+        <Link href={HEYGEN_SETTINGS_HREF} className={LINK_CLASS}>
+          עברו להגדרות
+        </Link>
+        <BackLink onBack={onBack} />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The avatars could not be loaded. The route's own error is an English code
+ * ("unauthorized", "Failed to load avatars"), so it goes to the console and the
+ * screen says it in Hebrew.
+ */
+export function AvatarsLoadError({ onBack }: { onBack?: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
+      <div className="text-button-destructive-default text-sm">לא הצלחנו לטעון את האווטארים. נסו שוב בעוד רגע.</div>
+      <BackLink onBack={onBack} />
+    </div>
+  )
+}
+
+/**
+ * Nothing to pick. This used to render an empty grid — no text, no way to tell
+ * "still loading" from "broken" from "nothing here" — and a user read it as the
+ * connection failing (2026-10-07). Only recorded video avatars are listed, so
+ * the two usual causes are named.
+ */
+export function AvatarsEmpty({ onBack }: { onBack?: () => void }) {
+  return (
+    <div
+      role="status"
+      className="flex flex-col items-center justify-center gap-2 rounded-xl border border-border-neutral-default bg-bg-surface px-6 py-8 text-center"
+    >
+      <p className="text-small-bold text-text-primary-default">
+        לא נמצאו אווטרים מוקלטים בחשבון ה-HeyGen שלכם
+      </p>
+      <p className="text-small text-text-neutral-default">
+        כאן מופיעים רק אווטרים שהוקלטו בווידאו. אווטר שנוצר מתמונה לא יופיע,
+        ואווטר חדש מופיע רק אחרי ש-HeyGen מסיים לעבד אותו.
+      </p>
+      <div className="flex items-center gap-4">
+        <a
+          href="https://app.heygen.com/avatars"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={LINK_CLASS}
+        >
+          לאווטרים שלי ב-HeyGen ←
+        </a>
+        <BackLink onBack={onBack} />
+      </div>
+    </div>
+  )
 }
 
 // _v2 on purpose: the key is versioned so a shape change or a fix to what the
@@ -51,7 +138,7 @@ function readCachedAvatars(uid: string): Avatar[] | null {
   return null
 }
 
-export function AvatarPicker({ onSelect }: AvatarPickerProps) {
+export function AvatarPicker({ onSelect, onBack }: AvatarPickerProps) {
   const [avatars, setAvatars] = useState<Avatar[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -120,55 +207,14 @@ export function AvatarPicker({ onSelect }: AvatarPickerProps) {
     )
   }
 
-  if (notConnected) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
-        <p className="text-small text-text-neutral-default">
-          חבר את חשבון HeyGen שלך כדי להשתמש באווטארים
-        </p>
-        <Link href="/settings" className="text-small font-semibold text-text-primary-default hover:underline">
-          עבור להגדרות
-        </Link>
-      </div>
-    )
-  }
+  if (notConnected) return <AvatarsNotConnected onBack={onBack} />
 
   if (error) {
-    return (
-      <div className="flex items-center justify-center py-8">
-        <div className="text-button-destructive-default text-sm">{error}</div>
-      </div>
-    )
+    console.error("[avatar-picker] load failed:", error)
+    return <AvatarsLoadError onBack={onBack} />
   }
 
-  // Nothing to pick. This used to render an empty grid — no text, no way
-  // to tell "still loading" from "broken" from "nothing here" — and a user
-  // read it as the connection failing (2026-10-07). Only recorded video
-  // avatars are listed, so the two usual causes are named.
-  if (avatars.length === 0) {
-    return (
-      <div
-        role="status"
-        className="flex flex-col items-center justify-center gap-2 rounded-xl border border-border-neutral-default bg-bg-surface px-6 py-8 text-center"
-      >
-        <p className="text-small-bold text-text-primary-default">
-          לא נמצאו אווטרים מוקלטים בחשבון ה-HeyGen שלך
-        </p>
-        <p className="text-small text-text-neutral-default">
-          כאן מופיעים רק אווטרים שהוקלטו בווידאו. אווטר שנוצר מתמונה לא יופיע,
-          ואווטר חדש מופיע רק אחרי ש-HeyGen מסיים לעבד אותו.
-        </p>
-        <a
-          href="https://app.heygen.com/avatars"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-small font-semibold text-text-primary-default hover:underline"
-        >
-          לאווטרים שלי ב-HeyGen ←
-        </a>
-      </div>
-    )
-  }
+  if (avatars.length === 0) return <AvatarsEmpty onBack={onBack} />
 
   return (
     <div className="grid grid-cols-2 gap-3">

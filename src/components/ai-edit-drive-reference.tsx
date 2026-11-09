@@ -270,7 +270,7 @@ export function DriveReferenceDialog({
         ) : folder.status === "unset" ? (
           <div className="flex flex-col items-start gap-2 rounded-lg bg-bg-surface p-4 text-small text-text-primary-default">
             <span>עוד לא חיברתם תיקייה מהדרייב ל{label}.</span>
-            <Link href="/settings?tab=media" className="text-small underline underline-offset-4 hover:text-text-neutral-default">
+            <Link href="/settings?tab=media&sub=drive" className="text-small underline underline-offset-4 hover:text-text-neutral-default">
               לחיבור תיקייה בהגדרות ← מדיה
             </Link>
           </div>

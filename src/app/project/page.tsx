@@ -2838,8 +2838,11 @@ function ProjectPageInner() {
             <p className="text-small text-text-neutral-default">
               חברו את חשבון {apiNotConnected} שלכם כדי ליצור תוכן
             </p>
-            <Link href="/settings" className="text-small font-semibold text-text-primary-default hover:underline">
-              עבור להגדרות
+            <Link
+              href={`/settings?tab=connections&sub=${apiNotConnected === "Gemini" ? "gemini" : "claude"}`}
+              className="text-small font-semibold text-text-primary-default hover:underline"
+            >
+              עברו להגדרות
             </Link>
           </div>
         )}
