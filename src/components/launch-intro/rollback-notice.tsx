@@ -41,20 +41,31 @@ export function RollbackNotice({ className }: { className?: string }) {
     <div
       dir="rtl"
       role="status"
-      className={`relative flex w-full flex-col items-end gap-[7px] overflow-hidden rounded-[12px] p-6 ${className ?? ""}`}
+      className={`relative flex w-full items-center gap-4 overflow-hidden rounded-[12px] p-6 ${className ?? ""}`}
     >
       <div aria-hidden className="pointer-events-none absolute inset-0 rounded-[12px]">
         <div className="absolute inset-0 rounded-[12px] bg-gray-98" />
         <ShaderFill className="absolute rounded-[12px]" shader={RAD_SOUP} />
       </div>
-      <p className="relative w-full text-right text-[14px] font-semibold leading-6 text-text-primary-default">
-        שימו לב: חזרנו לגירסה קודמת עקב תקלה (אופסי, התלהבנו מידי)
-      </p>
-      <p className="relative w-full text-right text-[14px] leading-[1.4] text-[#475568]">
-        נכון שהעלנו גירסה חדשה אבל זיהינו באג משמעותי שהיה פוגע בביצועים.
-        <br aria-hidden />
-        לכן קודם נתקן ונעלה שוב בימים הקרובים. תודה על הסבלנות.
-      </p>
+      {/* The "oops" picture on the right (Figma 709:2265), cropped as in the design. */}
+      <div aria-hidden className="relative h-24 w-[88px] shrink-0 overflow-hidden">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/launch/rollback-oops.png"
+          alt=""
+          className="absolute left-[-14.29%] top-[-11.4%] h-[121.05%] w-[131.43%] max-w-none"
+        />
+      </div>
+      <div className="relative flex min-w-0 flex-col items-start gap-[7px] text-right text-[14px]">
+        <p className="font-semibold leading-6 text-text-primary-default">
+          שימו לב: חזרנו לגירסה קודמת עקב תקלה (אופסי, התלהבנו מידי)
+        </p>
+        <p className="leading-[1.4] text-[#475568]">
+          נכון שהעלנו גירסה חדשה אבל זיהינו באג משמעותי שהיה פוגע בביצועים.
+          <br aria-hidden />
+          לכן קודם נתקן ונעלה שוב בימים הקרובים. תודה על הסבלנות.
+        </p>
+      </div>
     </div>
   )
 }
