@@ -668,6 +668,21 @@ const STORY_IMPORT_ERRORS: Record<string, string> = {
 const isDriveLink = (l: string) => /drive\.google\.com|docs\.google\.com/i.test(l)
 const looksLikeVideo = (u: string) => /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)
 
+/** Video or picture behind a Drive link — null when the probe can't tell (then: download as before). */
+async function probeDriveKind(url: string): Promise<"image" | "video" | null> {
+  try {
+    const res = await fetch("/api/media/drive-info", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    })
+    const data = (await res.json().catch(() => ({}))) as { kind?: string }
+    return res.ok && (data.kind === "video" || data.kind === "image") ? data.kind : null
+  } catch {
+    return null
+  }
+}
+
 /** The script's text on one of her frames: a still → the still render, a clip → the ffmpeg burn. */
 async function captionStoryFrame(
   postId: string,
@@ -799,7 +814,13 @@ export async function startStoryOwnImport(
       setProgress(`טוען פריים ${pulled} מתוך ${toPull}...`)
       let raw = src
       let kind: "image" | "video" = looksLikeVideo(src) ? "video" : "image"
-      if (isDriveLink(src)) {
+      // A clip stays in Drive (the video burn reads it from there) — the
+      // download route is for pictures and turned a story's video away
+      // (Hani, 2026-11-10: three files picked, two frames came in).
+      const driveKind = isDriveLink(src) ? await probeDriveKind(src) : null
+      if (driveKind === "video") {
+        kind = "video"
+      } else if (isDriveLink(src)) {
         const res = await fetch("/api/media/from-drive", {
           method: "POST",
           headers: { "Content-Type": "application/json" },

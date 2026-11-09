@@ -77,6 +77,8 @@ type Store = {
   /** Format → what was picked, in order. */
   picked: Record<string, MediaItem[]>
   importing: string | null
+  /** The new panel: why the last pick failed — shown in the gallery, where she picked. */
+  importError: string | null
   importProgress: string
   /** The format last worked on — the review bar keeps pointing at it after
    *  a pick closes the panel. */
@@ -121,6 +123,7 @@ let store: Store = {
   forceLoading: false,
   picked: {},
   importing: null,
+  importError: null,
   importProgress: "",
   lastFormat: null,
 }
@@ -147,7 +150,7 @@ export function useDrivePickVariant(): DrivePickVariant {
 }
 
 export function openDrivePicker(format: string) {
-  set({ pickerFor: format, lastFormat: format })
+  set({ pickerFor: format, lastFormat: format, importError: null })
 }
 export function closeDrivePicker() {
   set({ pickerFor: null })
@@ -392,7 +395,7 @@ function runImport(format: string, items: MediaItem[]) {
   }
   const importer = importers.get(format)
   if (!importer) return
-  if (staysOpen.has(format)) set({ picked: { ...store.picked, [format]: items }, importing: format })
+  if (staysOpen.has(format)) set({ picked: { ...store.picked, [format]: items }, importing: format, importError: null })
   else set({ picked: { ...store.picked, [format]: items }, pickerFor: null })
   importer(items.map((it) => it.src))
 }
@@ -704,21 +707,31 @@ export function DriveFolderEntry({
     }
   }, [statusOnly, format])
   const sawPull = useRef(false)
+  // An error left over from before this pick isn't this pick's failure.
+  const errAtStart = useRef<string | null | undefined>(undefined)
   const waiting = statusOnly && s.importing === format
   useEffect(() => {
     if (!waiting) {
       sawPull.current = false
+      errAtStart.current = undefined
       return
     }
+    if (errAtStart.current === undefined) errAtStart.current = error ?? null
     if (pulling) {
       sawPull.current = true
       return
     }
+    // Done: the gallery makes way for her media. Failed: she stays here,
+    // with the reason beside the button, to pick again.
     const done = () => {
       set({ importing: null })
       closeDrivePicker()
     }
-    if (sawPull.current || error) {
+    if (error && (sawPull.current || error !== errAtStart.current)) {
+      set({ importing: null, importError: error })
+      return
+    }
+    if (sawPull.current) {
       done()
       return
     }
@@ -1098,8 +1111,15 @@ function NoAccess({ folderKey }: { folderKey: FolderKey }) {
 
 /** Footer stuck to the bottom of the panel's scroll area. */
 function StickyFooter({ children }: { children: React.ReactNode }) {
+  const s = useDrivePickStore()
   return (
     <div className="sticky -bottom-6 z-10 -mx-6 -mb-6 mt-auto flex flex-col gap-2 border-t border-border-neutral-default bg-white px-6 py-4 dark:bg-gray-10">
+      {s.importError && (
+        <p role="alert" className="flex items-start gap-1.5 text-xs text-button-destructive-default">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          {s.importError}
+        </p>
+      )}
       {children}
     </div>
   )

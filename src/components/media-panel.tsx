@@ -3078,7 +3078,8 @@ function CarouselFlow({
             mechanism here. */}
       {drivePick ? (
         <>
-        {ownTextGate && (
+        {/* With her media in, the panel shows it — not the first step again. */}
+        {ownTextGate && !(images && images.length > 0) && !driveImporting && (
           <MediaSourceChooser
             format="carousel"
             brandTemplate={brandTemplate}
@@ -5048,7 +5049,7 @@ function MediaUploadFlow({
                   reference link. Upload-from-computer was removed per Hani. */}
               {drivePick ? (
                 <>
-                {ownTextImagePost && (
+                {ownTextImagePost && !previewUrl && !drivePulling && (
                   <MediaSourceChooser
                     format="image_post"
                     brandTemplate={mediaStyle.brandTemplate}
@@ -5339,7 +5340,7 @@ function MediaUploadFlow({
                  itself, not just the form. */}
           {drivePick ? (
             <>
-            {ownStoryText && (
+            {ownStoryText && savedStorySet.length === 0 && !busyOnStory && (
               <MediaSourceChooser
                 format="story"
                 brandTemplate={mediaStyle.brandTemplate}

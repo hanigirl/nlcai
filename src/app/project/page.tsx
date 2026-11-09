@@ -2517,6 +2517,7 @@ function ProjectPageInner() {
                     media={item.media}
                     onAiEditMedia={onAiEditMedia}
                     onDeleteMedia={onDeleteMedia}
+                    storyPlayer={ownTextGate}
                   />
                 }
                 cover={thCoverImage}
@@ -2532,6 +2533,7 @@ function ProjectPageInner() {
                 media={item.media}
                 onAiEditMedia={onAiEditMedia}
                 onDeleteMedia={onDeleteMedia}
+                storyPlayer={ownTextGate}
               />
             ),
         }

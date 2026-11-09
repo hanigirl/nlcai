@@ -20,6 +20,7 @@
  * UI only: generation, media flows and approvals are the page's own.
  */
 
+import { StoryPlayer } from "@/components/story-player"
 import { VideoWithPlay } from "@/components/video-with-play"
 import { playableVideoSrc, videoPreviewSrc } from "@/lib/drive-media"
 import { useState, type ReactNode } from "react"
@@ -480,10 +481,16 @@ export function FormatPanelMedia({
   mediaBusy = false,
   onAiEditMedia,
   onDeleteMedia,
+  storyPlayer = false,
 }: {
   fid: string
   media?: FormatCardMedia | null
   mediaBusy?: boolean
+  /**
+   * A story plays as a story — progress bars, Instagram's pacing — instead
+   * of paging ‹ › (Hani, 2026-11-10; new media panel).
+   */
+  storyPlayer?: boolean
   /** Unused: the media is no click target (Hani, 2026-11-09). */
   onOpenMedia?: () => void
   onAiEditMedia?: () => void
@@ -504,7 +511,14 @@ export function FormatPanelMedia({
       onDelete={onDeleteMedia}
       className="w-full"
     >
-      <FormatMediaPreview media={media} fid={fid} />
+      {storyPlayer && fid === "story" ? (
+        <StoryPlayer
+          frames={media.kind === "slides" ? media.items : [media.url]}
+          className="w-full aspect-[9/16] rounded-xl"
+        />
+      ) : (
+        <FormatMediaPreview media={media} fid={fid} />
+      )}
     </MediaPreviewZone>
   )
 }
