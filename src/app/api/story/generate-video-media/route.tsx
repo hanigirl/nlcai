@@ -127,7 +127,7 @@ async function burnAnimatedOverlay(inputPath: string, framesPattern: string, fps
  * the image path), keeping any audio. Runs the bundled ffmpeg-static binary
  * so it works identically on Vercel and locally.
  */
-function burnOverlay(
+async function burnOverlay(
   inputPath: string,
   overlayPath: string,
   outputPath: string,
@@ -142,6 +142,11 @@ function burnOverlay(
    */
   stillSeconds?: number,
 ): Promise<void> {
+  // The burned clip is as long as HER clip (a still: the hold), never the
+  // cap. The caption plates are looped stills with no end of their own, so
+  // `-t` is the only thing that ends the render — at the cap it froze a 4s
+  // clip's last frame for 56s (Nataliya, 2026-11-09).
+  const length = stillSeconds ?? Math.min(MAX_CLIP_SECONDS, (await clipSeconds(inputPath)) ?? MAX_CLIP_SECONDS)
   return new Promise((resolve, reject) => {
     if (!ffmpegPath) {
       reject(new Error("ffmpeg binary not found"))
@@ -159,14 +164,16 @@ function burnOverlay(
       // with "Option not found" (2026-10-07). Don't split this line.
       `[0:v]scale=${CANVAS_WIDTH}:${CANVAS_HEIGHT}:force_original_aspect_ratio=increase,crop=${CANVAS_WIDTH}:${CANVAS_HEIGHT},setsar=1[bg];` +
       `[1:v]format=rgba,fade=t=in:st=0.7:d=0.9:alpha=1,setsar=1[cap];` +
+      // `shortest=1`: the clip ends when her footage ends, even when the
+      // probe above couldn't read its length — without it overlay holds her
+      // last frame for as long as the looped caption runs.
       (secondaryPath
         ? // Comes in at 2s, once the hook has been read, and stays.
-          `[bg][cap]overlay=0:0[v1];` +
+          `[bg][cap]overlay=0:0:shortest=1[v1];` +
           `[2:v]format=rgba,fade=t=in:st=2:d=0.7:alpha=1,setsar=1[cap2];` +
-          `[v1][cap2]overlay=0:0[v]`
-        : `[bg][cap]overlay=0:0[v]`)
+          `[v1][cap2]overlay=0:0:shortest=1[v]`
+        : `[bg][cap]overlay=0:0:shortest=1[v]`)
 
-    const length = stillSeconds ?? MAX_CLIP_SECONDS
     const args = [
       "-y",
       ...(stillSeconds ? ["-loop", "1", "-framerate", "30", "-t", String(stillSeconds)] : []),
