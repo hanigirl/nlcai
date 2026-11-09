@@ -436,7 +436,13 @@ export async function POST(req: NextRequest) {
         : guardedFetch(videoUrl),
       // Her own video: the Drive look always — white words, a box per line,
       // her primary colour or black (Hani, 2026-11-09).
-      renderCaptionOverlayPng(overlayHook, overlayBody, position, { ...(await captionLookFor(supabase, user.id)), ...override?.style }),
+      // (Hani only for now — everyone else keeps the look they had.)
+      renderCaptionOverlayPng(
+        overlayHook,
+        overlayBody,
+        position,
+        canOwnMediaText(user.email) ? { ...(await captionLookFor(supabase, user.id)), ...override?.style } : override?.style,
+      ),
     ])
     const srcContentType = (videoRes.headers.get("content-type") || "")
       .split(";")[0]

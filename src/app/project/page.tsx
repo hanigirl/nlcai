@@ -2212,7 +2212,8 @@ function ProjectPageInner() {
    * 2026-11-09). A talking head keeps its own AI edit.
    */
   const ownMediaOn = (fid: string): boolean => {
-    if (fid === "talking_head") return false
+    // Hani only for now (OWN_MEDIA_TEXT_EMAILS) — everyone else keeps the AI edit they had.
+    if (fid === "talking_head" || !ownTextGate) return false
     const frames = [
       ...(storyImages ?? []),
       ...(storyVideoUrl && !(storyImages ?? []).includes(storyVideoUrl) ? [storyVideoUrl] : []),
@@ -3582,7 +3583,7 @@ function ProjectPageInner() {
         // Held from when the panel opened (aiOwn, above).
         const own = aiOwn
         // Her own media never opens a chat — only an AI generation does.
-        if (own && aiChatFormat !== "talking_head" && aiChatOpening?.kind !== "generate") return null
+        if (ownTextGate && own && aiChatFormat !== "talking_head" && aiChatOpening?.kind !== "generate") return null
         // No chat on this account at all.
         if (!aiChatOn) return null
         return (
