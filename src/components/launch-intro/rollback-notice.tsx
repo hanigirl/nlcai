@@ -41,17 +41,19 @@ export function RollbackNotice({ className }: { className?: string }) {
     <div
       dir="rtl"
       role="status"
-      className={`relative flex w-full flex-col items-start gap-[7px] overflow-hidden rounded-[12px] p-6 ${className ?? ""}`}
+      className={`relative flex w-full flex-col items-end gap-[7px] overflow-hidden rounded-[12px] p-6 ${className ?? ""}`}
     >
       <div aria-hidden className="pointer-events-none absolute inset-0 rounded-[12px]">
         <div className="absolute inset-0 rounded-[12px] bg-gray-98" />
         <ShaderFill className="absolute rounded-[12px]" shader={RAD_SOUP} />
       </div>
-      <p className="relative w-full text-right text-[16px] font-semibold leading-6 text-text-primary-default">
-        שימו לב: חזרנו לגירסה קודמת עקב תקלה
+      <p className="relative w-full text-right text-[14px] font-semibold leading-6 text-text-primary-default">
+        שימו לב: חזרנו לגירסה קודמת עקב תקלה (אופסי, התלהבנו מידי)
       </p>
-      <p className="relative w-full text-right text-[16px] leading-6 text-text-neutral-default">
-        עלו הרבה שינויים ביום שני בבוקר אבל זיהינו באג משמעותי לכן סגרנו את הפיצ׳רים החדשים, נתקן ונעלה ברגע שמוכן. תודה על הסבלנות.
+      <p className="relative w-full text-right text-[14px] leading-[1.4] text-[#475568]">
+        נכון שהעלנו גירסה חדשה אבל זיהינו באג משמעותי שהיה פוגע בביצועים.
+        <br aria-hidden />
+        לכן קודם נתקן ונעלה שוב בימים הקרובים. תודה על הסבלנות.
       </p>
     </div>
   )
