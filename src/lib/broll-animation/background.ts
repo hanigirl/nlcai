@@ -36,10 +36,15 @@ export function buildBackgroundPrompt(
     "",
     "ABSOLUTELY NO TEXT. No words, no letters, no numbers, no Hebrew or Latin characters, no captions, no watermarks, no logos, no signage, no UI chrome, no borders. If any surface in the scene would naturally carry writing, leave it blank.",
     "",
+    // Hani, 2026-11-10: the engine kept inventing faces. A person in the
+    // b-roll is hers to add (her own picture, through the chat) — never ours.
+    "ABSOLUTELY NO PEOPLE. No faces, no portraits, no human figures, no silhouettes, no hands, no body parts, no crowds, no characters or avatars. If reference images show people, take only their colours, light, texture and style — never the person. Build the image from objects, places, materials, light and abstract shapes.",
+    "",
     ...direction.lines,
+    "- Even where the visual language above mentions people, a portrait or a face, leave them out: keep its colours, light and texture only.",
     "",
     framing,
-    "- One clear subject drawn from the post's topic, rendered in the visual language above — never generic stock decoration.",
+    "- One clear subject drawn from the post's topic — an object, a place or an abstract form, never a person — rendered in the visual language above, never generic stock decoration.",
     "",
     // The caption lands in the lower-middle band, so that area has to stay
     // calm or the type sits on top of the busiest part of the picture.

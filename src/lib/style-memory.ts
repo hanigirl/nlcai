@@ -221,7 +221,8 @@ export async function triageVisualMemory(
   const client = new Anthropic({ apiKey: anthropicKey })
   const msg = await client.messages.create({
     model: MODEL,
-    max_tokens: 900,
+    // Hebrew + a detailed rule overflowed 900 and cut the JSON (agent saves, 2026-11-10).
+    max_tokens: 2000,
     system: TRIAGE_SYSTEM,
     messages: [{ role: "user", content: [...referenceBlocks(input.refs ?? []), { type: "text", text }] }],
   })

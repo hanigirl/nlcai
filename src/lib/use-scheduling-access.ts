@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { canUseDescription, canUseFormatCards, canUseFormatGap, canUseMultinetwork, canUsePreview, canUseScheduleAllA, canUseScheduling } from "@/lib/scheduling-access"
-import { canCopyStructure, canOwnMediaText, canTalkingHeadAi, canPlaceRefs, canUseAiChat } from "@/lib/feature-access"
+import { canCopyStructure, canOwnMediaText, canTalkingHeadAi, canPlaceRefs, canUseAiChat, canUseEditAgent } from "@/lib/feature-access"
 
 /** null while the session is read, then true/false. */
 export function useSchedulingAccess(): boolean | null {
@@ -108,4 +108,9 @@ function useEmailGate(allowed: (email: string | null | undefined) => boolean): b
     }
   }, [allowed])
   return on
+}
+
+/** The AI edit chat as an agent, b-roll first (lib/feature-access EDIT_AGENT_EMAILS). */
+export function useEditAgent(): boolean | null {
+  return useEmailGate(canUseEditAgent)
 }
