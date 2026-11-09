@@ -44,10 +44,12 @@ import {
 } from "@/components/image-caption-block"
 import { StoryPlayer } from "@/components/story-player"
 import { DriveMediaLinks } from "@/components/drive-media-links"
+import { myLanguageShowsPerson } from "@/lib/visual-language/creator-photo-client"
 import {
   DriveFolderEntry,
   DriveFolderPicker,
   closeDrivePicker,
+  importCreatorPhoto,
   openDrivePicker,
   useDrivePickStore,
   useDrivePickVariant,
@@ -327,6 +329,19 @@ export function MediaPanelFrame({
  * generate → refine happens in one place. Every other tile generates
  * straight away.
  */
+/**
+ * "השפה הויזואלית שלך" on the new panel: when her language is a photo of her,
+ * the picture comes from her own Drive folder (never a face the AI made up —
+ * Nataliya, 2026-11-09); otherwise it generates as before.
+ */
+function withHerPhoto(format: string, generate: () => void) {
+  void importCreatorPhoto(format, myLanguageShowsPerson)
+    .then((used) => {
+      if (!used) generate()
+    })
+    .catch(() => generate())
+}
+
 function openGenerateBrief(
   postId: string,
   format: AiEditFormat,
@@ -3069,7 +3084,7 @@ function CarouselFlow({
             busy={generating}
             disabled={!postId || !carouselText.trim()}
             onExisting={() => openDrivePicker("carousel")}
-            onAi={generateInBrand}
+            onAi={() => withHerPhoto("carousel", generateInBrand)}
           />
         )}
         <DriveFolderEntry
@@ -5044,7 +5059,7 @@ function MediaUploadFlow({
                     busy={inFlight > 0}
                     disabled={!postId}
                     onExisting={() => openDrivePicker("image_post")}
-                    onAi={() => postId && void startImageGeneration(postId, aiStyle)}
+                    onAi={() => postId && withHerPhoto("image_post", () => void startImageGeneration(postId, aiStyle))}
                   />
                 )}
                 <DriveFolderEntry
@@ -5334,7 +5349,7 @@ function MediaUploadFlow({
                 busy={storyInFlight > 0}
                 disabled={!postId}
                 onExisting={() => openDrivePicker("story")}
-                onAi={() => postId && void startStoryGeneration(postId, aiStyle)}
+                onAi={() => postId && withHerPhoto("story", () => void startStoryGeneration(postId, aiStyle))}
               />
             )}
             <DriveFolderEntry
@@ -5654,7 +5669,7 @@ function MediaUploadFlow({
                 busy={bRollGenerating}
                 disabled={!postId}
                 onExisting={() => openDrivePicker("b_roll")}
-                onAi={() => postId && void startBRollGeneration(postId, bRollAttemptRef.current++, aiStyle)}
+                onAi={() => postId && withHerPhoto("b_roll", () => void startBRollGeneration(postId, bRollAttemptRef.current++, aiStyle))}
               />
             )}
             <DriveFolderEntry

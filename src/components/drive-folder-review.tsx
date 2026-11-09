@@ -34,6 +34,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { cn } from "@/lib/utils"
 import { previewAccessNow, usePreviewAccess, usePreviewAccessShared } from "@/lib/use-scheduling-access"
 import { parseTextToSlides } from "@/lib/carousel-slides"
+import type { VisualFormat } from "@/lib/visual-language/types"
 
 /* ================================================================ types */
 
@@ -398,6 +399,68 @@ function runImport(format: string, items: MediaItem[]) {
   if (staysOpen.has(format)) set({ picked: { ...store.picked, [format]: items }, importing: format, importError: null })
   else set({ picked: { ...store.picked, [format]: items }, pickerFor: null })
   importer(items.map((it) => it.src))
+}
+
+/* ------------------------------------------- her photo, for her language */
+
+/**
+ * "השפה הויזואלית שלך" when her language is a photo of HER (Nataliya,
+ * 2026-11-09: the AI invented faces instead of using her photos folder). The
+ * image model may never draw a person (lib/visual-language/creator-photo), so
+ * the picture of her comes from her own Drive folder — the format's folder,
+ * else her photos folder (תמונות) — and goes through the same import as a
+ * gallery pick: her picture is the background, the script's text in front.
+ * One photo per run (her language keeps one photograph across all slides /
+ * frames; the import repeats it with each slide's words), a different one on
+ * each run.
+ *
+ * Returns false — and the caller generates as before, with no one in the
+ * picture — when her language isn't built on a photo of a person, or there's
+ * no connected folder with a usable file.
+ */
+const CREATOR_PHOTO_FOLDERS: Record<string, FolderKey[]> = {
+  carousel: ["carousel", "images"],
+  story: ["story", "images"],
+  image_post: ["images"],
+  b_roll: ["broll", "images"],
+}
+const photoTurn: Record<string, number> = {}
+const photoChecking = new Set<string>()
+
+/** The file for this run: rotates through the folder, never the same one twice in a row. */
+export function pickCreatorPhoto(format: string, folders: Record<FolderKey, Folder>): MediaItem | null {
+  for (const k of CREATOR_PHOTO_FOLDERS[format] ?? []) {
+    const f = folders[k]
+    if (f.status !== "connected") continue
+    // A b-roll can be her clip; every other format is a still.
+    const usable = f.items.filter((it) => it.kind === "image" || (format === "b_roll" && k === "broll"))
+    if (usable.length === 0) continue
+    photoTurn[format] ??= Math.floor(Math.random() * usable.length)
+    return usable[photoTurn[format]++ % usable.length]
+  }
+  return null
+}
+
+export async function importCreatorPhoto(
+  format: string,
+  languageShowsPerson: (format: VisualFormat) => Promise<boolean>,
+): Promise<boolean> {
+  if (!CREATOR_PHOTO_FOLDERS[format] || !importers.has(format)) return false
+  // A second click while the folder is being read is the same request.
+  if (photoChecking.has(format)) return true
+  photoChecking.add(format)
+  try {
+    if (!(await languageShowsPerson(format as VisualFormat))) return false
+    await loadDriveFolders()
+    // What's in Drive NOW — a photo she just added counts.
+    await Promise.all((CREATOR_PHOTO_FOLDERS[format] ?? []).map((k) => refreshDriveFolder(k)))
+    const item = pickCreatorPhoto(format, store.folders)
+    if (!item) return false
+    runImport(format, [item])
+    return true
+  } finally {
+    photoChecking.delete(format)
+  }
 }
 
 /* ================================================================ shared bits */

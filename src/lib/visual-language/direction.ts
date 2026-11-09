@@ -14,6 +14,7 @@ import {
   type VisualLanguage,
 } from "@/lib/visual-language/types"
 import { guardedFetch } from "@/lib/server-fetch"
+import { NO_INVENTED_PEOPLE } from "@/lib/visual-language/creator-photo"
 
 /**
  * Which visual language an AI image follows, in priority order:
@@ -171,7 +172,8 @@ export async function resolveDesignDirection(
     nicheChosen ? Promise.resolve([]) : loadStyleRules(supabase, userId),
   ])
   const extra = styleRuleLines(rules, opts.format)
-  return extra.length ? { ...direction, lines: [...direction.lines, "", ...extra] } : direction
+  // Never a made-up face (Nataliya, 2026-11-09) — lib/visual-language/creator-photo.
+  return { ...direction, lines: [...direction.lines, "", ...extra, ...(extra.length ? [""] : []), NO_INVENTED_PEOPLE] }
 }
 
 async function resolveBaseDirection(
