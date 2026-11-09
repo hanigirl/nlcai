@@ -3884,7 +3884,9 @@ function MediaUploadFlow({
       // post's caption laid over it. Where the file came from is not a
       // reason for the result to look different.
       if (!isVideo && (format === "image_post" || format === "b_roll") && !(noImageCaption && (format === "image_post" || format === "b_roll"))) {
-        runImageCaption(publicUrl)
+        // Gated: her picture as a b-roll becomes a clip, the text coming in.
+        if (format === "b_roll" && bRollOwnText) handleBurnText()
+        else runImageCaption(publicUrl)
       }
       toast.success("מדיה נשמרה", { id: uploadToast, duration: 3000 })
       return true
@@ -4867,7 +4869,9 @@ function MediaUploadFlow({
         // Imported for the AI panel (image post, b-roll): it captions after the save.
         !(skipAutoCaption && (targetFormat === "image_post" || targetFormat === "b_roll"))
       ) {
-        runImageCaption(mediaUrl)
+        // Gated: her picture as a b-roll becomes a clip, the text coming in.
+        if (targetFormat === "b_roll" && bRollOwnText) void handleBurnText()
+        else runImageCaption(mediaUrl)
       }
       if (targetFormat === "story") {
         // The single-link field and the per-frame list are the SAME story

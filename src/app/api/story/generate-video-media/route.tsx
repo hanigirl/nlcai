@@ -136,6 +136,11 @@ function burnOverlay(
    * hook has had time to land.
    */
   secondaryPath?: string,
+  /**
+   * The source is a STILL (her picture as a b-roll, gated): held for this
+   * many seconds so the text can fade in over it — a b-roll is a clip.
+   */
+  stillSeconds?: number,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!ffmpegPath) {
@@ -161,8 +166,10 @@ function burnOverlay(
           `[v1][cap2]overlay=0:0[v]`
         : `[bg][cap]overlay=0:0[v]`)
 
+    const length = stillSeconds ?? MAX_CLIP_SECONDS
     const args = [
       "-y",
+      ...(stillSeconds ? ["-loop", "1", "-framerate", "30", "-t", String(stillSeconds)] : []),
       "-i", inputPath,
       // `-loop 1` on the caption stills is what makes the fade possible, and
       // it is NOT optional: a single-frame input has no timeline, so `fade`
@@ -170,9 +177,9 @@ function burnOverlay(
       // repeat-last-frame behaviour then pastes that invisible frame for the
       // whole clip. Without the loop the caption never appears at all.
       // Verified by sampling frame colour at 0.2s / 1.5s / 3.0s.
-      "-loop", "1", "-t", String(MAX_CLIP_SECONDS), "-i", overlayPath,
+      "-loop", "1", "-t", String(length), "-i", overlayPath,
       ...(secondaryPath
-        ? ["-loop", "1", "-t", String(MAX_CLIP_SECONDS), "-i", secondaryPath]
+        ? ["-loop", "1", "-t", String(length), "-i", secondaryPath]
         : []),
       "-filter_complex",
       filter,
@@ -183,7 +190,7 @@ function burnOverlay(
       "-pix_fmt", "yuv420p",
       "-c:a", "aac",
       "-movflags", "+faststart",
-      "-t", String(MAX_CLIP_SECONDS),
+      "-t", String(length),
       outputPath,
     ]
     const proc = spawn(ffmpegPath, args)
@@ -331,8 +338,20 @@ export async function POST(req: NextRequest) {
       .eq("format_variant_id", variant.id)
       .eq("asset_type", "video")
       .maybeSingle()
+    // Her picture as a b-roll (gated, Hani 2026-11-10): it becomes a clip
+    // with the text coming in — not a still with the text pasted on.
+    const { data: stillRow } =
+      !assetRow && format === "b_roll" && canOwnMediaText(user.email)
+        ? await supabase
+            .from("media_assets")
+            .select("url")
+            .eq("format_variant_id", variant.id)
+            .eq("asset_type", "image")
+            .maybeSingle()
+        : { data: null }
     // An explicit source wins; otherwise fall back to the variant's slot.
-    const videoUrl = sourceUrl ?? (assetRow as { url: string } | null)?.url
+    const videoUrl =
+      sourceUrl ?? (assetRow as { url: string } | null)?.url ?? (stillRow as { url: string } | null)?.url
     if (!videoUrl) {
       return NextResponse.json(
         {
@@ -477,12 +496,22 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Her picture as a b-roll (gated): held 7s — the AI b-roll's length —
+    // with the text fading in. ffmpeg reads a still by its extension.
+    const stillSource = brollScript && srcContentType.startsWith("image/")
+    let srcPath = inputPath
+    if (stillSource) {
+      const ext = srcContentType.includes("png") ? "png" : srcContentType.includes("webp") ? "webp" : "jpg"
+      srcPath = path.join(tmp, `story-src-${id}.${ext}`)
+      tmpFiles.push(srcPath)
+    }
+
     // Static imports, not `await import("stream")`: the dynamic form came back
     // with `Readable` undefined in a dev server ("Cannot read properties of
     // undefined (reading 'fromWeb')", 2026-10-07), failing every burn there.
     await pipeline(
       Readable.fromWeb(videoRes.body as Parameters<typeof Readable.fromWeb>[0]),
-      createWriteStream(inputPath),
+      createWriteStream(srcPath),
     )
     await fs.writeFile(overlayPath, overlayPng)
 
@@ -520,7 +549,7 @@ export async function POST(req: NextRequest) {
         }
       }
     }
-    if (!animatedDone) await burnOverlay(inputPath, overlayPath, outputPath, secondaryPath)
+    if (!animatedDone) await burnOverlay(srcPath, overlayPath, outputPath, secondaryPath, stillSource ? 7 : undefined)
 
     const outBuffer = await fs.readFile(outputPath)
     // "burned-" prefix marks a text-baked output. The client reads this from
