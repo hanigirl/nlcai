@@ -1,3 +1,4 @@
+import { canOwnMediaText } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences, withPlacedImages } from "@/lib/media-brief"
 import { gatePlacement } from "@/lib/feature-access"
 import { picturesPlaced, placedImages } from "@/lib/placed-check"
@@ -130,8 +131,7 @@ function buildStoryPrompt(
     KEEP_INSIDE_FRAME_RULE,
     ...reservedZoneLines(direction.fixed, frameRole(frameIndex, frameCount), IMAGE_WIDTH, IMAGE_HEIGHT),
     progress,
-    "- The mood should relate to this post content (written in Hebrew): " +
-      `"""${context}"""`,
+    context ? "- The mood should relate to this post content (written in Hebrew): " + `"""${context}"""` : "",
     "",
     `Do NOT add any text other than the exact Hebrew lines above (and the tiny frame indicator if requested). ${noExtrasRule(direction)}`,
   ]
@@ -267,9 +267,11 @@ export async function POST(req: NextRequest) {
 
     // Theme context: title + hook carry the essence; the body is truncated
     // so a long post doesn't drown the composition instructions.
-    const context = [post.title, post.hook_text, post.body?.slice(0, 500)]
-      .filter(Boolean)
-      .join("\n")
+    // Fixed path (gated): no core post / hook in the prompt — the image model
+    // draws whatever text it is given (Hani, 2026-11-09).
+    const context = canOwnMediaText(user.email)
+      ? ""
+      : [post.title, post.hook_text, post.body?.slice(0, 500)].filter(Boolean).join("\n")
 
     const total = frames.length
     const images: string[] = new Array(total)

@@ -53,8 +53,7 @@ export function buildBackgroundPrompt(
           "",
         ]
       : []),
-    "- The mood should relate to this post content (written in Hebrew): " +
-      `"""${context}"""`,
+    context ? "- The mood should relate to this post content (written in Hebrew): " + `"""${context}"""` : "",
   ]
     .filter(Boolean)
     .join("\n")

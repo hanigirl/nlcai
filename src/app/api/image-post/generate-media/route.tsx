@@ -96,8 +96,8 @@ function buildImagePrompt(
     "- High legibility: strong contrast between text and background (use a clean area, scrim, or a solid shape behind the text if the style needs it).",
     KEEP_INSIDE_FRAME_RULE,
     ...reservedZoneLines(direction.fixed, "single", IMAGE_WIDTH, IMAGE_HEIGHT),
-    "- The mood should still relate to this post content (written in Hebrew): " +
-      `"""${context}"""`,
+    // No context = nothing but the lines above to draw from (the fixed path).
+    ...(context ? ["- The mood should still relate to this post content (written in Hebrew): " + `"""${context}"""`] : []),
     "",
     `Do NOT add any text other than the exact lines above. ${noExtrasRule(direction)}`,
   ].join("\n")
@@ -202,7 +202,9 @@ export async function POST(req: NextRequest) {
     // and the only words on the image are the script's (lib/script-text).
     const context = (
       canOwnMediaText(user.email)
-        ? [post.body?.slice(0, 600)]
+        ? // Not even the core post (Hani, 2026-11-09): given "for the mood", the
+          // image model drew its whole text onto the picture.
+          []
         : [post.title, post.hook_text, post.body?.slice(0, 600)]
     )
       .filter(Boolean)

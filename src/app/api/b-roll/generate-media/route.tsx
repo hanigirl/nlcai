@@ -1,3 +1,4 @@
+import { canOwnMediaText } from "@/lib/feature-access"
 import { gatePlacement } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
 import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
@@ -181,7 +182,8 @@ export async function POST(req: NextRequest) {
       throw e
     }
 
-    const context = (post.body ?? variantBody ?? hook).slice(0, 600)
+    // Fixed path (gated): the background is a picture, never the core post's words.
+    const context = canOwnMediaText(user.email) ? "" : (post.body ?? variantBody ?? hook).slice(0, 600)
     const mediaStyle = isMediaStyle(style) ? style : undefined
     const [brief, examples] = await Promise.all([
       buildCompositionBrief(supabase, user.id, { hook, rest: rest || undefined }, direction.lines, mediaStyle),

@@ -270,7 +270,8 @@ export async function POST(req: NextRequest) {
       const [W, H] = format === "story" ? [1080, 1920] : [1080, 1350]
       const role: ImageRole = input.role === "cover" || input.role === "content" ? input.role : "closing"
       const direction = await resolveDesignDirection(supabase, user.id, { format })
-      const context = [post.title, post.hook_text, post.body?.slice(0, 500)].filter(Boolean).join("\n")
+      // Fixed path (gated): no core post in a prompt that draws text.
+      const context = canOwnMediaText(user.email) ? "" : [post.title, post.hook_text, post.body?.slice(0, 500)].filter(Boolean).join("\n")
       const raw = await generateImage(
         openaiKey,
         slidePrompt({

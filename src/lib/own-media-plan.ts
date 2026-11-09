@@ -403,7 +403,7 @@ export function slidePrompt(input: {
       : []),
     KEEP_INSIDE_FRAME_RULE,
     ...reservedZoneLines(input.direction.fixed, input.role, input.width, input.height),
-    `- The mood relates to this post (Hebrew): """${input.context}"""`,
+    ...(input.context ? [`- The mood relates to this post (Hebrew): """${input.context}"""`] : []),
     "",
     `Do NOT add any text other than the exact Hebrew lines above. ${noExtrasRule(input.direction)}`,
   ].join("\n")
