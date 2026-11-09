@@ -19,6 +19,8 @@ import { loadImageForModels, normaliseImage } from "@/lib/visual-language/image-
 import { picturesPlaced } from "@/lib/placed-check"
 import { snapshotComposition } from "@/lib/edit-agent/snapshot"
 import type { ScriptText } from "@/lib/script-text"
+import { replaceStyleRules, triageVisualMemory } from "@/lib/style-memory"
+import { isRuleScope } from "@/lib/visual-memory"
 
 /**
  * The AI edit chat for a b-roll, as an AGENT (Hani, 2026-11-10): it sees the
@@ -109,6 +111,7 @@ How you work:
 - The words on the clip are the post's script, word for word — never invent, add, translate or drop words (no titles, no CTA). You may change how they look and move, not what they say.
 - The background picture: change_background edits it; new_background draws a new one in her visual language; blend_picture works a picture she attached into it; picture_as_background uses her attached picture as the background exactly as it is (only when she says so, e.g. "כמו שהיא"). If the background is HER OWN picture (stated below), it is never repainted or replaced by a drawn one — say so if she asks.
 - restyle_to_visual_language rebuilds the look in her CURRENT visual language (background + text design) — when she asks for "השפה שלי" / to match her brand.
+- Her saved preferences (Settings → מדיה → העדפות ויזואליות) shape every future b-roll. When she asks to save / remember / keep something for her b-rolls ("תשמור", "ככה ארצה שיהיו", "מעכשיו"), call remember with a precise description of exactly that — read it off the clip (template + stills): how lines enter, timing, which words get highlighted and how, the shape and place of each element. Say what was saved in your reply. Never say you can't save.
 - When her request has more than one reasonable reading, or would cost a long render on a guess, ask_user with 2–4 short options (Hebrew). Don't ask when the answer is clear.
 - Tool results tell you when a step failed and why. Never claim something happened that didn't.
 
@@ -154,6 +157,33 @@ const TOOLS: Anthropic.Tool[] = [
     name: "restyle_to_visual_language",
     description: "Rebuild the look in her CURRENT visual language: new background (unless it's her own picture) + text design.",
     input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "remember",
+    description:
+      "Save a lasting preference for her future b-rolls (shown in her Settings → העדפות ויזואליות). Describe it precisely and concretely, as a designer/animator would follow it, from what is in the clip now. One call per distinct preference.",
+    input_schema: {
+      type: "object",
+      properties: {
+        what: { type: "string", description: "The preference, precise (English or Hebrew): what it looks like / how it moves, where, timing." },
+        scope: { type: "string", enum: ["b_roll", "all"], description: "b_roll unless she said it's for all her formats." },
+      },
+      required: ["what"],
+    },
+  },
+  {
+    name: "replace_preferences",
+    description: "After remember reported a conflict and she chose the new one: replace the old preferences with it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        replace_ids: { type: "array", items: { type: "string" } },
+        rule: { type: "string" },
+        summary_he: { type: "string" },
+        scope: { type: "string", enum: ["b_roll", "all"] },
+      },
+      required: ["replace_ids", "rule", "summary_he"],
+    },
   },
   {
     name: "ask_user",
@@ -380,6 +410,31 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
         changed = true
         done.push("restyle")
         return "Done (draft). Look at it before finish."
+      }
+      case "remember": {
+        await input.setProgress("שומר את ההעדפה שלך...")
+        const what = String(a.what ?? "").trim()
+        if (!what) return "FAILED: nothing to remember."
+        const scopeAll = a.scope === "all"
+        const r = await triageVisualMemory(db, userId, anthropicKey, {
+          instruction: scopeAll ? `${what}\n(for all my formats)` : what,
+          format: "b_roll",
+          explicit: true,
+        })
+        const m = r.memory
+        if (m.kind === "saved") return `SAVED to her preferences [${m.scope}]: "${m.summary}". Tell her it's saved and shows in Settings → מדיה → העדפות ויזואליות.`
+        if (m.kind === "conflict")
+          return `NOT SAVED — it goes against saved preferences: ${m.previous.map((p) => `[id ${p.id}] "${p.summary}"`).join("; ")}. Proposal: rule=${JSON.stringify(m.proposal.rule)}, summary_he=${JSON.stringify(m.proposal.summary_he)}, scope=${m.proposal.scope}. ask_user whether to replace the old one(s) with it; if she says yes, call replace_preferences with these ids and this proposal.`
+        if (m.kind === "settings")
+          return `NOT SAVED — it's about ${m.topics.join("/")} (${m.summary}), which live in her Settings → מדיה → שפה ויזואלית, not in preferences. Tell her to set it there.`
+        return "NOT SAVED — nothing lasting about how things look or move was found in it. Describe the preference more concretely and try again, or tell her what's missing."
+      }
+      case "replace_preferences": {
+        const ids = Array.isArray(a.replace_ids) ? (a.replace_ids as unknown[]).map(String) : []
+        const scope = isRuleScope(a.scope) ? a.scope : "b_roll"
+        if (!ids.length) return "FAILED: no ids."
+        const rule = await replaceStyleRules(db, userId, ids, { rule: String(a.rule ?? ""), summary_he: String(a.summary_he ?? ""), scope })
+        return `SAVED (replaced the old ones): "${rule.summary_he}".`
       }
     }
     return `Unknown tool ${name}.`
