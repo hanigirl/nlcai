@@ -49,7 +49,7 @@ import type { OwnEditFormat } from "@/lib/own-media"
 import { isTalkingHeadRender } from "@/lib/talking-head-original"
 import { cutMessage, type CutStats } from "@/lib/talking-head-cut-message"
 import { TH_EDIT_MODES, TalkingHeadPlanEditor, TalkingHeadTemplateChip, appendToTalkingHeadTemplate, type ThPlanMoment } from "@/components/talking-head-ai"
-import { useCopyStructure } from "@/lib/use-scheduling-access"
+import { useCopyStructure, useOwnMediaText } from "@/lib/use-scheduling-access"
 import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import type { LaunchFeatureId } from "@/lib/launch-features"
 
@@ -342,6 +342,12 @@ const STILL_FORMAT_VIDEO: Record<"image_post", string> = {
 const STYLE_WORDS = /סגנון|השראה|בהשראת|כמו זה|כמו זאת|כמו בתמונה|כמו בדוגמה|דומה ל/
 /** …unless she says to put the picture itself in. */
 const PLACE_WORDS = /להכניס|תכניס|תכניסי|לשים את|תשים את|תשימי את|לשלב|תשלב|תשלבי|להוסיף את|תוסיף את|תוסיפי את/
+/**
+ * The rare case (Hani, 2026-11-09): put her picture INTO what's already there
+ * ("לשלב", "להוסיף את התמונה ל…"). "תכניס / תשים את התמונה" is the main
+ * case — her picture becomes the media.
+ */
+const COMBINE_WORDS = /לשלב|תשלב|תשלבי|שלב את|להוסיף את|תוסיף את|תוסיפי את|להוסיף ל|לתוך|בתוך ה/
 const STYLE_QUESTION =
   "מה לקחת מהתמונה ששלחתם? את העיצוב שלה (צבעים, פריסה, אווירה), או את הטקסט והמבנה שכתובים עליה? את התמונה עצמה לא אכניס, היא רק השראה."
 const STYLE_ANSWER_LEAD =
@@ -550,6 +556,8 @@ export function MediaAiChat({
   // as storage URLs; everywhere else the 3-reference cap stays.
   // Waiting for a carousel's screenshots ("תעשה לי כזה"): one per slide, up to 10.
   const copyGate = useCopyStructure() === true
+  // Her files + the script's text, the fixed path (lib/feature-access) — Hani only for now.
+  const ownTextGate = useOwnMediaText() === true
   const copyAllowed = copyGate || !!forceCopyStructure
   const copyWaiting =
     format === "carousel" && (session.extra.copy?.phase === "await" || session.extra.copy?.phase === "needs")
@@ -855,6 +863,63 @@ export function MediaAiChat({
       : !r.changed
         ? { role: "assistant", content: `הסרטון עלה כמו שהוא. ${r.message}${extra}` }
         : { role: "assistant", content: `${r.message || "הסרטון שלכם עלה, ועליו מה שביקשתם."}${extra}`, done: true, noStyle: !r.styleChange }
+    patchKey((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" }, messages: [...s.messages, reply] }))
+    return true
+  }
+  /**
+   * THE main case (Hani, 2026-11-09 — ~90% of use): she attaches her picture
+   * (or clip) from the chat or the Drive button → it BECOMES the format's
+   * media, with the script's text on it. No questions, never a reference,
+   * never redrawn into an AI design. Only "לשלב / להוסיף את התמונה" (put it
+   * into what's there) or "בסגנון / השראה" (a look) take other paths.
+   * Pictures here; a clip still goes through sendWithVideo. Gated: Hani only.
+   * Returns true when it handled the message.
+   */
+  const sendOwnPictures = async (text: string, attached: string[]): Promise<boolean> => {
+    if (!ownTextGate) return false
+    const originals = refs.originals(attached)
+    if (!originals.length || originals.some((o) => o.kind === "video")) return false
+    if (STYLE_WORDS.test(text) || COMBINE_WORDS.test(text)) return false
+    const isSet = format === "story" || format === "carousel"
+    const items = isSet ? originals : originals.slice(0, 1)
+    const extra = !isSet && originals.length > 1 ? " עבדתי עם התמונה הראשונה; שאר הקבצים לא נכללו." : ""
+    const key = chatKey
+    const patchKey = (fn: (s: MediaChat) => MediaChat) => updateChat(key, fresh, fn)
+    refs.clear()
+    links.reset()
+    setSentAsIs(null)
+    patchKey((s) => ({
+      ...s,
+      input: "",
+      busy: true,
+      extra: { ...s.extra, progress: items.length > 1 ? "מעלים את התמונות שלכם..." : "מעלים את התמונה שלכם...", gen: null },
+      messages: [...s.messages, { role: "user", content: text, ...(attached.length ? { images: attached } : {}) }],
+    }))
+    const imported = await requestAsIsUpload(format, items, { forEdit: true, instruction: text })
+    if (!imported.ok) {
+      patchKey((s) => ({
+        ...s,
+        busy: false,
+        extra: { ...s.extra, progress: "" },
+        messages: [...s.messages, { role: "assistant", content: imported.message, error: true }],
+      }))
+      return true
+    }
+    patchKey((s) => ({ ...s, extra: { ...s.extra, ownMedia: true, progress: "המדיה עלתה. עכשיו שמים עליה את הטקסט מהסקריפט..." } }))
+    const r = await runOwnMediaEdit({
+      postId,
+      format: format as OwnEditFormat,
+      instruction: text,
+      currentUrls: [],
+      justImported: true,
+      onProgress: (p) => patchKey((s) => ({ ...s, extra: { ...s.extra, progress: p } })),
+    })
+    if (r.ok && r.changed) landed(r.urls, { driveLinks: r.driveLinks })
+    const reply: ChatMessage = !r.ok
+      ? { role: "assistant", content: `המדיה עלתה, אבל הטקסט לא נכנס עליה. ${aiErrorMessage(r.message || "נסו שוב.")}`, error: true }
+      : !r.changed
+        ? { role: "assistant", content: `המדיה עלתה. ${r.message}${extra}` }
+        : { role: "assistant", content: `${r.message || "המדיה שלכם עלתה, ועליה הטקסט מהסקריפט."}${extra}`, done: true, noStyle: !r.styleChange }
     patchKey((s) => ({ ...s, busy: false, extra: { ...s.extra, progress: "" }, messages: [...s.messages, reply] }))
     return true
   }
@@ -1593,6 +1658,7 @@ export function MediaAiChat({
       }
       // A video makes a video (never a frame).
       if (await sendWithVideo(typed || brief, attached)) return
+      if (await sendOwnPictures(typed || PLACE_ONLY_INSTRUCTION, attached)) return
       const originals = refs.originals(attached)
       setSentAsIs(originals.length ? { index: cur.messages.length, items: originals } : null)
       refs.clear()
@@ -1611,6 +1677,7 @@ export function MediaAiChat({
       return
     }
     if (await sendWithVideo(text, attached)) return
+    if (await sendOwnPictures(text, attached)) return
     const originals = refs.originals(attached)
     setSentAsIs(originals.length ? { index: cur.messages.length, items: originals } : null)
     refs.clear()

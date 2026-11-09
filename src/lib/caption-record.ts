@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { CaptionRecord, CaptionSpec } from "@/lib/own-media"
+import type { TextSource } from "@/lib/script-text"
 
 /**
  * The sidecar beside a captioned render — `<render path>.json` in user-media,
@@ -24,10 +25,11 @@ export async function writeCaptionRecord(
   renderUrl: string,
   sourceUrl: string,
   caption: CaptionSpec,
+  textSource?: TextSource,
 ): Promise<void> {
   const path = storagePathOf(renderUrl)
   if (!path || !sourceUrl) return
-  const record: CaptionRecord = { v: 1, sourceUrl, caption }
+  const record: CaptionRecord = { v: 1, sourceUrl, caption, ...(textSource ? { textSource } : {}) }
   try {
     await supabase.storage.from(BUCKET).upload(`${path}.json`, JSON.stringify(record), {
       contentType: "application/json",

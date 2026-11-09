@@ -1,6 +1,5 @@
-import { scriptBlocks, storyFrames, stripFrameMarkers } from "@/lib/story-text-split"
-import { parseTextToSlides } from "@/lib/carousel-slides"
-import { parseImagePostBody } from "@/lib/image-post-text"
+import { scriptTextUnits } from "@/lib/script-text"
+import { stripFrameMarkers } from "@/lib/story-text-split"
 import Anthropic from "@anthropic-ai/sdk"
 import {
   canAddAnimatedFrame,
@@ -195,34 +194,8 @@ export type ScriptUnit = { headline?: string; body?: string }
  * lines, a b-roll's hook + reading caption.
  */
 export function scriptUnits(format: OwnEditFormat, body: string | null | undefined): ScriptUnit[] {
-  if (!body?.trim()) return []
-  const clean = (u: ScriptUnit): ScriptUnit | null => {
-    const headline = u.headline?.trim() || undefined
-    const text = u.body?.trim() || undefined
-    return headline || text ? { headline, body: text } : null
-  }
-  const keep = (list: (ScriptUnit | null)[]) => list.filter((u): u is ScriptUnit => !!u)
-  switch (format) {
-    case "story":
-      return keep(
-        storyFrames(body).map((text, k) => {
-          if (k > 0) return clean({ body: text })
-          const [headline, ...rest] = scriptBlocks(text)
-          return clean({ headline, body: rest.join("\n\n") })
-        }),
-      )
-    case "carousel":
-      return keep(parseTextToSlides(stripFrameMarkers(body)).map((sl) => clean({ headline: sl.title, body: sl.body })))
-    case "image_post": {
-      const t = parseImagePostBody(body)
-      return t ? keep([clean({ headline: t.headline, body: [t.subheadline, t.bottom].filter(Boolean).join("\n") })]) : []
-    }
-    default: {
-      // b-roll (one piece): the hook line, then the reading caption.
-      const lines = stripFrameMarkers(body).split("\n").map((l) => l.trim()).filter(Boolean)
-      return lines.length ? keep([clean({ headline: lines[0], body: lines.slice(1).join(" ") })]) : []
-    }
-  }
+  // One split for every path — lib/script-text (Hani, 2026-11-09).
+  return scriptTextUnits(format, body)
 }
 
 const squash = (t: string) => t.replace(/[\s"'״׳.,!?:;—–-]+/g, "")

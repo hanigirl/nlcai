@@ -75,3 +75,14 @@ export const TALKING_HEAD_AI_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyar
 export function canTalkingHeadAi(email: string | null | undefined): boolean {
   return !!email && TALKING_HEAD_AI_EMAILS.includes(email.toLowerCase())
 }
+
+/**
+ * Her own media + the script's text on it, every format and every way in
+ * (Hani, 2026-11-09 — the launch was held back for this). The fixed paths run
+ * for her only; everyone else keeps today's paths until she opens it.
+ */
+export const OWN_MEDIA_TEXT_EMAILS = ["hanigirl@gmail.com"]
+
+export function canOwnMediaText(email: string | null | undefined): boolean {
+  return !!email && OWN_MEDIA_TEXT_EMAILS.includes(email.toLowerCase())
+}

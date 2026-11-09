@@ -74,6 +74,8 @@ export interface CaptionRecord {
   /** The file as she brought it, before any words. */
   sourceUrl: string
   caption: CaptionSpec
+  /** Where its words came from (lib/script-text) — so invented text can be traced. */
+  textSource?: import("@/lib/script-text").TextSource
 }
 
 const HEX = /^#[0-9a-f]{6}$/i
