@@ -39,6 +39,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { IconActionButton } from "@/components/icon-action-button"
 import { MediaPreviewZone } from "@/components/media-preview-zone"
+import { AiHoverEditButton } from "@/components/ai-hover-edit"
 import { LaneStem, TreeConnector } from "@/components/format-lanes"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
 import {
@@ -412,25 +413,17 @@ function UniformCard({
         {hasMedia && item.media && (
           // The format's own shape (4:5 / 9:16) at the card's height — a
           // full-width box was near square and cut a 4:5 post (Hani, 2026-11-10).
-          onAiEdit ? (
-            <MediaPreviewZone
-              onAiEdit={onAiEdit}
-              aiClassName={item.media.kind === "slides" && item.media.items.length > 1 ? "bottom-11" : undefined}
-              className="mx-auto w-fit"
-            >
-              <FormatMediaPreview media={item.media} fid={item.fid} box={cn("h-[240px]", MEDIA_ASPECT[item.fid] ?? "aspect-[4/5]")} />
-            </MediaPreviewZone>
-          ) : (
-            <FormatMediaPreview
-              media={item.media}
-              fid={item.fid}
-              box={cn("h-[240px] self-center", MEDIA_ASPECT[item.fid] ?? "aspect-[4/5]")}
-            />
-          )
+          <FormatMediaPreview
+            media={item.media}
+            fid={item.fid}
+            box={cn("h-[240px] self-center", MEDIA_ASPECT[item.fid] ?? "aspect-[4/5]")}
+          />
         )}
       </div>
-      <div className="flex min-h-11 items-center px-5 py-3">
+      {/* The AI edit sits on the card's bottom-right corner, not on the media (Hani, 2026-11-10). */}
+      <div className="relative flex min-h-12 items-center px-5 py-3">
         {status && <span className="text-xs text-text-neutral-default">{status}</span>}
+        {hasMedia && onAiEdit && <AiHoverEditButton target="media" onClick={onAiEdit} visible className="bottom-3 start-3" />}
       </div>
     </div>
   )
