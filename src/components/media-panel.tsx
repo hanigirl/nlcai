@@ -1304,10 +1304,13 @@ function TalkingHeadFlow({
   // --- Choose source: upload or avatar ---
   if (!avatar && sourceMode === "choose" && !(videoPhase === "done" && liftedVideoUrl)) {
     return (
-      <div className="flex flex-col gap-6">
+      // The new panel (gated): two ways only — her video from Drive, or an
+      // avatar (Hani, 2026-11-10).
+      <div className={ownText ? "flex flex-col gap-3" : "flex flex-col gap-6"}>
         {drivePick ? (
           <DriveFolderEntry
             format="talking_head"
+            hideFolderLine={ownText}
             onImport={(links) => {
               setDriveLink(links[0])
               commitDrive(links[0])
@@ -1353,40 +1356,14 @@ function TalkingHeadFlow({
         </div>
         )}
 
-        {/* Own media text (gated): her video from her computer. */}
-        {ownText && (
-          <div className="flex flex-col gap-2">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="video/*"
-              className="hidden"
-              aria-label="העלאת סרטון מהמחשב"
-              onChange={(e) => {
-                const f = e.target.files?.[0]
-                e.target.value = ""
-                if (f) void attachFile(f)
-              }}
-            />
-            <Button
-              variant="outline"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={fileProgress !== null || driveLoading}
-              className="w-full gap-2"
-            >
-              {fileProgress !== null ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-              {fileProgress !== null ? "מעלה את הסרטון... " + fileProgress + "%" : "העלאה מהמחשב"}
-            </Button>
-            {fileError && <p className="text-xs text-button-destructive-default">{fileError}</p>}
-          </div>
-        )}
-
         {/* Divider */}
+        {!ownText && (
         <div className="flex items-center gap-3">
           <div className="h-px flex-1 bg-border-neutral-default" />
           <span className="text-xs text-text-neutral-default">או בחירת אווטאר</span>
           <div className="h-px flex-1 bg-border-neutral-default" />
         </div>
+        )}
 
         {/* Avatar button */}
         <Button

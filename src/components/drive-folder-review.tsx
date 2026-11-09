@@ -661,6 +661,7 @@ export function DriveFolderEntry({
   error,
   onOpen,
   statusOnly = false,
+  hideFolderLine = false,
 }: {
   format: string
   /**
@@ -668,6 +669,8 @@ export function DriveFolderEntry({
    * the import's wiring, the picked files and its progress / failure here.
    */
   statusOnly?: boolean
+  /** Just the button — no "מתיקיית …" line under it (talking head, new panel). */
+  hideFolderLine?: boolean
   /** The format's own Drive import — receives the picked files' links, in order. */
   onImport?: (links: string[]) => void
   /**
@@ -799,7 +802,7 @@ export function DriveFolderEntry({
             <DriveMark />
             מדיה מוכנה מ Google Drive
           </Button>
-          <p className="text-xs-body text-text-neutral-default">
+          <p hidden={hideFolderLine} className="text-xs-body text-text-neutral-default">
             {f.status === "connected"
               ? `מתיקיית „${f.name}” · ${filesLabel(f.items.length)}`
               : f.status === "error"
@@ -829,7 +832,7 @@ export function DriveFolderEntry({
           {error}
         </p>
       ) : (
-        <p className="text-xs-body text-text-neutral-default">
+        <p hidden={hideFolderLine} className="text-xs-body text-text-neutral-default">
           {f.status === "connected"
             ? `מתיקיית „${f.name}” · ${filesLabel(f.items.length)}`
             : f.status === "error"
