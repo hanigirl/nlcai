@@ -2229,12 +2229,6 @@ function ProjectPageInner() {
     setMediaReplacing(false)
   }
   const [panelStepFor, setPanelStepFor] = useState<string | null>(null)
-  if (panelStepFor !== selectedFormatCard) {
-    // A card opens on its script, every time.
-    setPanelStepFor(selectedFormatCard)
-    setPanelStepRaw("script")
-    setMediaReplacing(false)
-  }
   // "מחיקת הסקריפט": offered only while the format has no media, and removes
   // the whole format from the post (PATCH deleteFormat, server refuses if media).
   const [pendingCardDelete, setPendingCardDelete] = useState<string | null>(null)
@@ -2329,6 +2323,15 @@ function ProjectPageInner() {
           } satisfies FormatCardItem
         })
     : []
+
+  if (panelStepFor !== selectedFormatCard) {
+    // A card opens on the stage it's at (Hani, 2026-11-09): media made (or
+    // being made) → מדיה, otherwise its script.
+    const state = cardItems.find((i) => i.fid === selectedFormatCard)?.state
+    setPanelStepFor(selectedFormatCard)
+    setPanelStepRaw(state === "media" || state === "media-busy" ? "media" : "script")
+    setMediaReplacing(false)
+  }
 
   const cardsPanelProps = (() => {
     if (!cardsVariant || !selectedFormatCard) return {}
