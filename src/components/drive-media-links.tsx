@@ -192,12 +192,24 @@ export function DriveMediaLinks({
   // Fire the import once a row holds a complete Drive link and typing has
   // settled. Keyed on the joined links so a reorder (same links, new order)
   // doesn't re-pull anything — reordering is handled by `onItemsReorder`.
-  const autoKey = trimmedRows.join("|")
+  // Only the links themselves — the blank rows padded in for each media item
+  // must not change it (an edit that grows a 1-link story to 3 frames would
+  // otherwise read as "new links" and pull the raw Drive file over the edit).
+  const autoKey = trimmedRows.filter(Boolean).join("|")
   const lastAutoKeyRef = useRef<string | null>(null)
   const importingRef = useRef(importing)
   importingRef.current = importing
   useEffect(() => {
     if (!autoImport) return
+    // Only what she typed or pasted here. Links that come back saved with the
+    // post were imported already — re-pulling them on open would overwrite
+    // every edit made since (Hani, 2026-11-09: Drive media "doesn't keep the
+    // editing").
+    if (edited === null) {
+      // …and count as imported, so a reorder (same links) doesn't pull them either.
+      lastAutoKeyRef.current = autoKey
+      return
+    }
     if (!trimmedRows.some((l) => isCompleteDriveUrl(l))) return
     if (lastAutoKeyRef.current === autoKey) return
     const t = setTimeout(() => {
@@ -211,7 +223,7 @@ export function DriveMediaLinks({
     // `onImport` is a fresh closure each render; depending on it would reset
     // the debounce on every keystroke and never fire.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoImport, autoKey])
+  }, [autoImport, autoKey, edited === null])
 
   return (
     <div className="flex flex-col gap-2">

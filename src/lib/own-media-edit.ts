@@ -190,7 +190,10 @@ async function execute(
     [...byFrame].map(async ([n, ops]) => {
       for (const op of ops) {
         const item = original[n - 1]
-        if (!item) return
+        if (!item) {
+          problems.push(`אין פריים ${n} בסט הזה.`)
+          return
+        }
         const next =
           op.op === "remove_caption" ? await uncaption(item) : await caption(postId, format, item, op, instruction)
         if ("error" in next) problems.push(next.error)
@@ -297,13 +300,21 @@ async function execute(
     })
   }
 
-  const note = (notes.length ? ` ${notes.join(" ")}` : "") + (problems.length ? ` (${problems[0]})` : "")
+  // The plan's reply is written BEFORE anything ran and says everything was
+  // done. When a step failed it would claim what didn't happen (Hani,
+  // 2026-11-09: "it says it did something, but it didn't") — say plainly
+  // what didn't work instead.
+  const failed = [...new Set(problems)]
+  const said = failed.length
+    ? `עשיתי רק חלק ממה שביקשתם. מה שלא הצליח: ${failed.join(" ")}`
+    : plan.reply || "עדכנתי."
+  const note = notes.length ? ` ${notes.join(" ")}` : ""
   return {
     ok: true,
     changed: true,
     urls,
     driveLinks: format === "carousel" ? links : null,
-    message: (plan.reply || "עדכנתי.") + note,
+    message: said + note,
     styleChange,
   }
 }

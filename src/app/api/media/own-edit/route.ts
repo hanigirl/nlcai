@@ -135,17 +135,28 @@ export async function POST(req: NextRequest) {
       const url = urls[0]
       if (!url) return json({ error: "no_url" }, 400)
       const assetType = isVideoMediaUrl(url) ? "video" : "image"
+      // Insert first, then clear the older rows: a failed write must neither
+      // be reported as saved nor leave the format with no media at all.
+      const { data: added, error: addError } = await supabase
+        .from("media_assets")
+        .insert({
+          format_variant_id: variant.id,
+          asset_type: assetType,
+          url,
+          status: "completed",
+        } as never)
+        .select("id")
+        .single()
+      if (addError || !added) {
+        console.error("[media/own-edit] save", addError?.message)
+        return json({ error: "save_failed", message: "השינוי לא נשמר. נסו שוב." }, 500)
+      }
       await supabase
         .from("media_assets")
         .delete()
         .eq("format_variant_id", variant.id)
         .in("asset_type", format === "b_roll" ? ["image", "video"] : ["image"])
-      await supabase.from("media_assets").insert({
-        format_variant_id: variant.id,
-        asset_type: assetType,
-        url,
-        status: "completed",
-      } as never)
+        .neq("id", (added as { id: string }).id)
       return json({ urls: [url] })
     }
 
