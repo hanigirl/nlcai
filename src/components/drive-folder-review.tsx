@@ -370,6 +370,13 @@ export function disconnectFolder(k: FolderKey) {
  * card all work the way they always have.
  */
 const importers = new Map<string, (links: string[]) => void>()
+/**
+ * Formats whose gallery stays up while the pick is being made into media
+ * (the new media panel, Hani 2026-11-10: "don't send me back to the first
+ * screen") — the confirm button spins and the card loads; the entry closes
+ * the gallery once the panel's own import is done.
+ */
+const staysOpen = new Set<string>()
 export function registerDriveImporter(format: string, fn: ((links: string[]) => void) | null) {
   if (fn) importers.set(format, fn)
   else importers.delete(format)
@@ -385,7 +392,8 @@ function runImport(format: string, items: MediaItem[]) {
   }
   const importer = importers.get(format)
   if (!importer) return
-  set({ picked: { ...store.picked, [format]: items }, pickerFor: null })
+  if (staysOpen.has(format)) set({ picked: { ...store.picked, [format]: items }, importing: format })
+  else set({ picked: { ...store.picked, [format]: items }, pickerFor: null })
   importer(items.map((it) => it.src))
 }
 
@@ -686,6 +694,40 @@ export function DriveFolderEntry({
     registerDriveImporter(format, (links) => importRef.current?.(links))
     return () => registerDriveImporter(format, null)
   }, [format])
+  // The new panel: the gallery waits for the import, then makes way for the
+  // result. Never stuck: an import that fails, or never starts, lets go too.
+  useEffect(() => {
+    if (!statusOnly) return
+    staysOpen.add(format)
+    return () => {
+      staysOpen.delete(format)
+    }
+  }, [statusOnly, format])
+  const sawPull = useRef(false)
+  const waiting = statusOnly && s.importing === format
+  useEffect(() => {
+    if (!waiting) {
+      sawPull.current = false
+      return
+    }
+    if (pulling) {
+      sawPull.current = true
+      return
+    }
+    const done = () => {
+      set({ importing: null })
+      closeDrivePicker()
+    }
+    if (sawPull.current || error) {
+      done()
+      return
+    }
+    // The import hasn't reported yet — give it a moment to start.
+    const t = setTimeout(() => {
+      if (!sawPull.current) done()
+    }, 4000)
+    return () => clearTimeout(t)
+  }, [waiting, pulling, error])
   // Back from Drive / Settings in another tab: re-read, so a folder she just
   // connected or re-shared is there without a reload.
   useRefreshOnFocus(k, preview)
@@ -1094,7 +1136,7 @@ function SinglePickConfirm({ format, items }: { format: string; items: MediaItem
         ))}
       </div>
       <StickyFooter>
-        {busy ? (
+        {busy && s.importProgress ? (
           <ImportingLine />
         ) : (
           <div className="flex items-center gap-3">
@@ -1107,7 +1149,8 @@ function SinglePickConfirm({ format, items }: { format: string; items: MediaItem
             <span className="min-w-0 flex-1 truncate text-xs-body text-text-neutral-default">
               {item ? item.name : isVideo ? "עוד לא נבחר סרטון" : "עוד לא נבחרה תמונה"}
             </span>
-            <Button size="sm" disabled={!item} onClick={() => item && runImport(format, [item])}>
+            <Button size="sm" disabled={!item || busy} onClick={() => item && runImport(format, [item])} className="gap-1.5">
+              {busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
               {isVideo ? "שימוש בסרטון" : "שימוש בתמונה"}
             </Button>
           </div>
@@ -1179,7 +1222,7 @@ function OrderFirstPicker({ format, items, scriptText }: { format: string; items
       </div>
 
       <StickyFooter>
-        {busy ? (
+        {busy && s.importProgress ? (
           <ImportingLine />
         ) : (
           <>
@@ -1252,10 +1295,11 @@ function OrderFirstPicker({ format, items, scriptText }: { format: string; items
               </div>
             )}
             <Button
-              disabled={order.length === 0}
+              disabled={order.length === 0 || busy}
               onClick={() => runImport(format, order.map(byId).filter((x): x is MediaItem => !!x))}
-              className="w-full"
+              className="w-full gap-1.5"
             >
+              {busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
               {format === "carousel" ? `טעינת הקרוסלה (${countLabel(format, order.length)})` : `טעינת הסטורי (${countLabel(format, order.length)})`}
             </Button>
           </>
