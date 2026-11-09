@@ -64,6 +64,11 @@ export interface CompositionBrief {
   /** The visual-language brief the background was generated from. */
   styleSpec: string
   /**
+   * Hani + Nataliya only (lib/feature-access canOwnMediaText, 2026-11-10): her brand colours and fonts win over her
+   * usage examples, which set the composition only.
+   */
+  brandWins?: boolean
+  /**
    * What this clip is for, when it isn't a b-roll — e.g. a frame added to
    * her story (lib/own-media-animated): its safe zone, reserved brand areas.
    */
@@ -174,7 +179,17 @@ function assertSeekable(html: string): void {
  * blocks, then what they are for. Unlike an edit reference, these are the
  * standing look of her b-rolls.
  */
-function exampleBlocks(examples: ModelImage[]): Anthropic.ContentBlockParam[] {
+const EXAMPLES_DEFAULT =
+  " Set her text the way it looks there: the type's character, weight and scale, its colours, any plate / highlight / outline behind it, where it sits in the frame and how much of it there is. If she wrote her own design instruction, it still wins. Do NOT copy their words — use exactly the text given below."
+
+/**
+ * Hani + Nataliya only (lib/feature-access canOwnMediaText, 2026-11-10): her examples set the composition only — the
+ * typeface and colours come from her brand.
+ */
+const EXAMPLES_BRAND_WINS =
+  " They set the composition only: where her text sits in the frame, its hierarchy, weight and scale, any plate / highlight / outline behind it, and how much of it there is. The typeface comes from her BRAND FONTS and the colours from the BRAND COLOURS below — never from these frames (they may be shown in grayscale for that reason): keep each colour's role (text, plate, highlight) and fill it with the brand colour that fits. If she wrote her own design instruction, it still wins. Do NOT copy their words — use exactly the text given below."
+
+function exampleBlocks(examples: ModelImage[], brandWins = false): Anthropic.ContentBlockParam[] {
   if (!examples.length) return []
   return [
     ...examples.map(
@@ -189,14 +204,20 @@ function exampleBlocks(examples: ModelImage[]): Anthropic.ContentBlockParam[] {
         (examples.length === 1
           ? "The image above is a frame from a b-roll reel the creator already made, in her own style."
           : `The ${examples.length} images above are frames from b-roll reels the creator already made, in her own style.`) +
-        " Set her text the way it looks there: the type's character, weight and scale, its colours, any plate / highlight / outline behind it, where it sits in the frame and how much of it there is. If she wrote her own design instruction, it still wins. Do NOT copy their words — use exactly the text given below.",
+        (brandWins ? EXAMPLES_BRAND_WINS : EXAMPLES_DEFAULT),
     },
   ]
 }
 
-async function ask(apiKey: string, user: string, refs: string[] = [], examples: ModelImage[] = []): Promise<string> {
+async function ask(
+  apiKey: string,
+  user: string,
+  refs: string[] = [],
+  examples: ModelImage[] = [],
+  brandWins = false,
+): Promise<string> {
   const client = new Anthropic({ apiKey })
-  const blocks = [...exampleBlocks(examples), ...referenceBlocks(refs)]
+  const blocks = [...exampleBlocks(examples, brandWins), ...referenceBlocks(refs)]
   // Streamed: an Opus composition can run long, and the SDK refuses long
   // non-streaming requests.
   const message = await client.messages
@@ -240,6 +261,7 @@ export async function composeBRoll(
     ].join("\n"),
     refs,
     examples,
+    !!brief.brandWins,
   )
 }
 

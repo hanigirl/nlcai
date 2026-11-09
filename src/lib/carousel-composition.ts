@@ -8,6 +8,7 @@ import { fontHead, fontRoleLines, type BrandFont } from "@/lib/broll-animation/c
 import { launch } from "@/lib/broll-animation/render"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import { guardedFetch } from "@/lib/server-fetch"
+import { loadExampleForModels } from "@/lib/visual-language/image-input"
 
 /**
  * AI carousel, laid out in code (Hani, 2026-10-22).
@@ -50,6 +51,16 @@ export interface CarouselBrief {
    * them one-to-one (Hani, 2026-10-22).
    */
   examples?: string[]
+  /**
+   * She has brand colours: the examples supply composition only and are
+   * sent in grayscale, so their palette can't leak (Hani, 2026-11-09).
+   */
+  examplesGray?: boolean
+  /**
+   * Hani + Nataliya only (lib/feature-access canOwnMediaText, 2026-11-10): her brand colours win over her usage examples
+   * (system prompt rule on examples, the examples line in the brief).
+   */
+  brandWins?: boolean
   /** Names of the brand elements we paste afterwards — never drawn. */
   pastedElements?: string[]
   /**
@@ -123,6 +134,12 @@ WHEN USAGE EXAMPLES ARE ATTACHED (images of her own finished carousel slides): t
 
 Return two fenced blocks: first \`\`\`json {"illustrations": ["<English prompt for slide 1's illustration, or empty>", ...]}\`\`\` (one entry per slide; a concrete visual idea with NO text, letters or numbers — or "" for no illustration), then \`\`\`html ...\`\`\`.`
 
+/** Hani + Nataliya only (lib/feature-access canOwnMediaText, 2026-11-10): the examples set the layout, the brand sets the colours. */
+const SYSTEM_BRAND_WINS = SYSTEM.replace(
+  "backgrounds, number badge, callout style, colours and weights. Measure them; don't reinterpret them, don't \"improve\" them, don't add anything they don't have. Only the words change. The typefaces still come from rule 1.",
+  "backgrounds, number badge, callout style and weights. Measure them; don't reinterpret them, don't \"improve\" them, don't add anything they don't have. Only the words and the colours change. The typefaces still come from rule 1. The colours come from BRAND COLOURS (rule 5), never from the examples: keep each example's colour ROLES (which surface is dark, which is light, what is highlighted) and fill every role with the brand colour that fits it.",
+)
+
 function briefText(b: CarouselBrief): string {
   const fonts = b.fonts.length ? fontRoleLines(b.fonts) : '- (no brand font set — "Rubik" is the primary)'
   const palette = b.palette.length
@@ -148,7 +165,7 @@ function briefText(b: CarouselBrief): string {
       ? ["", "PASTED ELEMENTS (we add these ourselves — never draw them or anything resembling them):", ...b.pastedElements.map((n) => `- ${n}`)]
       : []),
     ...(b.examples?.length
-      ? ["", `USAGE EXAMPLES: ${b.examples.length} images of her own finished slides are attached above. Rebuild their layout one-to-one.`]
+      ? ["", `USAGE EXAMPLES: ${b.examples.length} images of her own finished slides are attached above. ${b.brandWins ? "Rebuild their layout one-to-one, in the BRAND COLOURS above — not their colours." : "Rebuild their layout one-to-one."}`]
       : []),
   ].join("\n")
 }
@@ -207,11 +224,34 @@ function parse(
   }
 }
 
+/**
+ * Her usage examples as image blocks. In grayscale when her brand colours
+ * set the palette — fetched and converted here, since a URL block would
+ * hand the model the original colours. One that can't be read is skipped.
+ */
+async function exampleBlocks(ex: Pick<CarouselBrief, "examples" | "examplesGray">): Promise<Anthropic.ContentBlockParam[]> {
+  const urls = ex.examples ?? []
+  if (!ex.examplesGray) {
+    return urls.map((url): Anthropic.ContentBlockParam => ({ type: "image", source: { type: "url", url } }))
+  }
+  const images = await Promise.all(
+    urls.map((url) =>
+      loadExampleForModels(url, true).catch((err) => {
+        console.error("[carousel][example-gray]", url, err)
+        return null
+      }),
+    ),
+  )
+  return images.flatMap((img): Anthropic.ContentBlockParam[] =>
+    img ? [{ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.base64 } }] : [],
+  )
+}
+
 async function ask(
   apiKey: string,
   user: string,
   count: number,
-  examples: string[] = [],
+  ex: Pick<CarouselBrief, "examples" | "examplesGray" | "brandWins"> = {},
   refs: string[] = [],
   placeable = false,
   /** Blocks of their own before everything (a structure to copy). */
@@ -220,12 +260,12 @@ async function ask(
   const client = new Anthropic({ apiKey })
   const content: Anthropic.ContentBlockParam[] = [
     ...lead,
-    ...examples.map((url): Anthropic.ContentBlockParam => ({ type: "image", source: { type: "url", url } })),
+    ...(await exampleBlocks(ex)),
     ...referenceBlocks(refs, { placeable }),
     { type: "text", text: user },
   ]
   const message = await client.messages
-    .stream({ model: MODEL, max_tokens: 24000, system: SYSTEM, messages: [{ role: "user", content }] })
+    .stream({ model: MODEL, max_tokens: 24000, system: ex.brandWins ? SYSTEM_BRAND_WINS : SYSTEM, messages: [{ role: "user", content }] })
     .finalMessage()
   return parse(message.content.map((c) => (c.type === "text" ? c.text : "")).join(""), count)
 }
@@ -325,9 +365,9 @@ export function composeCarousel(
 ) {
   if (structure) {
     const p = structurePrompt(brief, structure)
-    return ask(apiKey, p.text, brief.slides.length, [], [], false, p.lead)
+    return ask(apiKey, p.text, brief.slides.length, {}, [], false, p.lead)
   }
-  if (!place.length) return ask(apiKey, briefText(brief), brief.slides.length, brief.examples, refs)
+  if (!place.length) return ask(apiKey, briefText(brief), brief.slides.length, brief, refs)
   const k = place.length
   const placeNote = [
     "",
@@ -337,7 +377,7 @@ export function composeCarousel(
     `Put "attached": [one entry per slide: the attached image number placed on that slide, or 0] in the json block, leave that slide's "illustrations" entry empty, and show it with <img class="art" src="__SLIDE_IMAGE_N__"> (N = the slide number) styled object-fit: contain, so her picture is never cropped, stretched or distorted. We put her exact file there — never describe it as an illustration prompt. The layout makes room for it; it never covers the slide's text.`,
     ...(pictureEdits ? ["", PICTURE_EDIT_NOTE] : []),
   ].join("\n")
-  return ask(apiKey, briefText(brief) + placeNote, brief.slides.length, brief.examples, [...place, ...refs], true)
+  return ask(apiKey, briefText(brief) + placeNote, brief.slides.length, brief, [...place, ...refs], true)
 }
 
 /**
@@ -402,7 +442,7 @@ export function reviseCarousel(
       "Return the full revised HTML.",
     ].join("\n"),
     stored.brief.slides.length,
-    stored.brief.examples,
+    stored.brief,
     refs,
     refs.length > 0,
   )
