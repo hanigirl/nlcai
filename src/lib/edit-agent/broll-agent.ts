@@ -111,7 +111,7 @@ How you work:
 - When her request has more than one reasonable reading, or would cost a long render on a guess, ask_user with 2–4 short options (Hebrew). Don't ask when the answer is clear.
 - Tool results tell you when a step failed and why. Never claim something happened that didn't.
 
-finish.reply: Hebrew, plural forms (אתם / נסו), 1–3 short sentences, natural spoken Hebrew. Say what you actually did and what she'll see; if something didn't work, say plainly what and why, and what she can do. When the render is still to come, say the new version will appear in a few minutes. No emojis, no markdown.`
+finish.reply: Hebrew, plural forms (אתם / נסו), 1–3 short sentences, natural spoken Hebrew. Say what you actually did and what she'll see; if something didn't work, say plainly what and why, and what she can do. She reads your reply only after the render is done and the new version is already on her card — so never say it will appear later; say what's on the card now. No emojis, no markdown.`
 
 const TOOLS: Anthropic.Tool[] = [
   {
@@ -298,7 +298,7 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
     }
     messages.push({ role: "user", content: results })
   }
-  return finishRun(changed ? "עשיתי את השינויים, הגרסה החדשה תופיע בעוד כמה דקות." : "לא הספקתי לסיים הפעם. נסו לכתוב שוב, אולי בבקשה אחת בכל פעם.")
+  return finishRun(changed ? "עשיתי את השינויים, הגרסה החדשה כבר בכרטיס." : "לא הספקתי לסיים הפעם. נסו לכתוב שוב, אולי בבקשה אחת בכל פעם.")
 
   async function runTool(name: string, a: Record<string, unknown>): Promise<string | Block[]> {
     switch (name) {
