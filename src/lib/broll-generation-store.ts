@@ -5,6 +5,7 @@ import { longWaitDone, startLongWait } from "@/lib/long-wait"
 import { flushPendingSaves } from "@/lib/pending-saves"
 import { storyFrames } from "@/lib/story-text-split"
 import { setFormatMeta } from "@/lib/timing-storage"
+import { NO_SCRIPT_TEXT, scriptTextUnits, type ScriptText } from "@/lib/script-text"
 
 /**
  * Background b-roll generation, held OUTSIDE React.
@@ -636,4 +637,210 @@ export function startStoryDriveImport(
 export function clearStoryImportError(postId: string | null): void {
   if (!postId) return
   update(postId, (s) => ({ ...s, storyError: null }))
+}
+
+/* ------------------------------------------------------------------------ */
+/*  Her own frames + the script's text — the fixed story import (gated).    */
+/* ------------------------------------------------------------------------ */
+
+export type StoryOwnImportResult = {
+  ok: boolean
+  /** The set as saved (empty when nothing was saved). */
+  frames: string[]
+  message: string
+}
+
+const STORY_IMPORT_ERRORS: Record<string, string> = {
+  invalid_drive_link: "לא זוהה קובץ באחד הקישורים.",
+  drive_not_public: 'אחד הקבצים לא ציבורי — שנו הרשאה ל„כל מי שיש לו הקישור”.',
+  file_too_large: `אחד הקבצים גדול מדי (מקסימום ${MAX_FILE_MB}MB).`,
+}
+
+const isDriveLink = (l: string) => /drive\.google\.com|docs\.google\.com/i.test(l)
+const looksLikeVideo = (u: string) => /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)
+
+/** The script's text on one of her frames: a still → the still render, a clip → the ffmpeg burn. */
+async function captionStoryFrame(
+  postId: string,
+  url: string,
+  kind: "image" | "video",
+  unit: ScriptText,
+): Promise<{ url: string } | { error: string }> {
+  const caption = { headline: unit.headline ?? "", body: unit.body ?? "", position: "bottom" as const }
+  try {
+    // The route reads nothing from the script here — the words are passed.
+    const res = await fetch(kind === "video" ? "/api/story/generate-video-media" : "/api/media/caption-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        kind === "video"
+          ? { postId, format: "story", sourceUrl: url, persist: false, caption }
+          : { postId, format: "story", sourceUrl: url, persist: false, store: true, force: true, caption },
+      ),
+    })
+    const data = (await res.json().catch(() => ({}))) as { url?: string; error?: string; message?: string }
+    // The same URL back = nothing was drawn on it: not a success.
+    if (!res.ok || !data.url || data.url === url) {
+      return { error: data.message ?? data.error ?? "הטמעת הכיתוב נכשלה." }
+    }
+    return { url: data.url }
+  } catch {
+    return { error: "שגיאת רשת בהטמעת הכיתוב." }
+  }
+}
+
+/**
+ * Her own files become the story's frames, each with ITS story's text from
+ * the script, verbatim (Hani, 2026-11-09). Replaces startStoryDriveImport
+ * behind the own-media-text gate:
+ *   - text per frame from lib/script-text (no paragraph re-split across the
+ *     file count, no hook); a frame the script has no story for stays as she
+ *     brought it, and she is told so (NO_SCRIPT_TEXT);
+ *   - a still goes through the still caption render, a clip through the burn
+ *     (a picture sent to ffmpeg came back as a one-frame mp4);
+ *   - a frame whose text didn't go on is reported, never called a success;
+ *   - saved after every frame, so a reload mid-run keeps what was done;
+ *   - fewer files than stories → her last file again, each copy with its own
+ *     story's text.
+ *
+ * `rows[i]` is frame i: a Drive link, a URL of a file of hers already in
+ * storage, or "" (keep `existing[i]`). `caption:false` imports bare (the AI
+ * chat's own-media edit puts the text on right after, and pads the set).
+ */
+export async function startStoryOwnImport(
+  postId: string,
+  rows: string[],
+  existing: string[],
+  opts: { caption: boolean; quiet?: boolean },
+): Promise<StoryOwnImportResult> {
+  const fail = (message: string): StoryOwnImportResult => {
+    update(postId, (s) => ({ ...s, storyError: message }))
+    return { ok: false, frames: [], message }
+  }
+  if (!postId) return { ok: false, frames: [], message: "שמרו קודם את הפוסט." }
+  const sources = rows.map((r) => r.trim())
+  if (!sources.some(Boolean)) return fail("הדביקו לפחות קישור אחד")
+  if (sources.some((l) => l && !isDriveLink(l) && !/^https?:\/\//.test(l))) {
+    return fail("כל הקישורים צריכים להיות מגוגל דרייב (קאנבה לא נתמך כאן)")
+  }
+  if (getBRollGenerationSnapshot(postId).storyImporting) {
+    return { ok: false, frames: [], message: "ייבוא אחר לסטורי עוד רץ. חכו שיסתיים ונסו שוב." }
+  }
+
+  update(postId, (s) => ({ ...s, storyImporting: true, storyError: null, storyProgress: "" }))
+  const setProgress = (text: string) => update(postId, (s) => ({ ...s, storyProgress: text }))
+  const save = async (set: string[]) => {
+    const r = await fetch(`/api/core-posts/${postId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ storyImages: set }),
+    }).catch(() => null)
+    if (!r?.ok) return false
+    update(postId, (s) => ({ ...s, storyFrames: set }))
+    return true
+  }
+
+  try {
+    // The text is the script as saved: make sure the DB has what she sees.
+    await flushPendingSaves()
+    const units: ScriptText[] = opts.caption
+      ? await (async () => {
+          try {
+            const r = await fetch(`/api/core-posts/${postId}`)
+            const body = r.ok
+              ? ((await r.json()) as { post?: { formatPosts?: Record<string, string> } }).post?.formatPosts?.story
+              : null
+            return scriptTextUnits("story", body)
+          } catch {
+            return []
+          }
+        })()
+      : []
+
+    const frames: string[] = []
+    const failed: number[] = []
+    const noText: number[] = []
+    const toPull = sources.filter(Boolean).length
+    let pulled = 0
+    let last: { url: string; kind: "image" | "video" } | null = null
+
+    const place = async (raw: string, kind: "image" | "video", i: number) => {
+      if (!opts.caption) return raw
+      const unit = units[i]
+      if (!unit) {
+        noText.push(i + 1)
+        return raw
+      }
+      setProgress(`שמים את הטקסט מהסקריפט על פריים ${i + 1}...`)
+      const done = await captionStoryFrame(postId, raw, kind, unit)
+      if ("error" in done) {
+        failed.push(i + 1)
+        return raw
+      }
+      return done.url
+    }
+
+    for (let i = 0; i < sources.length; i++) {
+      const src = sources[i]
+      if (!src) {
+        if (existing[i]) frames.push(existing[i])
+        continue
+      }
+      pulled++
+      setProgress(`טוען פריים ${pulled} מתוך ${toPull}...`)
+      let raw = src
+      let kind: "image" | "video" = looksLikeVideo(src) ? "video" : "image"
+      if (isDriveLink(src)) {
+        const res = await fetch("/api/media/from-drive", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: src, store: true }),
+        })
+        const data = (await res.json().catch(() => ({}))) as { url?: string; kind?: string; error?: string }
+        if (!res.ok || data.error || !data.url) {
+          const msg = `${STORY_IMPORT_ERRORS[data.error ?? ""] ?? "טעינת אחד הפריימים נכשלה."} (פריים ${i + 1})`
+          return fail(frames.length ? `${msg} הפריימים שלפניו נשמרו.` : msg)
+        }
+        raw = data.url
+        kind = data.kind === "video" ? "video" : "image"
+      }
+      frames.push(await place(raw, kind, i))
+      last = { url: raw, kind }
+      // Frame by frame: a reload in the middle keeps what's done.
+      if (!(await save([...frames, ...existing.slice(i + 1)]))) return fail("שמירת הסטורי נכשלה")
+    }
+
+    // The script's stories set the story's length: her last file again for each one missing.
+    if (opts.caption && last && existing.length <= sources.length) {
+      for (let i = frames.length; i < units.length; i++) {
+        frames.push(await place(last.url, last.kind, i))
+        if (!(await save(frames))) return fail("שמירת הסטורי נכשלה")
+      }
+    }
+    if (existing.length > sources.length) frames.push(...existing.slice(sources.length))
+    if (!(await save(frames))) return fail("שמירת הסטורי נכשלה")
+
+    const parts: string[] = []
+    if (failed.length) {
+      parts.push(
+        `הטקסט מהסקריפט לא נכנס על ${failed.length === 1 ? `פריים ${failed[0]}` : `פריימים ${failed.join(", ")}`}, אז ${failed.length === 1 ? "הוא נשאר" : "הם נשארו"} כמו שהבאתם. נסו שוב.`,
+      )
+    }
+    if (noText.length) parts.push(`${noText.length === 1 ? `פריים ${noText[0]}` : `פריימים ${noText.join(", ")}`}: ${NO_SCRIPT_TEXT}`)
+    const withText = opts.caption && !failed.length && !noText.length && units.length > 0
+    const lead = `הסטורי נטען (${frames.length} פריימים)${withText ? ", ועל כל פריים הטקסט שלו מהסקריפט" : ""}.`
+    const message = [lead, ...parts].join(" ")
+    if (failed.length) {
+      update(postId, (s) => ({ ...s, storyError: parts[0] }))
+      if (!opts.quiet) toast.error(message, { duration: 10000 })
+    } else if (!opts.quiet) {
+      toast.success(message, { duration: noText.length ? 10000 : 5000 })
+    }
+    return { ok: true, frames, message }
+  } catch (err) {
+    console.error("[story-own-import]", err)
+    return fail("שגיאת רשת בטעינת הפריימים. נסו שוב.")
+  } finally {
+    update(postId, (s) => ({ ...s, storyImporting: false, storyProgress: "" }))
+  }
 }

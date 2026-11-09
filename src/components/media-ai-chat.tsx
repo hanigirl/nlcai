@@ -813,7 +813,9 @@ export function MediaAiChat({
       }))
       return true
     }
-    const extra = originals.length > 1 ? " עבדתי עם הסרטון הראשון; שאר הקבצים לא נכללו." : ""
+    // A story (gated): every file she attached, clips and pictures, in order, becomes a frame.
+    const storySet = ownTextGate && format === "story"
+    const extra = originals.length > 1 && !storySet ? " עבדתי עם הסרטון הראשון; שאר הקבצים לא נכללו." : ""
     refs.clear()
     links.reset()
     setSentAsIs(null)
@@ -826,8 +828,9 @@ export function MediaAiChat({
     }))
     // A carousel (2026-11-06): the clip becomes one more VIDEO slide, its
     // animated caption made in the same step (api/carousel/video-slide).
-    const imported = await requestAsIsUpload(format, [video], {
+    const imported = await requestAsIsUpload(format, storySet ? originals : [video], {
       forEdit: true,
+      ...(storySet ? { instruction: text } : {}),
       ...(format === "carousel" ? { instruction: text } : {}),
     })
     if (format === "carousel") {

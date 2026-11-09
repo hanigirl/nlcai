@@ -89,6 +89,13 @@ export type DriveMediaLinksProps = {
    * but above the link list.
    */
   beforeRows?: React.ReactNode
+  /**
+   * autoImport pulls only links that weren't imported yet (gated story path,
+   * Hani 2026-11-09): rows already imported go to `onImport` as "" (keep that
+   * frame), so dragging a row, or adding / removing one, never re-pulls and
+   * re-burns the others over her edits.
+   */
+  onlyNewLinks?: boolean
 }
 
 export function DriveMediaLinks({
@@ -111,6 +118,7 @@ export function DriveMediaLinks({
   maxRows = 10,
   autoImport = false,
   beforeRows,
+  onlyNewLinks = false,
 }: DriveMediaLinksProps) {
   // Rows are DERIVED, not synced. `edited` is null until she touches the
   // form; while it's null the rows come straight from the persisted list, so
@@ -195,10 +203,26 @@ export function DriveMediaLinks({
   // Only the links themselves — the blank rows padded in for each media item
   // must not change it (an edit that grows a 1-link story to 3 frames would
   // otherwise read as "new links" and pull the raw Drive file over the edit).
-  const autoKey = trimmedRows.filter(Boolean).join("|")
+  // onlyNewLinks: what was imported already (saved with the post, or pulled
+  // here) is never pulled again — only links new to this field go out.
+  const importedRef = useRef<Set<string>>(new Set())
+  const freshRows = onlyNewLinks ? trimmedRows.map((l) => (importedRef.current.has(l) ? "" : l)) : trimmedRows
+  const autoKey = onlyNewLinks
+    ? freshRows.map((l, i) => (l ? `${i}:${l}` : "")).filter(Boolean).join("|")
+    : trimmedRows.filter(Boolean).join("|")
   const lastAutoKeyRef = useRef<string | null>(null)
   const importingRef = useRef(importing)
   importingRef.current = importing
+  // A failed pull is forgotten, so pasting the same link again retries it.
+  const pendingRef = useRef<string[]>([])
+  const wasImportingRef = useRef(importing)
+  useEffect(() => {
+    if (wasImportingRef.current && !importing && importError) {
+      for (const l of pendingRef.current) importedRef.current.delete(l)
+      lastAutoKeyRef.current = null
+    }
+    wasImportingRef.current = importing
+  }, [importing, importError])
   useEffect(() => {
     if (!autoImport) return
     // Only what she typed or pasted here. Links that come back saved with the
@@ -207,16 +231,25 @@ export function DriveMediaLinks({
     // editing").
     if (edited === null) {
       // …and count as imported, so a reorder (same links) doesn't pull them either.
-      lastAutoKeyRef.current = autoKey
+      if (onlyNewLinks) for (const l of trimmedRows) if (l) importedRef.current.add(l)
+      lastAutoKeyRef.current = onlyNewLinks ? "" : autoKey
       return
     }
-    if (!trimmedRows.some((l) => isCompleteDriveUrl(l))) return
+    if (!freshRows.some((l) => isCompleteDriveUrl(l))) return
     if (lastAutoKeyRef.current === autoKey) return
     const t = setTimeout(() => {
       // Re-check at fire time: an import that started while we were waiting
       // would otherwise get a second one stacked on top of it.
       if (importingRef.current) return
       lastAutoKeyRef.current = autoKey
+      if (onlyNewLinks) {
+        // Only complete links go: a half-typed one would fail the whole pull.
+        const out = freshRows.map((l) => (isCompleteDriveUrl(l) ? l : ""))
+        pendingRef.current = out.filter(Boolean)
+        for (const l of pendingRef.current) importedRef.current.add(l)
+        onImport(out)
+        return
+      }
       onImport(trimmedRows)
     }, 900)
     return () => clearTimeout(t)

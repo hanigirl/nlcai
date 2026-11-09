@@ -24,6 +24,7 @@ import {
   type OwnFrameInfo,
 } from "@/lib/own-media"
 import { guardedFetch } from "@/lib/server-fetch"
+import { canOwnMediaText } from "@/lib/feature-access"
 
 // Rendering the clip alone takes ~250–270s on our functions (175 frames
 // screenshotted by a Lambda-sized Chromium; the same render is 10–18s on a
@@ -393,7 +394,13 @@ export async function POST(req: NextRequest) {
       history: input.history,
       justImported: input.justImported === true,
     })
-    return json({ plan, frames, driveLinks: linksAligned ? links : null })
+    return json({
+      plan,
+      frames,
+      driveLinks: linksAligned ? links : null,
+      // The fixed story text paths in lib/own-media-edit (gated, story only).
+      ownStoryText: format === "story" && canOwnMediaText(user.email),
+    })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("[media/own-edit]", msg)

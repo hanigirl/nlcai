@@ -230,6 +230,12 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Story frames of her own (gated, story only — Hani, 2026-11-09): the
+    // script's words on a solid box in her brand colours, or white on black,
+    // so they read on dark and light pictures alike.
+    const ownStory = format === "story" && !!override && canOwnMediaText(user.email)
+    const storyLook = ownStory && !override?.style ? await captionLookFor(supabase, user.id) : undefined
+
     /* ------------------------- what the caption says ------------------- */
     let overlayHook: string | undefined
     let overlayBody: string | undefined
@@ -346,7 +352,8 @@ export async function POST(req: NextRequest) {
     // without a visual language. A look the edit asked for wins.
     const style: CaptionStyle | undefined = ownText
       ? (override?.style ?? (await captionLookFor(supabase, user.id)))
-      : override?.style
+      : (override?.style ?? storyLook)
+    if (ownStory && !override && !textSource) textSource = "script"
     if (ownText && override) {
       const unit = scriptTextFor("image_post", variant.body)
       const same = (a?: string, b?: string) => (a ?? "").trim() === (b ?? "").trim()

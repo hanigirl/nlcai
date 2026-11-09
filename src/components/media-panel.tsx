@@ -33,6 +33,7 @@ import {
   startImageCaption,
   clearImageCaptionError,
   startStoryDriveImport,
+  startStoryOwnImport,
   clearStoryImportError,
 } from "@/lib/broll-generation-store"
 import {
@@ -79,7 +80,7 @@ import { makeCarouselVideoSlide, uploadSlotPicture } from "@/lib/carousel-video-
 import { isVideoSlide } from "@/lib/carousel-video"
 import { registerAsIsImporter, requestDrivePicker, type AsIsItem, type AsIsOptions, type AsIsResult } from "@/lib/as-is-upload"
 import { AiHoverEditButton } from "@/components/ai-hover-edit"
-import { useRefPlace } from "@/lib/use-scheduling-access"
+import { useOwnMediaText, useRefPlace } from "@/lib/use-scheduling-access"
 import type { MediaStyle } from "@/lib/visual-language/types"
 import type { AiEditFormat } from "@/components/media-ai-chat"
 import type { MediaGenResult } from "@/lib/media-brief"
@@ -3361,6 +3362,8 @@ function MediaUploadFlow({
   }, [postId, format])
 
   const accepted = acceptedMimeForFormat(format)
+  // Her own media + the script's text, the fixed story paths (lib/feature-access) — Hani only for now.
+  const ownStoryText = useOwnMediaText() === true && format === "story"
 
   /**
    * Upload via XHR (not supabase-js) so we get progress events. Same
@@ -4060,6 +4063,33 @@ function MediaUploadFlow({
     asIsRef.current = async (items, opts) => {
       if (!postId) return { ok: false, message: "שמרו קודם את הפוסט, ואז אפשר להעלות מדיה." }
       if (ownTextImagePost) return importOwnImagePost(items, opts)
+      // A story (gated — Hani, 2026-11-09): ALL her files, pictures and clips,
+      // in order, BECOME the story's frames. For the AI chat's edit (forEdit)
+      // they go in bare and the edit puts the script's text on right after;
+      // "as is" puts each story's text on here. Answers once it's saved.
+      if (ownStoryText) {
+        if (!items.length) return { ok: false, message: "אין כאן מדיה להעלות." }
+        const sources: string[] = []
+        for (const it of items) {
+          const src = it.drive ?? (it.file ? await uploadOwnStoryFile(it.file) : null)
+          if (!src) {
+            return {
+              ok: false,
+              message: it.file && it.file.size / 1024 / 1024 > MAX_FILE_MB
+                ? `הקובץ ${it.file.name} גדול מדי (מקסימום ${MAX_FILE_MB}MB), אז לא העליתי כלום. העלו אותו מהדרייב.`
+                : "לא הצלחתי להעלות את אחד הקבצים, אז לא שיניתי את הסטורי. נסו שוב.",
+            }
+          }
+          sources.push(src)
+        }
+        const r = await startStoryOwnImport(postId, sources, [], { caption: !opts?.forEdit, quiet: true })
+        if (!r.ok) return { ok: false, message: r.message }
+        // Row i of the link list is frame i: her Drive files keep their links.
+        onStoryDriveLinksChange?.(sources.some(isDriveUrl) ? sources.map((s) => (isDriveUrl(s) ? s : "")) : null)
+        setSavedStorySet(r.frames)
+        onStoryImagesChange?.(r.frames)
+        return { ok: true, message: opts?.forEdit ? (sources.length > 1 ? "הפריימים עלו." : "הפריים עלה.") : r.message }
+      }
       // Her video, imported so the own-video AI edit can work on it: one clip,
       // saved before we answer, without the import's automatic caption.
       if (opts?.forEdit) {
@@ -4117,7 +4147,40 @@ function MediaUploadFlow({
       toast.error("שמרו את הפוסט לפני ייבוא הסטורי", { duration: 4000 })
       return
     }
+    // Gated: each frame gets ITS story's text, saved frame by frame, failures told.
+    if (ownStoryText) {
+      void startStoryOwnImport(postId, rows, savedStorySet, { caption: true })
+      return
+    }
     startStoryDriveImport(postId, rows, savedStorySet)
+  }
+
+  /**
+   * One of her files from the computer into storage, as she brought it — no
+   * slot write (the story set is saved by the import). Under `<user>/image|video/`
+   * so the own-media edit knows it as hers.
+   */
+  const uploadOwnStoryFile = async (file: File): Promise<string | null> => {
+    if (file.size / 1024 / 1024 > MAX_FILE_MB) return null
+    try {
+      const { createClient } = await import("@/lib/supabase/client")
+      const supabase = createClient()
+      const {
+        data: { user },
+      } = await getCurrentUser(supabase)
+      if (!user) return null
+      const isVideo = file.type.startsWith("video/")
+      const ext = file.name.split(".").pop()?.toLowerCase() || ""
+      const safeExt = /^[a-z0-9]{2,5}$/.test(ext) ? ext : isVideo ? "mp4" : "jpg"
+      const path = `${user.id}/${isVideo ? "video" : "image"}/${crypto.randomUUID()}.${safeExt}`
+      const { error } = await supabase.storage
+        .from(MEDIA_BUCKET)
+        .upload(path, file, { contentType: file.type || (isVideo ? "video/mp4" : "image/jpeg") })
+      if (error) return null
+      return supabase.storage.from(MEDIA_BUCKET).getPublicUrl(path).data.publicUrl
+    } catch {
+      return null
+    }
   }
 
   /** Clear the saved story set (PATCH { storyImages: null }). */
@@ -4894,7 +4957,17 @@ function MediaUploadFlow({
           {drivePick ? (
             <DriveFolderEntry
               format="story"
-              onImport={handleStoryDriveImport}
+              // Gated: the files she picked BECOME the story (none of the old
+              // frames left trailing behind them), each with its story's text.
+              onImport={
+                ownStoryText && postId
+                  ? (links) => {
+                      onStoryDriveLinksChange?.(links)
+                      void startStoryOwnImport(postId, links, [], { caption: true })
+                    }
+                  : handleStoryDriveImport
+              }
+              {...(ownStoryText ? { pulling: storyDriveImporting, error: storyDriveError } : {})}
               // One pipeline (Hani, 2026-11-06): the AI panel, Drive gallery up.
               onOpen={
                 postId
@@ -4941,6 +5014,7 @@ function MediaUploadFlow({
             addRowLabel="הוסיפו פריים"
             importLabel="טענו את המדיה"
             autoImport
+            onlyNewLinks={ownStoryText}
           />
           )}
 
