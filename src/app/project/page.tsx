@@ -2436,7 +2436,6 @@ function ProjectPageInner() {
                   <FormatPanelMedia
                     fid={fid}
                     media={item.media}
-                    onOpenMedia={() => setMediaReplacing(true)}
                     onAiEditMedia={onAiEditMedia}
                     onDeleteMedia={onDeleteMedia}
                   />
@@ -2452,7 +2451,6 @@ function ProjectPageInner() {
               <FormatPanelMedia
                 fid={fid}
                 media={item.media}
-                onOpenMedia={() => setMediaReplacing(true)}
                 onAiEditMedia={onAiEditMedia}
                 onDeleteMedia={onDeleteMedia}
               />
@@ -2498,7 +2496,6 @@ function ProjectPageInner() {
               fid={fid}
               editor={editor}
               saveStatus={formatSaveStatus[fid]}
-              onOpenMedia={() => setPanelStep("media")}
               onDeleteMedia={onDeleteMedia}
             />
           ),
@@ -2528,7 +2525,6 @@ function ProjectPageInner() {
             editor={editor}
             media={hasMedia ? item.media : null}
             mediaBusy={item.state === "media-busy"}
-            onOpenMedia={() => setPanelStep("media")}
             onAiEditMedia={
               fid !== "talking_head"
                 ? () => {

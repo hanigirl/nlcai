@@ -470,20 +470,20 @@ export function FormatPanelNextStep({
 
 /**
  * The media as it is now (or a skeleton while it is made). Hovering it shows
- * the AI sparkle and the delete; a click on it opens the ways to replace it.
+ * the AI sparkle and the delete. A click on it does nothing (Hani, 2026-11-09).
  */
 export function FormatPanelMedia({
   fid,
   media,
   mediaBusy = false,
-  onOpenMedia,
   onAiEditMedia,
   onDeleteMedia,
 }: {
   fid: string
   media?: FormatCardMedia | null
   mediaBusy?: boolean
-  onOpenMedia: () => void
+  /** Unused: the media is no click target (Hani, 2026-11-09). */
+  onOpenMedia?: () => void
   onAiEditMedia?: () => void
   onDeleteMedia: () => void
 }) {
@@ -497,8 +497,6 @@ export function FormatPanelMedia({
   }
   return (
     <MediaPreviewZone
-      onOpen={onOpenMedia}
-      openLabel={`החלפת ${FORMAT_NOUN[fid] ?? "המדיה"}`}
       onAiEdit={onAiEditMedia}
       aiClassName={media.kind === "slides" && media.items.length > 1 ? "bottom-11" : undefined}
       onDelete={onDeleteMedia}
@@ -622,7 +620,6 @@ export function FormatPanelScript({
   editor,
   media,
   mediaBusy = false,
-  onOpenMedia,
   onAiEditMedia,
   onDeleteMedia,
   saveStatus,
@@ -634,7 +631,8 @@ export function FormatPanelScript({
   media?: FormatCardMedia | null
   mediaBusy?: boolean
   /** Click on the media — to the ways to replace it. */
-  onOpenMedia: () => void
+  /** Unused: the media is no click target (Hani, 2026-11-09). */
+  onOpenMedia?: () => void
   /** Absent = no AI edit for this format (a talking head). */
   onAiEditMedia?: () => void
   onDeleteMedia: () => void
@@ -676,8 +674,6 @@ export function FormatPanelScript({
           ) : (
             <div className="flex flex-col gap-3">
               <MediaPreviewZone
-                onOpen={onOpenMedia}
-                openLabel={`החלפת ${FORMAT_NOUN[fid] ?? "המדיה"}`}
                 onAiEdit={onAiEditMedia}
                 aiClassName={media.kind === "slides" && media.items.length > 1 ? "bottom-11" : undefined}
                 onDelete={onDeleteMedia}

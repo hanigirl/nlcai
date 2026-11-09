@@ -36,10 +36,15 @@ export function MediaPreviewZone({
   className,
   children,
 }: {
-  /** Opens the media panel for this format. */
-  onOpen: () => void
+  /**
+   * Opens the media panel for this format. Absent = the media isn't a click
+   * target at all (the canvas panel, Hani 2026-11-09: tapping her picture
+   * reopened the "no media yet" flows and brought back the version before
+   * her last edit). Only the hover actions act on it then.
+   */
+  onOpen?: () => void
   /** Accessible name for the click-to-change action, e.g. "החלפת הקרוסלה". */
-  openLabel: string
+  openLabel?: string
   /** Present = the AI sparkle is offered on this media. */
   onAiEdit?: () => void
   aiBusy?: boolean
@@ -54,6 +59,36 @@ export function MediaPreviewZone({
   className?: string
   children: ReactNode
 }) {
+  const actions = (
+    <>
+      {onAiEdit && (
+        <AiHoverEditButton
+          target="media"
+          onClick={onAiEdit}
+          busy={aiBusy}
+          visible={aiVisible}
+          className={aiClassName}
+        />
+      )}
+      {onDelete && (
+        <HoverMediaIconButton
+          label={deleteLabel}
+          icon={Trash2}
+          destructive
+          onClick={onDelete}
+          className={cn("bottom-2 end-2", aiClassName)}
+        />
+      )}
+    </>
+  )
+  if (!onOpen) {
+    return (
+      <div className={cn(AI_HOVER_ZONE, "rounded-xl", className)} onMouseDown={(e) => e.stopPropagation()}>
+        {children}
+        {actions}
+      </div>
+    )
+  }
   return (
     <div
       role="button"
@@ -91,24 +126,7 @@ export function MediaPreviewZone({
       }}
     >
       {children}
-      {onAiEdit && (
-        <AiHoverEditButton
-          target="media"
-          onClick={onAiEdit}
-          busy={aiBusy}
-          visible={aiVisible}
-          className={aiClassName}
-        />
-      )}
-      {onDelete && (
-        <HoverMediaIconButton
-          label={deleteLabel}
-          icon={Trash2}
-          destructive
-          onClick={onDelete}
-          className={cn("bottom-2 end-2", aiClassName)}
-        />
-      )}
+      {actions}
     </div>
   )
 }
