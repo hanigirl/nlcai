@@ -24,13 +24,6 @@ export interface Avatar {
 
 interface AvatarPickerProps {
   onSelect: (avatar: Avatar) => void
-  /**
-   * Back to where the picker was opened from ("טענו אווטארים" on the talking
-   * head panel). Every state that has no avatar to pick — not connected, a
-   * load error, an empty account — offers it in place, so the message is never
-   * a dead end (Nataliya, 2026-11-09).
-   */
-  onBack?: () => void
 }
 
 /** Where HeyGen is connected: Settings → חיבורים → מדיה, scrolled to its card. */
@@ -38,29 +31,20 @@ export const HEYGEN_SETTINGS_HREF = "/settings?tab=connections&sub=heygen"
 
 const LINK_CLASS = "text-small font-semibold text-text-primary-default hover:underline"
 
-/** "חזרה" — the same text link as the state's own action, beside it. */
-function BackLink({ onBack }: { onBack?: () => void }) {
-  if (!onBack) return null
-  return (
-    <button type="button" onClick={onBack} className={`${LINK_CLASS} cursor-pointer`}>
-      חזרה
-    </button>
-  )
-}
-
-/** No HeyGen key: connect it in settings, or go back. */
-export function AvatarsNotConnected({ onBack }: { onBack?: () => void }) {
+/**
+ * No HeyGen key: connect it in settings. The way back is the panel's header
+ * arrow (media-panel PanelBackArrow), like every other level of the panel —
+ * never a link in here (Hani, 2026-11-10).
+ */
+export function AvatarsNotConnected() {
   return (
     <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
       <p className="text-small text-text-neutral-default">
         חברו את חשבון ה-HeyGen שלכם כדי להשתמש באווטארים
       </p>
-      <div className="flex items-center gap-4">
-        <Link href={HEYGEN_SETTINGS_HREF} className={LINK_CLASS}>
-          עברו להגדרות
-        </Link>
-        <BackLink onBack={onBack} />
-      </div>
+      <Link href={HEYGEN_SETTINGS_HREF} className={LINK_CLASS}>
+        עברו להגדרות
+      </Link>
     </div>
   )
 }
@@ -70,11 +54,10 @@ export function AvatarsNotConnected({ onBack }: { onBack?: () => void }) {
  * ("unauthorized", "Failed to load avatars"), so it goes to the console and the
  * screen says it in Hebrew.
  */
-export function AvatarsLoadError({ onBack }: { onBack?: () => void }) {
+export function AvatarsLoadError() {
   return (
     <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
       <div className="text-button-destructive-default text-sm">לא הצלחנו לטעון את האווטארים. נסו שוב בעוד רגע.</div>
-      <BackLink onBack={onBack} />
     </div>
   )
 }
@@ -85,7 +68,7 @@ export function AvatarsLoadError({ onBack }: { onBack?: () => void }) {
  * connection failing (2026-10-07). Only recorded video avatars are listed, so
  * the two usual causes are named.
  */
-export function AvatarsEmpty({ onBack }: { onBack?: () => void }) {
+export function AvatarsEmpty() {
   return (
     <div
       role="status"
@@ -98,17 +81,14 @@ export function AvatarsEmpty({ onBack }: { onBack?: () => void }) {
         כאן מופיעים רק אווטרים שהוקלטו בווידאו. אווטר שנוצר מתמונה לא יופיע,
         ואווטר חדש מופיע רק אחרי ש-HeyGen מסיים לעבד אותו.
       </p>
-      <div className="flex items-center gap-4">
-        <a
-          href="https://app.heygen.com/avatars"
-          target="_blank"
-          rel="noopener noreferrer"
-          className={LINK_CLASS}
-        >
-          לאווטרים שלי ב-HeyGen ←
-        </a>
-        <BackLink onBack={onBack} />
-      </div>
+      <a
+        href="https://app.heygen.com/avatars"
+        target="_blank"
+        rel="noopener noreferrer"
+        className={LINK_CLASS}
+      >
+        לאווטרים שלי ב-HeyGen ←
+      </a>
     </div>
   )
 }
@@ -138,7 +118,7 @@ function readCachedAvatars(uid: string): Avatar[] | null {
   return null
 }
 
-export function AvatarPicker({ onSelect, onBack }: AvatarPickerProps) {
+export function AvatarPicker({ onSelect }: AvatarPickerProps) {
   const [avatars, setAvatars] = useState<Avatar[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -207,14 +187,14 @@ export function AvatarPicker({ onSelect, onBack }: AvatarPickerProps) {
     )
   }
 
-  if (notConnected) return <AvatarsNotConnected onBack={onBack} />
+  if (notConnected) return <AvatarsNotConnected />
 
   if (error) {
     console.error("[avatar-picker] load failed:", error)
-    return <AvatarsLoadError onBack={onBack} />
+    return <AvatarsLoadError />
   }
 
-  if (avatars.length === 0) return <AvatarsEmpty onBack={onBack} />
+  if (avatars.length === 0) return <AvatarsEmpty />
 
   return (
     <div className="grid grid-cols-2 gap-3">

@@ -263,6 +263,24 @@ interface MediaPanelProps {
 }
 
 /**
+ * The header's back arrow for a level inside the panel (the Drive picker, the
+ * avatar picker): one level up. Exported so state previews draw the very same
+ * arrow.
+ */
+export function PanelBackArrow({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="חזרה"
+      className="p-0.5 rounded-lg hover:bg-bg-surface transition-colors cursor-pointer"
+    >
+      <ChevronRight className="size-4 text-text-neutral-default" />
+    </button>
+  )
+}
+
+/**
  * The panel's shell: fixed on the left, header with title + close, scrolling
  * content, optional pinned footer. Exported so the format-cards state preview
  * (/test/format-cards) draws the very same panel without mounting the flows.
@@ -473,32 +491,19 @@ export function MediaPanel({
       headerStart={
         <>
             {drivePickerOpen && (
-              <button
-                type="button"
+              <PanelBackArrow
                 onClick={() => {
                   if (!drivePickStore.importing) closeDrivePicker()
                 }}
-                aria-label="חזרה"
-                className="p-0.5 rounded-lg hover:bg-bg-surface transition-colors cursor-pointer"
-              >
-                <ChevronRight className="size-4 text-text-neutral-default" />
-              </button>
+              />
             )}
             {!drivePickerOpen && formatId === "talking_head" && (thAvatar || thSourceMode === "avatar") && (
-              <button
+              <PanelBackArrow
                 onClick={() => {
-                  if (thAvatar) {
-                    onThAvatarChange(null)
-                    onThSourceModeChange("choose")
-                  } else {
-                    onThSourceModeChange("choose")
-                  }
+                  if (thAvatar) onThAvatarChange(null)
+                  onThSourceModeChange("choose")
                 }}
-                aria-label="חזרה"
-                className="p-0.5 rounded-lg hover:bg-bg-surface transition-colors cursor-pointer"
-              >
-                <ChevronRight className="size-4 text-text-neutral-default" />
-              </button>
+              />
             )}
             {!drivePickerOpen && onBack && (
               <button
@@ -1385,7 +1390,7 @@ function TalkingHeadFlow({
     return (
       <div className="flex flex-col gap-3">
         <p className="text-sm text-text-neutral-default">בחרו אווטאר:</p>
-        <AvatarPicker onSelect={(a) => onAvatarChange(a)} onBack={() => onSourceModeChange("choose")} />
+        <AvatarPicker onSelect={(a) => onAvatarChange(a)} />
       </div>
     )
   }

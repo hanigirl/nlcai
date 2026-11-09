@@ -2,25 +2,28 @@
 
 /**
  * State preview for the talking head avatar picker (Nataliya, 2026-11-09:
- * after "טענו אווטארים" the message had no way back, and "עברו להגדרות"
- * opened settings on the wrong section).
+ * after "טען אווטארים" she found no way back, and "עבור להגדרות" opened
+ * settings on the wrong section).
  *
- * Every state where there is no avatar to pick now offers "חזרה" in place,
- * back to the two ways in (Drive / avatar). "עברו להגדרות" lands on
- * Settings → חיבורים → מדיה, scrolled to the HeyGen card.
+ * Drawn inside the real panel shell (MediaPanelFrame) with the real header
+ * back arrow (PanelBackArrow) — the way back from the picker is that arrow,
+ * one level up to the Drive / avatar choice, like every level of the panel.
+ * "עברו להגדרות" lands on Settings → חיבורים → מדיה, on the HeyGen card.
  *
  *   ?state=
- *     not-connected — no HeyGen key: "עברו להגדרות" + "חזרה"
- *     error         — the avatars could not be loaded: "חזרה"
- *     empty         — no recorded avatars in the account: HeyGen link + "חזרה"
- *   no param = all three side by side.
+ *     not-connected — no HeyGen key (default)
+ *     error         — the avatars could not be loaded
+ *     empty         — no recorded avatars in the account
  *
- * Renders the real components from the picker itself. No fetches, no DB
- * writes; "חזרה" here only reports that it was pressed.
+ * Renders the real components. No fetches, no DB writes; the arrow and the
+ * tabs here only report that they were pressed.
  */
 
 import { Suspense, useState } from "react"
+import Link from "next/link"
 import { useSearchParams } from "next/navigation"
+import { MediaPanelFrame, PanelBackArrow } from "@/components/media-panel"
+import { FormatPanelTabs } from "@/components/format-cards/format-cards"
 import {
   AvatarsEmpty,
   AvatarsLoadError,
@@ -35,39 +38,53 @@ const STATES = [
 
 type StateId = (typeof STATES)[number]["id"]
 
-function StateBody({ id, onBack }: { id: StateId; onBack: () => void }) {
-  if (id === "not-connected") return <AvatarsNotConnected onBack={onBack} />
-  if (id === "error") return <AvatarsLoadError onBack={onBack} />
-  return <AvatarsEmpty onBack={onBack} />
+function StateBody({ id }: { id: StateId }) {
+  if (id === "error") return <AvatarsLoadError />
+  if (id === "empty") return <AvatarsEmpty />
+  return <AvatarsNotConnected />
 }
 
 function Preview() {
   const params = useSearchParams()
-  const only = params.get("state")
-  const shown = STATES.filter((s) => !only || s.id === only)
-  const [pressed, setPressed] = useState<string | null>(null)
+  const raw = params.get("state")
+  const id: StateId = STATES.some((s) => s.id === raw) ? (raw as StateId) : "not-connected"
+  const [backPressed, setBackPressed] = useState(false)
 
   return (
     <div dir="rtl" className="min-h-screen bg-bg-surface p-8">
-      <div className="flex flex-wrap items-start gap-6">
-        {shown.map((s) => (
-          <section key={s.id} className="flex w-[400px] flex-col gap-3">
-            <h2 className="text-small-bold text-text-primary-default">{s.title}</h2>
-            {/* The panel's content column: same width and padding as the real one. */}
-            <div className="rounded-xl border border-border-neutral-default bg-white px-6 py-6 dark:bg-gray-10">
-              <div className="flex flex-col gap-3">
-                <p className="text-sm text-text-neutral-default">בחרו אווטאר:</p>
-                <StateBody id={s.id} onBack={() => setPressed(s.id)} />
-              </div>
-            </div>
-            {pressed === s.id && (
-              <p role="status" className="text-xs text-text-neutral-default">
-                בפאנל האמיתי: חוזרים לבחירה בין סרטון מהדרייב לאווטאר.
-              </p>
-            )}
-          </section>
-        ))}
+      {/* State switcher, outside the panel. */}
+      <div className="me-[440px] flex flex-col gap-3">
+        <h1 className="text-p-bold text-text-primary-default">בחירת אווטאר: המצבים בלי אווטארים</h1>
+        <div className="flex flex-wrap gap-4">
+          {STATES.map((s) => (
+            <Link
+              key={s.id}
+              href={`/test/avatar-picker-states?state=${s.id}`}
+              className={`text-small hover:underline ${s.id === id ? "font-semibold text-text-primary-default" : "text-text-neutral-default"}`}
+            >
+              {s.title}
+            </Link>
+          ))}
+        </div>
+        {backPressed && (
+          <p role="status" className="text-small text-text-neutral-default">
+            בפאנל האמיתי החץ מחזיר רמה אחת למעלה: לבחירה בין סרטון מהדרייב לאווטאר.
+          </p>
+        )}
       </div>
+
+      <MediaPanelFrame
+        open
+        title="דיבור למצלמה"
+        onClose={() => {}}
+        headerStart={<PanelBackArrow onClick={() => setBackPressed(true)} />}
+        tabs={<FormatPanelTabs value="media" onChange={() => {}} done={{ script: true }} />}
+      >
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-text-neutral-default">בחרו אווטאר:</p>
+          <StateBody id={id} />
+        </div>
+      </MediaPanelFrame>
     </div>
   )
 }
