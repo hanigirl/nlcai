@@ -241,20 +241,39 @@ export function FormatCardsRow({
   items,
   selected,
   onSelect,
+  aiEditFor,
+  hideWaiting = false,
 }: {
   variant: FormatCardsVariant
   items: FormatCardItem[]
   selected: string | null
   onSelect: (fid: string) => void
+  /**
+   * The AI edit sparkle on a card's media, as on the panel's (Hani,
+   * 2026-11-10). Returns nothing where the chat isn't offered — never on
+   * her own Drive media (iron rule).
+   */
+  aiEditFor?: (fid: string) => (() => void) | undefined
+  /** No "מחכה לאישור לתזמון" line (Hani, 2026-11-10: "לא צריכה"). */
+  hideWaiting?: boolean
 }) {
-  const Card = variant === "a" ? WindowCard : UniformCard
   return (
     <div className="flex items-start" dir="rtl" data-format-cards={variant}>
       <LaneStem />
       {items.map((item, i) => (
         <div key={item.fid} className="flex items-start" data-format-card={item.fid}>
           {i > 0 && <TreeConnector />}
-          <Card item={item} selected={selected === item.fid} onSelect={() => onSelect(item.fid)} />
+          {variant === "a" ? (
+            <WindowCard item={item} selected={selected === item.fid} onSelect={() => onSelect(item.fid)} />
+          ) : (
+            <UniformCard
+              item={item}
+              selected={selected === item.fid}
+              onSelect={() => onSelect(item.fid)}
+              onAiEdit={aiEditFor?.(item.fid)}
+              hideWaiting={hideWaiting}
+            />
+          )}
         </div>
       ))}
     </div>
@@ -330,7 +349,19 @@ function WindowCard({ item, selected, onSelect }: { item: FormatCardItem; select
  * B — one size for every format, the canvas's usual card chrome (header bar),
  * and a status line at the bottom: a step in the workflow, not the post.
  */
-function UniformCard({ item, selected, onSelect }: { item: FormatCardItem; selected: boolean; onSelect: () => void }) {
+function UniformCard({
+  item,
+  selected,
+  onSelect,
+  onAiEdit,
+  hideWaiting = false,
+}: {
+  item: FormatCardItem
+  selected: boolean
+  onSelect: () => void
+  onAiEdit?: () => void
+  hideWaiting?: boolean
+}) {
   const Icon = item.icon
   const hasMedia = item.state === "media" && !!item.media
   const status =
@@ -342,7 +373,9 @@ function UniformCard({ item, selected, onSelect }: { item: FormatCardItem; selec
           ? "המדיה בהכנה…"
           : item.approval === "approved" || item.approval === "scheduled"
             ? null
-            : "מחכה לאישור לתזמון"
+            : hideWaiting
+              ? null
+              : "מחכה לאישור לתזמון"
   return (
     <div
       {...cardButtonProps(`${item.label} — פתיחה בפאנל`, onSelect)}
@@ -379,11 +412,21 @@ function UniformCard({ item, selected, onSelect }: { item: FormatCardItem; selec
         {hasMedia && item.media && (
           // The format's own shape (4:5 / 9:16) at the card's height — a
           // full-width box was near square and cut a 4:5 post (Hani, 2026-11-10).
-          <FormatMediaPreview
-            media={item.media}
-            fid={item.fid}
-            box={cn("h-[240px] self-center", MEDIA_ASPECT[item.fid] ?? "aspect-[4/5]")}
-          />
+          onAiEdit ? (
+            <MediaPreviewZone
+              onAiEdit={onAiEdit}
+              aiClassName={item.media.kind === "slides" && item.media.items.length > 1 ? "bottom-11" : undefined}
+              className="mx-auto w-fit"
+            >
+              <FormatMediaPreview media={item.media} fid={item.fid} box={cn("h-[240px]", MEDIA_ASPECT[item.fid] ?? "aspect-[4/5]")} />
+            </MediaPreviewZone>
+          ) : (
+            <FormatMediaPreview
+              media={item.media}
+              fid={item.fid}
+              box={cn("h-[240px] self-center", MEDIA_ASPECT[item.fid] ?? "aspect-[4/5]")}
+            />
+          )
         )}
       </div>
       <div className="flex min-h-11 items-center px-5 py-3">

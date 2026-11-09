@@ -3421,6 +3421,19 @@ function ProjectPageInner() {
                         items={cardItems}
                         selected={selectedFormatCard}
                         onSelect={handleFormatCardClick}
+                        // Hani + Nataliya (2026-11-10): the AI edit on the card too, no "waiting" line.
+                        aiEditFor={
+                          editAgentOn
+                            ? (f) =>
+                                !ownMediaOn(f) && chatOnFor(f)
+                                  ? () => {
+                                      setAiChatFormat(f as AiEditFormat)
+                                      setAiChatOpening(null)
+                                    }
+                                  : undefined
+                            : undefined
+                        }
+                        hideWaiting={editAgentOn}
                       />
                     </div>
                   )}
