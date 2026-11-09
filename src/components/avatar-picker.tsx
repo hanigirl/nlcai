@@ -6,6 +6,7 @@ import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
 import { userKey } from "@/lib/user-scoped-storage"
 import { getCurrentUser } from "@/lib/supabase/current-user"
+import { useOwnMediaText } from "@/lib/use-scheduling-access"
 
 
 export interface Avatar {
@@ -124,6 +125,10 @@ export function AvatarPicker({ onSelect }: AvatarPickerProps) {
   const [error, setError] = useState<string | null>(null)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [notConnected, setNotConnected] = useState(false)
+  // The new states (Hebrew, plural, deep link to the HeyGen card — Nataliya,
+  // 2026-11-09) are for the own media text gate only; everyone else keeps
+  // the states exactly as they were.
+  const ownText = useOwnMediaText() === true
 
   useEffect(() => {
     let cancelled = false
@@ -187,14 +192,66 @@ export function AvatarPicker({ onSelect }: AvatarPickerProps) {
     )
   }
 
-  if (notConnected) return <AvatarsNotConnected />
+  if (ownText) {
+    if (notConnected) return <AvatarsNotConnected />
 
-  if (error) {
-    console.error("[avatar-picker] load failed:", error)
-    return <AvatarsLoadError />
+    if (error) {
+      console.error("[avatar-picker] load failed:", error)
+      return <AvatarsLoadError />
+    }
+
+    if (avatars.length === 0) return <AvatarsEmpty />
   }
 
-  if (avatars.length === 0) return <AvatarsEmpty />
+  if (notConnected) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
+        <p className="text-small text-text-neutral-default">
+          חבר את חשבון HeyGen שלך כדי להשתמש באווטארים
+        </p>
+        <Link href="/settings" className="text-small font-semibold text-text-primary-default hover:underline">
+          עבור להגדרות
+        </Link>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <div className="text-button-destructive-default text-sm">{error}</div>
+      </div>
+    )
+  }
+
+  // Nothing to pick. This used to render an empty grid — no text, no way
+  // to tell "still loading" from "broken" from "nothing here" — and a user
+  // read it as the connection failing (2026-10-07). Only recorded video
+  // avatars are listed, so the two usual causes are named.
+  if (avatars.length === 0) {
+    return (
+      <div
+        role="status"
+        className="flex flex-col items-center justify-center gap-2 rounded-xl border border-border-neutral-default bg-bg-surface px-6 py-8 text-center"
+      >
+        <p className="text-small-bold text-text-primary-default">
+          לא נמצאו אווטרים מוקלטים בחשבון ה-HeyGen שלך
+        </p>
+        <p className="text-small text-text-neutral-default">
+          כאן מופיעים רק אווטרים שהוקלטו בווידאו. אווטר שנוצר מתמונה לא יופיע,
+          ואווטר חדש מופיע רק אחרי ש-HeyGen מסיים לעבד אותו.
+        </p>
+        <a
+          href="https://app.heygen.com/avatars"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-small font-semibold text-text-primary-default hover:underline"
+        >
+          לאווטרים שלי ב-HeyGen ←
+        </a>
+      </div>
+    )
+  }
 
   return (
     <div className="grid grid-cols-2 gap-3">

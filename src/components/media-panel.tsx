@@ -521,12 +521,28 @@ export function MediaPanel({
               />
             )}
             {!drivePickerOpen && formatId === "talking_head" && (thAvatar || thSourceMode === "avatar") && (
-              <PanelBackArrow
-                onClick={() => {
-                  if (thAvatar) onThAvatarChange(null)
-                  onThSourceModeChange("choose")
-                }}
-              />
+              ownMediaPanel ? (
+                <PanelBackArrow
+                  onClick={() => {
+                    if (thAvatar) onThAvatarChange(null)
+                    onThSourceModeChange("choose")
+                  }}
+                />
+              ) : (
+                <button
+                  onClick={() => {
+                    if (thAvatar) {
+                      onThAvatarChange(null)
+                      onThSourceModeChange("choose")
+                    } else {
+                      onThSourceModeChange("choose")
+                    }
+                  }}
+                  className="p-0.5 rounded-lg hover:bg-bg-surface transition-colors cursor-pointer"
+                >
+                  <ChevronRight className="size-4 text-text-neutral-default" />
+                </button>
+              )
             )}
             {!drivePickerOpen && onBack && (
               <button
@@ -1412,7 +1428,7 @@ function TalkingHeadFlow({
   if (!avatar && sourceMode === "avatar" && !(videoPhase === "done" && liftedVideoUrl)) {
     return (
       <div className="flex flex-col gap-3">
-        <p className="text-sm text-text-neutral-default">בחרו אווטאר:</p>
+        <p className="text-sm text-text-neutral-default">{ownText ? "בחרו אווטאר:" : "בחר אווטאר:"}</p>
         <AvatarPicker onSelect={(a) => onAvatarChange(a)} />
       </div>
     )

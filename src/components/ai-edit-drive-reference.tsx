@@ -14,6 +14,7 @@ import {
 import { TooltipLabel } from "@/components/ui/tooltip"
 import { MAX_REFERENCES } from "@/lib/ai-edit-references"
 import { cn } from "@/lib/utils"
+import { useOwnMediaText } from "@/lib/use-scheduling-access"
 import type { ReferenceImages } from "@/components/ai-edit-reference"
 import { onDrivePickerRequest, takeDrivePickerRequest, type AsIsItem } from "@/lib/as-is-upload"
 import {
@@ -196,6 +197,8 @@ export function DriveReferenceDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const room = MAX_REFERENCES - r.refs.length
+  // The deep link to the Drive section (Nataliya, 2026-11-09) — own media text gate only.
+  const ownText = useOwnMediaText() === true
 
   // What's in Drive NOW, each time the gallery opens.
   useEffect(() => {
@@ -270,7 +273,7 @@ export function DriveReferenceDialog({
         ) : folder.status === "unset" ? (
           <div className="flex flex-col items-start gap-2 rounded-lg bg-bg-surface p-4 text-small text-text-primary-default">
             <span>עוד לא חיברתם תיקייה מהדרייב ל{label}.</span>
-            <Link href="/settings?tab=media&sub=drive" className="text-small underline underline-offset-4 hover:text-text-neutral-default">
+            <Link href={ownText ? "/settings?tab=media&sub=drive" : "/settings?tab=media"} className="text-small underline underline-offset-4 hover:text-text-neutral-default">
               לחיבור תיקייה בהגדרות ← מדיה
             </Link>
           </div>

@@ -2843,11 +2843,12 @@ function ProjectPageInner() {
             <p className="text-small text-text-neutral-default">
               חברו את חשבון {apiNotConnected} שלכם כדי ליצור תוכן
             </p>
+            {/* The deep link (Nataliya, 2026-11-09) — own media text gate only. */}
             <Link
-              href={`/settings?tab=connections&sub=${apiNotConnected === "Gemini" ? "gemini" : "claude"}`}
+              href={ownTextGate ? `/settings?tab=connections&sub=${apiNotConnected === "Gemini" ? "gemini" : "claude"}` : "/settings"}
               className="text-small font-semibold text-text-primary-default hover:underline"
             >
-              עברו להגדרות
+              {ownTextGate ? "עברו להגדרות" : "עבור להגדרות"}
             </Link>
           </div>
         )}
