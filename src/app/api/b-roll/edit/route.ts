@@ -1,3 +1,4 @@
+import { scriptTextNote } from "@/lib/script-text-note"
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { createClient } from "@/lib/supabase/server"
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest) {
     const text = instruction?.trim()
     const current0 = parseReferences(references)
     const refs = current0.length ? current0 : parseReferences(earlierReferences)
-    const ask =
+    let ask =
       text && !current0.length && refs.length
         ? `${text}\n(The attached image${refs.length > 1 ? "s" : ""} came with her earlier message in this chat.)`
         : text
@@ -119,10 +120,12 @@ export async function POST(req: NextRequest) {
 
     const { data: variant } = await supabase
       .from("format_variants")
-      .select("id")
+      .select("id, body")
       .eq("core_post_id", postId)
       .eq("format", "b_roll")
       .maybeSingle()
+    // The script is the text on the clip — the edit brings its words in line.
+    ask = `${ask}${scriptTextNote("b_roll", (variant as { body?: string | null } | null)?.body)}`
     const { data: asset } = variant
       ? await supabase
           .from("media_assets")

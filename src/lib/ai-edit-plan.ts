@@ -140,7 +140,7 @@ export function editPrompt(edit: string, placing: number, restyle = false, brand
           ]
         : []),
       "",
-      "Keep exactly: every piece of Hebrew text (same words, same spelling, right-to-left, same reading order) and any photo of a person or logo. Everything of the previous look that the visual language doesn't have goes. Do not add new text. Nothing may touch or cross the image edge.",
+      "Keep exactly: every piece of Hebrew text the change above doesn't rewrite (same words, same spelling, right-to-left, same reading order) and any photo of a person or logo. Everything of the previous look that the visual language doesn't have goes. Do not add new text. Nothing may touch or cross the image edge.",
     ].join("\n")
   }
   return [
@@ -149,6 +149,6 @@ export function editPrompt(edit: string, placing: number, restyle = false, brand
       : "Edit this image. Apply ONLY the following change:",
     edit,
     "",
-    "Keep everything else exactly as it is: the layout, every piece of Hebrew text (same words, same spelling, right-to-left), the fonts, colours, illustrations and any logo. Do not add new text, and no person, character, animal or object the change above doesn't name. Nothing may touch or cross the image edge.",
+    "Keep everything else exactly as it is: the layout, every piece of Hebrew text the change above doesn't rewrite (same words, same spelling, right-to-left), the fonts, colours, illustrations and any logo. Do not add new text, and no person, character, animal or object the change above doesn't name. Nothing may touch or cross the image edge.",
   ].join("\n")
 }

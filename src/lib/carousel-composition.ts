@@ -376,7 +376,7 @@ export function reviseCarousel(
       ...(restyle
         ? [
             "RESTYLE — the brand fonts, colours, visual language and usage examples above are the creator's CURRENT visual language. The CURRENT CAROUSEL was designed in an earlier look that she has replaced (or drifted from it). Rebuild the whole carousel in the current language, as if it were designed from this brief today — with the usage examples as the template when they are attached: backgrounds, colours, type treatment, layout devices, decoration and the slide number all follow it. Nothing of the earlier look may remain — no colour, shape, ornament, tab, line or layout device the current language doesn't have. An earlier request that was about the old look no longer applies; one about content (words, her placed picture, its size) still does.",
-            "Keep every slide's text exactly as it is.",
+            "Keep every slide's text exactly as it is — except where the request gives the script's words for a slide: then that slide's text becomes exactly those words.",
             own.length
               ? `Slide${own.length > 1 ? "s" : ""} ${own.join(", ")} show${own.length > 1 ? "" : "s"} the creator's own picture — keep it on that slide, restyle only around it, and never give it a new illustration prompt.`
               : "If an earlier request placed the creator's own picture on a slide, keep that picture there (restyle only around it) and never give it a new illustration prompt.",

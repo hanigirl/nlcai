@@ -1,3 +1,5 @@
+import type { OwnEditFormat } from "@/lib/own-media"
+import { scriptTextNote } from "@/lib/script-text-note"
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { Resvg } from "@resvg/resvg-js"
@@ -164,14 +166,16 @@ export async function POST(req: NextRequest) {
     const historyNote = turns.length
       ? `\n\nEarlier in this chat (context only — act on her request above; "no", "again", "like I said" refer to this):\n${turns.join("\n")}`
       : ""
-    const ask = ask0 ? `${ask0}${slotNote}${historyNote}` : ask0
-
     const { data: variant } = await supabase
       .from("format_variants")
-      .select("id")
+      .select("id, body")
       .eq("core_post_id", postId)
       .eq("format", format)
       .maybeSingle()
+    // The script is the text on the media — an edit brings the media's words
+    // in line with it ("ג׳נרט מחדש עם הטקסט המעודכן").
+    const scriptNote = scriptTextNote(format as OwnEditFormat, (variant as { body?: string | null } | null)?.body)
+    const ask = ask0 ? `${ask0}${slotNote}${scriptNote}${historyNote}` : ask0
     const { data: assets } = variant
       ? await supabase
           .from("media_assets")
