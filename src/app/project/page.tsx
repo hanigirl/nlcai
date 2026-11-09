@@ -953,6 +953,7 @@ function ProjectPageInner() {
           }
           setActiveCard("post")
 
+          setFormatDescriptions((data.post.formatDescriptions as Record<string, string> | undefined) ?? {})
           // Restore format variants
           const fp = data.post.formatPosts as Record<string, string>
           if (fp && Object.keys(fp).length > 0) {
@@ -2236,6 +2237,23 @@ function ProjectPageInner() {
     setMediaReplacing(false)
   }
   const [panelStepFor, setPanelStepFor] = useState<string | null>(null)
+  // The post's description per format (045) — written in the תזמון tab,
+  // sent with the post, apart from the script (Hani, 2026-11-09).
+  const [formatDescriptions, setFormatDescriptions] = useState<Record<string, string>>({})
+  const descriptionTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const changeDescription = (fid: string, text: string) => {
+    setFormatDescriptions((d) => ({ ...d, [fid]: text }))
+    const postId = savedPostId
+    if (!postId) return
+    clearTimeout(descriptionTimers.current[fid])
+    descriptionTimers.current[fid] = setTimeout(() => {
+      void fetch(`/api/core-posts/${postId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ formatDescriptions: { [fid]: text } }),
+      }).catch(() => toast.error("לא הצלחנו לשמור את התיאור. נסו שוב."))
+    }, 800)
+  }
   // "מחיקת הסקריפט": offered only while the format has no media, and removes
   // the whole format from the post (PATCH deleteFormat, server refuses if media).
   const [pendingCardDelete, setPendingCardDelete] = useState<string | null>(null)
@@ -2462,7 +2480,13 @@ function ProjectPageInner() {
           tabs,
           hideFlows: true,
           scriptView: (
-            <FormatPanelSchedule fid={fid} hasMedia={hasMedia} onGoToMedia={() => setPanelStep("media")} />
+            <FormatPanelSchedule
+              fid={fid}
+              hasMedia={hasMedia}
+              onGoToMedia={() => setPanelStep("media")}
+              description={formatDescriptions[fid] ?? ""}
+              onDescriptionChange={(t) => changeDescription(fid, t)}
+            />
           ),
           footer:
             hasMedia && approvalProps ? (

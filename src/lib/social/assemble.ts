@@ -58,12 +58,12 @@ export async function assembleScheduledPost(
   // ---- the format's own body: the caption, in full ----
   const { data: variantRow } = await db
     .from("format_variants")
-    .select("id, body")
+    .select("id, body, description")
     .eq("core_post_id", corePostId)
     .eq("format", format)
     .maybeSingle()
 
-  const variant = variantRow as { id: string; body: string | null } | null
+  const variant = variantRow as { id: string; body: string | null; description: string | null } | null
   if (!variant) {
     throw new SocialPublishError(
       `אין תוכן לפורמט "${format}" בפוסט הזה.`,
@@ -71,7 +71,9 @@ export async function assembleScheduledPost(
     )
   }
 
-  const body = (variant.body ?? "").trim()
+  // The post's description goes out (Hani, 2026-11-09); without one, its
+  // script, as before.
+  const body = (variant.description?.trim() || variant.body || "").trim()
 
   // A story carries no caption at all — Instagram accepts zero characters and
   // no API can add text or stickers to one. So the body is simply not sent;

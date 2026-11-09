@@ -87,7 +87,7 @@ export async function GET(
       supabase.from("core_posts").select("*").eq("id", id).eq("user_id", user.id).single(),
       supabase
         .from("format_variants")
-        .select("id, format, body, drive_slide_links")
+        .select("id, format, body, description, drive_slide_links")
         .eq("core_post_id", id),
     ])
 
@@ -99,12 +99,16 @@ export async function GET(
       id: string
       format: string
       body: string
+      description: string | null
       drive_slide_links: string[] | null
     }[]
 
     const formatPosts: Record<string, string> = {}
+    // The description that goes out with each format (045), apart from its script.
+    const formatDescriptions: Record<string, string> = {}
     for (const v of variants) {
       formatPosts[v.format] = v.body
+      if (v.description) formatDescriptions[v.format] = v.description
     }
 
     // Carousel only (027): the Drive links the slides were imported from.
@@ -298,6 +302,7 @@ export async function GET(
         ...(post as Record<string, unknown>),
         mediaStyles,
         formatPosts,
+        formatDescriptions,
         formatsWithMedia,
         formatMedia,
         videoUrl,
@@ -331,7 +336,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, deleteFormat, videoUrl, deleteVideo, coverBase64, coverPillColor, coverText, deleteCover, carouselImages, carouselMeta, carouselDriveLinks, storyImages, storyDriveLinks, bRollDriveLinks } = (await req.json()) as {
+    const { body, hookText, hookId, idea, productId, triggerWord, userResponse, formatPosts, formatDescriptions, deleteFormat, videoUrl, deleteVideo, coverBase64, coverPillColor, coverText, deleteCover, carouselImages, carouselMeta, carouselDriveLinks, storyImages, storyDriveLinks, bRollDriveLinks } = (await req.json()) as {
       body?: string
       hookText?: string
       hookId?: string
@@ -340,6 +345,8 @@ export async function PATCH(
       triggerWord?: string
       userResponse?: string
       formatPosts?: Record<string, string>
+      /** Per format, the post's description (045) — "" clears it. */
+      formatDescriptions?: Record<string, string>
       // Removes one format from the post (Hani, 2026-11-07). Only allowed while
       // the format has no media: media is deleted on its own first.
       deleteFormat?: string
@@ -521,6 +528,19 @@ export async function PATCH(
             } as never,
             { onConflict: "core_post_id,format" },
           )
+        didIndirectEdit = true
+      }
+    }
+
+    // The description of an existing format (its script is untouched).
+    if (formatDescriptions) {
+      for (const [format, text] of Object.entries(formatDescriptions)) {
+        if (typeof text !== "string") continue
+        await supabase
+          .from("format_variants")
+          .update({ description: text.trim() ? text : null } as never)
+          .eq("core_post_id", id)
+          .eq("format", format)
         didIndirectEdit = true
       }
     }

@@ -110,7 +110,11 @@ function DialogBody({
   // Draft slot — "תזמון פוסט" in the footer commits it to the board.
   const [draftDate, setDraftDate] = useState(data.scheduledDate)
   const [draftTime, setDraftTime] = useState(data.scheduledTime)
-  const [captionDraft, setCaptionDraft] = useState(data.caption)
+  // The description is what she writes here (Hani, 2026-11-09); the script
+  // stays behind "סקריפט הפוסט".
+  const descriptionOf = (d: typeof data) => d.description ?? d.caption
+  const [captionDraft, setCaptionDraft] = useState(descriptionOf(data))
+  const [scriptOpen, setScriptOpen] = useState(false)
   const [slotError, setSlotError] = useState<string | null>(null)
   const slotKey = `${data.corePostId}:${data.format} ${data.scheduledDate} ${data.scheduledTime}`
   const [syncedSlot, setSyncedSlot] = useState(slotKey)
@@ -120,14 +124,14 @@ function DialogBody({
     setDraftTime(data.scheduledTime)
     setSlotError(null)
   }
-  const [syncedCaption, setSyncedCaption] = useState(`${data.corePostId}:${data.format} ${data.caption}`)
-  if (syncedCaption !== `${data.corePostId}:${data.format} ${data.caption}`) {
-    setSyncedCaption(`${data.corePostId}:${data.format} ${data.caption}`)
-    setCaptionDraft(data.caption)
+  const [syncedCaption, setSyncedCaption] = useState(`${data.corePostId}:${data.format} ${descriptionOf(data)}`)
+  if (syncedCaption !== `${data.corePostId}:${data.format} ${descriptionOf(data)}`) {
+    setSyncedCaption(`${data.corePostId}:${data.format} ${descriptionOf(data)}`)
+    setCaptionDraft(descriptionOf(data))
   }
   const slotDirty =
     !!draftDate && (draftDate !== data.scheduledDate || draftTime !== data.scheduledTime)
-  const captionDirty = captionDraft !== data.caption
+  const captionDirty = captionDraft !== descriptionOf(data)
   // One button for every edit here (Hani, 2026-10-21): "תזמון פוסט" saves the
   // caption and the slot together. No separate caption save.
   const commit = () => {
@@ -272,11 +276,27 @@ function DialogBody({
             )}
           </section>
 
-          {/* Caption — the format's full body, exactly what is sent. */}
+          {/* The post's description, under the time — what is sent. The script
+              is one quiet link above it (Hani, 2026-11-09). */}
           <section className="flex flex-col gap-2" aria-labelledby="pv-caption">
+            {!!data.script?.trim() && !loading && (
+              <button
+                type="button"
+                onClick={() => setScriptOpen((o) => !o)}
+                aria-expanded={scriptOpen}
+                className="self-start text-xs-body text-text-neutral-default underline-offset-2 hover:text-text-primary-default hover:underline"
+              >
+                סקריפט הפוסט
+              </button>
+            )}
+            {scriptOpen && !!data.script?.trim() && (
+              <p className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg bg-gray-95 px-3 py-2 text-xs-body leading-relaxed text-text-neutral-default dark:bg-gray-20">
+                {data.script}
+              </p>
+            )}
             <div className="flex items-center gap-2">
               <h4 id="pv-caption" className="flex-1 text-small-bold text-text-primary-default">
-                כיתוב
+                תיאור הפוסט
               </h4>
             </div>
             {loading ? (
@@ -298,14 +318,15 @@ function DialogBody({
                   value={captionDraft}
                   onChange={(e) => setCaptionDraft(e.target.value)}
                   rows={8}
+                  placeholder="הטקסט שעולה עם הפוסט. בלי תיאור, יעלה הסקריפט."
                   dir="rtl"
                   aria-labelledby="pv-caption"
                   className="min-h-40 text-small leading-relaxed"
                 />
                 <div className="flex justify-end">
-                  <CaptionCounter length={captionDraft.length} />
+                  <CaptionCounter length={(captionDraft || data.script || "").length} />
                 </div>
-                <CaptionTooLong length={captionDraft.length} />
+                <CaptionTooLong length={(captionDraft || data.script || "").length} />
               </>
             )}
           </section>
