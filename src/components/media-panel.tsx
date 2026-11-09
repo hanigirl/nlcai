@@ -3509,7 +3509,6 @@ function MediaUploadFlow({
     index: number
   } | null>(null)
   const [savingStory, setSavingStory] = useState(false)
-  useReportBusy(onBusyChange, format, uploading || drivePulling || savingStory)
   const [pendingStoryDelete, setPendingStoryDelete] = useState(false)
   // A story video whose caption is already baked in — the burn route stores
   // it under a "burned-" filename, so we can tell a finished clip from a raw
@@ -3672,6 +3671,7 @@ function MediaUploadFlow({
   const accepted = acceptedMimeForFormat(format)
   // Her own media + the script's text, the fixed story paths (lib/feature-access) — Hani only for now.
   const ownStoryText = useOwnMediaText() === true && format === "story"
+  const ownBRollText = useOwnMediaText() === true && format === "b_roll"
 
   /**
    * Upload via XHR (not supabase-js) so we get progress events. Same
@@ -4141,6 +4141,9 @@ function MediaUploadFlow({
   // deletes it (Hani, 2026-11-08: "המדיה צריך להיות הבירול עם נגן וזהו").
   const bRollShowsMedia = isBRoll && !!previewUrl && !bRollGenerating
   const burningText = bRollState.burning > 0
+  // B-roll being made counts as busy too, so the new panel shows it loading
+  // once at the top of the tab — like story and image (Hani, 2026-11-10).
+  useReportBusy(onBusyChange, format, uploading || drivePulling || savingStory || (isBRoll && (bRollGenerating || burningText)))
 
   /* ---- still-image caption: fire, pick up, redo ---------------------- */
 
@@ -5805,7 +5808,10 @@ function MediaUploadFlow({
               />
             )}
 
+          {/* The new panel shows her media once, at the top of the tab — never
+              this older grey preview under the flows (Hani, 2026-11-10). */}
           {isBRoll &&
+            !ownBRollText &&
             !(captionEnabled && previewKind === "image") &&
             (previewUrl || burningText || bRollGenerating) && (
             <div className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-5 bg-gray-95 px-6 py-5 dark:bg-gray-10">
