@@ -49,9 +49,9 @@ When inconsistent, issues_he lists each concrete contradiction in short, kind, s
 
 When consistent:
 - summary_he: 2-3 Hebrew sentences describing the language the way a designer would explain it to the creator.
-- style_spec: the brief (rules below). The brand colours she chose are authoritative — build the palette around them.
-- palette: the colours in priority order with a short English role each.
-- preview: four hex colours for a tiny mock slide of her carousel — bg (slide background), accent (her highlight colour), title (headline text colour), body (body text colour). Must be readable together.
+- style_spec: the brief (rules below). The brand colours she chose are authoritative — they ARE the palette. Take layout, type, imagery and devices from the examples, never their hues: a colour that appears in the examples but isn't one of her brand colours is not part of her language (give its role to the brand colour that fits; white, black and tints of her colours are fine). With no brand colours chosen, take the palette from the examples.
+- palette: the colours in priority order with a short English role each — only her brand colours (plus white / black / tints of them) when she chose any.
+- preview: four hex colours for a tiny mock slide of her carousel — bg (slide background), accent (her highlight colour), title (headline text colour), body (body text colour). Must be readable together, and drawn from the same palette.
 - formats: how the language adapts to each output format. Each value is 50-120 English words of format-specific instructions that ADD to style_spec (never repeat or contradict it):
   - carousel: Instagram 4:5 multi-slide series — how the cover slide differs from content slides and the closing slide, slide numbering / swipe cues, how continuity carries across slides.
   - story: 9:16 vertical with the top ~14% and bottom ~24% kept clear — how text and imagery stack, how multi-frame stories connect.

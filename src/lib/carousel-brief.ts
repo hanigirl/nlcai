@@ -3,7 +3,7 @@ import type { SlideData } from "@/lib/carousel-templates"
 import type { CarouselBrief } from "@/lib/carousel-composition"
 import { loadBrandFonts } from "@/lib/broll-animation/brief"
 import { reservedZoneLines } from "@/lib/visual-language/fixed-elements"
-import { resolveDesignDirection, type DesignDirection } from "@/lib/visual-language/direction"
+import { brandPalette, resolveDesignDirection, type DesignDirection } from "@/lib/visual-language/direction"
 import { userExampleKind, type MediaStyle, type VisualLanguage } from "@/lib/visual-language/types"
 import { languageKey, languageLines, pieceLines, styleOfLines } from "@/lib/visual-language/current-brief"
 
@@ -58,11 +58,11 @@ export async function buildCarouselBrief(
     supabase.from("users").select("brand_colors, visual_language").eq("id", userId).single(),
   ])
   const row = userRow as { brand_colors?: string[] | null; visual_language?: VisualLanguage | null } | null
+  // Her brand colours win; the analysed palette (which can carry colours read
+  // off her examples) only fills in when she set none.
   const palette = isBlank
     ? []
-    : isBrand && row?.visual_language?.palette?.length
-      ? row.visual_language.palette
-      : (row?.brand_colors ?? []).map((hex, i) => ({ hex, role: i === 0 ? "primary brand colour" : "brand colour" }))
+    : brandPalette(row?.brand_colors, isBrand ? row?.visual_language?.palette : [])
   return {
     slides: input.slides,
     fonts,
@@ -70,6 +70,8 @@ export async function buildCarouselBrief(
     styleLines: input.direction.lines,
     reservedLines: reservedZoneLines(input.direction.fixed, "content", W, H),
     examples: isBrand ? await carouselExamples(supabase, userId, row?.visual_language) : [],
+    // Her brand colours set the palette: the examples go out in grayscale.
+    examplesGray: (row?.brand_colors ?? []).length > 0,
     pastedElements: input.direction.fixed.map((el) => el.name),
     style: input.style,
   }

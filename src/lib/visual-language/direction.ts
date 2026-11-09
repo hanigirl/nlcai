@@ -1,7 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { getUserApiKey } from "@/lib/api-keys"
 import { deriveNicheVisualLanguage } from "@/lib/agents/visual-language-analyzer"
-import { loadImageForModels, type ModelImage } from "@/lib/visual-language/image-input"
+import { loadExampleForModels, loadImageForModels, type ModelImage } from "@/lib/visual-language/image-input"
+import { stripLookWords } from "@/lib/visual-language/composition-only"
+import { loadBrandFonts } from "@/lib/broll-animation/brief"
+import type { BrandFont } from "@/lib/broll-animation/compose"
 import { measureElement, type FixedElement } from "@/lib/visual-language/fixed-elements"
 import sharp from "sharp"
 import { loadStyleRules, styleRuleLines } from "@/lib/style-memory"
@@ -84,7 +87,16 @@ export async function loadBrandExamples(
   kind: ExampleKind,
   exampleKinds: VisualLanguage["example_kinds"],
   max = MAX_FORMAT_EXAMPLES,
+  /**
+   * She has brand colours: the examples go out in grayscale (composition
+   * only). Left out, it's read from her brand colours.
+   */
+  gray?: boolean,
 ): Promise<ModelImage[]> {
+  if (gray === undefined) {
+    const { data: u } = await supabase.from("users").select("brand_colors").eq("id", userId).single()
+    gray = ((u as { brand_colors?: string[] | null } | null)?.brand_colors ?? []).length > 0
+  }
   const { data, error } = await supabase
     .from("user_media")
     .select("id, storage_path, metadata")
@@ -100,7 +112,7 @@ export async function loadBrandExamples(
   const picked = [...filed, ...unfiled].slice(0, max)
   const images = await Promise.all(
     picked.map((r) =>
-      loadImageForModels(supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl).catch(
+      loadExampleForModels(supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl, gray).catch(
         (err) => {
           console.error("[visual-language][format-example]", r.id, err)
           return null
@@ -109,6 +121,53 @@ export async function loadBrandExamples(
     ),
   )
   return images.filter((x): x is ModelImage => x !== null)
+}
+
+/**
+ * Her brand colours (Settings → brand colours) are the palette. Her usage
+ * examples and her analysed language set the layout and style, never the
+ * colours: an example made in other colours used to pull the whole piece
+ * into them (Nataliya, 2026-11-09). With no brand colours, the examples'
+ * colours apply as before.
+ */
+export function brandColourLines(colors: string[]): string[] {
+  if (!colors.length) return []
+  return [
+    `BRAND COLOURS — authoritative: ${colors.join(", ")} (in priority order; the first is her main colour). Build every designed surface — background, text boxes and plates, highlights, accents, text colour — from these, plus white, black and lighter / darker tints of them. This overrides any other colour named in the description above or seen in the attached example images: the examples set the layout and style, never the palette. Where an example uses a colour that isn't one of these, give that role to the brand colour that fits it. Photographic imagery may keep its natural colours, graded to sit with this palette; her attached brand elements (logo, marks) keep their own colours.`,
+  ]
+}
+
+/**
+ * The palette a layout engine (carousel, b-roll / animated frames) designs
+ * with: her brand colours when she set any — keeping the role the analysis
+ * gave each one — never a colour the analysis lifted from her examples.
+ */
+export function brandPalette(
+  colors: string[] | null | undefined,
+  analysed: { hex: string; role: string }[] | null | undefined,
+): { hex: string; role: string }[] {
+  const brand = colors ?? []
+  if (!brand.length) return analysed ?? []
+  const roleOf = new Map((analysed ?? []).map((p) => [p.hex.toLowerCase(), p.role]))
+  return brand.map((hex, i) => {
+    const rank = i === 0 ? "primary brand colour" : "brand colour"
+    const role = roleOf.get(hex.toLowerCase())
+    return { hex, role: role ? `${rank} — ${role}` : rank }
+  })
+}
+
+/**
+ * Fonts always come from her brand fonts, never from her examples (Hani,
+ * 2026-11-09). The image model can't load a font file, so it gets the name
+ * and the character to aim for.
+ */
+export function brandFontLine(fonts: BrandFont[]): string {
+  const primary = fonts.find((f) => f.role === "primary") ?? fonts[0]
+  const accent = fonts.find((f) => f !== primary)
+  if (!primary) {
+    return "TYPEFACE — a clean, highly readable Hebrew typeface. Never copy the typeface of an attached example image."
+  }
+  return `BRAND FONTS — authoritative: set all text in her brand typeface "${primary.family}"${accent ? ` (her accent typeface "${accent.family}" only for a short highlighted word)` : ""}. Never copy the typeface of an attached example image.`
 }
 
 /**
@@ -216,11 +275,16 @@ async function resolveBaseDirection(
         ? { references: [], fixed: [] }
         : await loadElements(supabase, userId, vl, opts.format)
     const references = loaded.map((r) => r.image)
+    // Her analysed language is written from her examples. Colours come from
+    // her brand colours (when she set any) and fonts from her brand fonts,
+    // so the description's colour and font words are left out (Hani,
+    // 2026-11-09) — its composition stays.
+    const look = { colours: colors.length > 0, fonts: true }
     const lines = [
       "VISUAL LANGUAGE — this is the creator's own brand. Follow it faithfully; it overrides any generic style habit:",
-      vl.style_spec.trim(),
+      stripLookWords(vl.style_spec.trim(), look),
     ]
-    const formatSpec = vl.formats?.[opts.format]?.trim()
+    const formatSpec = stripLookWords(vl.formats?.[opts.format]?.trim() ?? "", look)
     if (formatSpec) {
       lines.push("", `How this language works in this format: ${formatSpec}`)
     }
@@ -238,7 +302,7 @@ async function resolveBaseDirection(
     const examples =
       opts.allowReferences === false || !exampleKind
         ? []
-        : await loadBrandExamples(supabase, userId, exampleKind, vl.example_kinds)
+        : await loadBrandExamples(supabase, userId, exampleKind, vl.example_kinds, MAX_FORMAT_EXAMPLES, colors.length > 0)
     if (examples.length) {
       const first = references.length + 1
       references.push(...examples)
@@ -248,9 +312,17 @@ async function resolveBaseDirection(
           : `Reference images ${first}–${references.length} are`
       lines.push(
         "",
-        `${range} FINISHED ${FORMAT_NAMES[opts.format]} the creator made in her own style — this is exactly how her ${FORMAT_NAMES[opts.format]} should look. Design this image as the next one in that series: same palette and background treatment, same typography character and hierarchy, same layout devices, graphic elements, density and overall feel. Do NOT copy their text, photos or subject — this image has its own content.`,
+        colors.length
+          ? `${range} FINISHED ${FORMAT_NAMES[opts.format]} the creator made, shown in grayscale on purpose. They set the COMPOSITION only: layout, where each element sits, the text hierarchy (headline / body sizes and weights), how much text there is and the ratio of picture to text. Design this image as the next one in that series. Do NOT copy their text, photos, subject or typeface, and take no colour from them — the colours are her BRAND COLOURS below.`
+          : `${range} FINISHED ${FORMAT_NAMES[opts.format]} the creator made in her own style. They set the composition — layout, where each element sits, the text hierarchy, how much text there is and the ratio of picture to text — and, since she has no brand colours, the palette and background treatment too. Design this image as the next one in that series. Do NOT copy their text, photos, subject or typeface — this image has its own content.`,
       )
     }
+    // Last, so it wins over her analysed language (which may name colours
+    // it read off the examples) and over the examples themselves.
+    const colourLines = brandColourLines(colors)
+    if (colourLines.length) lines.push("", ...colourLines)
+    // Examples ride along as images: say outright the type isn't theirs.
+    if (examples.length) lines.push("", brandFontLine(await loadBrandFonts(supabase, userId)))
     return { source: "brand", lines, references, fixed }
   }
 

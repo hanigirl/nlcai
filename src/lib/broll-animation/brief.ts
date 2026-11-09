@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { BROLL_VIDEO_CTA, hasDescriptionCta } from "@/lib/broll-copy"
 import type { MediaStyle, VisualFormat, VisualLanguage } from "@/lib/visual-language/types"
 import type { BrandFont, CompositionBrief } from "./compose"
-import { resolveDesignDirection, type DesignDirection } from "@/lib/visual-language/direction"
+import { brandPalette, resolveDesignDirection, type DesignDirection } from "@/lib/visual-language/direction"
 import { languageKey, languageLines, pieceLines, styleOfLines } from "@/lib/visual-language/current-brief"
 
 /**
@@ -71,9 +71,9 @@ export async function buildCompositionBrief(
   const row = userRow as { brand_colors?: string[] | null; visual_language?: VisualLanguage | null } | null
   const vl = row?.visual_language
   const useBrandPalette = (!style || style === "brand") && vl?.status === "ok" && vl.palette?.length
-  const palette = useBrandPalette
-    ? vl!.palette
-    : (row?.brand_colors ?? []).map((hex, i) => ({ hex, role: i === 0 ? "primary brand colour" : "brand colour" }))
+  // Her brand colours win; the analysed palette (which can carry colours read
+  // off her examples) only fills in when she set none.
+  const palette = brandPalette(row?.brand_colors, useBrandPalette ? vl!.palette : [])
 
   return {
     hook: text.hook,

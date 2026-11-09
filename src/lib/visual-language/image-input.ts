@@ -82,3 +82,22 @@ export async function screenshotWebsite(
     return null
   }
 }
+
+/**
+ * Her usage examples with their colour taken out (Hani, 2026-11-09): they
+ * supply composition only — layout, placement, hierarchy, amount of text,
+ * picture-to-text ratio. Sent in grayscale, their palette can't leak into a
+ * piece that must be in her brand colours.
+ */
+export async function grayscaleImage(img: ModelImage): Promise<ModelImage> {
+  const pipeline = sharp(Buffer.from(img.base64, "base64")).grayscale()
+  const buf =
+    img.mediaType === "image/png" ? await pipeline.png().toBuffer() : await pipeline.jpeg({ quality: 85 }).toBuffer()
+  return { mediaType: img.mediaType, base64: buf.toString("base64") }
+}
+
+/** An example by URL, normalised and — when `gray` — without its colour. */
+export async function loadExampleForModels(url: string, gray: boolean): Promise<ModelImage> {
+  const img = await loadImageForModels(url)
+  return gray ? grayscaleImage(img) : img
+}
