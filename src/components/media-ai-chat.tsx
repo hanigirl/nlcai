@@ -8,7 +8,6 @@ import { ArrowUp, Check, Loader2, X } from "lucide-react"
 import { AiSparkle } from "@/components/ai-refine-button"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { useDismissOnOutsideClick } from "@/lib/use-dismiss-on-outside-click"
 import { startBRollEdit } from "@/lib/broll-generation-store"
 import { LongWaitBusyRow } from "@/components/long-wait-busy-row"
 import { AWAY_COPY, trackAwayResult } from "@/lib/long-wait"
@@ -559,7 +558,7 @@ export function MediaAiChat({
   }, [chatKey, clearRefs])
   const scrollRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
-  useDismissOnOutsideClick(panelRef, open && preview, () => onOpenChange(false))
+  // Stays open until she presses X — an outside click doesn't close it (Hani, 2026-11-09).
 
   const autoSent = useRef(false)
   useEffect(() => {

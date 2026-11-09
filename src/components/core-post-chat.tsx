@@ -11,7 +11,6 @@ import { toast } from "sonner"
 import { AiSparkle } from "@/components/ai-refine-button"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { useDismissOnOutsideClick } from "@/lib/use-dismiss-on-outside-click"
 import { usePreviewAccess } from "@/lib/use-scheduling-access"
 import { logLearningEdit, type LearningOutcome } from "@/lib/learning-capture"
 import { getChat, clearChat, moveChat, updateChat, useAiChat, useWatchChat, type AiChatSession } from "@/lib/ai-chat-session-store"
@@ -118,9 +117,8 @@ export function CorePostChat({
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
-  // Today's batch (2026-10-29), Hani only: above the schedule bar, closes on an outside click.
+  // Today's batch (2026-10-29), Hani only: above the schedule bar. Stays open until X (2026-11-09).
   const preview = usePreviewAccess() === true
-  useDismissOnOutsideClick(panelRef, open && preview, () => onOpenChange(false))
   // Read the latest post at open-time without re-seeding on every keystroke
   // the parent makes to corePost.
   const corePostRef = useRef(corePost)

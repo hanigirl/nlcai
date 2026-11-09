@@ -5,7 +5,6 @@ import { BidiText } from "@/components/bidi-text"
 import { useEffect, useRef } from "react"
 import { X } from "lucide-react"
 import { AiSparkle } from "@/components/ai-refine-button"
-import { useDismissOnOutsideClick } from "@/lib/use-dismiss-on-outside-click"
 import { COPY_NOUN } from "@/lib/format-copy-refine"
 import { AiChatNewButton } from "@/components/ai-chat-new-button"
 import { useWatchChat } from "@/lib/ai-chat-session-store"
@@ -46,8 +45,7 @@ export function FormatCopyChat({
   const fid = ctrl.activeFid
   const scrollRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
-  // Only the floating panel closes on an outside click; the /test page renders it in flow.
-  useDismissOnOutsideClick(panelRef, floating && !!fid, ctrl.close)
+  // Stays open until she presses X — an outside click doesn't close it (Hani, 2026-11-09).
   const session = fid ? ctrl.session(fid) : null
   // While shown, a reply lands here — nothing to reopen (lib/ai-chat-reveal).
   useWatchChat(fid ? ctrl.chatKey(fid) : null)
