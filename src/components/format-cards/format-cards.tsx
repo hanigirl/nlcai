@@ -372,12 +372,18 @@ function UniformCard({ item, selected, onSelect }: { item: FormatCardItem; selec
         )}
         {item.state === "media-busy" && (
           <div className="flex h-full flex-col items-center gap-3">
-            <Skeleton className="h-[240px] w-[180px] rounded-xl" />
+            <Skeleton className={cn("h-[240px] rounded-xl", MEDIA_ASPECT[item.fid] ?? "aspect-[4/5]")} />
             <span className="text-small text-text-neutral-default" role="status">יוצר מדיה</span>
           </div>
         )}
         {hasMedia && item.media && (
-          <FormatMediaPreview media={item.media} fid={item.fid} box="h-[240px] w-full" />
+          // The format's own shape (4:5 / 9:16) at the card's height — a
+          // full-width box was near square and cut a 4:5 post (Hani, 2026-11-10).
+          <FormatMediaPreview
+            media={item.media}
+            fid={item.fid}
+            box={cn("h-[240px] self-center", MEDIA_ASPECT[item.fid] ?? "aspect-[4/5]")}
+          />
         )}
       </div>
       <div className="flex min-h-11 items-center px-5 py-3">
