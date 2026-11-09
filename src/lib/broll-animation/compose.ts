@@ -68,6 +68,8 @@ export interface CompositionBrief {
    * usage examples, which set the composition only.
    */
   brandWins?: boolean
+  /** Her words appear at once — only elements may move (Nataliya). */
+  staticText?: boolean
   /**
    * What this clip is for, when it isn't a b-roll — e.g. a frame added to
    * her story (lib/own-media-animated): its safe zone, reserved brand areas.
@@ -138,10 +140,18 @@ function briefText(b: CompositionBrief): string {
   return [
     "TEXT (verbatim):",
     `- Hook (the hero, the first thing read): ${JSON.stringify(b.hook)}`,
-    ...(b.rest ? [`- Supporting line (smaller, optional to animate subtly): ${JSON.stringify(b.rest)}`] : []),
+    ...(b.rest
+      ? [b.staticText ? `- Supporting line (smaller): ${JSON.stringify(b.rest)}` : `- Supporting line (smaller, optional to animate subtly): ${JSON.stringify(b.rest)}`]
+      : []),
     ...(b.cta
-      ? [`- Call to action, arrives after the hook has been read (around 2–3s): ${JSON.stringify(b.cta)}`]
+      ? [b.staticText ? `- Call to action: ${JSON.stringify(b.cta)}` : `- Call to action, arrives after the hook has been read (around 2–3s): ${JSON.stringify(b.cta)}`]
       : ["- No call-to-action line (the script already has one)."]),
+    ...(b.staticText
+      ? [
+          "",
+          "STATIC TEXT — a hard rule for this creator, above every other instruction and above her own design instruction: all the text (hook, supporting line, call to action) is fully visible and legible from the very first frame (t=0) and never moves or changes — no reveal, fade, slide, scale, blur, typewriter, mask, per-word or per-letter animation, colour change or highlight sweep on the words or on the plates/boxes directly behind them. Motion is allowed ONLY on non-text elements: shapes, decorative graphics, icons, the background.",
+        ]
+      : []),
     "",
     "BRAND FONTS:",
     fonts,

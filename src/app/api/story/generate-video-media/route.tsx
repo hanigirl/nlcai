@@ -20,7 +20,7 @@ import { getAuthUser } from "@/lib/auth-user"
 import { cleanCaptionSpec, type CaptionSpec } from "@/lib/own-media"
 import { writeCaptionRecord } from "@/lib/caption-record"
 import { guardedFetch } from "@/lib/server-fetch"
-import { canOwnMediaText } from "@/lib/feature-access"
+import { canOwnMediaText, staticBRollText } from "@/lib/feature-access"
 import { NO_SCRIPT_TEXT, scriptTextFor, type TextSource } from "@/lib/script-text"
 import { captionLookFor } from "@/lib/caption-look"
 
@@ -141,6 +141,8 @@ async function burnOverlay(
    * many seconds so the text can fade in over it — a b-roll is a clip.
    */
   stillSeconds?: number,
+  /** The words are there from the first frame — no fade (Nataliya, 2026-11-10). */
+  staticText = false,
 ): Promise<void> {
   // The burned clip is as long as HER clip (a still: the hold), never the
   // cap. The caption plates are looped stills with no end of their own, so
@@ -163,14 +165,14 @@ async function burnOverlay(
       // filter shipped as "scale=1080:1920crop=..." and every burn failed
       // with "Option not found" (2026-10-07). Don't split this line.
       `[0:v]scale=${CANVAS_WIDTH}:${CANVAS_HEIGHT}:force_original_aspect_ratio=increase,crop=${CANVAS_WIDTH}:${CANVAS_HEIGHT},setsar=1[bg];` +
-      `[1:v]format=rgba,fade=t=in:st=0.7:d=0.9:alpha=1,setsar=1[cap];` +
+      (staticText ? `[1:v]format=rgba,setsar=1[cap];` : `[1:v]format=rgba,fade=t=in:st=0.7:d=0.9:alpha=1,setsar=1[cap];`) +
       // `shortest=1`: the clip ends when her footage ends, even when the
       // probe above couldn't read its length — without it overlay holds her
       // last frame for as long as the looped caption runs.
       (secondaryPath
         ? // Comes in at 2s, once the hook has been read, and stays.
           `[bg][cap]overlay=0:0:shortest=1[v1];` +
-          `[2:v]format=rgba,fade=t=in:st=2:d=0.7:alpha=1,setsar=1[cap2];` +
+          (staticText ? `[2:v]format=rgba,setsar=1[cap2];` : `[2:v]format=rgba,fade=t=in:st=2:d=0.7:alpha=1,setsar=1[cap2];`) +
           `[v1][cap2]overlay=0:0:shortest=1[v]`
         : `[bg][cap]overlay=0:0:shortest=1[v]`)
 
@@ -539,7 +541,9 @@ export async function POST(req: NextRequest) {
     // B-roll (gated): why the animated caption didn't happen, so the chat
     // can say so instead of "done" over a still plate.
     let animatedFallback: "no_key" | "failed" | undefined
-    if (rawAnimated === true && override) {
+    // Static text (Nataliya): no animated caption — the still plate, at once.
+    const staticText = format === "b_roll" && staticBRollText(user.email)
+    if (rawAnimated === true && override && !staticText) {
       const anthropicKey = await getUserApiKey(supabase, "anthropic_api_key").catch(() => null)
       if (!anthropicKey && brollScript) animatedFallback = "no_key"
       if (anthropicKey) {
@@ -556,7 +560,7 @@ export async function POST(req: NextRequest) {
         }
       }
     }
-    if (!animatedDone) await burnOverlay(srcPath, overlayPath, outputPath, secondaryPath, stillSource ? 7 : undefined)
+    if (!animatedDone) await burnOverlay(srcPath, overlayPath, outputPath, secondaryPath, stillSource ? 7 : undefined, staticText)
 
     const outBuffer = await fs.readFile(outputPath)
     // "burned-" prefix marks a text-baked output. The client reads this from

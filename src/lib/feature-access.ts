@@ -123,3 +123,12 @@ export const EDIT_AGENT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.co
 export function canUseEditAgent(email: string | null | undefined): boolean {
   return !!email && EDIT_AGENT_EMAILS.includes(email.toLowerCase())
 }
+
+/**
+ * B-roll text appears at once — no animation on the words; only elements may
+ * move (Hani for Nataliya, 2026-11-10).
+ */
+export const STATIC_BROLL_TEXT_EMAILS = ["nataliya@nataliyarey.com"]
+export function staticBRollText(email: string | null | undefined): boolean {
+  return !!email && STATIC_BROLL_TEXT_EMAILS.includes(email.toLowerCase())
+}

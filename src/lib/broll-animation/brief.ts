@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { BROLL_VIDEO_CTA, hasDescriptionCta } from "@/lib/broll-copy"
-import { canOwnMediaText } from "@/lib/feature-access"
+import { canOwnMediaText, staticBRollText } from "@/lib/feature-access"
 import type { MediaStyle, VisualFormat, VisualLanguage } from "@/lib/visual-language/types"
 import type { BrandFont, CompositionBrief } from "./compose"
 import { brandPalette, resolveDesignDirection, type DesignDirection } from "@/lib/visual-language/direction"
@@ -76,6 +76,7 @@ export async function buildCompositionBrief(
   } | null
   const vl = row?.visual_language
   const brandWins = canOwnMediaText(row?.email)
+  const staticText = staticBRollText(row?.email)
   const useBrandPalette = (!style || style === "brand") && vl?.status === "ok" && vl.palette?.length
   // Gated: her brand colours win; the analysed palette (which can carry
   // colours read off her examples) only fills in when she set none.
@@ -93,6 +94,7 @@ export async function buildCompositionBrief(
     fonts,
     styleSpec: styleLines.join("\n"),
     ...(brandWins ? { brandWins: true } : {}),
+    ...(staticText ? { staticText: true } : {}),
   }
 }
 
@@ -134,6 +136,7 @@ export async function currentCompositionBrief(
     fonts: fresh.fonts,
     styleSpec: fresh.styleSpec,
     brandWins: fresh.brandWins,
+    staticText: fresh.staticText,
   }
   return { brief, direction, changed: compositionLanguageKey(brief) !== compositionLanguageKey(stored) }
 }
