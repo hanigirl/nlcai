@@ -5,12 +5,12 @@ import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from "react"
 import { useCoverDefaultColor } from "@/lib/use-cover-brand-colors"
 import Image from "next/image"
-import { X, Sparkles, Smartphone, Video, Layers, Image as ImageIcon, Film, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, ChevronLeft, ChevronRight, Link2, Trash2, Type, Upload, type LucideIcon } from "lucide-react"
+import { X, Smartphone, Video, Layers, Image as ImageIcon, Film, ImagePlus, Mic, Square, RefreshCw, ChevronDown, Loader2, CircleCheck, Download, ChevronLeft, ChevronRight, Link2, Trash2, Type, Upload, type LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { AvatarPicker, type Avatar } from "@/components/avatar-picker"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
+import { MediaSourceChooser } from "@/components/media-source-chooser"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -47,6 +47,7 @@ import {
   DriveFolderEntry,
   DriveFolderPicker,
   closeDrivePicker,
+  openDrivePicker,
   useDrivePickStore,
   useDrivePickVariant,
 } from "@/components/drive-folder-review"
@@ -311,22 +312,6 @@ export function MediaPanelFrame({
 }
 
 /**
- * The second way in on the new media panel (Hani, 2026-11-10): her own media
- * from Drive with the script's text on it, or a chat for full control. The
- * chat isn't built yet (lib/edit-agent), so the button is there but off.
- * Shown only where the Drive-text rules run (OWN_MEDIA_TEXT_EMAILS).
- */
-function ChatSoonButton() {
-  return (
-    <Button variant="outline" disabled className="w-full gap-2">
-      <Sparkles className="size-4" />
-      צ׳אט לדיוק מירבי
-      <Badge variant="secondary">בקרוב</Badge>
-    </Button>
-  )
-}
-
-/**
  * Report a flow's busy flag to the canvas, and withdraw it on unmount: work
  * tracked in component state dies with the component, so a skeleton left up
  * after the panel closes would wait for a card that never comes.
@@ -458,6 +443,8 @@ export function MediaPanel({
   const drivePick = useDrivePickVariant()
   const drivePickStore = useDrivePickStore()
   const drivePickerOpen = !!drivePick && !!formatId && drivePickStore.pickerFor === formatId
+  // The new media panel (Figma 714:2846) names step 2 by her choice.
+  const ownMediaPanel = useOwnMediaText() === true
   useEffect(() => {
     if (drivePick && drivePickStore.pickerFor && drivePickStore.pickerFor !== formatId) closeDrivePicker()
     // Only a format switch should close it.
@@ -467,7 +454,15 @@ export function MediaPanel({
   return (
     <MediaPanelFrame
       open={isOpen}
-      title={meta ? (drivePickerOpen ? `${meta.label} · מהדרייב` : (headerTitle ?? meta.label)) : null}
+      title={
+        meta
+          ? drivePickerOpen
+            ? ownMediaPanel && formatId !== "talking_head"
+              ? "שימוש במדיה קיימת"
+              : `${meta.label} · מהדרייב`
+            : (headerTitle ?? meta.label)
+          : null
+      }
       onClose={onClose}
       footer={drivePickerOpen ? undefined : footer}
       tabs={drivePickerOpen ? undefined : tabs}
@@ -1958,6 +1953,24 @@ function CarouselFlow({
    * start and runs the generation from her answer. Every other template —
    * her language, the AI looks, the code-drawn ones — generates straight away.
    */
+  // The new panel's "השפה הויזואלית שלך": switch to her language, then
+  // generate once the pick has landed (handleGenerate reads the state).
+  const [brandGenPending, setBrandGenPending] = useState(false)
+  const generateInBrand = () => {
+    if (!brandTemplate || selectedTemplate === BRAND_TEMPLATE_ID) {
+      requestGenerate()
+      return
+    }
+    setSelectedTemplate(BRAND_TEMPLATE_ID)
+    setBrandGenPending(true)
+  }
+  useEffect(() => {
+    if (!brandGenPending || selectedTemplate !== BRAND_TEMPLATE_ID) return
+    setBrandGenPending(false)
+    requestGenerate()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brandGenPending, selectedTemplate])
+
   const startGenerate = () => {
     const blank = selectedTemplate === BLANK_TEMPLATE_ID
     if ((!blank && !askFirstRef.current) || !postId) {
@@ -3055,8 +3068,20 @@ function CarouselFlow({
             mechanism here. */}
       {drivePick ? (
         <>
+        {ownTextGate && (
+          <MediaSourceChooser
+            format="carousel"
+            brandTemplate={brandTemplate}
+            aspect="4/5"
+            busy={generating}
+            disabled={!postId || !carouselText.trim()}
+            onExisting={() => openDrivePicker("carousel")}
+            onAi={generateInBrand}
+          />
+        )}
         <DriveFolderEntry
           format="carousel"
+          statusOnly={ownTextGate}
           onImport={requestDriveImport}
           // The import's progress and failure, where she picked (live bug,
           // 2026-11-06: a video picked for a carousel failed as "not an
@@ -3075,7 +3100,6 @@ function CarouselFlow({
               : undefined
           }
         />
-        {ownTextGate && <ChatSoonButton />}
         </>
       ) : (
       <div className="flex flex-col gap-2">
@@ -3883,6 +3907,14 @@ function MediaUploadFlow({
    * (server-authoritative), so no payload is needed beyond postId.
    */
   /** `askFirst`: "עריכה עם AI" on the picked tile — ask first, then generate in it. */
+  // The new panel's "השפה הויזואלית שלך": her language when she has one,
+  // else her picked style — never "חדש לגמרי" (it talks first).
+  const aiStyle: MediaStyle = mediaStyle.brandTemplate
+    ? "brand"
+    : mediaStyle.style === "blank"
+      ? "ai-light"
+      : mediaStyle.style
+
   const handleAiGenerate = (askFirst = false) => {
     if (!postId) {
       toast.error("שמרו קודם את הפוסט כדי לייצר תמונה", { duration: 4000 })
@@ -5006,8 +5038,21 @@ function MediaUploadFlow({
                   reference link. Upload-from-computer was removed per Hani. */}
               {drivePick ? (
                 <>
+                {ownTextImagePost && (
+                  <MediaSourceChooser
+                    format="image_post"
+                    brandTemplate={mediaStyle.brandTemplate}
+                    brandLoading={mediaStyle.brandLoading}
+                    aspect="4/5"
+                    busy={inFlight > 0}
+                    disabled={!postId}
+                    onExisting={() => openDrivePicker("image_post")}
+                    onAi={() => postId && void startImageGeneration(postId, aiStyle)}
+                  />
+                )}
                 <DriveFolderEntry
                   format="image_post"
+                  statusOnly={ownTextImagePost}
                   pulling={drivePulling}
                   error={driveError}
                   // One pipeline (Hani, 2026-11-06): the AI panel, Drive gallery up.
@@ -5025,7 +5070,6 @@ function MediaUploadFlow({
                     attachDriveMedia(links[0], "image_post")
                   }}
                 />
-                {ownTextImagePost && <ChatSoonButton />}
                 </>
               ) : (
               <div className="flex flex-col gap-2">
@@ -5285,8 +5329,20 @@ function MediaUploadFlow({
                  itself, not just the form. */}
           {drivePick ? (
             <>
+            {ownStoryText && (
+              <MediaSourceChooser
+                format="story"
+                brandTemplate={mediaStyle.brandTemplate}
+                brandLoading={mediaStyle.brandLoading}
+                busy={storyInFlight > 0}
+                disabled={!postId}
+                onExisting={() => openDrivePicker("story")}
+                onAi={() => postId && void startStoryGeneration(postId, aiStyle)}
+              />
+            )}
             <DriveFolderEntry
               format="story"
+              statusOnly={ownStoryText}
               // Gated: the files she picked BECOME the story (none of the old
               // frames left trailing behind them), each with its story's text.
               onImport={
@@ -5308,7 +5364,6 @@ function MediaUploadFlow({
                   : undefined
               }
             />
-            {ownStoryText && <ChatSoonButton />}
             </>
           ) : !showStoryDriveLinks ? (
             <Button
@@ -5592,8 +5647,20 @@ function MediaUploadFlow({
               bring it back when the user asks to swap the clip. */}
           {bRollShowsMedia ? null : drivePick && isBRoll ? (
             <>
+            {bRollOwnText && (
+              <MediaSourceChooser
+                format="b_roll"
+                brandTemplate={mediaStyle.brandTemplate}
+                brandLoading={mediaStyle.brandLoading}
+                busy={bRollGenerating}
+                disabled={!postId}
+                onExisting={() => openDrivePicker("b_roll")}
+                onAi={() => postId && void startBRollGeneration(postId, bRollAttemptRef.current++, aiStyle)}
+              />
+            )}
             <DriveFolderEntry
               format={format}
+              statusOnly={bRollOwnText}
               pulling={drivePulling}
               error={driveError}
               // One pipeline (Hani, 2026-11-06): the AI panel, Drive gallery up.
@@ -5611,7 +5678,6 @@ function MediaUploadFlow({
                 attachDriveMedia(links[0], format)
               }}
             />
-            {bRollOwnText && <ChatSoonButton />}
             </>
           ) : isBRoll && !showBRollDriveField ? (
             // Same door as the story's (Hani, 2026-07-29): one button naming

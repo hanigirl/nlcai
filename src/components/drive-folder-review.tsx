@@ -649,8 +649,14 @@ export function DriveFolderEntry({
   pulling,
   error,
   onOpen,
+  statusOnly = false,
 }: {
   format: string
+  /**
+   * The new media panel (MediaSourceChooser) has its own way in — keep only
+   * the import's wiring, the picked files and its progress / failure here.
+   */
+  statusOnly?: boolean
   /** The format's own Drive import — receives the picked files' links, in order. */
   onImport?: (links: string[]) => void
   /**
@@ -720,7 +726,19 @@ export function DriveFolderEntry({
           </div>
         </div>
       )}
-      {!preview ? (
+      {statusOnly ? (
+        pulling ? (
+          <p className="flex items-center gap-2 text-xs text-text-neutral-default" role="status">
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+            מחברים את המדיה מהדרייב...
+          </p>
+        ) : error ? (
+          <p role="alert" className="flex items-start gap-1.5 text-xs text-button-destructive-default">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            {error}
+          </p>
+        ) : null
+      ) : !preview ? (
         <>
           <Button variant="outline" onClick={() => (onOpen ? onOpen() : openDrivePicker(format))} className="w-full gap-2">
             <DriveMark />
