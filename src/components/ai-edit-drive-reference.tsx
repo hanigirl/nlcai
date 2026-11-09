@@ -281,7 +281,7 @@ export function DriveReferenceDialog({
         ) : folder.items.length === 0 ? (
           <p className="rounded-lg bg-bg-surface p-4 text-small text-text-primary-default">התיקייה ריקה. העלו אליה תמונות או סרטונים בדרייב.</p>
         ) : (
-          <div className="grid max-h-[50vh] grid-cols-3 gap-2 overflow-y-auto p-0.5" role="group" aria-label="קבצים בתיקייה">
+          <div className="grid max-h-[50vh] auto-rows-max grid-cols-3 gap-2 overflow-y-auto p-0.5" role="group" aria-label="קבצים בתיקייה">
             {folder.items.map((item) => {
               const on = picked.some((p) => p.id === item.id)
               const full = !on && picked.length >= room
