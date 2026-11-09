@@ -1220,9 +1220,25 @@ function OrderFirstPicker({
   const [order, setOrder] = useState<string[]>(() => (s.picked[format] ?? []).map((i) => i.id).slice(0, max))
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [overIndex, setOverIndex] = useState<number | null>(null)
+  // Fewer files than the script has slides / frames: her last file fills the
+  // rest, and she is asked first (Hani, 2026-11-10 — the script always
+  // covers the media).
+  const [confirmShort, setConfirmShort] = useState(false)
   const byId = (id: string) => items.find((i) => i.id === id)
+  const load = () => runImport(format, order.map(byId).filter((x): x is MediaItem => !!x))
+  const carousel = format === "carousel"
+  const shortNote =
+    order.length === 1
+      ? carousel
+        ? "בחרת רק תמונה אחת. היא תופיע בכל השקופיות של הקרוסלה."
+        : "בחרת רק קובץ אחד. הוא יופיע בכל הפריימים של הסטורי."
+      : carousel
+        ? `בחרת ${order.length} תמונות ל-${max} שקופיות. התמונה האחרונה תופיע גם בשאר השקופיות.`
+        : `בחרת ${order.length} קבצים ל-${max} פריימים. הקובץ האחרון יופיע גם בשאר הפריימים.`
+  const sameLabel = order.length === 1 ? (carousel ? "כן, אותה תמונה" : "כן, אותו קובץ") : "כן, להמשיך"
 
   const toggle = (id: string) => {
+    setConfirmShort(false)
     if (order.includes(id)) setOrder(order.filter((x) => x !== id))
     else if (order.length < max) setOrder([...order, id])
   }
@@ -1336,9 +1352,25 @@ function OrderFirstPicker({
                 })}
               </div>
             )}
+            {confirmShort && !busy ? (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-start gap-2 rounded-xl border border-yellow-80 bg-bg-surface-primary-default px-3 py-2.5 dark:border-yellow-30">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-yellow-30 dark:text-yellow-80" aria-hidden />
+                  <p className="text-xs-body text-text-primary-default">{shortNote}</p>
+                </div>
+                <div className="flex gap-2">
+                  <Button onClick={load} className="flex-1">
+                    {sameLabel}
+                  </Button>
+                  <Button variant="outline" onClick={() => setConfirmShort(false)} className="flex-1">
+                    ביטול
+                  </Button>
+                </div>
+              </div>
+            ) : (
             <Button
               disabled={order.length === 0 || busy}
-              onClick={() => runImport(format, order.map(byId).filter((x): x is MediaItem => !!x))}
+              onClick={() => (maxPicks && order.length < max ? setConfirmShort(true) : load())}
               className="w-full gap-1.5"
             >
               {busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
@@ -1348,6 +1380,7 @@ function OrderFirstPicker({
                   ? `טעינת הקרוסלה (${countLabel(format, order.length)})`
                   : `טעינת הסטורי (${countLabel(format, order.length)})`}
             </Button>
+            )}
           </>
         )}
       </StickyFooter>

@@ -2660,8 +2660,15 @@ function CarouselFlow({
     // own-media-text: stored slides with the script's text and a caption
     // record each, saved before the toast — which says what really happened.
     if (ownTextGate) {
+      // The script covers the media (Hani, 2026-11-10): fewer pictures than
+      // slides → her last picture again on each slide left, with its words.
+      const slideCount = scriptTextUnits("carousel", carouselText).length
+      const filled =
+        slideCount > links.length
+          ? [...links, ...Array<string>(slideCount - links.length).fill(links[links.length - 1])]
+          : links
       const r = await importOwnSlides(
-        links.map((l) => ({ kind: "image" as const, drive: l })),
+        filled.map((l) => ({ kind: "image" as const, drive: l })),
         { caption: true },
       )
       if (!r.ok) {
