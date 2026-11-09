@@ -1,4 +1,5 @@
 import { canEditPictures } from "@/lib/feature-access"
+import { withNoInventedPeople } from "@/lib/visual-language/no-invented-people"
 import { PICTURE_UNCHANGED, adaptPictureForSlide, editPicture, wantsPictureAsIs } from "@/lib/picture-edit"
 import { canCopyStructure, gatePlacement, PICTURE_IS_BACKGROUND, refusesPlacingIntoDesign } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
@@ -337,6 +338,9 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    // Her language never puts a person in on its own (gated): the layout,
+    // the illustrations and the whole-slide fallback all read these lines.
+    direction = withNoInventedPeople(direction, user.email)
     // Her own direction for this carousel wins over the language where they
     // conflict — and is kept in the saved brief, so later AI edits honour it.
     direction = withMediaBrief(direction, normalizeMediaBrief(mediaBrief))
