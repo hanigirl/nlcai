@@ -1,5 +1,5 @@
 import { canOwnMediaText } from "@/lib/feature-access"
-import { withNoInventedPeople } from "@/lib/visual-language/no-invented-people"
+import { withGraphicOnly } from "@/lib/visual-language/graphic-only"
 import { gatePlacement } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
 import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
@@ -144,8 +144,8 @@ export async function POST(req: NextRequest) {
     const placed = gated.place
     const ownBackground = placed.length ? await pictureAsBackground(referenceBuffer(placed[0])) : null
     const baseDirection = withMediaBrief(
-      // Her language never puts a person in on its own (gated).
-      withNoInventedPeople(
+      // Her language makes graphics only, never a photo (gated).
+      withGraphicOnly(
         await resolveDesignDirection(supabase, user.id, {
           format: "b_roll",
           allowReferences: false,

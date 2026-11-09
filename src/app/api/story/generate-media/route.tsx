@@ -1,5 +1,5 @@
 import { canOwnMediaText } from "@/lib/feature-access"
-import { withNoInventedPeople } from "@/lib/visual-language/no-invented-people"
+import { withGraphicOnly } from "@/lib/visual-language/graphic-only"
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences, withPlacedImages } from "@/lib/media-brief"
 import { PICTURE_IS_BACKGROUND, refusesPlacingIntoDesign, gatePlacement } from "@/lib/feature-access"
 import { picturesPlaced, placedImages } from "@/lib/placed-check"
@@ -250,8 +250,8 @@ export async function POST(req: NextRequest) {
     // Resolved once so every frame shares it; regenerate rotates only the
     // composition.
     const base = withMediaBrief(
-      // Her language never puts a person in on its own (gated).
-      withNoInventedPeople(
+      // Her language makes graphics only, never a photo (gated).
+      withGraphicOnly(
         await resolveDesignDirection(supabase, user.id, {
           format: "story",
           style: isMediaStyle(style) ? style : undefined,

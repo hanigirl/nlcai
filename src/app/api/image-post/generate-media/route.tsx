@@ -1,5 +1,5 @@
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences, withPlacedImages } from "@/lib/media-brief"
-import { withNoInventedPeople } from "@/lib/visual-language/no-invented-people"
+import { withGraphicOnly } from "@/lib/visual-language/graphic-only"
 import { canOwnMediaText, gatePlacement, PICTURE_IS_BACKGROUND, refusesPlacingIntoDesign } from "@/lib/feature-access"
 import { picturesPlaced, placedImages } from "@/lib/placed-check"
 import { parseReferences } from "@/lib/ai-edit-references"
@@ -220,8 +220,8 @@ export async function POST(req: NextRequest) {
     const direction = withMediaReferences(
       withPlacedImages(
         withMediaBrief(
-          // Her language never puts a person in on its own (gated).
-          withNoInventedPeople(
+          // Her language makes graphics only, never a photo (gated).
+          withGraphicOnly(
             await resolveDesignDirection(supabase, user.id, {
               format: "image_post",
               style: isMediaStyle(style) ? style : undefined,
