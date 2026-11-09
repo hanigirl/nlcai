@@ -29,7 +29,6 @@ export function MediaPreviewZone({
   openLabel,
   onAiEdit,
   aiBusy = false,
-  aiVisible = false,
   aiClassName,
   onDelete,
   deleteLabel = "מחיקת המדיה",
@@ -48,7 +47,7 @@ export function MediaPreviewZone({
   /** Present = the AI sparkle is offered on this media. */
   onAiEdit?: () => void
   aiBusy?: boolean
-  /** Keep the sparkle shown without hover (design preview). */
+  /** Unused: the sparkle is always shown now. */
   aiVisible?: boolean
   /** Moves the sparkle — e.g. above a native video control bar. */
   aiClassName?: string
@@ -66,7 +65,8 @@ export function MediaPreviewZone({
           target="media"
           onClick={onAiEdit}
           busy={aiBusy}
-          visible={aiVisible}
+          // Always shown on media (Hani, 2026-11-09: "people will not find it" on hover).
+          visible
           className={aiClassName}
         />
       )}
@@ -76,6 +76,7 @@ export function MediaPreviewZone({
           icon={Trash2}
           destructive
           onClick={onDelete}
+          visible
           className={cn("bottom-2 end-2", aiClassName)}
         />
       )}
@@ -142,8 +143,11 @@ export function HoverMediaIconButton({
   onClick,
   destructive = false,
   disabled = false,
+  visible = false,
   className,
 }: {
+  /** Shown without hover. */
+  visible?: boolean
   /** Tooltip and accessible name (an action noun: "הורדת הקאבר"). */
   label: string
   icon: LucideIcon
@@ -168,7 +172,9 @@ export function HoverMediaIconButton({
         }}
         className={cn(
           "absolute z-20 flex size-9 items-center justify-center rounded-[10px] bg-white shadow-md transition-[opacity,background-color] hover:bg-gray-95 dark:bg-gray-10 dark:hover:bg-gray-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 cursor-pointer disabled:cursor-not-allowed",
-          "opacity-0 group-hover/ai:opacity-100 group-focus-within/ai:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100",
+          visible
+            ? "opacity-100"
+            : "opacity-0 group-hover/ai:opacity-100 group-focus-within/ai:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100",
           className,
         )}
       >
