@@ -110,6 +110,13 @@ export async function runOwnMediaEdit(opts: {
     // Any format (gated, Hani 2026-11-09 — "where is the text?"): a file just
     // imported always gets the script's words, even when the planner (or no
     // Claude key) came back with nothing.
+    // Her files just became the story (gated): every story is HER picture with
+    // its own text — her last file repeats (Hani, 2026-11-09: "duplicate it to
+    // three, no matter what"; iron rule 1: her picture is the background).
+    // Never a new AI-designed frame in its place.
+    if (ownStory && opts.justImported) {
+      plan.ops = plan.ops.filter((op) => op.op !== "add_slide" && op.op !== "add_animated_slide")
+    }
     const ownText = ownStory || planned.data.ownText === true
     if (ownText && opts.justImported && plan.ops.length === 0 && plan.script?.length) {
       const script = plan.script
