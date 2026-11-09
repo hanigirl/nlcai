@@ -83,8 +83,12 @@ export type FormatPreviewData = {
   corePostId: string
   format: FormatId
   hook: string
-  /** The format's own body, in full — what `assemble.ts` sends as the caption. */
+  /** What `assemble.ts` sends as the caption: the description, else the script. */
   caption: string
+  /** The post's description (045) — edited in the preview; "" = none yet. */
+  description?: string
+  /** The format's script — behind a link while scheduling (Hani, 2026-11-09). */
+  script?: string
   /** Every content asset in slide order (carousel), or the single image/video. */
   slides: PreviewSlide[]
   /** Reel cover — attached as the reel's thumbnail. */

@@ -1090,6 +1090,8 @@ export default function CalendarPage() {
   const [previewDetail, setPreviewDetail] = useState<{
     key: string
     caption: string
+    description: string
+    script: string
     slides: PreviewSlide[]
     coverUrl?: string
   } | null>(null)
@@ -1103,6 +1105,7 @@ export default function CalendarPage() {
         const p = data?.post as
           | {
               formatPosts?: Record<string, string>
+              formatDescriptions?: Record<string, string>
               formatMedia?: Record<string, string>
               videoUrl?: string | null
               coverUrl?: string | null
@@ -1120,16 +1123,20 @@ export default function CalendarPage() {
           if (urls.length === 0 && p.formatMedia?.story) urls = [p.formatMedia.story]
         } else if (format === "talking_head") urls = p.videoUrl ? [p.videoUrl] : []
         else if (p.formatMedia?.[format]) urls = [p.formatMedia[format]]
+        const script = p.formatPosts?.[format] ?? ""
+        const description = p.formatDescriptions?.[format] ?? ""
         setPreviewDetail({
           key,
-          caption: p.formatPosts?.[format] ?? "",
+          caption: description.trim() || script,
+          description,
+          script,
           slides: urls.map(slide),
           coverUrl: format === "talking_head" ? p.coverUrl ?? undefined : undefined,
         })
       })
       .catch((err) => {
         console.error("[calendar] failed to load post for preview", err)
-        setPreviewDetail({ key, caption: "", slides: [] })
+        setPreviewDetail({ key, caption: "", description: "", script: "", slides: [] })
       })
   }
   // A draft laid on the board by "סידור אוטומטי בלוח" opens with its own
@@ -1246,6 +1253,8 @@ export default function CalendarPage() {
           (hookByPostId.get(previewRow.corePostId) || previewRow.hook || "").trim() ||
           "פוסט מתוזמן",
         caption: previewDetail?.key === previewKey ? previewDetail.caption : "",
+        description: previewDetail?.key === previewKey ? previewDetail.description : "",
+        script: previewDetail?.key === previewKey ? previewDetail.script : "",
         slides: previewDetail?.key === previewKey ? previewDetail.slides : [],
         coverUrl: previewDetail?.key === previewKey ? previewDetail.coverUrl : undefined,
         handle: connection.primary?.handle ?? "",
@@ -1299,16 +1308,19 @@ export default function CalendarPage() {
           fetch(`/api/core-posts/${previewRow.corePostId}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ formatPosts: { [previewRow.format]: caption } }),
+            // The description (045) — the script is left as it is.
+            body: JSON.stringify({ formatDescriptions: { [previewRow.format]: caption } }),
           })
             .then((r) => {
               if (!r.ok) throw new Error(`PATCH ${r.status}`)
-              setPreviewDetail((d) => (d && d.key === key ? { ...d, caption } : d))
-              toast.success("הכיתוב עודכן")
+              setPreviewDetail((d) =>
+                d && d.key === key ? { ...d, description: caption, caption: caption.trim() || d.script } : d,
+              )
+              toast.success("התיאור עודכן")
             })
             .catch((err) => {
-              console.error("[calendar] caption save failed", err)
-              toast.error("לא הצלחנו לשמור את הכיתוב. נסו שוב.")
+              console.error("[calendar] description save failed", err)
+              toast.error("לא הצלחנו לשמור את התיאור. נסו שוב.")
             })
         },
         onUnschedule: () => {

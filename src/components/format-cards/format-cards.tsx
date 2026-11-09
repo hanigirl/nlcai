@@ -23,6 +23,7 @@
 import { VideoWithPlay } from "@/components/video-with-play"
 import { playableVideoSrc, videoPreviewSrc } from "@/lib/drive-media"
 import { useState, type ReactNode } from "react"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Check,
   ChevronLeft,
@@ -558,10 +559,15 @@ export function FormatPanelSchedule({
   fid,
   hasMedia,
   onGoToMedia,
+  description,
+  onDescriptionChange,
 }: {
   fid: string
   hasMedia: boolean
   onGoToMedia: () => void
+  /** The post's description — what goes out with it (Hani, 2026-11-09). */
+  description?: string
+  onDescriptionChange?: (text: string) => void
 }) {
   if (!hasMedia) {
     return (
@@ -577,6 +583,19 @@ export function FormatPanelSchedule({
   }
   return (
     <div className="flex flex-col gap-3">
+      {onDescriptionChange && fid !== "story" && (
+        <label className="flex flex-col gap-1.5">
+          <span className="text-small-bold text-text-primary-default">תיאור הפוסט</span>
+          <Textarea
+            value={description ?? ""}
+            onChange={(e) => onDescriptionChange(e.target.value)}
+            rows={6}
+            dir="rtl"
+            placeholder="הטקסט שעולה עם הפוסט. בלי תיאור, יעלה הסקריפט."
+            className="min-h-32 text-small leading-relaxed"
+          />
+        </label>
+      )}
       <ScheduleIllustration />
       <p className="text-small text-text-neutral-default">
         אחרי האישור, הפוסט מחכה בפאנל הצד של לוח התזמון עד שמתזמנים אותו.
