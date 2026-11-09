@@ -11,6 +11,7 @@ import { toast } from "sonner"
 import { AvatarPicker, type Avatar } from "@/components/avatar-picker"
 import { Button } from "@/components/ui/button"
 import { MediaSourceChooser } from "@/components/media-source-chooser"
+import { scriptTextUnits } from "@/lib/script-text"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -174,6 +175,8 @@ interface MediaPanelProps {
   onCarouselImagesChange: (images: string[] | null) => void
   onCarouselSlidesChange: (slides: SlideData[] | null) => void
   carouselText: string
+  /** The story's script — how many frames the Drive gallery lets her pick. */
+  storyText?: string
   /**
    * Per-slide Drive links the carousel was imported from, in slide order.
    * Lifted (like the images) because they live on the post now (migration
@@ -413,6 +416,7 @@ export function MediaPanel({
   onCarouselImagesChange,
   onCarouselSlidesChange,
   carouselText,
+  storyText = "",
   carouselDriveLinks,
   onCarouselDriveLinksChange,
   storyDriveLinks,
@@ -523,6 +527,12 @@ export function MediaPanel({
             key={formatId}
             format={formatId}
             scriptText={formatId === "carousel" ? carouselText : ""}
+            // The new panel: no more pictures than the script has frames / slides.
+            maxPicks={
+              ownMediaPanel && (formatId === "carousel" || formatId === "story")
+                ? scriptTextUnits(formatId, formatId === "carousel" ? carouselText : storyText).length || undefined
+                : undefined
+            }
           />
         )}
 

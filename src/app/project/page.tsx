@@ -2679,6 +2679,7 @@ function ProjectPageInner() {
         onCarouselImagesChange={setCarouselImages}
         onCarouselSlidesChange={setCarouselSlides}
         carouselText={formatPosts["carousel"] ?? ""}
+        storyText={formatPosts["story"] ?? ""}
         carouselDriveLinks={carouselDriveLinks}
         onCarouselDriveLinksChange={(links) => {
           setCarouselDriveLinks(links)

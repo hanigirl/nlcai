@@ -954,10 +954,16 @@ function GridSkeleton({ format }: { format: string }) {
 export function DriveFolderPicker({
   format,
   scriptText,
+  maxPicks,
 }: {
   format: string
   /** The format's script — A shows each slide's words on its slot. */
   scriptText: string
+  /**
+   * As many frames / slides as the script has (Hani, 2026-11-10: a 3-frame
+   * story takes 3, no more) — the new media panel passes it.
+   */
+  maxPicks?: number
 }) {
   const s = useDrivePickStore()
   const k = FORMAT_FOLDER[format] ?? "images"
@@ -1056,7 +1062,7 @@ export function DriveFolderPicker({
           </a>
         </div>
       ) : format === "carousel" || format === "story" ? (
-        <OrderFirstPicker format={format} items={f.items} scriptText={scriptText} />
+        <OrderFirstPicker format={format} items={f.items} scriptText={scriptText} maxPicks={maxPicks} />
       ) : (
         <SinglePickConfirm format={format} items={f.items} />
       )}
@@ -1176,18 +1182,29 @@ function useSlideTexts(format: string, scriptText: string): string[] {
 
 const MAX_FRAMES = 10
 
-function OrderFirstPicker({ format, items, scriptText }: { format: string; items: MediaItem[]; scriptText: string }) {
+function OrderFirstPicker({
+  format,
+  items,
+  scriptText,
+  maxPicks,
+}: {
+  format: string
+  items: MediaItem[]
+  scriptText: string
+  maxPicks?: number
+}) {
+  const max = maxPicks && maxPicks > 0 ? Math.min(maxPicks, MAX_FRAMES) : MAX_FRAMES
   const s = useDrivePickStore()
   const busy = s.importing === format
   const texts = useSlideTexts(format, scriptText)
-  const [order, setOrder] = useState<string[]>(() => (s.picked[format] ?? []).map((i) => i.id))
+  const [order, setOrder] = useState<string[]>(() => (s.picked[format] ?? []).map((i) => i.id).slice(0, max))
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [overIndex, setOverIndex] = useState<number | null>(null)
   const byId = (id: string) => items.find((i) => i.id === id)
 
   const toggle = (id: string) => {
     if (order.includes(id)) setOrder(order.filter((x) => x !== id))
-    else if (order.length < MAX_FRAMES) setOrder([...order, id])
+    else if (order.length < max) setOrder([...order, id])
   }
   const move = (from: number, to: number) => {
     if (from === to) return
@@ -1201,7 +1218,12 @@ function OrderFirstPicker({ format, items, scriptText }: { format: string; items
     <>
       <p className="text-xs-body text-text-neutral-default">
         לחצו על ה{format === "carousel" ? "תמונות" : "תמונות והסרטונים"} לפי הסדר שבו הם יופיעו
-        {format === "carousel" && texts.length > 0 ? ` · בסקריפט יש ${texts.length} שקופיות` : ""}.
+        {maxPicks
+          ? ` · בסקריפט יש ${countLabel(format, max)}`
+          : format === "carousel" && texts.length > 0
+            ? ` · בסקריפט יש ${texts.length} שקופיות`
+            : ""}
+        .
       </p>
 
       <div className={cn("grid gap-3", "grid-cols-3")}>
@@ -1214,7 +1236,7 @@ function OrderFirstPicker({ format, items, scriptText }: { format: string; items
               format={format}
               selected={at >= 0}
               badge={at >= 0 ? at + 1 : 0}
-              disabled={busy}
+              disabled={busy || (at < 0 && !!maxPicks && order.length >= max)}
               onClick={() => toggle(it.id)}
             />
           )
@@ -1300,7 +1322,11 @@ function OrderFirstPicker({ format, items, scriptText }: { format: string; items
               className="w-full gap-1.5"
             >
               {busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
-              {format === "carousel" ? `טעינת הקרוסלה (${countLabel(format, order.length)})` : `טעינת הסטורי (${countLabel(format, order.length)})`}
+              {maxPicks
+                ? `${format === "carousel" ? "טעינת הקרוסלה" : "טעינת הסטורי"} (${order.length}/${max})`
+                : format === "carousel"
+                  ? `טעינת הקרוסלה (${countLabel(format, order.length)})`
+                  : `טעינת הסטורי (${countLabel(format, order.length)})`}
             </Button>
           </>
         )}
