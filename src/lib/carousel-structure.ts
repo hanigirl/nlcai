@@ -63,7 +63,7 @@ export async function readCarouselStructure(
         "",
         "1. ANALYSIS (English, precise, for a designer who cannot see the images): for each reference slide — its role (cover / point / list / quote / CTA…), the layout (where the title, body, numbers, image or shape sit, alignment, proportions, margins), the text hierarchy (sizes relative to each other, weights), and how many lines of text it holds. Then the carousel's look: background colours, text colours, accent colour, type style (serif / sans, weight, case), decoration and recurring devices (slide numbers, arrows, handles, frames).",
         "",
-        `2. SLIDES: her script, re-split into EXACTLY ${refs.length} slides that fit those roles — the cover gets the hook, the last slide its call to action if the reference ends with one. Use ONLY her script's words (Hebrew), in order; you may split or merge her slides and shorten to fit a slide's text amount, never add a claim or a new idea. Each slide: a title and an optional body.`,
+        `2. SLIDES: her script, re-split into EXACTLY ${refs.length} slides that fit those roles — the cover gets the hook, the last slide its call to action if the reference ends with one. HARD RULE: use ONLY her script's words (Hebrew), copied word for word, in order — you may split or merge her slides, but never shorten, reword, summarise or add a single word, title or idea that isn't in her script. Each slide: a title and an optional body.`,
         "",
         "Her script:",
         ...script.map((s) => `- [${s.type}] ${s.title}${s.body ? ` — ${s.body}` : ""}`),

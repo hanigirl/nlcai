@@ -1,6 +1,7 @@
 import { gatePlacement } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
 import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
+import { stripFrameMarkers } from "@/lib/story-text-split"
 import { NextRequest, NextResponse } from "next/server"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { createClient } from "@/lib/supabase/server"
@@ -89,13 +90,11 @@ export async function POST(req: NextRequest) {
       .maybeSingle()
     const variantBody = (variantRow as { body: string | null } | null)?.body
 
-    // b-roll's script IS the hook (see api/core-posts/[id]/media), so the
-    // caption is the hook alone unless the variant carries more.
-    const hook =
-      post.hook_text?.trim() ||
-      post.title?.trim() ||
-      variantBody?.split(/\n+/)[0]?.trim() ||
-      ""
+    // The b-roll's script is the text, word for word (Hani, 2026-11-09):
+    // its first line is the hook, the rest the reading caption. The post's
+    // hook / title only when the b-roll has no script of its own.
+    const scriptHook = variantBody ? stripFrameMarkers(variantBody).split(/\n+/).map((l) => l.trim()).find(Boolean) : undefined
+    const hook = scriptHook || post.hook_text?.trim() || post.title?.trim() || ""
     if (!hook) {
       return NextResponse.json(
         {
@@ -105,7 +104,7 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       )
     }
-    const rest = variantBody
+    const rest = (variantBody ? stripFrameMarkers(variantBody) : undefined)
       ?.split(/\n+/)
       .map((l) => l.trim())
       .filter(Boolean)

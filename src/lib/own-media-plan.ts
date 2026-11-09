@@ -1,4 +1,6 @@
 import { scriptBlocks, storyFrames, stripFrameMarkers } from "@/lib/story-text-split"
+import { parseTextToSlides } from "@/lib/carousel-slides"
+import { parseImagePostBody } from "@/lib/image-post-text"
 import Anthropic from "@anthropic-ai/sdk"
 import {
   canAddAnimatedFrame,
@@ -73,22 +75,24 @@ export async function planOwnMediaEdit(
 ): Promise<OwnEditPlan> {
   const { format, frames } = input
   const n = frames.length
-  // A story's script is already split into stories (the card's "סטורי 1…"):
-  // each frame carries its own story's words, verbatim (Hani, 2026-11-09 —
-  // three stories in the script came back as one frame with a made-up title).
-  const scriptStories = format === "story" && input.post.formatBody ? storyFrames(input.post.formatBody) : []
+  // MEDIA TEXT IS THE SCRIPT (Hani, 2026-11-09): every word on her media
+  // comes from the format's script, split the way the card splits it — a
+  // story's stories, a carousel's slides, an image post's / b-roll's lines.
+  // Talking in everyday words is for the script editor, never for the media.
+  const units = scriptUnits(format, input.post.formatBody)
+  const unitName = format === "story" ? "story" : format === "carousel" ? "slide" : "text"
   const isSet = isSetFormat(format)
   const animated = canAddAnimatedFrame(format)
   const client = new Anthropic({ apiKey })
   const ops = [
-    `{"op":"set_caption","frames":[1..${n}],"headline"?:string,"body"?:string,"position"?:"top"|"center"|"bottom","style"?:{"pill"?:"#hex"|"none","text"?:"#hex","scale"?:0.6-1.5}} — add, rewrite, restyle or move the caption. Omitted fields keep the frame's current caption values; to change only the position or look, send only those. Text must be natural spoken Hebrew, short.`,
+    `{"op":"set_caption","frames":[1..${n}],"headline"?:string,"body"?:string,"position"?:"top"|"center"|"bottom","style"?:{"pill"?:"#hex"|"none","text"?:"#hex","scale"?:0.6-1.5}} — add, restyle or move the caption. Omitted fields keep the frame's current caption values; to change only the position or look, send only those. The words come from the script, exactly as written — see the hard rule.`,
     `{"op":"remove_caption","frames":[...]} — take our caption off (back to her file as she brought it).`,
     ...(isSet
       ? [
-          `{"op":"add_slide","after":0..${n},"headline"?:string,"body"?:string,"role"?:"closing"|"content"|"cover","design"?:string} — a NEW STILL ${NOUN[format].item} (one image) designed by AI in her visual language, inserted after that position (0 = first). Write its Hebrew text from the post when she doesn't dictate it (a closing frame = a short CTA from the post). design = ${DESIGN_FIELD}`,
+          `{"op":"add_slide","after":0..${n},"headline"?:string,"body"?:string,"role"?:"closing"|"content"|"cover","design"?:string} — a NEW STILL ${NOUN[format].item} (one image) designed by AI in her visual language, inserted after that position (0 = first). Its text is the script's ${NOUN[format].item} for that position, exactly as written (or her own dictated words); with no script text for it, it carries no text. design = ${DESIGN_FIELD}`,
           ...(animated
             ? [
-                `{"op":"add_animated_slide","after":0..${n},"headline":string,"body"?:string,"role"?:"closing"|"content"|"cover","design"?:string} — a NEW ${NOUN[format].item} with ANIMATED text: a 7-second vertical video clip, the same motion-design engine as our b-roll (her fonts, brand colours and visual language, kinetic Hebrew type over an AI background). Use it whenever she asks for animation / motion / moving or animated text / "מונפש" / "אנימציה" / "שזז" / "וידאו" for a new frame. headline = the main line (short, natural spoken Hebrew; from the post when she doesn't dictate it), body = an optional short second line. design = ${DESIGN_FIELD} Takes ~3 minutes.`,
+                `{"op":"add_animated_slide","after":0..${n},"headline":string,"body"?:string,"role"?:"closing"|"content"|"cover","design"?:string} — a NEW ${NOUN[format].item} with ANIMATED text: a 7-second vertical video clip, the same motion-design engine as our b-roll (her fonts, brand colours and visual language, kinetic Hebrew type over an AI background). Use it whenever she asks for animation / motion / moving or animated text / "מונפש" / "אנימציה" / "שזז" / "וידאו" for a new frame. headline/body = the script's story for that position, exactly as written (or her own dictated words). design = ${DESIGN_FIELD} Takes ~3 minutes.`,
                 `{"op":"edit_animated_frame","frame":k,"instruction":string,"design"?:string,"headline"?:string,"body"?:string,"newBackground"?:boolean} — CHANGE an AI-made animated frame IN PLACE (only a frame marked AI-MADE with animated text; never her own). Applies her request to that frame's motion design and re-renders it: background colour / plain / none, text colour, size, motion style, calmer or bolder, its words. instruction = her request about this frame, in her own words (Hebrew, copied as she said it). design = ${DESIGN_FIELD} headline/body = the frame's NEW words, only when she changes the words (send every line that should be on it); omit both to keep its words. newBackground:true only when she wants a different background PICTURE (another image); a plain / solid / no background, or removing a loud one, needs no new picture. Takes ~2 minutes. Use this — never add_animated_slide — when she asks to change a frame we already animated.`,
               ]
             : []),
@@ -118,10 +122,10 @@ export async function planOwnMediaEdit(
     "Reply with JSON only: {\"reply\": \"one short Hebrew line, plural addressing (אתם), saying what you did / why not\", \"ops\": [...], \"refused\"?: true}.",
     "When you plan ops, the reply states what you changed, in her own words, short and sure (e.g. \"בפריים 3 הורדתי את הרקע הלבן הבומבסטי, והטקסט עכשיו לבן ופשוט.\") — no disclaimers, no promises to retry.",
     "Never stack a second caption over words that are already there: a frame marked as already having its own words gets no caption unless she explicitly asks to put text on it.",
-    ...(scriptStories.length
+    "HARD RULE — THE SCRIPT IS THE TEXT. Every word that goes ON the media (captions, headlines, new frames' text) is copied from the script below, word for word. Never reword, shorten, summarise, translate or 'improve' it, and never invent a title, headline, hook or CTA that isn't in it. Writing in everyday words is the script editor's job, not yours. The only other words allowed are ones she dictates in her request, copied exactly.",
+    ...(units.length > 1
       ? [
-          `THE SCRIPT IS THE TEXT. This story's script has ${scriptStories.length} stories, listed below as "Script stories". Frame k carries script story k, word for word — never reword it, shorten it, or invent a title or headline that isn't in it. Use other words only when she dictates them in her request.`,
-          `The set follows the script: ${scriptStories.length} frames, in its order. Her frames take the first stories; when she has fewer frames than the script, add the missing stories as NEW frames after her last one (add_animated_slide when her media is video or she asked for motion, else add_slide), each with its script story's exact text. Never fold several stories into one frame.`,
+          `The set follows the script: ${units.length} ${NOUN[format].item}s, in its order — ${NOUN[format].item} k carries script ${unitName} k. Her ${NOUN[format].item}s take the first ones; when she has fewer than the script, add the missing ones as NEW ${NOUN[format].item}s after her last one${animated ? " (add_animated_slide when her media is video or she asked for motion, else add_slide)" : ""}, each with its exact script text. Never fold several into one ${NOUN[format].item}, and never add one the script doesn't have unless she dictates its words.`,
         ]
       : []),
     "Only touch the frames she means: a named one (\"פריים 2\", \"האחרון\", \"השקופית הזאת\" = the one on screen), otherwise all frames her request is about.",
@@ -139,8 +143,8 @@ export async function planOwnMediaEdit(
       formatText: input.post.formatBody ? stripFrameMarkers(input.post.formatBody).slice(0, 1500) : null,
       coreText: input.post.formatBody ? undefined : input.post.body?.slice(0, 1500),
     }),
-    ...(scriptStories.length
-      ? ["", "Script stories (exact text, one per frame, in order):", ...scriptStories.map((t, i) => `${i + 1}. ${JSON.stringify(t)}`)]
+    ...(units.length
+      ? ["", `The script, per ${NOUN[format].item} (exact text to put on the media, in order):`, ...units.map((u, i) => `${i + 1}. ${JSON.stringify(u)}`)]
       : []),
     "",
     "Allowed ops:",
@@ -167,35 +171,67 @@ export async function planOwnMediaEdit(
   const sane = sanitiseOps(json.ops, n, isSet, animated)
   return {
     reply: typeof json.reply === "string" && json.reply.trim() ? json.reply.trim() : "",
-    ops: scriptStories.length ? holdToScript(sane, scriptStories, input.instruction) : sane,
+    ops: holdToScript(sane, units, input.instruction),
     refused: json.refused === true || undefined,
   }
 }
 
-/** Story k's words as a caption: story 1 leads with its first block as the headline. */
-function storyCaption(stories: string[], k: number): { headline?: string; body?: string } | null {
-  const text = stories[k]
-  if (!text) return null
-  if (k > 0) return { headline: undefined, body: text }
-  const [headline, ...rest] = scriptBlocks(text)
-  return { headline: headline || undefined, body: rest.length ? rest.join("\n\n") : undefined }
+export type ScriptUnit = { headline?: string; body?: string }
+
+/**
+ * The script as the media's text, one unit per frame / slide — split exactly
+ * the way the card shows it: a story's stories (story 1 leads with its first
+ * block as the headline), a carousel's slides, an image post's labelled
+ * lines, a b-roll's hook + reading caption.
+ */
+export function scriptUnits(format: OwnEditFormat, body: string | null | undefined): ScriptUnit[] {
+  if (!body?.trim()) return []
+  const clean = (u: ScriptUnit): ScriptUnit | null => {
+    const headline = u.headline?.trim() || undefined
+    const text = u.body?.trim() || undefined
+    return headline || text ? { headline, body: text } : null
+  }
+  const keep = (list: (ScriptUnit | null)[]) => list.filter((u): u is ScriptUnit => !!u)
+  switch (format) {
+    case "story":
+      return keep(
+        storyFrames(body).map((text, k) => {
+          if (k > 0) return clean({ body: text })
+          const [headline, ...rest] = scriptBlocks(text)
+          return clean({ headline, body: rest.join("\n\n") })
+        }),
+      )
+    case "carousel":
+      return keep(parseTextToSlides(stripFrameMarkers(body)).map((sl) => clean({ headline: sl.title, body: sl.body })))
+    case "image_post": {
+      const t = parseImagePostBody(body)
+      return t ? keep([clean({ headline: t.headline, body: [t.subheadline, t.bottom].filter(Boolean).join("\n") })]) : []
+    }
+    default: {
+      // b-roll (one piece): the hook line, then the reading caption.
+      const lines = stripFrameMarkers(body).split("\n").map((l) => l.trim()).filter(Boolean)
+      return lines.length ? keep([clean({ headline: lines[0], body: lines.slice(1).join(" ") })]) : []
+    }
+  }
 }
 
 const squash = (t: string) => t.replace(/[\s"'״׳.,!?:;—–-]+/g, "")
 
 /**
- * The model's wording never replaces the script (Hani, 2026-11-09: "it is
- * reinventing the title, which is a big no-no"). A caption or new frame gets
- * its script story's exact text — unless the text is hers, dictated in this
- * request. A caption over several frames becomes one per frame, each with its
- * own story.
+ * The hard rule, in code (Hani, 2026-11-09: "it is reinventing the title,
+ * which is a big no-no"): whatever the model wrote, the words on her media
+ * are the script's — unless they're hers, dictated in this request. A caption
+ * over several frames becomes one per frame, each with its own unit. A new
+ * frame the script has no text for gets no text; a planned new frame with
+ * made-up words is dropped.
  */
-export function holdToScript(ops: OwnEditOp[], stories: string[], instruction: string): OwnEditOp[] {
+export function holdToScript(ops: OwnEditOp[], units: ScriptUnit[], instruction: string): OwnEditOp[] {
   const said = squash(instruction)
   const dictated = (h?: string, b?: string) => {
     const t = squash([h, b].filter(Boolean).join(""))
     return !!t && said.includes(t)
   }
+  const unitAt = (k: number): ScriptUnit | null => units[k] ?? null
   const out: OwnEditOp[] = []
   const added: number[] = []
   for (const op of ops) {
@@ -206,21 +242,44 @@ export function holdToScript(ops: OwnEditOp[], stories: string[], instruction: s
         continue
       }
       for (const f of op.frames) {
-        const cap = storyCaption(stories, f - 1)
-        out.push(cap ? { ...op, frames: [f], ...cap } : { ...op, frames: [f] })
+        const u = unitAt(f - 1)
+        // No script text for this frame: keep its current words (look/position only).
+        out.push(u ? { ...op, frames: [f], headline: u.headline, body: u.body } : { ...op, frames: [f], headline: undefined, body: undefined })
       }
       continue
     }
     if (op.op === "add_slide" || op.op === "add_animated_slide") {
       // Where it lands: after `after`, past the new frames already put there.
       const at = op.after + added.filter((a) => a <= op.after).length
-      added.push(op.after)
       if (dictated(op.headline, op.body)) {
+        added.push(op.after)
         out.push(op)
         continue
       }
-      const cap = storyCaption(stories, at)
-      out.push(cap ? { ...op, ...cap, headline: cap.headline ?? cap.body, body: cap.headline ? cap.body : undefined } : op)
+      const u = unitAt(at)
+      if (u) {
+        added.push(op.after)
+        // An animated frame needs a main line: a body-only unit leads with its text.
+        out.push(
+          op.op === "add_animated_slide" && !u.headline
+            ? { ...op, headline: u.body, body: undefined }
+            : { ...op, headline: u.headline, body: u.body },
+        )
+      } else if (op.op === "add_slide" && !op.headline && !op.body) {
+        // A picture-only slide she asked for: no words to hold.
+        added.push(op.after)
+        out.push(op)
+      }
+      // Beyond the script with the model's own words: dropped, never shown.
+      continue
+    }
+    if (op.op === "edit_animated_frame" && (op.headline !== undefined || op.body !== undefined) && !dictated(op.headline, op.body)) {
+      const u = unitAt(op.frame - 1)
+      out.push(
+        u
+          ? { ...op, headline: u.headline ?? u.body, body: u.headline ? u.body : undefined }
+          : { ...op, headline: undefined, body: undefined },
+      )
       continue
     }
     out.push(op)
