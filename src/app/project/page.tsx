@@ -2499,7 +2499,10 @@ function ProjectPageInner() {
       )
       if (panelStep === "media") {
         // No media (or media being made, or replacing it): the real flows.
-        if (!hasMedia || mediaReplacing) return { tabs }
+        // The new panel (Hani only): media being made shows here as the
+        // loading media, once — not the flows with their old preview below.
+        const showMedia = hasMedia || (ownTextGate && fid !== "talking_head" && item.state === "media-busy")
+        if (!showMedia || mediaReplacing) return { tabs }
         return {
           tabs,
           hideFlows: true,
@@ -2515,6 +2518,7 @@ function ProjectPageInner() {
                   <FormatPanelMedia
                     fid={fid}
                     media={item.media}
+                    mediaBusy={ownTextGate && item.state === "media-busy"}
                     onAiEditMedia={onAiEditMedia}
                     onDeleteMedia={onDeleteMedia}
                     storyPlayer={ownTextGate}
@@ -2531,6 +2535,7 @@ function ProjectPageInner() {
               <FormatPanelMedia
                 fid={fid}
                 media={item.media}
+                mediaBusy={ownTextGate && item.state === "media-busy"}
                 onAiEditMedia={onAiEditMedia}
                 onDeleteMedia={onDeleteMedia}
                 storyPlayer={ownTextGate}

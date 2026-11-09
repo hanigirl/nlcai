@@ -5426,7 +5426,9 @@ function MediaUploadFlow({
                  (Hani, 2026-07-29 — Figma 598:83). Work in progress renders
                  here at full size rather than as a 72px tile off to the side,
                  so what you watch being made is the thing you end up with. */}
-          {(savedStorySet.length > 0 || busyOnStory) && (
+          {/* The new panel shows her media once, at the top of the tab — never
+              this older preview under the flows as well (Hani, 2026-11-10). */}
+          {!ownStoryText && (savedStorySet.length > 0 || busyOnStory) && (
             <div className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-5 bg-gray-95 px-6 py-5 dark:bg-gray-10">
               <p className="text-center text-xs text-text-neutral-default">
                 {busyOnStory ? "מייצרים מדיה לסטורי..." : "הסטורי שלך"}
@@ -5545,7 +5547,7 @@ function MediaUploadFlow({
             </>
           )}
 
-          {!hydrating && previewUrl && !isBRoll && (
+          {!hydrating && previewUrl && !isBRoll && !ownTextImagePost && !ownStoryText && (
             <div className="flex flex-col gap-2">
               <p className="text-small-bold text-text-primary-default">
                 המדיה הנוכחית
