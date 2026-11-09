@@ -3064,8 +3064,10 @@ function CarouselFlow({
           pulling={driveImporting}
           error={driveImportError}
           // One pipeline (Hani, 2026-11-06): the AI panel, Drive gallery up.
+          // The new panel opens the folder's gallery itself — the AI chat is
+          // off on these accounts, so the AI-panel route did nothing.
           onOpen={
-            postId
+            postId && !ownTextGate
               ? () => {
                   requestDrivePicker("carousel")
                   requestGenerate(true)
@@ -5010,7 +5012,7 @@ function MediaUploadFlow({
                   error={driveError}
                   // One pipeline (Hani, 2026-11-06): the AI panel, Drive gallery up.
                   onOpen={
-                    postId
+                    postId && !ownTextImagePost
                       ? () => {
                           requestDrivePicker("image_post")
                           handleAiGenerate(true)
@@ -5298,7 +5300,7 @@ function MediaUploadFlow({
               {...(ownStoryText ? { pulling: storyDriveImporting, error: storyDriveError } : {})}
               // One pipeline (Hani, 2026-11-06): the AI panel, Drive gallery up.
               onOpen={
-                postId
+                postId && !ownStoryText
                   ? () => {
                       requestDrivePicker("story")
                       handleStoryGenerate(true)
@@ -5596,7 +5598,7 @@ function MediaUploadFlow({
               error={driveError}
               // One pipeline (Hani, 2026-11-06): the AI panel, Drive gallery up.
               onOpen={
-                postId && format === "b_roll"
+                postId && format === "b_roll" && !bRollOwnText
                   ? () => {
                       requestDrivePicker("b_roll")
                       handleBRollGenerate(true)
