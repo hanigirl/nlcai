@@ -1,6 +1,15 @@
 "use client"
 
 import { isVideoSlide } from "@/lib/carousel-video"
+import { isOwnCarousel } from "@/lib/carousel-own"
+import { makeCarouselVideoSlide, uploadSlotPicture } from "@/lib/carousel-video-client"
+import { useOwnMediaText } from "@/lib/use-scheduling-access"
+import type { AsIsItem } from "@/lib/as-is-upload"
+import type { CaptionRecord } from "@/lib/own-media"
+import { toast } from "sonner"
+import { createClient } from "@/lib/supabase/client"
+import { getCurrentUser } from "@/lib/supabase/current-user"
+import { canOwnMediaText } from "@/lib/feature-access"
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { getFormatMeta, setFormatMeta } from "@/lib/timing-storage"
@@ -53,6 +62,9 @@ export async function captionCarouselSlide(
 ): Promise<string> {
   // A video slide keeps its own frame — the caption is burned into pictures only.
   if (isVideoSlide(bare)) return bare
+  // A stored picture of hers (own-media-text): rendered from its URL, stored,
+  // with a caption record — so it can be moved / taken off after a reload.
+  if (isHttp(bare)) return (await captionOwnSlide(postId, bare, slideIndex, position)).url
   try {
     const res = await fetch("/api/media/caption-image", {
       method: "POST",
@@ -72,6 +84,255 @@ export async function captionCarouselSlide(
     // Same fall-back as a non-OK response: keep the bare slide.
   }
   return bare
+}
+
+const isHttp = (s: string | null | undefined): s is string => !!s && /^https?:\/\//i.test(s)
+
+export type OwnSlideCaption = { url: string; status: "captioned" | "no_script" | "failed" }
+
+/**
+ * One slide of HER carousel, captioned with the script's slide (own-media-
+ * text, Hani only): the picture is already in storage, the render is stored
+ * too, and its caption record points back at the bare picture. A slide the
+ * script has no text for, or whose render failed, stays the bare picture —
+ * and the caller is told which, so it never reports a caption that isn't there.
+ */
+export async function captionOwnSlide(
+  postId: string,
+  bareUrl: string,
+  slideIndex: number,
+  position: CaptionPosition,
+): Promise<OwnSlideCaption> {
+  if (isVideoSlide(bareUrl)) return { url: bareUrl, status: "captioned" }
+  try {
+    const res = await fetch("/api/media/caption-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        postId,
+        format: "carousel",
+        sourceUrl: bareUrl,
+        slideIndex,
+        position,
+        persist: false,
+        store: true,
+        // The set decides about designed-in words once, from its cover.
+        force: true,
+      }),
+    })
+    const data = (await res.json().catch(() => ({}))) as { url?: string; skipped?: string }
+    if (res.ok && data.url) return { url: data.url, status: "captioned" }
+    if (data.skipped === "no_script_text") return { url: bareUrl, status: "no_script" }
+  } catch {
+    // Kept bare, reported as failed.
+  }
+  return { url: bareUrl, status: "failed" }
+}
+
+/** The caption record beside a render (lib/caption-record), read from the public bucket. */
+export async function readCaptionRecordClient(renderUrl: string): Promise<CaptionRecord | null> {
+  if (!/\/storage\/v1\/object\/public\/user-media\//.test(renderUrl)) return null
+  try {
+    const clean = renderUrl.split(/[?#]/)[0]
+    const res = await fetch(`${clean}.json`, { cache: "no-store" })
+    if (!res.ok) return null
+    const rec = (await res.json()) as CaptionRecord
+    return rec?.v === 1 && typeof rec.sourceUrl === "string" ? rec : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The originals under a stored set, from the caption records — no Drive
+ * round trip, and it works after a reload (the memory caches don't). A slide
+ * we never captioned IS its original. null when a captioned slide has no
+ * record (an older render): the caller falls back to Drive.
+ */
+export async function baresFromRecords(images: string[]): Promise<string[] | null> {
+  if (!images.length || !images.every(isHttp)) return null
+  const out = await Promise.all(
+    images.map(async (u) => {
+      if (isVideoSlide(u)) return u
+      const rec = await readCaptionRecordClient(u)
+      if (rec) return rec.sourceUrl
+      return /\/image\/captioned-/.test(u) ? null : u
+    }),
+  )
+  return out.every((u): u is string => !!u) ? out : null
+}
+
+/**
+ * A set the panel has already saved itself (awaited, before the AI edit
+ * reads it) — the page's autosave skips it rather than writing the same
+ * slides a second time while the edit is reading them.
+ */
+const savedSets = new Map<string, string>()
+/** Record a set as already on the server (just loaded, or saved by an edit). */
+export function markCarouselSaved(postId: string, images: string[]) {
+  savedSets.set(postId, images.join("|"))
+}
+export function isCarouselAlreadySaved(postId: string, images: string[] | null): boolean {
+  const s = savedSets.get(postId)
+  return !!s && !!images && s === images.join("|")
+}
+
+/** Save her carousel now and wait for it: the slides, what it is, and one link per slide. */
+export async function saveOwnCarousel(
+  postId: string,
+  slides: string[],
+  links: string[],
+  bakedText: boolean | undefined,
+): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/core-posts/${postId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        carouselImages: slides,
+        carouselMeta: { source: "import", ...(bakedText === undefined ? {} : { bakedText }) },
+        // No Drive slide at all: no links — never stale ones from an older set.
+        carouselDriveLinks: links.some(Boolean) ? links : [],
+      }),
+    })
+    if (!res.ok) return false
+    savedSets.set(postId, slides.join("|"))
+    setFormatMeta(postId, "carousel", { templateId: undefined, bakedText })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Whether the page keeps a loaded carousel as its stored URLs instead of
+ * turning it into bytes: her own set, for the own-media-text gate only.
+ */
+export async function keepCarouselAsUrls(urls: string[], links: unknown): Promise<boolean> {
+  const aligned = Array.isArray(links) ? links.filter((l): l is string => typeof l === "string") : null
+  if (!isOwnCarousel(urls, aligned)) return false
+  try {
+    const { data } = await getCurrentUser(createClient())
+    return canOwnMediaText(data.user?.email)
+  } catch {
+    return false
+  }
+}
+
+export async function urlToBase64(url: string): Promise<string | null> {
+  try {
+    const blob = await (await fetch(url)).blob()
+    return await new Promise<string>((resolve, reject) => {
+      const r = new FileReader()
+      r.onload = () => resolve(String(r.result).replace(/^data:[^,]*,/, ""))
+      r.onerror = () => reject(new Error("read"))
+      r.readAsDataURL(blob)
+    })
+  } catch {
+    return null
+  }
+}
+
+/** One of her files put in storage as a slide, bare. */
+export type StagedSlide = { url: string; base64?: string; link: string; video: boolean }
+
+/**
+ * Her file → a stored slide, uncaptioned: a picture into her storage
+ * (`slots/`), a clip into a carousel video slide (as it is, 4:5). `link` is
+ * the Drive link the slide came from, "" from her computer — so the links
+ * always line up with the slides, and a stale link can never be taken for
+ * this slide's original.
+ */
+export async function stageOwnSlide(
+  postId: string,
+  item: AsIsItem,
+): Promise<{ ok: true; slide: StagedSlide } | { ok: false; message: string }> {
+  if (item.kind === "video") {
+    const v = await makeCarouselVideoSlide({ postId, drive: item.drive, file: item.file })
+    return v.ok ? { ok: true, slide: { url: v.url, link: item.drive ?? "", video: true } } : { ok: false, message: v.message }
+  }
+  if (item.file) {
+    const url = await uploadSlotPicture(item.file)
+    return url ? { ok: true, slide: { url, link: "", video: false } } : { ok: false, message: "העלאת התמונה נכשלה. נסו שוב." }
+  }
+  if (item.drive) {
+    const res = await fetch("/api/media/from-drive", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: item.drive, store: false }),
+    })
+    const data = (await res.json().catch(() => ({}))) as { base64?: string; error?: string; contentType?: string }
+    // A clip behind the link: a VIDEO slide, as it is.
+    if (data.error === "not_an_image") return stageOwnSlide(postId, { kind: "video", drive: item.drive })
+    if (!res.ok || !data.base64) {
+      return {
+        ok: false,
+        message:
+          data.error === "drive_not_public"
+            ? "הקובץ בדרייב לא פתוח לצפייה. שתפו אותו לכל מי שיש לו את הקישור."
+            : data.error === "file_too_large"
+              ? "הקובץ בדרייב גדול מדי."
+              : "טעינת הקובץ מהדרייב נכשלה.",
+      }
+    }
+    const url = await uploadSlotPicture(`data:${data.contentType || "image/png"};base64,${data.base64}`)
+    return url
+      ? { ok: true, slide: { url, base64: data.base64, link: item.drive, video: false } }
+      : { ok: false, message: "שמירת התמונה מהדרייב נכשלה. נסו שוב." }
+  }
+  return { ok: false, message: "לא נמצא קובץ." }
+}
+
+export type OwnCaptionOutcome = { slides: string[]; noScript: number[]; failed: number[] }
+
+/**
+ * Caption the given slides of her set with the script (side by side — each
+ * slide is its own render). `at` = which slides (0-based); the rest untouched.
+ */
+export async function captionOwnSlides(
+  postId: string,
+  bares: string[],
+  at: number[],
+  position: CaptionPosition,
+  onProgress?: (msg: string) => void,
+): Promise<OwnCaptionOutcome> {
+  const slides = [...bares]
+  const noScript: number[] = []
+  const failed: number[] = []
+  const todo = at.filter((i) => i >= 0 && i < bares.length && !isVideoSlide(bares[i]))
+  let done = 0
+  if (todo.length) onProgress?.(`שמים את הטקסט מהסקריפט על השקופיות (0 מתוך ${todo.length})...`)
+  await Promise.all(
+    todo.map(async (i) => {
+      const r = await captionOwnSlide(postId, bares[i], i, position)
+      slides[i] = r.url
+      if (r.status === "no_script") noScript.push(i)
+      if (r.status === "failed") failed.push(i)
+      onProgress?.(`שמים את הטקסט מהסקריפט על השקופיות (${++done} מתוך ${todo.length})...`)
+    }),
+  )
+  return { slides, noScript: noScript.sort((a, b) => a - b), failed: failed.sort((a, b) => a - b) }
+}
+
+/** What actually happened to the caption — said plainly, never "done" over a bare slide. */
+export function ownCaptionNote(o: { noScript: number[]; failed: number[] }): string {
+  const list = (n: number[]) => n.map((i) => i + 1).join(", ")
+  const parts: string[] = []
+  if (o.noScript.length) {
+    parts.push(
+      o.noScript.length === 1
+        ? `לשקופית ${list(o.noScript)} אין טקסט בסקריפט, אז לא שמתי עליה טקסט.`
+        : `לשקופיות ${list(o.noScript)} אין טקסט בסקריפט, אז לא שמתי עליהן טקסט.`,
+    )
+  }
+  if (o.failed.length) {
+    parts.push(
+      o.failed.length === 1
+        ? `הטקסט לא נכנס על שקופית ${list(o.failed)}, היא נשארה כמו שהעליתם. אפשר לנסות שוב מהכרטיס.`
+        : `הטקסט לא נכנס על שקופיות ${list(o.failed)}, הן נשארו כמו שהעליתם. אפשר לנסות שוב מהכרטיס.`,
+    )
+  }
+  return parts.join(" ")
 }
 
 /** Pull the slides down from their per-slide Drive links, uncaptioned. */
@@ -157,13 +418,21 @@ export function applyCarouselMetaFromServer(postId: string, meta: unknown) {
   }
 }
 
-/** Save the carousel's meta alone, onto the slides already stored. */
-export function persistCarouselMeta(postId: string) {
-  void fetch(`/api/core-posts/${postId}`, {
+/** Save the carousel's meta alone, onto the slides already stored. Resolves false when it didn't save. */
+export function persistCarouselMeta(postId: string): Promise<boolean> {
+  return fetch(`/api/core-posts/${postId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ carouselMeta: carouselMetaForServer(postId) }),
-  }).catch((err) => console.error("[carousel-caption][meta]", err))
+  })
+    .then((res) => {
+      if (!res.ok) console.error("[carousel-caption][meta]", res.status)
+      return res.ok
+    })
+    .catch((err) => {
+      console.error("[carousel-caption][meta]", err)
+      return false
+    })
 }
 
 /** The current on/off + placement for a post, straight from storage. */
@@ -219,6 +488,8 @@ export function useCarouselCaption({
   const [settings, setSettings] = useState(() =>
     readCarouselCaptionSettings(postId),
   )
+  // Her own media + the script's text (lib/feature-access) — Hani only.
+  const own = useOwnMediaText() === true
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState("")
   /**
@@ -265,7 +536,10 @@ export function useCarouselCaption({
   const cachedBares = postId ? carouselBareSlides.get(postId) : undefined
   const cameFromImport =
     slideCount > 0 &&
-    (links.length === slideCount || cachedBares?.length === slideCount)
+    (links.length === slideCount ||
+      cachedBares?.length === slideCount ||
+      // Her pictures from the computer / the chat have no links (own-media-text).
+      (own && isOwnCarousel(images ?? [], driveLinks)))
 
   // A carousel brought before the check existed has never been looked at.
   // Look once, at the cover AS SHE BROUGHT IT — the stored slide may carry
@@ -282,17 +556,24 @@ export function useCarouselCaption({
     checkedRef.current = postId
     void (async () => {
       let cover = cachedCover
-      if (!cover) {
+      if (!cover && own && images) {
+        const bares = await baresFromRecords(images.slice(0, 1))
+        cover = bares?.[0]
+      }
+      if (!cover && links.length) {
         const pulled = await pullBareSlidesFromDrive(links.slice(0, 1))
         cover = pulled?.[0]
       }
+      // A stored picture (own-media-text) is looked at as bytes.
+      if (cover && isHttp(cover)) cover = (await urlToBase64(cover)) ?? undefined
       const hasText = cover ? await slideHasBakedText(cover) : null
       if (hasText === null) {
         setCheckFailed(true)
         return
       }
       setFormatMeta(postId, "carousel", { bakedText: hasText })
-      persistCarouselMeta(postId)
+      const saved = await persistCarouselMeta(postId)
+      if (!saved && own) toast.error("לא הצלחתי לשמור את הגדרות הקרוסלה. רעננו ונסו שוב.")
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [postId, isImport, cameFromImport, bakedText, links.join("|")])
@@ -302,13 +583,22 @@ export function useCarouselCaption({
     if (!postId) return null
     const cached = carouselBareSlides.get(postId)
     if (cached && cached.length === slideCount) return cached
-    if (links.length === 0) return null
+    // After a reload (own-media-text): the originals from the caption
+    // records — not a Drive download, and never links that may be stale.
+    if (own && images) {
+      const fromRecords = await baresFromRecords(images)
+      if (fromRecords) {
+        carouselBareSlides.set(postId, fromRecords)
+        return fromRecords
+      }
+    }
+    if (links.length === 0 || (own && links.length !== slideCount)) return null
     setProgress("טוענים מחדש את השקופיות מהדרייב...")
     const pulled = await pullBareSlidesFromDrive(links, setProgress, images)
     if (pulled) carouselBareSlides.set(postId, pulled)
     return pulled
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [postId, slideCount, links.join("|")])
+  }, [postId, slideCount, links.join("|"), own, (images ?? []).join("|")])
 
   /** Redraw the whole set at `position`, starting with the visible slide. */
   const redraw = useCallback(

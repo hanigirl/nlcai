@@ -35,7 +35,8 @@ import {
 } from "@/lib/ai-edit-plan"
 import { currentCarouselBrief } from "@/lib/carousel-brief"
 import { wantsOwnLanguage } from "@/lib/visual-language/current-brief"
-import { canEditPictures } from "@/lib/feature-access"
+import { canEditPictures, canOwnMediaText } from "@/lib/feature-access"
+import { isOwnCarousel } from "@/lib/carousel-own"
 import { isVideoSlide } from "@/lib/carousel-video"
 import { PICTURE_MISSING, adaptPictureForSlide, editPicture, wantsPictureAsIs } from "@/lib/picture-edit"
 import type { ModelImage } from "@/lib/visual-language/image-input"
@@ -168,7 +169,7 @@ export async function POST(req: NextRequest) {
       : ""
     const { data: variant } = await supabase
       .from("format_variants")
-      .select("id, body")
+      .select("id, body, drive_slide_links")
       .eq("core_post_id", postId)
       .eq("format", format)
       .maybeSingle()
@@ -210,6 +211,20 @@ export async function POST(req: NextRequest) {
         { error: "own_media", message: "זו מדיה שלכם, ואת מה שצילמתם אני לא משנה. אפשר לשנות את הכיתוב או להוסיף שקופית." },
         { status: 400 },
       )
+    }
+
+    // A carousel of her own pictures (computer, chat, Drive) — never repainted
+    // either (own-media-text, lib/carousel-own). Her slides go to own-edit.
+    if (format === "carousel" && canOwnMediaText(user.email)) {
+      const links = ((variant as { drive_slide_links?: string[] | null } | null)?.drive_slide_links ?? []).filter(
+        (l): l is string => typeof l === "string",
+      )
+      if (isOwnCarousel(urls, links)) {
+        return NextResponse.json(
+          { error: "own_media", message: "זו מדיה שלכם, ואת מה שצילמתם אני לא משנה. אפשר לשנות את הכיתוב או להוסיף שקופית." },
+          { status: 400 },
+        )
+      }
     }
 
     let openaiKey: string

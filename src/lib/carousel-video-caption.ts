@@ -60,3 +60,32 @@ export async function videoCaptionWords(
     return { ...script, design: ask }
   }
 }
+
+/** A script unit as the video caption takes it: a body alone becomes the headline, verbatim. */
+export function scriptWords(unit: { headline?: string; body?: string }): { headline: string; body?: string } {
+  if (unit.headline) return { headline: unit.headline, ...(unit.body ? { body: unit.body } : {}) }
+  return { headline: unit.body ?? "" }
+}
+
+const squash = (t: string) => t.replace(/[\s"'״׳.,!?:;—–-]+/g, "")
+
+/**
+ * The words are the script's (Hani, 2026-11-09: "apply the text of the
+ * script, not add any additional text"): whatever the model wrote is kept
+ * only when it IS the script, or words she dictated in her message. A
+ * shortened / rewritten caption is dropped back to the script; the look she
+ * asked for (design) always stays.
+ */
+export function holdVideoWordsToScript(
+  words: VideoCaptionWords,
+  script: { headline: string; body?: string },
+  instruction: string | undefined,
+): VideoCaptionWords {
+  const said = squash(instruction ?? "")
+  const theirs = squash([words.headline, words.body].filter(Boolean).join(""))
+  const fromScript = theirs === squash([script.headline, script.body].filter(Boolean).join(""))
+  const dictated = !!theirs && said.includes(theirs)
+  const design = words.design ?? (instruction?.trim() || undefined)
+  if (fromScript || dictated) return { headline: words.headline, ...(words.body ? { body: words.body } : {}), ...(design ? { design } : {}) }
+  return { ...script, ...(design ? { design } : {}) }
+}

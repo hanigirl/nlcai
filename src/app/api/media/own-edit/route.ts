@@ -24,6 +24,8 @@ import {
   type OwnFrameInfo,
 } from "@/lib/own-media"
 import { guardedFetch } from "@/lib/server-fetch"
+import { isOwnCarouselSlideUrl } from "@/lib/carousel-own"
+import { canOwnMediaText } from "@/lib/feature-access"
 
 // Rendering the clip alone takes ~250–270s on our functions (175 frames
 // screenshotted by a Lambda-sized Chromium; the same render is 10–18s on a
@@ -338,6 +340,7 @@ export async function POST(req: NextRequest) {
     // One link per frame, in order ("" for a frame that has none, like an
     // added AI slide) — only then does link i belong to frame i.
     const linksAligned = links.length === urls.length && links.some(Boolean)
+    const ownText = format === "carousel" && canOwnMediaText(user.email)
 
     const frames: OwnFrameInfo[] = await Promise.all(
       urls.map(async (url, i): Promise<OwnFrameInfo> => {
@@ -348,7 +351,9 @@ export async function POST(req: NextRequest) {
         const aiMade =
           /\/ai-(slide|anim)-[0-9a-f-]+\.(png|mp4)/.test(url) ||
           (format === "carousel"
-            ? carouselMeta.source === "ai" && !linksAligned
+            ? carouselMeta.source === "ai" && !linksAligned &&
+              // Her picture on a slot of an AI-stamped set is still hers (own-media-text).
+              !(ownText && isOwnCarouselSlideUrl(url))
             : !isOwnMediaUrl(url))
         const driveLink = linksAligned ? links[i] || undefined : undefined
         let record: CaptionRecord | null = isCaptionedRenderUrl(url) || format === "carousel"
@@ -368,6 +373,9 @@ export async function POST(req: NextRequest) {
         }
         if (format === "carousel") {
           if (carouselMeta.bakedText === true) return { url, kind, aiMade, caption: "baked" }
+          // Her stored picture, never captioned by us: it IS the original
+          // (own-media-text) — captioned from here, not re-pulled from Drive.
+          if (ownText && isOwnCarouselSlideUrl(url)) return { url, kind, aiMade, caption: "none" }
           // Imported slides are captioned on arrival by default; with the
           // Drive link lined up the original can always be pulled again.
           if (driveLink && carouselMeta.bakedText === false) {
