@@ -249,13 +249,21 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
         max_tokens: 4000,
         system: SYSTEM,
         tools: overTime ? TOOLS.filter((t) => t.name === "finish" || t.name === "ask_user") : TOOLS,
-        tool_choice: { type: "any" },
+        // Opus 5.5 takes no forced tool choice; a plain-text answer is her reply.
+        tool_choice: { type: "auto" },
         messages,
       })
       .finalMessage()
     messages.push({ role: "assistant", content: res.content })
     const calls = res.content.filter((c): c is Anthropic.ToolUseBlock => c.type === "tool_use")
-    if (!calls.length) break
+    if (!calls.length) {
+      const said = res.content
+        .filter((c): c is Anthropic.TextBlock => c.type === "text")
+        .map((c) => c.text)
+        .join("\n")
+        .trim()
+      return finishRun(said || (changed ? "עשיתי את השינויים." : "לא הצלחתי להבין מה לעשות. אפשר לנסח שוב?"))
+    }
 
     const results: Block[] = []
     for (const call of calls) {
