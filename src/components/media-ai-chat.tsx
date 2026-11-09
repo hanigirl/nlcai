@@ -114,6 +114,18 @@ interface MediaChatExtra {
    * await = asked for a link or screenshots; choose = the reference is in
    * (her storage URLs), waiting for "בשפת המותג שלי" / "בדיוק כמו בקרוסלה".
    */
+  /**
+   * Her own file became this media in this conversation (a clip attached to
+   * an AI panel): later requests edit it as her media (Hani, 2026-11-09 — "a
+   * b-roll with text on it" after the import got "only engine-made b-roll").
+   */
+  ownMedia?: boolean
+  /**
+   * She attached a picture and said "בסגנון…" (Hani, 2026-11-09): asked what
+   * to take from it — its design or the words on it. Her brief waits here;
+   * the picture is a reference only and is never put into the media.
+   */
+  styleAsk?: { brief: string } | null
   copy?:
     | { phase: "await" }
     | { phase: "choose"; refs: string[]; brief: string }
@@ -326,6 +338,14 @@ const STILL_FORMAT_VIDEO: Record<"image_post", string> = {
     "פוסט תמונה הוא תמונה, אז סרטון לא יכול להיות המדיה שלו. צרפו במקומו תמונה, או צילום מסך של הרגע שאתם רוצים מתוך הסרטון.",
 }
 /** Her attachment becomes the media as it is — lib/as-is-upload. */
+/** "בסגנון…" with an attached picture: a look to take (see styleAsk). */
+const STYLE_WORDS = /סגנון|השראה|בהשראת|כמו זה|כמו זאת|כמו בתמונה|כמו בדוגמה|דומה ל/
+/** …unless she says to put the picture itself in. */
+const PLACE_WORDS = /להכניס|תכניס|תכניסי|לשים את|תשים את|תשימי את|לשלב|תשלב|תשלבי|להוסיף את|תוסיף את|תוסיפי את/
+const STYLE_QUESTION =
+  "מה לקחת מהתמונה ששלחתם? את העיצוב שלה (צבעים, פריסה, אווירה), או את הטקסט והמבנה שכתובים עליה? את התמונה עצמה לא אכניס, היא רק השראה."
+const STYLE_ANSWER_LEAD =
+  "The attached picture is ONLY a style reference — never put it, or any part of it, into the media. What to take from it:"
 const AS_IS = "להעלות כמו שזה, בלי תוספות"
 const AS_IS_BUSY = "מעלים את המדיה כמו שהיא..."
 const GEN_STALE = "הבקשה הזאת כבר לא פעילה. לחצו שוב על כפתור היצירה בפאנל המדיה."
@@ -820,12 +840,13 @@ export function MediaAiChat({
       }))
       return true
     }
-    patchKey((s) => ({ ...s, extra: { ...s.extra, progress: "הסרטון עלה. עכשיו מוסיפים את מה שביקשתם — זה לוקח כמה דקות, אל תרעננו את הדף..." } }))
+    patchKey((s) => ({ ...s, extra: { ...s.extra, ownMedia: true, progress: "הסרטון עלה. עכשיו מוסיפים את מה שביקשתם — זה לוקח כמה דקות, אל תרעננו את הדף..." } }))
     const r = await runOwnMediaEdit({
       postId,
       format: format as OwnEditFormat,
       instruction: text,
       currentUrls: [],
+      justImported: true,
       onProgress: (p) => patchKey((s) => ({ ...s, extra: { ...s.extra, progress: p } })),
     })
     if (r.ok && r.changed) landed(r.urls, { driveLinks: r.driveLinks })
@@ -1501,6 +1522,31 @@ export function MediaAiChat({
       const typed = (preset ?? cur.input).trim()
       const brief = typed || (placing ? PLACE_ONLY_INSTRUCTION : attached.length ? REFERENCE_ONLY_INSTRUCTION : "")
       if (!brief || links.busy) return
+      // "בסגנון הזה" on an attached picture means a look to take, never the
+      // picture itself (Hani, 2026-11-09) — and what she means by style is
+      // asked first: the design, or the words written on it.
+      const pictureRefs = attached.filter((r) => !videoRefs.includes(r) && !looks.includes(r))
+      const styleAsk = cur.extra.styleAsk
+      if (styleAsk && pictureRefs.length && typed) {
+        patchKey((s) => ({ ...s, input: "", extra: { ...s.extra, styleAsk: null } }))
+        refs.clear()
+        links.reset()
+        void generate(`${styleAsk.brief}\n${STYLE_ANSWER_LEAD} ${typed}`, attached, typed, attached)
+        return
+      }
+      if (typed && pictureRefs.length && STYLE_WORDS.test(typed) && !PLACE_WORDS.test(typed)) {
+        patchKey((s) => ({
+          ...s,
+          input: "",
+          extra: { ...s.extra, styleAsk: { brief: typed } },
+          messages: [
+            ...s.messages,
+            { role: "user", content: typed },
+            { role: "assistant", content: STYLE_QUESTION },
+          ],
+        }))
+        return
+      }
       // Carousel slide slots: each picture / clip on the slide she chose.
       const placedNow = slotPlacement()
       if (placedNow.length) {
@@ -1610,7 +1656,7 @@ export function MediaAiChat({
       return
     }
     const editText = triage.editInstruction.trim() || text
-    if (own) {
+    if (own || cur.extra.ownMedia) {
       await sendOwn(editText, cur.messages, patchKey, isWatching, memory)
       return
     }

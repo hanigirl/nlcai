@@ -73,7 +73,7 @@ export async function planImageEdit(
               ]
             : []),
           ...(refs.length
-            ? ['- place: the numbers of the attached images she wants put INTO the design as they are (her own picture, character, logo, product). Empty for images that only show a look to match.']
+            ? ['- place: the numbers of the attached images she wants put INTO the design as they are (her own picture, character, logo, product). Empty for images that only show a look to match. An image she calls a style, look, example or inspiration ("בסגנון", "כמו זה", "השראה", "בהשראת", "דומה ל") is NEVER placed — unless she also explicitly says to put that image itself in.']
             : []),
         ].join("\n") },
         ],

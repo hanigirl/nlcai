@@ -67,6 +67,8 @@ type Body = {
   /** Originals the browser still remembers for older renders (format meta). */
   knownOriginals?: Record<string, string>
   history?: { role: "user" | "assistant"; content: string }[]
+  /** The attached file was just imported as this media (media-ai-chat sendWithVideo). */
+  justImported?: boolean
   headline?: string
   body?: string
   role?: ImageRole
@@ -389,6 +391,7 @@ export async function POST(req: NextRequest) {
       currentFrame: input.currentFrame,
       post: { title: post.title, hook: post.hook_text, body: post.body, formatBody: variant.body },
       history: input.history,
+      justImported: input.justImported === true,
     })
     return json({ plan, frames, driveLinks: linksAligned ? links : null })
   } catch (error) {

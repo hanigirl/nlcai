@@ -71,6 +71,8 @@ export async function runOwnMediaEdit(opts: {
   currentUrls: string[]
   currentFrame?: number
   history?: { role: "user" | "assistant"; content: string }[]
+  /** Her attached file was just imported as this media, for this request. */
+  justImported?: boolean
   onProgress?: (text: string) => void
 }): Promise<OwnEditResult> {
   const { postId, format } = opts
@@ -92,6 +94,7 @@ export async function runOwnMediaEdit(opts: {
       currentFrame: opts.currentFrame,
       knownOriginals: knownOriginals(postId, format, opts.currentUrls),
       history: opts.history,
+      justImported: opts.justImported,
     })
     if (!planned.ok || !planned.data.plan || !planned.data.frames) {
       return { ok: false, message: planned.data.message ?? FAIL }

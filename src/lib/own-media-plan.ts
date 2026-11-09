@@ -71,6 +71,8 @@ export async function planOwnMediaEdit(
     currentFrame?: number
     post: { title: string | null; hook: string | null; body: string | null; formatBody: string | null }
     history?: { role: "user" | "assistant"; content: string }[]
+    /** Her attached file was just imported as this media, for this request. */
+    justImported?: boolean
   },
 ): Promise<OwnEditPlan> {
   const { format, frames } = input
@@ -151,6 +153,13 @@ export async function planOwnMediaEdit(
     ...ops.map((o) => `- ${o}`),
     ...(input.history?.length
       ? ["", "Earlier in this conversation:", ...input.history.slice(-30).map((m) => `${m.role === "user" ? "Her" : "You"}: ${m.content}`)]
+      : []),
+    ...(input.justImported
+      ? [
+          "",
+          // Hani, 2026-11-09: "להכניס את התמונה שצירפתי" on a b-roll got "can't add another picture".
+          "The file she attached with this request has JUST been put in as this media — it is the media listed above. A request to put in / use / upload her attached file is therefore already done: never answer that another file can't be added. Do the rest of her request; when she asked for nothing else, put the script's text on it as the caption (set_caption on every frame).",
+        ]
       : []),
     "",
     `Her request (Hebrew): ${JSON.stringify(input.instruction)}`,
