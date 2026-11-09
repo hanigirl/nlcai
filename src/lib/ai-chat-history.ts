@@ -140,7 +140,9 @@ async function save(key: string, s: Session) {
   const uid = await userId()
   if (!uid) return
   const messages = await withStoredImages(uid, s.messages)
-  const row = { messages, extra: s.extra ?? {}, updated_at: new Date().toISOString() }
+  // __busy: a request was running — if the page goes before it lands, the
+  // next load says it stopped (lib/ai-chat-session-store withInterruptedNotice).
+  const row = { messages, extra: { ...(s.extra ?? {}), __busy: !!s.busy }, updated_at: new Date().toISOString() }
   let id = activeId.get(key)
   if (id === undefined) {
     const { data } = await db()

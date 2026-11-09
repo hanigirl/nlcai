@@ -54,6 +54,27 @@ let version = 0
 /** Keys moved by moveChat: a reply still on its way follows the conversation. */
 const moved = new Map<string, string>()
 
+/**
+ * Said when a conversation comes back with a request that was still running
+ * (a reload, or the app opening a new version mid-request — Hani, 2026-11-09:
+ * "הוא מתחיל לייצר ואז נעצר, ולא מתריע כלום"). The request's answer is lost
+ * with the page, so she's told to send it again instead of silence.
+ */
+export const INTERRUPTED_NOTICE = "הבקשה האחרונה נעצרה באמצע כי הדף נטען מחדש, והתוצאה לא נשמרה. שלחו אותה שוב ואמשיך מכאן."
+
+/** A conversation whose request was cut off: busy no more, and it says so. */
+export function withInterruptedNotice(s: AnySession, wasBusy: boolean): AnySession {
+  if (!wasBusy) return { ...s, busy: false }
+  const last = s.messages[s.messages.length - 1]
+  const said = last?.role === "assistant" && last?.content === INTERRUPTED_NOTICE
+  return {
+    ...s,
+    busy: false,
+    extra: { ...s.extra, progress: "" },
+    messages: said ? s.messages : [...s.messages, { role: "assistant", content: INTERRUPTED_NOTICE, error: true }],
+  }
+}
+
 function read(key: string): AnySession | null {
   if (typeof window === "undefined") return null
   try {
@@ -61,8 +82,11 @@ function read(key: string): AnySession | null {
     if (!raw) return null
     const parsed = JSON.parse(raw) as AnySession
     if (!parsed || !Array.isArray(parsed.messages)) return null
-    // The request that was running didn't survive the reload.
-    return { messages: parsed.messages, input: typeof parsed.input === "string" ? parsed.input : "", busy: false, extra: parsed.extra ?? {} }
+    // The request that was running didn't survive the reload — say so.
+    return withInterruptedNotice(
+      { messages: parsed.messages, input: typeof parsed.input === "string" ? parsed.input : "", busy: false, extra: parsed.extra ?? {} },
+      parsed.busy === true,
+    )
   } catch {
     return null
   }
@@ -79,7 +103,7 @@ function write(key: string, s: AnySession | null) {
       s.messages.length > MAX_STORED_MESSAGES
         ? [s.messages[0], ...s.messages.slice(-(MAX_STORED_MESSAGES - 1))]
         : s.messages
-    const raw = JSON.stringify({ messages: msgs, input: s.input, extra: s.extra })
+    const raw = JSON.stringify({ messages: msgs, input: s.input, busy: s.busy, extra: s.extra })
     if (raw.length > MAX_STORED_CHARS) {
       window.sessionStorage.removeItem(STORAGE_PREFIX + key)
       return
@@ -110,8 +134,10 @@ function fetchSaved(key: string) {
     const cur = sessions.get(key)
     // Something she said here meanwhile wins over the saved copy.
     if (hasHerWords(cur) || (cur && cur.messages.length > 1) || cur?.busy) return
-    sessions.set(key, saved)
-    write(key, saved)
+    const { __busy, ...extra } = (saved.extra ?? {}) as Record<string, unknown>
+    const shown = withInterruptedNotice({ ...saved, extra }, __busy === true)
+    sessions.set(key, shown)
+    write(key, shown)
     emit(key)
   })
 }
@@ -155,6 +181,9 @@ export function clearChat(key: string) {
 export async function restoreArchivedChat(key: string, id: string): Promise<boolean> {
   const restored = await restoreChat(key, id, sessions.get(key) ?? null)
   if (!restored) return false
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { __busy, ...extra } = (restored.extra ?? {}) as Record<string, unknown>
+  restored.extra = extra
   sessions.set(key, restored)
   write(key, restored)
   emit(key)
