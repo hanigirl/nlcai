@@ -150,7 +150,7 @@ export async function planOwnMediaEdit(
     "Allowed ops:",
     ...ops.map((o) => `- ${o}`),
     ...(input.history?.length
-      ? ["", "Earlier in this conversation:", ...input.history.slice(-6).map((m) => `${m.role === "user" ? "Her" : "You"}: ${m.content}`)]
+      ? ["", "Earlier in this conversation:", ...input.history.slice(-30).map((m) => `${m.role === "user" ? "Her" : "You"}: ${m.content}`)]
       : []),
     "",
     `Her request (Hebrew): ${JSON.stringify(input.instruction)}`,

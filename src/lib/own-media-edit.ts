@@ -168,23 +168,36 @@ async function execute(
     original[op.frame - 1] = { ...item, url: made.data.url }
   }
 
-  for (const op of plan.ops) {
-    if (op.op !== "set_caption" && op.op !== "remove_caption") continue
-    if (op.op === "set_caption" && (op.style || op.position)) styleChange = true
-    for (const n of op.frames) {
-      const item = original[n - 1]
-      if (!item) continue
-      onProgress?.(
-        op.op === "remove_caption"
-          ? `מורידים את הכיתוב (${n} מתוך ${frames.length})...`
-          : `מעדכנים את הכיתוב (${n} מתוך ${frames.length})...`,
-      )
-      const next =
-        op.op === "remove_caption" ? await uncaption(item) : await caption(postId, format, item, op, instruction)
-      if ("error" in next) problems.push(next.error)
-      else original[n - 1] = next.item
-    }
+  // Every frame's caption renders at the same time (Hani, 2026-11-09: three
+  // animated captions one after another took ~12 minutes; side by side ~4).
+  // Ops on the same frame still run in order, one after the other.
+  const captionOps = plan.ops.filter(
+    (op): op is Extract<OwnEditOp, { op: "set_caption" | "remove_caption" }> =>
+      op.op === "set_caption" || op.op === "remove_caption",
+  )
+  if (captionOps.some((op) => op.op === "set_caption" && (op.style || op.position))) styleChange = true
+  const byFrame = new Map<number, typeof captionOps>()
+  for (const op of captionOps) for (const n of op.frames) byFrame.set(n, [...(byFrame.get(n) ?? []), op])
+  if (byFrame.size) {
+    const removing = captionOps.every((op) => op.op === "remove_caption")
+    onProgress?.(
+      removing
+        ? `מורידים את הכיתוב (${byFrame.size} ${byFrame.size === 1 ? "פריים" : "פריימים"} במקביל)...`
+        : `מעדכנים את הכיתוב (${byFrame.size} ${byFrame.size === 1 ? "פריים" : "פריימים"} במקביל)...`,
+    )
   }
+  await Promise.all(
+    [...byFrame].map(async ([n, ops]) => {
+      for (const op of ops) {
+        const item = original[n - 1]
+        if (!item) return
+        const next =
+          op.op === "remove_caption" ? await uncaption(item) : await caption(postId, format, item, op, instruction)
+        if ("error" in next) problems.push(next.error)
+        else original[n - 1] = next.item
+      }
+    }),
+  )
 
   let set: Item[] = [...original]
   for (const op of plan.ops) {
@@ -237,17 +250,21 @@ async function execute(
   // script's unit k), burned over the same original — never the caption of
   // the frame it was copied from.
   if (plan.script?.length) {
-    for (let i = 0; i < set.length; i++) {
-      const it = set[i]
-      const unit = plan.script[i]
-      if (!it.copyOf || !unit) continue
-      // A copy of a frame that carries its own words (baked in) stays as is.
-      if (it.caption !== "ours" && it.caption !== "none") continue
-      onProgress?.(`מעדכנים את הכיתוב (${i + 1} מתוך ${set.length})...`)
-      const next = await caption(postId, format, it, { op: "set_caption", frames: [i + 1], headline: unit.headline ?? "", body: unit.body ?? "" }, instruction)
-      if ("error" in next) problems.push(next.error)
-      else set[i] = { ...next.item, link: it.link }
-    }
+    const script = plan.script
+    // A copy of a frame that carries its own words (baked in) stays as is.
+    const todo = set.flatMap((it, i) =>
+      it.copyOf && script[i] && (it.caption === "ours" || it.caption === "none") ? [i] : [],
+    )
+    if (todo.length) onProgress?.(`מעדכנים את הכיתוב (${todo.length} ${todo.length === 1 ? "פריים" : "פריימים"} במקביל)...`)
+    await Promise.all(
+      todo.map(async (i) => {
+        const it = set[i]
+        const unit = script[i]
+        const next = await caption(postId, format, it, { op: "set_caption", frames: [i + 1], headline: unit.headline ?? "", body: unit.body ?? "" }, instruction)
+        if ("error" in next) problems.push(next.error)
+        else set[i] = { ...next.item, link: it.link }
+      }),
+    )
   }
 
   const urls = set.map((it) => it.url)

@@ -102,6 +102,11 @@ export interface ChatMessage {
 interface MediaChatExtra {
   /** Own media: the step it is on, under the busy row. */
   progress: string
+  /**
+   * The media as it was before the last edit landed — "ביטול השינוי האחרון"
+   * puts it back in one click (Hani, 2026-11-09), no render, no explaining.
+   */
+  undo?: { urls: string[] } | null
   /** A generation waiting for (or running on) her brief — see GenStep. */
   gen?: GenStep | null
   /**
@@ -559,6 +564,18 @@ export function MediaAiChat({
   }, [chatKey, clearRefs])
   const scrollRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  // The card's media right now — what "ביטול השינוי האחרון" goes back to.
+  const currentUrlsRef = useRef(currentUrls)
+  currentUrlsRef.current = currentUrls
+  /** An edit landed: remember what was there before it, then show the new set. */
+  const landed = (urls: string[], extra?: { driveLinks?: string[] | null }) => {
+    const before = currentUrlsRef.current
+    const differs = before.length !== urls.length || before.some((u, i) => u !== urls[i])
+    if (format !== "talking_head" && before.length && differs) {
+      updateChat(chatKey, fresh, (s) => ({ ...s, extra: { ...s.extra, undo: { urls: [...before] } } }))
+    }
+    onUpdated?.(format, urls, extra)
+  }
   // Stays open until she presses X — an outside click doesn't close it (Hani, 2026-11-09).
 
   const autoSent = useRef(false)
@@ -811,7 +828,7 @@ export function MediaAiChat({
       currentUrls: [],
       onProgress: (p) => patchKey((s) => ({ ...s, extra: { ...s.extra, progress: p } })),
     })
-    if (r.ok && r.changed) onUpdated?.(format, r.urls, { driveLinks: r.driveLinks })
+    if (r.ok && r.changed) landed(r.urls, { driveLinks: r.driveLinks })
     const reply: ChatMessage = !r.ok
       ? { role: "assistant", content: `הסרטון עלה כמו שהוא. ${aiErrorMessage(r.message || "העריכה לא הצליחה. נסו שוב.")}`, error: true }
       : !r.changed
@@ -1676,7 +1693,7 @@ export function MediaAiChat({
       onProgress: (p) => patchKey((s) => ({ ...s, extra: { ...s.extra, progress: p } })),
     }).then((r) => {
       full = r
-      if (r.ok && r.changed) onUpdated?.(format, r.urls, { driveLinks: r.driveLinks })
+      if (r.ok && r.changed) landed(r.urls, { driveLinks: r.driveLinks })
       return r.ok ? { ok: true as const } : { ok: false as const, message: r.message }
     })
     // If she leaves before it lands, the result arrives as a toast.
@@ -1716,6 +1733,11 @@ export function MediaAiChat({
           postId,
           format,
           instruction: text,
+          // The conversation before this message: corrections refer to it.
+          history: (getChat<ChatMessage, MediaChatExtra>(chatKey)?.messages ?? [])
+            .filter((m, i) => i > 0 && !m.error && m.content)
+            .slice(0, -1)
+            .map((m) => ({ role: m.role, content: m.content })),
           ...(references.length ? { references } : {}),
           ...(earlierReferences.length ? { earlierReferences } : {}),
           ...(placeAt?.some((n) => n >= 0) ? { placeAt } : {}),
@@ -1730,7 +1752,7 @@ export function MediaAiChat({
       }
       if (!res.ok || !data.urls) return { ok: false, message: data.message ?? data.error ?? "העריכה לא הצליחה" }
       if (data.unchanged) return { ok: true, unchanged: data.message || "הבקשה לא שינתה כלום, אז השארתי את המדיה כמו שהייתה." }
-      onUpdated?.(format, data.urls)
+      landed(data.urls)
       return { ok: true, urls: data.urls }
     } catch (err) {
       return { ok: false, message: err instanceof Error ? err.message : String(err) }
@@ -1738,6 +1760,39 @@ export function MediaAiChat({
   }
 
   const lastEdit = lastLandedEdit(messages)
+
+  /** "ביטול השינוי האחרון": the set from before the last edit, saved back as it was. */
+  const undoLast = async () => {
+    const before = session.extra.undo?.urls
+    if (!before?.length) return
+    patch((s) => ({ ...s, busy: true, extra: { ...s.extra, progress: "מחזירים את המדיה למה שהייתה..." } }))
+    try {
+      const res = await fetch("/api/media/own-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "save", postId, format, urls: before }),
+      })
+      const data = (await res.json().catch(() => ({}))) as { urls?: string[]; message?: string }
+      if (!res.ok || !data.urls) throw new Error(data.message || "")
+      onUpdated?.(format, data.urls)
+      patch((s) => ({
+        ...s,
+        busy: false,
+        extra: { ...s.extra, progress: "", undo: null },
+        messages: [...s.messages, { role: "assistant", content: "החזרתי את המדיה למה שהייתה לפני השינוי האחרון.", done: true, noStyle: true }],
+      }))
+    } catch (err) {
+      patch((s) => ({
+        ...s,
+        busy: false,
+        extra: { ...s.extra, progress: "" },
+        messages: [
+          ...s.messages,
+          { role: "assistant", content: (err instanceof Error && err.message) || "לא הצלחתי לבטל את השינוי. נסו שוב.", error: true },
+        ],
+      }))
+    }
+  }
   const title = gen ? GEN_COPY[format].title : copy.title
   /** A style picked (not "חדש לגמרי"): she may skip the words. */
   const canSkip = gen?.phase === "brief" && !!gen.style && gen.style !== "blank"
@@ -1993,6 +2048,11 @@ export function MediaAiChat({
             onOutcome={(next) => setMemory(lastEdit.index, next)}
           />
         )}
+        {session.extra.undo?.urls.length && !loading && format !== "talking_head" ? (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            <Chip onClick={() => void undoLast()}>ביטול השינוי האחרון</Chip>
+          </div>
+        ) : null}
         {/* Talking head: an edit is on — back to her original, every edit off. */}
         {format === "talking_head" && isTalkingHeadRender(currentUrls[0]) && !loading && (
           <div className="mb-2 flex flex-wrap gap-1.5">

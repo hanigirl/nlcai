@@ -89,8 +89,10 @@ function toCanvas(base64: string, [w, h]: [number, number]): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { postId, format, instruction, references, earlierReferences, placeAt: rawPlaceAt, element: rawElement } = (await req.json().catch(() => ({}))) as {
+    const { postId, format, instruction, references, earlierReferences, placeAt: rawPlaceAt, element: rawElement, history: rawHistory } = (await req.json().catch(() => ({}))) as {
       postId?: string
+      /** The conversation so far (Hani, 2026-11-09): "no, like I said" refers to it. */
+      history?: unknown
       format?: unknown
       instruction?: string
       /** Screenshots she attached (lib/ai-edit-references). */
@@ -152,7 +154,17 @@ export async function POST(req: NextRequest) {
       text && !current.length && refs.length
         ? `${text}\n(The attached image${refs.length > 1 ? "s" : ""} came with her earlier message in this chat.)`
         : text
-    const ask = ask0 ? `${ask0}${slotNote}` : ask0
+    // The whole conversation, so a correction ("לא, על כל השקופיות") acts on what came before.
+    const turns = Array.isArray(rawHistory)
+      ? rawHistory
+          .filter((m): m is { role: string; content: string } => !!m && typeof m === "object" && typeof (m as { content?: unknown }).content === "string")
+          .slice(-30)
+          .map((m) => `${m.role === "user" ? "Her" : "You"}: ${m.content.slice(0, 600)}`)
+      : []
+    const historyNote = turns.length
+      ? `\n\nEarlier in this chat (context only — act on her request above; "no", "again", "like I said" refer to this):\n${turns.join("\n")}`
+      : ""
+    const ask = ask0 ? `${ask0}${slotNote}${historyNote}` : ask0
 
     const { data: variant } = await supabase
       .from("format_variants")
