@@ -3,6 +3,7 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { deriveNicheVisualLanguage } from "@/lib/agents/visual-language-analyzer"
 import { loadExampleForModels, loadImageForModels, type ModelImage } from "@/lib/visual-language/image-input"
 import { stripLookWords } from "@/lib/visual-language/composition-only"
+import { canOwnMediaText } from "@/lib/feature-access"
 import { loadBrandFonts } from "@/lib/broll-animation/brief"
 import type { BrandFont } from "@/lib/broll-animation/compose"
 import { measureElement, type FixedElement } from "@/lib/visual-language/fixed-elements"
@@ -89,13 +90,15 @@ export async function loadBrandExamples(
   max = MAX_FORMAT_EXAMPLES,
   /**
    * She has brand colours: the examples go out in grayscale (composition
-   * only). Left out, it's read from her brand colours.
+   * only). Left out, it's read from her brand colours. Hani + Nataliya only
+   * (lib/feature-access canOwnMediaText).
    */
   gray?: boolean,
 ): Promise<ModelImage[]> {
   if (gray === undefined) {
-    const { data: u } = await supabase.from("users").select("brand_colors").eq("id", userId).single()
-    gray = ((u as { brand_colors?: string[] | null } | null)?.brand_colors ?? []).length > 0
+    const { data: u } = await supabase.from("users").select("brand_colors, email").eq("id", userId).single()
+    const me = u as { brand_colors?: string[] | null; email?: string | null } | null
+    gray = canOwnMediaText(me?.email) && (me?.brand_colors ?? []).length > 0
   }
   const { data, error } = await supabase
     .from("user_media")
@@ -242,7 +245,7 @@ async function resolveBaseDirection(
   const [{ data: userRow }, { data: identityRow }] = await Promise.all([
     supabase
       .from("users")
-      .select("brand_colors, visual_language, niche_visual_language")
+      .select("brand_colors, visual_language, niche_visual_language, email")
       .eq("id", userId)
       .single(),
     supabase
@@ -256,7 +259,11 @@ async function resolveBaseDirection(
     brand_colors?: string[] | null
     visual_language?: VisualLanguage | null
     niche_visual_language?: NicheVisualLanguage | null
+    email?: string | null
   } | null
+  // Hani + Nataliya only (lib/feature-access, 2026-11-10): her brand colours
+  // and fonts win over her usage examples. Everyone else: unchanged.
+  const brandWins = canOwnMediaText(row?.email)
   const identity = identityRow as {
     niche?: string | null
     who_i_am?: string | null
@@ -279,7 +286,7 @@ async function resolveBaseDirection(
     // her brand colours (when she set any) and fonts from her brand fonts,
     // so the description's colour and font words are left out (Hani,
     // 2026-11-09) — its composition stays.
-    const look = { colours: colors.length > 0, fonts: true }
+    const look = { colours: brandWins && colors.length > 0, fonts: brandWins }
     const lines = [
       "VISUAL LANGUAGE — this is the creator's own brand. Follow it faithfully; it overrides any generic style habit:",
       stripLookWords(vl.style_spec.trim(), look),
@@ -302,7 +309,7 @@ async function resolveBaseDirection(
     const examples =
       opts.allowReferences === false || !exampleKind
         ? []
-        : await loadBrandExamples(supabase, userId, exampleKind, vl.example_kinds, MAX_FORMAT_EXAMPLES, colors.length > 0)
+        : await loadBrandExamples(supabase, userId, exampleKind, vl.example_kinds, MAX_FORMAT_EXAMPLES, brandWins && colors.length > 0)
     if (examples.length) {
       const first = references.length + 1
       references.push(...examples)
@@ -312,17 +319,19 @@ async function resolveBaseDirection(
           : `Reference images ${first}–${references.length} are`
       lines.push(
         "",
-        colors.length
+        !brandWins
+          ? `${range} FINISHED ${FORMAT_NAMES[opts.format]} the creator made in her own style — this is exactly how her ${FORMAT_NAMES[opts.format]} should look. Design this image as the next one in that series: same palette and background treatment, same typography character and hierarchy, same layout devices, graphic elements, density and overall feel. Do NOT copy their text, photos or subject — this image has its own content.`
+          : colors.length
           ? `${range} FINISHED ${FORMAT_NAMES[opts.format]} the creator made, shown in grayscale on purpose. They set the COMPOSITION only: layout, where each element sits, the text hierarchy (headline / body sizes and weights), how much text there is and the ratio of picture to text. Design this image as the next one in that series. Do NOT copy their text, photos, subject or typeface, and take no colour from them — the colours are her BRAND COLOURS below.`
           : `${range} FINISHED ${FORMAT_NAMES[opts.format]} the creator made in her own style. They set the composition — layout, where each element sits, the text hierarchy, how much text there is and the ratio of picture to text — and, since she has no brand colours, the palette and background treatment too. Design this image as the next one in that series. Do NOT copy their text, photos, subject or typeface — this image has its own content.`,
       )
     }
     // Last, so it wins over her analysed language (which may name colours
     // it read off the examples) and over the examples themselves.
-    const colourLines = brandColourLines(colors)
+    const colourLines = brandWins ? brandColourLines(colors) : []
     if (colourLines.length) lines.push("", ...colourLines)
     // Examples ride along as images: say outright the type isn't theirs.
-    if (examples.length) lines.push("", brandFontLine(await loadBrandFonts(supabase, userId)))
+    if (brandWins && examples.length) lines.push("", brandFontLine(await loadBrandFonts(supabase, userId)))
     return { source: "brand", lines, references, fixed }
   }
 

@@ -56,6 +56,11 @@ export interface CarouselBrief {
    * sent in grayscale, so their palette can't leak (Hani, 2026-11-09).
    */
   examplesGray?: boolean
+  /**
+   * Hani + Nataliya only (lib/feature-access canOwnMediaText, 2026-11-10): her brand colours win over her usage examples
+   * (system prompt rule on examples, the examples line in the brief).
+   */
+  brandWins?: boolean
   /** Names of the brand elements we paste afterwards — never drawn. */
   pastedElements?: string[]
   /**
@@ -125,9 +130,15 @@ THE CAROUSEL IS ONE SYSTEM — slides are swiped one after another, so consisten
 8. Keep ≥64px margins; nothing touches or crosses a slide edge.
 9. No JavaScript, no external resources other than the illustration tokens.
 
-WHEN USAGE EXAMPLES ARE ATTACHED (images of her own finished carousel slides): they are THE TEMPLATE. Rebuild them one-to-one in HTML — the same structure per slide type (cover / content / closing), the same order of elements top to bottom (e.g. bold dark title → plain body text → tinted callout box), the same positions, proportions, sizes relative to the frame, alignment, spacing, backgrounds, number badge, callout style and weights. Measure them; don't reinterpret them, don't "improve" them, don't add anything they don't have. Only the words and the colours change. The typefaces still come from rule 1. The colours come from BRAND COLOURS (rule 5), never from the examples: keep each example's colour ROLES (which surface is dark, which is light, what is highlighted) and fill every role with the brand colour that fits it.
+WHEN USAGE EXAMPLES ARE ATTACHED (images of her own finished carousel slides): they are THE TEMPLATE. Rebuild them one-to-one in HTML — the same structure per slide type (cover / content / closing), the same order of elements top to bottom (e.g. bold dark title → plain body text → tinted callout box), the same positions, proportions, sizes relative to the frame, alignment, spacing, backgrounds, number badge, callout style, colours and weights. Measure them; don't reinterpret them, don't "improve" them, don't add anything they don't have. Only the words change. The typefaces still come from rule 1.
 
 Return two fenced blocks: first \`\`\`json {"illustrations": ["<English prompt for slide 1's illustration, or empty>", ...]}\`\`\` (one entry per slide; a concrete visual idea with NO text, letters or numbers — or "" for no illustration), then \`\`\`html ...\`\`\`.`
+
+/** Hani + Nataliya only (lib/feature-access canOwnMediaText, 2026-11-10): the examples set the layout, the brand sets the colours. */
+const SYSTEM_BRAND_WINS = SYSTEM.replace(
+  "backgrounds, number badge, callout style, colours and weights. Measure them; don't reinterpret them, don't \"improve\" them, don't add anything they don't have. Only the words change. The typefaces still come from rule 1.",
+  "backgrounds, number badge, callout style and weights. Measure them; don't reinterpret them, don't \"improve\" them, don't add anything they don't have. Only the words and the colours change. The typefaces still come from rule 1. The colours come from BRAND COLOURS (rule 5), never from the examples: keep each example's colour ROLES (which surface is dark, which is light, what is highlighted) and fill every role with the brand colour that fits it.",
+)
 
 function briefText(b: CarouselBrief): string {
   const fonts = b.fonts.length ? fontRoleLines(b.fonts) : '- (no brand font set — "Rubik" is the primary)'
@@ -154,7 +165,7 @@ function briefText(b: CarouselBrief): string {
       ? ["", "PASTED ELEMENTS (we add these ourselves — never draw them or anything resembling them):", ...b.pastedElements.map((n) => `- ${n}`)]
       : []),
     ...(b.examples?.length
-      ? ["", `USAGE EXAMPLES: ${b.examples.length} images of her own finished slides are attached above. Rebuild their layout one-to-one, in the BRAND COLOURS above — not their colours.`]
+      ? ["", `USAGE EXAMPLES: ${b.examples.length} images of her own finished slides are attached above. ${b.brandWins ? "Rebuild their layout one-to-one, in the BRAND COLOURS above — not their colours." : "Rebuild their layout one-to-one."}`]
       : []),
   ].join("\n")
 }
@@ -240,7 +251,7 @@ async function ask(
   apiKey: string,
   user: string,
   count: number,
-  ex: Pick<CarouselBrief, "examples" | "examplesGray"> = {},
+  ex: Pick<CarouselBrief, "examples" | "examplesGray" | "brandWins"> = {},
   refs: string[] = [],
   placeable = false,
   /** Blocks of their own before everything (a structure to copy). */
@@ -254,7 +265,7 @@ async function ask(
     { type: "text", text: user },
   ]
   const message = await client.messages
-    .stream({ model: MODEL, max_tokens: 24000, system: SYSTEM, messages: [{ role: "user", content }] })
+    .stream({ model: MODEL, max_tokens: 24000, system: ex.brandWins ? SYSTEM_BRAND_WINS : SYSTEM, messages: [{ role: "user", content }] })
     .finalMessage()
   return parse(message.content.map((c) => (c.type === "text" ? c.text : "")).join(""), count)
 }

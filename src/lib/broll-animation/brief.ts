@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { BROLL_VIDEO_CTA, hasDescriptionCta } from "@/lib/broll-copy"
+import { canOwnMediaText } from "@/lib/feature-access"
 import type { MediaStyle, VisualFormat, VisualLanguage } from "@/lib/visual-language/types"
 import type { BrandFont, CompositionBrief } from "./compose"
 import { brandPalette, resolveDesignDirection, type DesignDirection } from "@/lib/visual-language/direction"
@@ -66,14 +67,23 @@ export async function buildCompositionBrief(
   }
   const [fonts, { data: userRow }] = await Promise.all([
     loadBrandFonts(supabase, userId),
-    supabase.from("users").select("brand_colors, visual_language").eq("id", userId).single(),
+    supabase.from("users").select("brand_colors, visual_language, email").eq("id", userId).single(),
   ])
-  const row = userRow as { brand_colors?: string[] | null; visual_language?: VisualLanguage | null } | null
+  const row = userRow as {
+    brand_colors?: string[] | null
+    visual_language?: VisualLanguage | null
+    email?: string | null
+  } | null
   const vl = row?.visual_language
+  const brandWins = canOwnMediaText(row?.email)
   const useBrandPalette = (!style || style === "brand") && vl?.status === "ok" && vl.palette?.length
-  // Her brand colours win; the analysed palette (which can carry colours read
-  // off her examples) only fills in when she set none.
-  const palette = brandPalette(row?.brand_colors, useBrandPalette ? vl!.palette : [])
+  // Gated: her brand colours win; the analysed palette (which can carry
+  // colours read off her examples) only fills in when she set none.
+  const palette = brandWins
+    ? brandPalette(row?.brand_colors, useBrandPalette ? vl!.palette : [])
+    : useBrandPalette
+      ? vl!.palette
+      : (row?.brand_colors ?? []).map((hex, i) => ({ hex, role: i === 0 ? "primary brand colour" : "brand colour" }))
 
   return {
     hook: text.hook,
@@ -82,6 +92,7 @@ export async function buildCompositionBrief(
     palette,
     fonts,
     styleSpec: styleLines.join("\n"),
+    ...(brandWins ? { brandWins: true } : {}),
   }
 }
 
@@ -117,6 +128,12 @@ export async function currentCompositionBrief(
   const style: MediaStyle = wanted === "brand" && base.source !== "brand" ? "niche" : wanted
   const direction = { ...base, lines: [...base.lines, ...pieceLines(lines)] }
   const fresh = await buildCompositionBrief(supabase, userId, { hook: stored.hook, rest: stored.rest }, direction.lines, style)
-  const brief: CompositionBrief = { ...stored, palette: fresh.palette, fonts: fresh.fonts, styleSpec: fresh.styleSpec }
+  const brief: CompositionBrief = {
+    ...stored,
+    palette: fresh.palette,
+    fonts: fresh.fonts,
+    styleSpec: fresh.styleSpec,
+    brandWins: fresh.brandWins,
+  }
   return { brief, direction, changed: compositionLanguageKey(brief) !== compositionLanguageKey(stored) }
 }

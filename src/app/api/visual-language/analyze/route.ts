@@ -3,6 +3,7 @@ import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-cre
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
+import { canOwnMediaText } from "@/lib/feature-access"
 import { analyzeVisualLanguage } from "@/lib/agents/visual-language-analyzer"
 import { measureElement } from "@/lib/visual-language/fixed-elements"
 import {
@@ -137,6 +138,7 @@ export async function POST() {
       elements: okElements,
       examples: okExamples,
       niche: (identityRow as { niche?: string | null } | null)?.niche ?? null,
+      brandWins: canOwnMediaText(user.email),
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
