@@ -9,7 +9,8 @@
 export const REF_PLACE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 
 export function canPlaceRefs(email: string | null | undefined): boolean {
-  return !!email && REF_PLACE_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-09); REF_PLACE_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -33,7 +34,8 @@ export function gatePlacement(
 export const BROLL_BLEND_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 
 export function canBlendBRoll(email: string | null | undefined): boolean {
-  return !!email && BROLL_BLEND_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-09); BROLL_BLEND_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -48,7 +50,8 @@ export function canBlendBRoll(email: string | null | undefined): boolean {
 export const PICTURE_EDIT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 
 export function canEditPictures(email: string | null | undefined): boolean {
-  return !!email && PICTURE_EDIT_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-09); PICTURE_EDIT_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -60,7 +63,8 @@ export function canEditPictures(email: string | null | undefined): boolean {
 export const COPY_STRUCTURE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 
 export function canCopyStructure(email: string | null | undefined): boolean {
-  return !!email && COPY_STRUCTURE_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-09); COPY_STRUCTURE_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -73,5 +77,6 @@ export function canCopyStructure(email: string | null | undefined): boolean {
 export const TALKING_HEAD_AI_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 
 export function canTalkingHeadAi(email: string | null | undefined): boolean {
-  return !!email && TALKING_HEAD_AI_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-09); TALKING_HEAD_AI_EMAILS kept for reference.
+  return !!email
 }

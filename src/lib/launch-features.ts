@@ -35,7 +35,7 @@ export function canReviewLaunch(email: string | null | undefined): boolean {
  * LAUNCH_REVIEW_EMAILS (Hani + Nataliya, 2026-11-08). Flip to true at the
  * launch push to show them to everyone.
  */
-export const LAUNCH_FOR_EVERYONE = false
+export const LAUNCH_FOR_EVERYONE = true
 
 /** How long the "פיצ׳ר חדש" notes stay, from the user's first visit after launch. */
 export const NOTE_DAYS = 14
