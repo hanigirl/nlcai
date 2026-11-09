@@ -112,3 +112,14 @@ export const NO_AI_CHAT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.co
 export function canUseAiChat(email: string | null | undefined): boolean {
   return !(email && NO_AI_CHAT_EMAILS.includes(email.toLowerCase()))
 }
+
+/**
+ * The AI edit chat as an agent (Hani, 2026-11-10 — lib/edit-agent): it sees
+ * the media and the whole conversation, works in steps, looks at its result,
+ * asks when unsure and explains what happened; it runs on the server. B-roll
+ * first. Never on her own media from Drive / her computer (iron rule).
+ */
+export const EDIT_AGENT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export function canUseEditAgent(email: string | null | undefined): boolean {
+  return !!email && EDIT_AGENT_EMAILS.includes(email.toLowerCase())
+}

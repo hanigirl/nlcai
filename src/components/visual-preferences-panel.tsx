@@ -70,6 +70,26 @@ export function VisualPreferencesPanel() {
     }
   }, [])
 
+  // The chat saves on the server while this tab stays open — read the list
+  // again whenever she comes back to it (Hani, 2026-11-10: "לא שמר").
+  useEffect(() => {
+    const reload = () => {
+      if (document.visibilityState !== "visible") return
+      fetch("/api/visual-language/style-memory", { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: { preferences?: VisualPreference[] } | null) => {
+          if (data?.preferences) setPrefs(data.preferences)
+        })
+        .catch(() => undefined)
+    }
+    window.addEventListener("focus", reload)
+    document.addEventListener("visibilitychange", reload)
+    return () => {
+      window.removeEventListener("focus", reload)
+      document.removeEventListener("visibilitychange", reload)
+    }
+  }, [])
+
   const save = async () => {
     if (!editing) return
     const text = editing.text.trim()

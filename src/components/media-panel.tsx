@@ -376,6 +376,29 @@ function useRefPlaceFlag() {
   }, [on])
 }
 
+/**
+ * The story flow stays mounted (only hidden) under the media the tab shows, so
+ * the page's frames can change under it — the card's trash, an edit from the
+ * chat. Whatever the page holds now is the story: `apply(now, deleted)` runs on
+ * every change after mount, `deleted` when frames there were are gone.
+ */
+export function useFollowPageStoryFrames(
+  enabled: boolean,
+  pageFrames: string[] | null | undefined,
+  apply: (now: string[], deleted: boolean) => void,
+) {
+  const prevRef = useRef(pageFrames)
+  const applyRef = useRef(apply)
+  applyRef.current = apply
+  useEffect(() => {
+    const prev = prevRef.current
+    prevRef.current = pageFrames
+    if (!enabled || prev === pageFrames) return
+    const now = pageFrames && pageFrames.length > 0 ? pageFrames : []
+    applyRef.current(now, !!prev && prev.length > 0 && now.length === 0)
+  }, [enabled, pageFrames])
+}
+
 function useReportBusy(
   report: ((format: string, busy: boolean) => void) | undefined,
   format: string,
@@ -1746,6 +1769,7 @@ function CarouselFlow({
   // Today's batch (2026-10-29), Hani only: the leave-screen note + save-if-left.
   const previewOn = usePreviewAccess() === true
   const drivePick = useDrivePickVariant()
+  const noGreyBandCarousel = useOwnMediaText() === true
   // No separate "current carousel" tile (Hani 2026-07-09): the template
   // that made the saved carousel shows its real cover, starts SELECTED,
   // and tapping it opens the saved slides — one tile, one selection ring.
@@ -3136,7 +3160,7 @@ function CarouselFlow({
           Playable right here: tapping a slide steps through the set without
           leaving the panel. Purely additive — the template tiles, the saved
           slides and the import above are untouched. */}
-      {images && images.length > 0 && (
+      {images && images.length > 0 && !noGreyBandCarousel && (
         <YourCarouselBand
           images={images}
           onOpen={() => openDialog(savedTemplateId ?? DRIVE_IMPORT_KEY)}
@@ -3437,6 +3461,20 @@ function MediaUploadFlow({
       setPreviewKind(null)
     }
   }, [initialMediaUrl, format])
+  // Story: the same, for its frame set. The card's trash clears the page's
+  // frames while this flow stays mounted (only hidden); keeping the old set
+  // here hid both the first step and the media, so the tab went blank
+  // (Nataliya, 2026-11-09). Whatever the page holds now is the story — an
+  // edit from the chat included; its frames going away = deleted.
+  // Hani + Nataliya only (the new panel keeps the flow mounted under the media).
+  const followStory = useOwnMediaText() === true && format === "story"
+  useFollowPageStoryFrames(followStory, initialStoryFrames, (now, deleted) => {
+    setSavedStorySet(now)
+    if (deleted) {
+      setPreviewUrl(null)
+      setPreviewKind(null)
+    }
+  })
   // Once the replacement actually lands, put the field away again — otherwise
   // swapping a clip leaves the panel permanently back in "paste a link" mode.
   useEffect(() => {
@@ -3509,7 +3547,6 @@ function MediaUploadFlow({
     index: number
   } | null>(null)
   const [savingStory, setSavingStory] = useState(false)
-  useReportBusy(onBusyChange, format, uploading || drivePulling || savingStory)
   const [pendingStoryDelete, setPendingStoryDelete] = useState(false)
   // A story video whose caption is already baked in — the burn route stores
   // it under a "burned-" filename, so we can tell a finished clip from a raw
@@ -3672,6 +3709,10 @@ function MediaUploadFlow({
   const accepted = acceptedMimeForFormat(format)
   // Her own media + the script's text, the fixed story paths (lib/feature-access) — Hani only for now.
   const ownStoryText = useOwnMediaText() === true && format === "story"
+  const ownBRollText = useOwnMediaText() === true && format === "b_roll"
+  // The new panel never shows the old grey band under the flows — her media
+  // shows once, at the top of the tab (Hani, 2026-11-10, every format).
+  const noGreyBand = useOwnMediaText() === true
 
   /**
    * Upload via XHR (not supabase-js) so we get progress events. Same
@@ -4141,6 +4182,9 @@ function MediaUploadFlow({
   // deletes it (Hani, 2026-11-08: "המדיה צריך להיות הבירול עם נגן וזהו").
   const bRollShowsMedia = isBRoll && !!previewUrl && !bRollGenerating
   const burningText = bRollState.burning > 0
+  // B-roll being made counts as busy too, so the new panel shows it loading
+  // once at the top of the tab — like story and image (Hani, 2026-11-10).
+  useReportBusy(onBusyChange, format, uploading || drivePulling || savingStory || (isBRoll && (bRollGenerating || burningText)))
 
   /* ---- still-image caption: fire, pick up, redo ---------------------- */
 
@@ -5155,7 +5199,7 @@ function MediaUploadFlow({
               Under the ?imgcap gate the band is replaced by the caption
               block, which owns the same slot: same grey, same frame, plus
               the caption's own states and controls. */}
-          {!hydrating && captionEnabled && (previewUrl || captioningImage) && (
+          {!hydrating && captionEnabled && (previewUrl || captioningImage) && !noGreyBand && (
             <ImageCaptionBlock
               aspect="4/5"
               state={
@@ -5187,7 +5231,7 @@ function MediaUploadFlow({
               onOpenLightbox={setLightboxSrc}
             />
           )}
-          {!hydrating && !captionEnabled && previewUrl && (
+          {!hydrating && !captionEnabled && previewUrl && !noGreyBand && (
             <div className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-5 bg-gray-95 px-6 py-5 dark:bg-gray-10">
               <p className="text-center text-xs text-text-neutral-default">
                 התמונה שלך
@@ -5243,10 +5287,12 @@ function MediaUploadFlow({
             <Skeleton className="h-px flex-1" />
           </div>
           <Skeleton className="h-9 w-full rounded-lg" />
+          {!noGreyBand && (
           <div className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-5 bg-gray-95 px-6 py-5 dark:bg-gray-10">
             <Skeleton className="h-3 w-20" />
             <Skeleton className="w-[200px] aspect-[9/16] rounded-[10px]" />
           </div>
+          )}
         </>
       )}
 
@@ -5781,6 +5827,7 @@ function MediaUploadFlow({
               ffmpeg burn below; only a still lands here. */}
           {isBRoll &&
             captionEnabled &&
+            !noGreyBand &&
             previewKind === "image" &&
             (previewUrl || captioningImage) && (
               <ImageCaptionBlock
@@ -5805,7 +5852,10 @@ function MediaUploadFlow({
               />
             )}
 
+          {/* The new panel shows her media once, at the top of the tab — never
+              this older grey preview under the flows (Hani, 2026-11-10). */}
           {isBRoll &&
+            !ownBRollText &&
             !(captionEnabled && previewKind === "image") &&
             (previewUrl || burningText || bRollGenerating) && (
             <div className="-mx-6 -mb-6 mt-2 flex flex-col items-center gap-5 bg-gray-95 px-6 py-5 dark:bg-gray-10">
