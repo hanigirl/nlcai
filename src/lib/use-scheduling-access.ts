@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
-import { canUseFormatCards, canUseFormatGap, canUseMultinetwork, canUsePreview, canUseScheduleAllA, canUseScheduling } from "@/lib/scheduling-access"
+import { canUseDescription, canUseFormatCards, canUseFormatGap, canUseMultinetwork, canUsePreview, canUseScheduleAllA, canUseScheduling } from "@/lib/scheduling-access"
 import { canCopyStructure, canTalkingHeadAi, canPlaceRefs } from "@/lib/feature-access"
 
 /** null while the session is read, then true/false. */
@@ -46,6 +46,10 @@ export function useCopyStructure(): boolean | null {
   return useEmailGate(canCopyStructure)
 }
 
+/** תיאור הפוסט apart from the script — Hani only (DESCRIPTION_EMAILS). */
+export function useDescriptionAccess(): boolean | null {
+  return useEmailGate(canUseDescription)
+}
 /** The scheduling changes still in trial — Hani only (see PREVIEW_EMAILS). */
 export function useSchedulingPreview(): boolean | null {
   return useEmailGate(canUsePreview)

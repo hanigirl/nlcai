@@ -296,7 +296,7 @@ function DialogBody({
             )}
             <div className="flex items-center gap-2">
               <h4 id="pv-caption" className="flex-1 text-small-bold text-text-primary-default">
-                תיאור הפוסט
+                {data.description !== undefined ? "תיאור הפוסט" : "כיתוב"}
               </h4>
             </div>
             {loading ? (
@@ -318,7 +318,7 @@ function DialogBody({
                   value={captionDraft}
                   onChange={(e) => setCaptionDraft(e.target.value)}
                   rows={8}
-                  placeholder="הטקסט שעולה עם הפוסט. בלי תיאור, יעלה הסקריפט."
+                  placeholder={data.description !== undefined ? "הטקסט שעולה עם הפוסט. בלי תיאור, יעלה הסקריפט." : undefined}
                   dir="rtl"
                   aria-labelledby="pv-caption"
                   className="min-h-40 text-small leading-relaxed"

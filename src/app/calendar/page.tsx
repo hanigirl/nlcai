@@ -54,7 +54,7 @@ import {
   type PreviewSlide,
   type PublishStatus as PreviewPublishStatus,
 } from "@/components/format-preview/shared"
-import { useFormatGap, useMultinetwork, useScheduleAllA, useSchedulingAccess, useSchedulingPreview } from "@/lib/use-scheduling-access"
+import { useFormatGap, useMultinetwork, useScheduleAllA, useSchedulingAccess, useSchedulingPreview, useDescriptionAccess } from "@/lib/use-scheduling-access"
 import {
   hasAnySlot,
   planScheduleAll,
@@ -569,6 +569,8 @@ export default function CalendarPage() {
   // board it was before. Includes the weekly routine on the board (ghost
   // slots + in-place edit), the approved-only rail and the format preview.
   const schedulingOn = useSchedulingAccess() === true
+  // תיאור הפוסט apart from the script — Hani only (DESCRIPTION_EMAILS).
+  const descriptionOn = useDescriptionAccess() === true
   // Today's batch (2026-10-29): a click on an auto-arranged card opens it — Hani only.
   const previewOn = useSchedulingPreview() === true
   // Direction A of "schedule all" (task 4084d905): one row in the panel
@@ -1090,8 +1092,8 @@ export default function CalendarPage() {
   const [previewDetail, setPreviewDetail] = useState<{
     key: string
     caption: string
-    description: string
-    script: string
+    description?: string
+    script?: string
     slides: PreviewSlide[]
     coverUrl?: string
   } | null>(null)
@@ -1127,9 +1129,9 @@ export default function CalendarPage() {
         const description = p.formatDescriptions?.[format] ?? ""
         setPreviewDetail({
           key,
-          caption: description.trim() || script,
-          description,
-          script,
+          caption: descriptionOn ? description.trim() || script : script,
+          description: descriptionOn ? description : undefined,
+          script: descriptionOn ? script : undefined,
           slides: urls.map(slide),
           coverUrl: format === "talking_head" ? p.coverUrl ?? undefined : undefined,
         })
@@ -1253,8 +1255,8 @@ export default function CalendarPage() {
           (hookByPostId.get(previewRow.corePostId) || previewRow.hook || "").trim() ||
           "פוסט מתוזמן",
         caption: previewDetail?.key === previewKey ? previewDetail.caption : "",
-        description: previewDetail?.key === previewKey ? previewDetail.description : "",
-        script: previewDetail?.key === previewKey ? previewDetail.script : "",
+        description: previewDetail?.key === previewKey ? previewDetail.description : descriptionOn ? "" : undefined,
+        script: previewDetail?.key === previewKey ? previewDetail.script : undefined,
         slides: previewDetail?.key === previewKey ? previewDetail.slides : [],
         coverUrl: previewDetail?.key === previewKey ? previewDetail.coverUrl : undefined,
         handle: connection.primary?.handle ?? "",
@@ -1308,15 +1310,24 @@ export default function CalendarPage() {
           fetch(`/api/core-posts/${previewRow.corePostId}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            // The description (045) — the script is left as it is.
-            body: JSON.stringify({ formatDescriptions: { [previewRow.format]: caption } }),
+            // Hani: the description (045), the script left as it is.
+            // Everyone else: the caption is the script, as before.
+            body: JSON.stringify(
+              descriptionOn
+                ? { formatDescriptions: { [previewRow.format]: caption } }
+                : { formatPosts: { [previewRow.format]: caption } },
+            ),
           })
             .then((r) => {
               if (!r.ok) throw new Error(`PATCH ${r.status}`)
               setPreviewDetail((d) =>
-                d && d.key === key ? { ...d, description: caption, caption: caption.trim() || d.script } : d,
+                d && d.key === key
+                  ? descriptionOn
+                    ? { ...d, description: caption, caption: caption.trim() || (d.script ?? "") }
+                    : { ...d, caption }
+                  : d,
               )
-              toast.success("התיאור עודכן")
+              toast.success(descriptionOn ? "התיאור עודכן" : "הכיתוב עודכן")
             })
             .catch((err) => {
               console.error("[calendar] description save failed", err)
