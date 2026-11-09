@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useSyncExternalStore } from "react"
+import { archiveChat, isPersistedKey, loadChat, restoreChat, scheduleSave } from "@/lib/ai-chat-history"
 
 /**
  * Module-level memory for the AI edit panels (media AI edit, core post chat,
@@ -20,6 +21,10 @@ import { useEffect, useSyncExternalStore } from "react"
  *     request, so a restored session is never "busy".
  *
  * A conversation only starts over when she presses "שיחה חדשה" (clearChat).
+ *
+ * Kept for good (Hani, 2026-11-09): a real post's conversation is also saved
+ * to her account (lib/ai-chat-history), so another device or a closed tab
+ * opens on it; "שיחה חדשה" moves it to the panel's archive.
  * Nothing secret is stored: her words, the AI's replies, and the panel state.
  */
 
@@ -92,9 +97,32 @@ function emit(key: string) {
   for (const l of anyListeners) l()
 }
 
+/** Keys already asked from her account this page load. */
+const fetched = new Set<string>()
+const hasHerWords = (s: AnySession | null | undefined) => !!s?.messages.some((m) => m?.role === "user")
+
+/** Nothing in this tab: bring the saved conversation from her account. */
+function fetchSaved(key: string) {
+  if (fetched.has(key) || !isPersistedKey(key)) return
+  fetched.add(key)
+  void loadChat(key).then((saved) => {
+    if (!saved || !hasHerWords(saved)) return
+    const cur = sessions.get(key)
+    // Something she said here meanwhile wins over the saved copy.
+    if (hasHerWords(cur) || (cur && cur.messages.length > 1) || cur?.busy) return
+    sessions.set(key, saved)
+    write(key, saved)
+    emit(key)
+  })
+}
+
 /** The conversation for `key`, or null if there is none yet. */
 export function getChat<M, X>(key: string): AiChatSession<M, X> | null {
-  if (!sessions.has(key)) sessions.set(key, read(key))
+  if (!sessions.has(key)) {
+    const stored = read(key)
+    sessions.set(key, stored)
+    if (!stored) fetchSaved(key)
+  }
   return (sessions.get(key) as AiChatSession<M, X> | null) ?? null
 }
 
@@ -111,14 +139,26 @@ export function updateChat<M, X>(
   const next = fn(getChat<M, X>(key) ?? init())
   sessions.set(key, next)
   write(key, next)
+  scheduleSave(key, next)
   emit(key)
 }
 
-/** "שיחה חדשה": forget this conversation. */
+/** "שיחה חדשה": this conversation goes to the panel's archive; the panel starts over. */
 export function clearChat(key: string) {
+  void archiveChat(key, sessions.get(key) ?? null)
   sessions.set(key, null)
   write(key, null)
   emit(key)
+}
+
+/** From the archive: that conversation is the panel's current one again. */
+export async function restoreArchivedChat(key: string, id: string): Promise<boolean> {
+  const restored = await restoreChat(key, id, sessions.get(key) ?? null)
+  if (!restored) return false
+  sessions.set(key, restored)
+  write(key, restored)
+  emit(key)
+  return true
 }
 
 /** Move a conversation to a new key (a draft post that just got its id). */
@@ -127,6 +167,7 @@ export function moveChat(from: string, to: string) {
   if (!s || getChat(to)) return
   sessions.set(to, s)
   write(to, s)
+  scheduleSave(to, s)
   moved.set(from, to)
   clearChat(from)
 }

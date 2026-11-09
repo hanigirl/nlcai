@@ -16,6 +16,7 @@ import { logLearningEdit, type LearningOutcome } from "@/lib/learning-capture"
 import { getChat, clearChat, moveChat, updateChat, useAiChat, useWatchChat, type AiChatSession } from "@/lib/ai-chat-session-store"
 import { revealChatReply } from "@/lib/ai-chat-reveal"
 import { AiChatNewButton } from "@/components/ai-chat-new-button"
+import { AiChatArchiveButton } from "@/components/ai-chat-archive-button"
 
 interface ChatMessage {
   role: "user" | "assistant"
@@ -284,6 +285,7 @@ export function CorePostChat({
         <AiSparkle />
         <span className="text-small-bold text-text-primary-default">עריכת פוסט ליבה</span>
         <div className="ms-auto flex items-center gap-1">
+          <AiChatArchiveButton chatKey={storeKey} disabled={loading} />
           {messages.some((m) => m.role === "user") && (
             <AiChatNewButton disabled={loading} onClick={() => clearChat(storeKey)} />
           )}

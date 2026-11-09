@@ -28,6 +28,7 @@ import {
   type AiChatSession,
 } from "@/lib/ai-chat-session-store"
 import { AiChatNewButton } from "@/components/ai-chat-new-button"
+import { AiChatArchiveButton } from "@/components/ai-chat-archive-button"
 import { canRevealChat, revealChatReply } from "@/lib/ai-chat-reveal"
 import { MAX_REFERENCES, MAX_SLOT_REFERENCES, REFERENCE_ONLY_INSTRUCTION } from "@/lib/ai-edit-references"
 import {
@@ -1773,6 +1774,7 @@ export function MediaAiChat({
           copy={format === "carousel" && copyAllowed && !currentUrls.length}
         />
         <div className="ms-auto flex items-center gap-1">
+          <AiChatArchiveButton chatKey={chatKey} disabled={loading} />
           {messages.some((m) => m.role === "user") && (
             <AiChatNewButton disabled={loading} onClick={() => clearChat(chatKey)} />
           )}

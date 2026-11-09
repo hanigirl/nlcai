@@ -7,6 +7,7 @@ import { X } from "lucide-react"
 import { AiSparkle } from "@/components/ai-refine-button"
 import { COPY_NOUN } from "@/lib/format-copy-refine"
 import { AiChatNewButton } from "@/components/ai-chat-new-button"
+import { AiChatArchiveButton } from "@/components/ai-chat-archive-button"
 import { useWatchChat } from "@/lib/ai-chat-session-store"
 import { REFERENCE_ONLY_INSTRUCTION } from "@/lib/ai-edit-references"
 import {
@@ -87,6 +88,7 @@ export function FormatCopyChat({
         <AiSparkle />
         <span className="text-small-bold text-text-primary-default">עריכת {COPY_NOUN[fid]}</span>
         <div className="ms-auto flex items-center gap-1">
+          <AiChatArchiveButton chatKey={ctrl.chatKey(fid)} disabled={session.loading} />
           {!fresh && <AiChatNewButton disabled={session.loading} onClick={() => ctrl.reset(fid)} />}
           <button
             type="button"
