@@ -245,10 +245,23 @@ export async function POST(req: NextRequest) {
     // title fallback, no CTA appended. No script text → she's told.
     const brollScript = format === "b_roll" && canOwnMediaText(user.email)
     const brollText = brollScript ? scriptTextFor("b_roll", variant.body) : null
+    // The own-media-text path (lib/feature-access) — carousel branch.
+    const ownCarousel = format === "carousel" && canOwnMediaText(user.email)
 
     if (override) {
       overlayHook = override.headline
       overlayBody = override.body
+    } else if (ownCarousel) {
+      // Her own media + the script's text (Hani, 2026-11-09): slide k carries
+      // the script's slide k, split on the "שקופית N" headers (lib/script-
+      // text). No hook / title fallback — a slide past the script stays bare.
+      const unit = scriptTextFor("carousel", variant.body, body.slideIndex ?? 0)
+      if (!unit) {
+        return NextResponse.json({ skipped: "no_script_text", message: NO_SCRIPT_TEXT, originalUrl: sourceUrl })
+      }
+      overlayHook = unit.headline
+      overlayBody = unit.body
+      textSource = "script"
     } else if (format === "carousel") {
       // A slide carries its own title and body — the same split the panel
       // shows, so the words burned into the picture are the words the user
@@ -365,7 +378,9 @@ export async function POST(req: NextRequest) {
       ? (override?.style ?? (await captionLookFor(supabase, user.id)))
       : brollScript
         ? { ...(await captionLookFor(supabase, user.id)), ...override?.style }
-        : (override?.style ?? storyLook)
+        : ownCarousel
+          ? (override?.style ?? (await captionLookFor(supabase, user.id)))
+          : (override?.style ?? storyLook)
     if (ownStory && !override && !textSource) textSource = "script"
     if (ownText && override) {
       const unit = scriptTextFor("image_post", variant.body)

@@ -94,6 +94,12 @@ import {
   captionCarouselSlide,
   slideHasBakedText,
   forgetCarouselSlides,
+  captionOwnSlides,
+  ownCaptionNote,
+  saveOwnCarousel,
+  stageOwnSlide,
+  urlToBase64,
+  type StagedSlide,
   readCarouselCaptionSettings,
 } from "@/lib/carousel-caption"
 import { MAX_CAROUSEL_SLIDES } from "@/lib/carousel-limits"
@@ -2245,6 +2251,119 @@ function CarouselFlow({
   // confirm's "yes" runs the very same rows the user submitted.
   const [pendingDriveReimport, setPendingDriveReimport] = useState<string[] | null>(null)
 
+  // Her own media + the script's text (lib/feature-access) — Hani only.
+  const ownTextGate = useOwnMediaText() === true
+
+  /**
+   * own-media-text (Hani, 2026-11-09): her files → stored slides, each with
+   * ITS script slide's words (lib/script-text, no hook fallback), saved and
+   * waited for before it says anything. One path for the Drive links, the
+   * Drive folder, the computer, the chat attach and the slide slots:
+   *   - every slide is a stored URL with a caption record, so moving or
+   *     removing the caption works after a reload (no memory-only cache);
+   *   - the Drive links are rewritten to match the slides ("" for a file
+   *     from the computer), so a stale link is never taken for an original;
+   *   - `caption: false` (the chat's attach): imported bare — the AI edit
+   *     right after puts the script's text on it.
+   */
+  const importOwnSlides = async (
+    items: AsIsItem[],
+    opts: { caption: boolean; at?: number[]; base?: string[] },
+  ): Promise<AsIsResult & { slides?: string[]; partial?: boolean }> => {
+    if (!postId) return { ok: false, message: "שמרו קודם את הפוסט, ואז אפשר להעלות מדיה." }
+    setDriveImportError(null)
+    setDriveImporting(true)
+    onBusyChange?.("carousel", true)
+    try {
+      const staged: StagedSlide[] = []
+      for (let k = 0; k < items.length; k++) {
+        const n = opts.at ? opts.at[k] + 1 : k + 1
+        setDriveImportProgress(
+          opts.at ? `מעלים את שקופית ${n}...` : `מעלים שקופית ${k + 1} מתוך ${items.length}...`,
+        )
+        const r = await stageOwnSlide(postId, items[k])
+        if (!r.ok) return { ok: false, message: `${r.message} (שקופית ${n})` }
+        staged.push(r.slide)
+      }
+      const base = opts.at ? [...(opts.base ?? images ?? [])] : []
+      let bares: string[]
+      let links: string[]
+      let targets: number[]
+      if (opts.at && base.length) {
+        bares = base
+        links =
+          driveLinks && driveLinks.length === base.length ? [...driveLinks] : base.map(() => "")
+        targets = []
+        opts.at.forEach((slot, k) => {
+          if (slot >= bares.length) return
+          bares[slot] = staged[k].url
+          links[slot] = staged[k].link
+          targets.push(slot)
+        })
+      } else if (opts.at) {
+        const order = opts.at.map((slot, k) => ({ slot, s: staged[k] })).sort((a, b) => a.slot - b.slot)
+        bares = order.map((o) => o.s.url)
+        links = order.map((o) => o.s.link)
+        targets = bares.map((_, i) => i)
+      } else {
+        bares = staged.map((s) => s.url)
+        links = staged.map((s) => s.link)
+        targets = bares.map((_, i) => i)
+      }
+      // Finished designs keep their own words (2026-10-22): a new set's
+      // cover decides once. Slots keep what the set already said.
+      let baked = opts.at && base.length ? getFormatMeta(postId, "carousel").bakedText : undefined
+      if (!(opts.at && base.length)) {
+        const cover = staged.find((s) => !s.video)
+        if (cover) {
+          setDriveImportProgress("בודקים אם יש טקסט בשקופיות...")
+          const b64 = cover.base64 ?? (await urlToBase64(cover.url))
+          const has = b64 ? await slideHasBakedText(b64) : null
+          baked = has === null ? undefined : has
+        }
+      }
+      const { captionOn, position } = readCarouselCaptionSettings(postId)
+      const doCaption = opts.caption && captionOn && baked !== true
+      const outcome = doCaption
+        ? await captionOwnSlides(postId, bares, targets, position, setDriveImportProgress)
+        : { slides: bares, noScript: [], failed: [] }
+      setDriveImportProgress("שומרים את הקרוסלה...")
+      if (!(await saveOwnCarousel(postId, outcome.slides, links, baked))) {
+        return { ok: false, message: "השקופיות לא נשמרו בפוסט. נסו שוב." }
+      }
+      carouselGenCache.delete(postId)
+      carouselBareSlides.set(postId, bares)
+      if (doCaption) carouselCaptionedSlides.set(postId, outcome.slides)
+      else carouselCaptionedSlides.delete(postId)
+      setSavedTemplateId(undefined)
+      onImagesChange(outcome.slides)
+      onDriveLinksChange(links.some(Boolean) ? links : [])
+      const where = targets.map((i) => i + 1)
+      const lead = opts.at
+        ? where.length === 1
+          ? `שמתי את המדיה בשקופית ${where[0]}`
+          : `שמתי את המדיה בשקופיות ${where.join(", ")}`
+        : outcome.slides.length === 1
+          ? "השקופית עלתה"
+          : `${outcome.slides.length} השקופיות עלו, לפי הסדר`
+      const tail = !opts.caption
+        ? "."
+        : baked === true
+          ? ", כמו שהן: יש עליהן כבר טקסט משלכם, אז לא הוספתי."
+          : !captionOn
+            ? ", כמו שהן, בלי טקסט (הכיתוב כבוי בכרטיס הקרוסלה)."
+            : outcome.noScript.length + outcome.failed.length === targets.filter((i) => !isVideoSlide(bares[i])).length
+              ? "."
+              : ", ועליהן הטקסט מהסקריפט."
+      const note = doCaption ? ownCaptionNote(outcome) : ""
+      return { ok: true, message: `${lead}${tail}${note ? ` ${note}` : ""}`, slides: outcome.slides, partial: !!note }
+    } finally {
+      setDriveImporting(false)
+      onBusyChange?.("carousel", false)
+      setDriveImportProgress("")
+    }
+  }
+
   /**
    * Import entry point. Asks first when there is already a carousel to lose;
    * a first import has nothing to overwrite and goes straight through.
@@ -2265,6 +2384,25 @@ function CarouselFlow({
         return r.ok
           ? { ok: true, message: r.message || "בניתי את הקרוסלה מחדש לפי המבנה של הרפרנס, עם הטקסט שלכם." }
           : { ok: false, message: r.message, ...(r.needs ? { needs: r.needs } : {}) }
+      }
+      // own-media-text: her pictures (and clips going in as they are) become
+      // the slides with the script's text — awaited, links rewritten, records
+      // kept. A clip that gets the animated caption, and empty slots that the
+      // AI fills, keep their own paths below.
+      if (ownTextGate && items.length) {
+        const slots = opts?.at && opts.at.length === items.length ? opts.at : undefined
+        const videoForEdit = !!opts?.forEdit && items.some((it) => it.kind === "video")
+        const aiFill = !!slots && !(opts?.base ?? images ?? []).length && !!opts?.fill && items.length < opts.fill
+        if (!videoForEdit && !aiFill) {
+          const r = await importOwnSlides(items, {
+            // Slot pictures carry their slide's words; the chat's attach is
+            // captioned by the AI edit that follows it.
+            caption: slots ? true : !opts?.forEdit,
+            at: slots,
+            base: opts?.base,
+          })
+          return r.ok ? { ok: true, message: r.message } : { ok: false, message: r.message }
+        }
       }
       // Her slide slots (Hani, 2026-11-06): each file on the slide she chose,
       // replacing what's there — the slide count stays.
@@ -2461,6 +2599,28 @@ function CarouselFlow({
     // downloaded; it belongs in the reference-link block below).
     if (links.some((l) => !/drive\.google\.com|docs\.google\.com/i.test(l))) {
       setDriveImportError("כל הקישורים צריכים להיות מגוגל דרייב (קאנבה לא נתמך כאן)")
+      return
+    }
+    // own-media-text: stored slides with the script's text and a caption
+    // record each, saved before the toast — which says what really happened.
+    if (ownTextGate) {
+      const r = await importOwnSlides(
+        links.map((l) => ({ kind: "image" as const, drive: l })),
+        { caption: true },
+      )
+      if (!r.ok) {
+        setDriveImportError(r.message)
+        return
+      }
+      if (r.slides) {
+        setGeneratedByTemplate((p) => ({ ...p, [DRIVE_IMPORT_KEY]: r.slides! }))
+        setDialogFor(DRIVE_IMPORT_KEY)
+        setPreviewIndex(0)
+      }
+      // Links kept as typed — the recipe for re-importing after fixing one.
+      onDriveLinksChange(links)
+      if (r.partial) toast.warning(r.message, { duration: 8000 })
+      else toast.success(r.message, { duration: 6000 })
       return
     }
     setDriveImportError(null)

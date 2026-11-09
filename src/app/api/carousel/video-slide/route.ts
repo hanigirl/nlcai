@@ -7,7 +7,9 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { fetchDriveFile } from "@/lib/drive-fetch"
 import { extractDriveFileId } from "@/lib/drive-media"
 import { parseTextToSlides } from "@/lib/carousel-slides"
-import { videoCaptionWords } from "@/lib/carousel-video-caption"
+import { holdVideoWordsToScript, scriptWords, videoCaptionWords } from "@/lib/carousel-video-caption"
+import { scriptTextFor, type ScriptText } from "@/lib/script-text"
+import { canOwnMediaText } from "@/lib/feature-access"
 import { renderOwnVideoCaption, OVERLAY_SECONDS } from "@/lib/own-video-captions"
 import {
   CAROUSEL_VIDEO_HEIGHT,
@@ -149,7 +151,21 @@ export async function POST(req: NextRequest) {
 
     // ---- the slide ----
     const output = path.join(work, "out.mp4")
-    if (caption) {
+    // Her own media + the script's text (lib/feature-access): the slide's
+    // words are the script's slide, verbatim; a slide the script has no text
+    // for goes in without a caption — never the hook.
+    const ownText = canOwnMediaText(user.email)
+    let ownUnit: ScriptText | null = null
+    if (caption && ownText) {
+      const { data: v } = await supabase
+        .from("format_variants")
+        .select("body")
+        .eq("core_post_id", postId)
+        .eq("format", "carousel")
+        .maybeSingle()
+      ownUnit = scriptTextFor("carousel", (v as { body: string | null } | null)?.body, Math.max(0, caption.slideIndex ?? 0))
+    }
+    if (caption && (!ownText || ownUnit)) {
       const anthropicKey = await getUserApiKey(supabase, "anthropic_api_key").catch(() => null)
       if (!anthropicKey) throw new SlideError("anthropic_not_connected", "כדי להוסיף כיתוב מונפש צריך לחבר מפתח Claude בהגדרות.", 400)
       // The slide's own words, from the carousel script; the hook when the
@@ -167,7 +183,13 @@ export async function POST(req: NextRequest) {
       const scriptBody = at?.title ? at.body?.trim() || undefined : undefined
       // The script's words by default; her message can change them, not
       // only their look (Hani, 2026-11-06 — lib/carousel-video-caption).
-      const words = await videoCaptionWords(anthropicKey, { headline: scriptHeadline, body: scriptBody }, caption.design)
+      const words = ownUnit
+        ? holdVideoWordsToScript(
+            await videoCaptionWords(anthropicKey, scriptWords(ownUnit), caption.design),
+            scriptWords(ownUnit),
+            caption.design,
+          )
+        : await videoCaptionWords(anthropicKey, { headline: scriptHeadline, body: scriptBody }, caption.design)
       const framesDir = path.join(work, "frames")
       await fs.mkdir(framesDir, { recursive: true })
       const frames = await renderOwnVideoCaption(

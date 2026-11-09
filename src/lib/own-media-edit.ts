@@ -2,7 +2,7 @@
 
 import { flushPendingSaves } from "@/lib/pending-saves"
 import { getFormatMeta, setFormatMeta } from "@/lib/timing-storage"
-import { forgetCarouselSlides } from "@/lib/carousel-caption"
+import { forgetCarouselSlides, markCarouselSaved } from "@/lib/carousel-caption"
 import { isDriveUrl } from "@/lib/drive-media"
 import { NO_SCRIPT_TEXT } from "@/lib/script-text"
 import type { CaptionSpec, OwnEditFormat, OwnEditOp, OwnEditPlan, OwnFrameInfo } from "@/lib/own-media"
@@ -349,7 +349,11 @@ async function execute(
   if (!saved.ok) return { ok: false, message: saved.data.message ?? FAIL }
 
   // Keep the card's caption controls honest about what's on the media now.
-  if (format === "carousel") forgetCarouselSlides(postId)
+  if (format === "carousel") {
+    forgetCarouselSlides(postId)
+    // Already saved above — the page autosave needn't write it again.
+    markCarouselSaved(postId, urls)
+  }
   if (format === "image_post" || format === "b_roll") {
     const it = set[0]
     setFormatMeta(postId, format, {
@@ -430,6 +434,8 @@ async function caption(
     design: [prev.design, item.kind === "video" ? instruction?.trim() : undefined].filter(Boolean).join("\n") || undefined,
   }
   if (!spec.headline && !spec.body) {
+    // A carousel slide past the script stays bare — said as such (lib/script-text).
+    if (format === "carousel") return { error: NO_SCRIPT_TEXT }
     return { error: "לא היה כתוב לי מה לשים בכיתוב. כתבו את הנוסח ואעדכן." }
   }
   // Over the original — or, on a bare frame, over the frame itself.

@@ -15,8 +15,12 @@ import { CaptionControls } from "@/components/image-caption-block"
 import {
   applyCarouselMetaFromServer,
   carouselMetaForServer,
+  isCarouselAlreadySaved,
+  keepCarouselAsUrls,
+  markCarouselSaved,
   useCarouselCaption,
 } from "@/lib/carousel-caption"
+import { isOwnCarousel } from "@/lib/carousel-own"
 import { useStillCaption } from "@/lib/still-caption"
 import { toast } from "sonner"
 import { registerPendingSaveFlusher } from "@/lib/pending-saves"
@@ -179,6 +183,14 @@ function hasFormatText(
 function carouselSignature(images: string[] | null): string {
   if (!images || images.length === 0) return ""
   return `${images.length}|${images.map((img) => img.slice(0, 16)).join("|")}`
+}
+
+/** own-media-text: a stored URL in full, bytes by length + both ends. */
+function carouselSignatureFull(images: string[] | null): string {
+  if (!images || images.length === 0) return ""
+  return `${images.length}|${images
+    .map((img) => (/^https?:\/\//i.test(img) ? img : `${img.length}:${img.slice(0, 16)}:${img.slice(-16)}`))
+    .join("|")}`
 }
 
 /**
@@ -418,6 +430,8 @@ function ProjectPageInner() {
 
   // Carousel state (lifted for panel persistence)
   const [carouselImages, setCarouselImages] = useState<string[] | null>(null)
+  // Her own media + the script's text (lib/feature-access) — carousel paths.
+  const ownTextGate = useOwnMediaText() === true
   const [carouselSlides, setCarouselSlides] = useState<SlideData[] | null>(null)
   // Per-slide Drive links behind an imported carousel, in slide order. Lives
   // on the post (migration 027), not in this browser — so the list follows the
@@ -1070,6 +1084,7 @@ function ProjectPageInner() {
             // set — but the canvas no longer waits for it, and a failed
             // decode can no longer hide the carousel entirely.
             prevCarouselSigRef.current = carouselSignature(urls)
+            markCarouselSaved(postId, urls)
             setCarouselImages(urls)
             Promise.all(
               urls.map((u) =>
@@ -1090,7 +1105,11 @@ function ProjectPageInner() {
                   ),
               ),
             )
-              .then((b64s) => {
+              .then(async (b64s) => {
+                // Her own carousel stays as its stored URLs (own-media-text):
+                // re-saved as bytes it would lose what each slide is and its
+                // caption record (lib/carousel-own).
+                if (await keepCarouselAsUrls(urls, data.post.carouselDriveLinks)) return
                 prevCarouselSigRef.current = carouselSignature(b64s)
                 setCarouselImages(b64s)
               })
@@ -1600,10 +1619,16 @@ function ProjectPageInner() {
   const prevCarouselSigRef = useRef<string>("")
   useEffect(() => {
     if (!savedPostId) return
-    const sig = carouselSignature(carouselImages)
+    // own-media-text: the whole URL counts — two stored sets of the same
+    // length share their first 16 characters, so a slide swapped for another
+    // stored picture (a slot upload, a caption moved) was never saved. A set
+    // the panel already saved itself (or just loaded) isn't written twice.
+    const sig = ownTextGate ? carouselSignatureFull(carouselImages) : carouselSignature(carouselImages)
     if (sig === prevCarouselSigRef.current) return
     prevCarouselSigRef.current = sig
     if (!carouselImages || carouselImages.length === 0) return
+    if (ownTextGate && isCarouselAlreadySaved(savedPostId, carouselImages)) return
+    markCarouselSaved(savedPostId, carouselImages)
     // What the carousel is (AI-made / brought, words designed in) rides
     // with the slides, so another browser reads it the same way.
     void savePatch(
@@ -1611,7 +1636,7 @@ function ProjectPageInner() {
       { carouselImages, carouselMeta: carouselMetaForServer(savedPostId) },
       "הקרוסלה",
     )
-  }, [savedPostId, carouselImages])
+  }, [savedPostId, carouselImages, ownTextGate])
 
   // Manual hooks generation (no auto-generation)
   const handleGenerateHooks = (opts?: { replace?: boolean }) => {
@@ -2194,7 +2219,7 @@ function ProjectPageInner() {
     }
     // A talking head is always her own video (her upload or her avatar).
     if (aiChatFormat === "talking_head") return true
-    return aiChatOpening?.kind !== "generate" && isOwnMediaFormat(aiChatFormat, urls[aiChatFormat], carouselDriveLinks)
+    return aiChatOpening?.kind !== "generate" && isOwnMediaFormat(aiChatFormat, urls[aiChatFormat], carouselDriveLinks, ownTextGate)
   })()
   const aiOwnKey = aiChatFormat ? `${aiChatFormat}:${aiChatOpening?.id ?? "edit"}` : ""
   const [aiOwnFrozen, setAiOwnFrozen] = useState<{ key: string; own: boolean } | null>(null)
@@ -2218,7 +2243,7 @@ function ProjectPageInner() {
   // Read by the post load and the cover request, which run outside render.
   const thAiOnRef = useRef(false)
   // Own media text (gated, 2026-11-09): a cover that fails is said, never only logged.
-  const ownTextGate = useOwnMediaText() === true
+  // (ownTextGate is read above, once for the page.)
   const ownTextRef = useRef(false)
   ownTextRef.current = ownTextGate
   const thGateRef = useRef<boolean | null>(null)
@@ -3739,9 +3764,11 @@ const MEDIA_NOUN: Record<AiEditFormat, string> = {
  * A carousel counts as hers when it has one Drive link per slide ("" for a
  * slide the AI added later); stray links on an AI carousel don't line up.
  */
-function isOwnMediaFormat(format: AiEditFormat, urls: string[], carouselLinks: string[] | null): boolean {
+function isOwnMediaFormat(format: AiEditFormat, urls: string[], carouselLinks: string[] | null, ownText = false): boolean {
   if (urls.length === 0) return false
   if (format === "carousel") {
+    // own-media-text: her computer / chat pictures have no links; the slide URLs say whose they are.
+    if (ownText) return isOwnCarousel(urls, carouselLinks)
     return !!carouselLinks && carouselLinks.length === urls.length && carouselLinks.some(Boolean)
   }
   if (format === "b_roll") return !isEditableBRollUrl(urls[0])
