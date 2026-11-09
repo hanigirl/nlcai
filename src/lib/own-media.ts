@@ -140,6 +140,13 @@ export interface OwnEditPlan {
   ops: OwnEditOp[]
   /** She asked for something that would change her own pixels. */
   refused?: boolean
+  /**
+   * The script per frame / slide (lib/own-media-plan scriptUnits): a frame
+   * the edit duplicates gets ITS OWN unit's caption, not a copy of the
+   * frame it came from (Hani, 2026-11-09: one video for all three stories
+   * came back as the same captioned clip three times).
+   */
+  script?: { headline?: string; body?: string }[]
 }
 
 /** What the plan route knows about one frame, handed back to the executor. */

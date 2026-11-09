@@ -125,7 +125,7 @@ export async function planOwnMediaEdit(
     "HARD RULE — THE SCRIPT IS THE TEXT. Every word that goes ON the media (captions, headlines, new frames' text) is copied from the script below, word for word. Never reword, shorten, summarise, translate or 'improve' it, and never invent a title, headline, hook or CTA that isn't in it. Writing in everyday words is the script editor's job, not yours. The only other words allowed are ones she dictates in her request, copied exactly.",
     ...(units.length > 1
       ? [
-          `The set follows the script: ${units.length} ${NOUN[format].item}s, in its order — ${NOUN[format].item} k carries script ${unitName} k. Her ${NOUN[format].item}s take the first ones; when she has fewer than the script, add the missing ones as NEW ${NOUN[format].item}s after her last one${animated ? " (add_animated_slide when her media is video or she asked for motion, else add_slide)" : ""}, each with its exact script text. Never fold several into one ${NOUN[format].item}, and never add one the script doesn't have unless she dictates its words.`,
+          `The set follows the script: ${units.length} ${NOUN[format].item}s, in its order — ${NOUN[format].item} k carries script ${unitName} k. Her ${NOUN[format].item}s take the first ones; when she has fewer than the script, add the missing ones as NEW ${NOUN[format].item}s after her last one${animated ? " (add_animated_slide when her media is video or she asked for motion, else add_slide)" : ""}, each with its exact script text. Never fold several into one ${NOUN[format].item}, and never add one the script doesn't have unless she dictates its words. Her same video/photo on several ${NOUN[format].item}s = duplicate_slide; each copy then gets its own script text automatically, so caption only the frames that exist now.`,
         ]
       : []),
     "Only touch the frames she means: a named one (\"פריים 2\", \"האחרון\", \"השקופית הזאת\" = the one on screen), otherwise all frames her request is about.",
@@ -172,6 +172,7 @@ export async function planOwnMediaEdit(
   return {
     reply: typeof json.reply === "string" && json.reply.trim() ? json.reply.trim() : "",
     ops: holdToScript(sane, units, input.instruction),
+    script: units.length ? units : undefined,
     refused: json.refused === true || undefined,
   }
 }
@@ -244,7 +245,8 @@ export function holdToScript(ops: OwnEditOp[], units: ScriptUnit[], instruction:
       for (const f of op.frames) {
         const u = unitAt(f - 1)
         // No script text for this frame: keep its current words (look/position only).
-        out.push(u ? { ...op, frames: [f], headline: u.headline, body: u.body } : { ...op, frames: [f], headline: undefined, body: undefined })
+        // "" (not undefined) clears a field: undefined would keep the frame's old, maybe made-up, words.
+        out.push(u ? { ...op, frames: [f], headline: u.headline ?? "", body: u.body ?? "" } : { ...op, frames: [f], headline: undefined, body: undefined })
       }
       continue
     }

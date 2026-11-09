@@ -113,7 +113,7 @@ export async function runOwnMediaEdit(opts: {
 }
 
 /** One frame of the working set, carrying what we know about it. */
-type Item = OwnFrameInfo & { link?: string }
+type Item = OwnFrameInfo & { link?: string; /** Made by duplicate_slide from this frame. */ copyOf?: OwnFrameInfo }
 
 async function execute(
   postId: string,
@@ -196,7 +196,7 @@ async function execute(
     } else if (op.op === "duplicate_slide") {
       const it = original[op.frame - 1]
       const at = set.indexOf(it)
-      if (at >= 0) set.splice(at + 1, 0, { ...it })
+      if (at >= 0) set.splice(at + 1, 0, { ...it, copyOf: it })
     } else if (op.op === "add_slide" || op.op === "add_animated_slide") {
       const animated = op.op === "add_animated_slide"
       onProgress?.(
@@ -221,6 +221,21 @@ async function execute(
       const at = anchor ? set.indexOf(anchor) + 1 : 0
       const fresh: Item = { url: made.data.url, kind: animated ? "video" : "image", aiMade: true, caption: "baked" }
       set.splice(at < 0 ? set.length : at, 0, fresh)
+    }
+  }
+
+  // A copy of a captioned frame carries ITS OWN script text (frame k = the
+  // script's unit k), burned over the same original — never the caption of
+  // the frame it was copied from.
+  if (plan.script?.length) {
+    for (let i = 0; i < set.length; i++) {
+      const it = set[i]
+      const unit = plan.script[i]
+      if (!it.copyOf || !unit || it.caption !== "ours") continue
+      onProgress?.(`מעדכנים את הכיתוב (${i + 1} מתוך ${set.length})...`)
+      const next = await caption(postId, format, it, { op: "set_caption", frames: [i + 1], headline: unit.headline ?? "", body: unit.body ?? "" }, instruction)
+      if ("error" in next) problems.push(next.error)
+      else set[i] = { ...next.item, link: it.link }
     }
   }
 
