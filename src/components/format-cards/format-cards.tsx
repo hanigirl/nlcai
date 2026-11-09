@@ -148,7 +148,7 @@ export function FormatMediaPreview({
   media: FormatCardMedia
   fid: string
   fill?: boolean
-  /** A fixed media box (uniform card) — the media fits inside it whole. */
+  /** A fixed media box (uniform card) — the media fills it, in the format's proportion. */
   box?: string
   /** ‹ › floats on the media (window) instead of sitting under it. */
   navOverlay?: boolean
@@ -160,7 +160,8 @@ export function FormatMediaPreview({
   const mediaClass = fill
     ? "size-full object-cover"
     : box
-      ? "size-full object-contain"
+      ? // Fills the format's frame, full width, in its proportion (Hani, 2026-11-09) — never letterboxed.
+        "size-full object-cover"
       : `w-full ${MEDIA_ASPECT[fid] ?? "aspect-[4/5]"} object-cover`
 
   const nav =

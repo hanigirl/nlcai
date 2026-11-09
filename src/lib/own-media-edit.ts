@@ -87,6 +87,7 @@ export async function runOwnMediaEdit(opts: {
       driveLinks?: string[] | null
       /** The fixed story text paths (gated, story only). */
       ownStoryText?: boolean
+      ownText?: boolean
       message?: string
       error?: string
     }>("/api/media/own-edit", {
@@ -106,7 +107,11 @@ export async function runOwnMediaEdit(opts: {
     const ownStory = format === "story" && planned.data.ownStoryText === true
     // Her files just became the story (gated): the script's text goes on
     // them, no questions — even when the planner came back with nothing.
-    if (ownStory && opts.justImported && plan.ops.length === 0 && !plan.refused && plan.script?.length) {
+    // Any format (gated, Hani 2026-11-09 — "where is the text?"): a file just
+    // imported always gets the script's words, even when the planner (or no
+    // Claude key) came back with nothing.
+    const ownText = ownStory || planned.data.ownText === true
+    if (ownText && opts.justImported && plan.ops.length === 0 && plan.script?.length) {
       const script = plan.script
       plan.ops = frames.flatMap((_, i) =>
         // A frame past the script: an empty op, which execute turns into the NO_SCRIPT_TEXT note.

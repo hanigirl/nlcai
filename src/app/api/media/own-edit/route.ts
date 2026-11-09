@@ -27,7 +27,7 @@ import {
 import { guardedFetch } from "@/lib/server-fetch"
 import { isOwnCarouselSlideUrl } from "@/lib/carousel-own"
 import { canOwnMediaText } from "@/lib/feature-access"
-import { scriptTextFor } from "@/lib/script-text"
+import { scriptTextFor, scriptTextUnits } from "@/lib/script-text"
 
 // Rendering the clip alone takes ~250–270s on our functions (175 frames
 // screenshotted by a Lambda-sized Chromium; the same render is 10–18s on a
@@ -329,13 +329,15 @@ export async function POST(req: NextRequest) {
 
     // B-roll, her own media + the script's text (Hani, 2026-11-09, gated).
     const brollOwn = format === "b_roll" && canOwnMediaText(user.email)
+    // Any format (gated): her file just imported gets the script's words without a model.
+    const ownJustImported = canOwnMediaText(user.email) && input.justImported === true
     let anthropicKey: string | null = null
     try {
       anthropicKey = await getUserApiKey(supabase, "anthropic_api_key")
     } catch {
       // A new user without a Claude key still gets her file + the script's
       // words (b-roll, just imported): that needs no model.
-      if (!(brollOwn && input.justImported)) {
+      if (!ownJustImported) {
         return json(
           { error: "anthropic_not_connected", message: "כדי לערוך עם AI צריך לחבר מפתח Claude בהגדרות." },
           400,
@@ -410,7 +412,7 @@ export async function POST(req: NextRequest) {
           history: input.history,
           justImported: input.justImported === true,
         })
-      : { reply: "", ops: [] }
+      : { reply: "", ops: [], script: scriptTextUnits(format, variant.body) }
     const plan = brollOwn
       ? holdBRollToScript(planned, frames, scriptTextFor("b_roll", variant.body), input.justImported === true)
       : planned
@@ -420,6 +422,8 @@ export async function POST(req: NextRequest) {
       driveLinks: linksAligned ? links : null,
       // The fixed story text paths in lib/own-media-edit (gated, story only).
       ownStoryText: format === "story" && canOwnMediaText(user.email),
+      // The fixed own-media text paths, any format (gated).
+      ownText: canOwnMediaText(user.email),
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)

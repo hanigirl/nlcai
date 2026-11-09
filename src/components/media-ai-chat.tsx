@@ -354,6 +354,9 @@ const STYLE_QUESTION =
 const STYLE_ANSWER_LEAD =
   "The attached picture is ONLY a style reference — never put it, or any part of it, into the media. What to take from it:"
 const AS_IS = "להעלות כמו שזה, בלי תוספות"
+/** Her picture attached, fixed path: the two choices (Hani, 2026-11-09). */
+const PUT_TEXT = "שים טקסט מעל"
+const AS_IS_PLAIN = "להעלות בלי תוספות"
 const AS_IS_BUSY = "מעלים את המדיה כמו שהיא..."
 /** Talking head, own media text (gated): "ביטול השינוי האחרון" typed in the chat. */
 const TH_UNDO_WORDS = /ביטול השינוי|לבטל את (השינוי|העריכה)|תבטל(י)? את (השינוי|העריכה)|בטל(י)? את (השינוי|העריכה)/
@@ -788,7 +791,7 @@ export function MediaAiChat({
       extra: {
         ...s.extra,
         // Image post, fixed path: her picture gets the script's text (media-panel importOwnImagePost).
-        progress: format === "image_post" && ownTextGate ? "מעלים את התמונה ושמים עליה את הטקסט מהסקריפט..." : AS_IS_BUSY,
+        progress: AS_IS_BUSY,
         gen: null,
       },
       messages: [...s.messages, { role: "user", content: AS_IS, ...(images.length ? { images } : {}) }],
@@ -802,18 +805,27 @@ export function MediaAiChat({
             // No carousel yet: the empty slots are made with AI (she said yes).
             ...(firstGen ? { fill: slotCount } : {}),
           })
-        : await requestAsIsUpload(format, items)
+        : // Gated (Hani, 2026-11-09): "בלי תוספות" means exactly that — her file, saved, no text.
+          await requestAsIsUpload(format, items, ownTextGate ? { forEdit: true } : undefined)
     setSlotChoice({})
     setSlotTarget(null)
     setEmptied(null)
     patchKey((s) => ({
       ...s,
       busy: false,
-      extra: { ...s.extra, progress: "" },
+      // Her file is the media now: later requests edit it as hers.
+      extra: { ...s.extra, progress: "", ...(result.ok && ownTextGate ? { ownMedia: true } : {}) },
       messages: [
         ...s.messages,
         result.ok
-          ? { role: "assistant", content: `${result.message}${placed.length ? keptNote(placed) : ""}`, done: true, noStyle: true }
+          ? {
+              role: "assistant",
+              content: ownTextGate
+                ? "העליתי את המדיה כמו שהיא, בלי טקסט. רוצים עליה את הטקסט מהסקריפט? כתבו לי כאן."
+                : `${result.message}${placed.length ? keptNote(placed) : ""}`,
+              done: true,
+              noStyle: true,
+            }
           : { role: "assistant", content: result.message, error: true },
       ],
     }))
@@ -910,15 +922,15 @@ export function MediaAiChat({
    * Pictures here; a clip still goes through sendWithVideo. Gated: Hani only.
    * Returns true when it handled the message.
    */
-  const sendOwnPictures = async (text: string, attached: string[]): Promise<boolean> => {
+  const sendOwnPictures = async (text: string, attached: string[], force = false): Promise<boolean> => {
     if (!ownTextGate) return false
     const originals = refs.originals(attached)
     if (!originals.length || originals.some((o) => o.kind === "video")) return false
-    if (STYLE_WORDS.test(text) || COMBINE_WORDS.test(text)) return false
+    if (!force && (STYLE_WORDS.test(text) || COMBINE_WORDS.test(text))) return false
     // Image post: "תעשה לי כזה" / "רפרנס" with a picture asks for one LIKE it —
     // a look to take, never her picture as the post's image.
     // (A picture sent with no words — REFERENCE_ONLY_INSTRUCTION — is the main case: it becomes the media.)
-    if (format === "image_post" && text !== REFERENCE_ONLY_INSTRUCTION && LIKE_THIS.test(text) && !PLACE_WORDS.test(text)) return false
+    if (!force && format === "image_post" && text !== REFERENCE_ONLY_INSTRUCTION && LIKE_THIS.test(text) && !PLACE_WORDS.test(text)) return false
     const isSet = format === "story" || format === "carousel"
     const items = isSet ? originals : originals.slice(0, 1)
     const extra = !isSet && originals.length > 1 ? " עבדתי עם התמונה הראשונה; שאר הקבצים לא נכללו." : ""
@@ -2061,6 +2073,14 @@ export function MediaAiChat({
   const title = gen ? GEN_COPY[format].title : copy.title
   /** A style picked (not "חדש לגמרי"): she may skip the words. */
   const canSkip = gen?.phase === "brief" && !!gen.style && gen.style !== "blank"
+  // The as-is chip under the composer (her files attached).
+  const asIsChipShown =
+    asIsNow.length > 0 && !canSkip && !loading && !referenceMode && !(format === "carousel" && !slotsHere) && !(askNow && messages[messages.length - 1]?.askEmpty)
+  // Fixed path (gated): her PICTURES attached → "שים טקסט מעל" / "להעלות בלי תוספות".
+  const ownPictureChoice =
+    ownTextGate && format !== "talking_head" && asIsNow.length > 0 && asIsNow.every((o) => o.kind !== "video") && !loading && !referenceMode && !(askNow && messages[messages.length - 1]?.askEmpty)
+  // Choice chips up = the send button waits (Hani, 2026-11-09).
+  const choicesShown = ownPictureChoice
   const busyText = progress || (gen?.phase === "running" ? GEN_COPY[format].busy : copy.busy)
 
   /** Her answer in a memory note (undo, across the board…) — kept with the thread. */
@@ -2325,7 +2345,19 @@ export function MediaAiChat({
           </div>
         )}
         <LinkReferenceRows l={links} />
-        {asIsNow.length > 0 && !canSkip && !loading && !referenceMode && !(format === "carousel" && !slotsHere) && !(askNow && messages[messages.length - 1]?.askEmpty) && (
+        {ownPictureChoice ? (
+          // Her picture attached (Hani, 2026-11-09): two clear choices, the
+          // text on it first. The send button waits while they're up.
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            <Chip
+              className="border-transparent bg-button-primary-default text-white hover:bg-button-primary-hover dark:hover:bg-button-primary-hover"
+              onClick={() => void sendOwnPictures(input.trim() || PLACE_ONLY_INSTRUCTION, refs.refs, true)}
+            >
+              {PUT_TEXT}
+            </Chip>
+            <Chip onClick={() => void uploadAsIs(asIsNow, refs.split(refs.refs).place)}>{AS_IS_PLAIN}</Chip>
+          </div>
+        ) : asIsChipShown && (
           <div className="mb-2 flex flex-wrap gap-1.5">
             <Chip onClick={() => void uploadAsIs(asIsNow, refs.split(refs.refs).place)}>{AS_IS}</Chip>
           </div>
@@ -2426,7 +2458,7 @@ export function MediaAiChat({
           <Button
             size="icon-sm"
             onClick={() => void send()}
-            disabled={(!input.trim() && !refs.refs.length) || loading || links.busy || uploading || (askNow && messages[messages.length - 1]?.askEmpty)}
+            disabled={(!input.trim() && !refs.refs.length) || loading || links.busy || uploading || (askNow && messages[messages.length - 1]?.askEmpty) || choicesShown}
             aria-label={gen && gen.phase !== "running" ? "יצירה" : "שליחה"}
             className="shrink-0 rounded-full"
           >
