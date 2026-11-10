@@ -137,7 +137,7 @@ export function staticBRollText(email: string | null | undefined): boolean {
  * EXPERIMENT (Hani, 2026-11-10): her visual-language b-roll builds one file
  * from her Drive b-roll folder into the composition (lib/broll-animation/library-media).
  */
-export const DRIVE_IN_BROLL_EMAILS = ["hanigirl@gmail.com"]
+export const DRIVE_IN_BROLL_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 export function driveInBRoll(email: string | null | undefined): boolean {
   return !!email && DRIVE_IN_BROLL_EMAILS.includes(email.toLowerCase())
 }

@@ -22,6 +22,7 @@ const BUCKET = "user-media"
 /** Bigger files are skipped — the download alone would eat the clip's time. */
 const MAX_BYTES = 250 * 1024 * 1024
 const RASTER = /\.(jpe?g|png|webp)$/i
+const VIDEOS_ON = false
 
 /** Her file in our storage, and its size (to place it whole). */
 export type LibraryMedia = { kind: "image" | "video"; url: string; width: number; height: number; name: string }
@@ -109,7 +110,9 @@ export async function pickLibraryMedia(
   if (!folderId) return null
   const listing = await listPublicFolder(folderId, true).catch(() => null)
   if (!listing || "error" in listing) return null
-  const usable = listing.items.filter((i: DriveFolderItem) => i.kind === "video" || RASTER.test(i.name))
+  // Pictures only for now — the picture behaviour is what she approved
+  // (2026-11-10); her video inside the composition isn't tested on the server yet.
+  const usable = listing.items.filter((i: DriveFolderItem) => (VIDEOS_ON && i.kind === "video") || (i.kind === "image" && RASTER.test(i.name)))
   // Random order, then the first one that downloads.
   const order = usable.sort(() => Math.random() - 0.5).slice(0, 3)
   const sharp = (await import("sharp")).default
