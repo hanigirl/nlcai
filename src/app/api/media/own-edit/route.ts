@@ -141,6 +141,28 @@ export async function POST(req: NextRequest) {
       const url = urls[0]
       if (!url) return json({ error: "no_url" }, 400)
       const assetType = isVideoMediaUrl(url) ? "video" : "image"
+      // One video per format is a database rule (media_assets_one_video_cover_per_variant):
+      // a new video REPLACES the row in place — inserting a second one failed
+      // every save of a captioned b-roll video (Hani, 2026-11-10: "השינוי לא נשמר").
+      if (assetType === "video") {
+        const { data: updated, error: updError } = await supabase
+          .from("media_assets")
+          .update({ url, status: "completed" } as never)
+          .eq("format_variant_id", variant.id)
+          .eq("asset_type", "video")
+          .select("id")
+        if (updError) {
+          console.error("[media/own-edit] save video", updError.message)
+          return json({ error: "save_failed", message: "השינוי לא נשמר. נסו שוב." }, 500)
+        }
+        if ((updated as unknown[] | null)?.length) {
+          // A b-roll is one piece: an older still in the image slot goes.
+          if (format === "b_roll") {
+            await supabase.from("media_assets").delete().eq("format_variant_id", variant.id).eq("asset_type", "image")
+          }
+          return json({ urls: [url] })
+        }
+      }
       // Insert first, then clear the older rows: a failed write must neither
       // be reported as saved nor leave the format with no media at all.
       const { data: added, error: addError } = await supabase
