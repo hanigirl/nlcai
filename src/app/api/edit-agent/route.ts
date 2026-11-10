@@ -222,6 +222,18 @@ export async function POST(req: NextRequest) {
     await admin.from("ai_edit_jobs").update({ ...patch, updated_at: now() }).eq("id", jobId)
   }
 
+  const videoRefs: (string | null)[] = Array.isArray(body.videos)
+    ? (body.videos as unknown[]).map((v) => {
+        if (typeof v !== "string") return null
+        if (v.startsWith("drive:")) {
+          const id = extractDriveFileId(v.slice(6))
+          return id ? `drive:${id}` : null
+        }
+        // Only her own folder.
+        if (v.startsWith(`storage:${user.id}/`)) return v
+        return null
+      })
+    : []
   // The own-b-roll caption runs through our caption routes as her.
   const origin = new URL(req.url).origin
   const cookie = req.headers.get("cookie") ?? ""
@@ -236,6 +248,10 @@ export async function POST(req: NextRequest) {
             script: scriptTextFor("b_roll", v?.body),
             history,
             request: text || "(she attached pictures without words)",
+            attached,
+            attachedUrls: herImages,
+            attachedVideos: videoRefs,
+            publicUrl: (p) => admin.storage.from("user-media").getPublicUrl(p).data.publicUrl,
             setProgress: (progress) => setJob({ progress }),
             call: async <T,>(path: string, payload: unknown) => {
               const res = await fetch(new URL(path, origin), {
@@ -260,18 +276,7 @@ export async function POST(req: NextRequest) {
         history,
         request: text || "(she attached pictures without words)",
         attached,
-        attachedVideos: Array.isArray(body.videos)
-          ? (body.videos as unknown[]).map((v) => {
-              if (typeof v !== "string") return null
-              if (v.startsWith("drive:")) {
-                const id = extractDriveFileId(v.slice(6))
-                return id ? `drive:${id}` : null
-              }
-              // Only her own folder.
-              if (v.startsWith(`storage:${user.id}/`)) return v
-              return null
-            })
-          : [],
+        attachedVideos: videoRefs,
         setProgress: (progress) => setJob({ progress }),
       })
       if (outcome.kind === "ask") {

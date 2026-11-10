@@ -24,23 +24,30 @@ export interface OwnBRollAgentInput {
   script: ScriptText | null
   history: ChatTurn[]
   request: string
+  /** Pictures she attached to THIS message (data URLs) — references, or a new file for the media. */
+  attached?: string[]
+  /** The same pictures, stored (public URLs), same order. */
+  attachedUrls?: string[]
+  /** Per attached picture, when it is a VIDEO's frame: "drive:<id>" or "storage:<path>". */
+  attachedVideos?: (string | null)[]
+  /** Public URL for one of her storage paths. */
+  publicUrl?: (path: string) => string
   setProgress: (text: string) => Promise<void>
   /** POST to one of our routes as her (her cookies), → JSON. */
   call: <T>(path: string, body: unknown) => Promise<{ ok: boolean; data: T }>
 }
 
-const SYSTEM = `You are the AI edit chat of a content app, on ONE b-roll that is the creator's OWN media (a video or photo she filmed / brought from her Google Drive), with the post's script as a caption over it. She writes in Hebrew.
+const SYSTEM = `You are the AI edit chat of a content app, on ONE b-roll that is the creator's OWN media (a video or photo she filmed / brought from her Google Drive or computer), with the post's script as a caption over it. She writes in Hebrew.
 
-You talk with her like a sharp, warm designer colleague: you understand what she means, remember the conversation, and answer questions plainly. Not every message is an edit — when she asks something, just answer (finish).
+You talk with her like a sharp, warm, flexible designer colleague: you understand what she means (also loose or partial wording), infer the unstated from context and the whole conversation, remember what was said and done, and answer questions plainly. Not every message is an edit — when she asks something, just answer (finish).
 
-What you can change here — ONLY the caption's look:
-- position: top / center / bottom
-- the colour of the words (text, #hex)
-- the box behind the words (pill: a #hex colour, or "none" for no box)
-- size (scale 0.6–1.5, 1 = default)
-Her video/photo itself is never changed (it's hers), and the words are the post's script — they are changed in the script editor, not here. If she asks for anything else, say so kindly in one sentence and say what you CAN change here.
+What you control — EVERYTHING about the caption (the script's words over her media):
+- position (top / center / bottom), colour of the words, the box behind them (a colour or none), size;
+- and any other look or motion of the caption through \`design\` — font weight, letter spacing, line breaks, a rounded / pill / sharp box, outline, shadow, glow, highlight of a word, one box per line or one block, how it enters and moves (on a video), anything she describes. Write \`design\` as a precise instruction for the caption designer, in her words plus whatever detail makes it unambiguous. When she attaches a reference picture of a look she wants, read it and describe that look in \`design\` (and set position / colours / size to match).
+- replace_media: when she attaches a photo or video of hers and wants it AS the b-roll (instead of the current one), put it in; the caption is drawn over it again.
+What you never do: change, retouch, recolour, crop or redraw her photo/video pixels, and never change the words (they are the post's script — changed in the script editor). If she asks for that, say so in one kind sentence and offer what you can do.
 
-Use set_caption with only what she asked to change (the rest keeps its current value), then finish. When her request has more than one reasonable reading, ask_user with 2–4 short options. Colours: use her brand colours when she says "צבע המותג"; otherwise real hex values for what she named.
+Act with set_caption / replace_media, then finish. Several changes in one turn are fine. Only when her request truly has several readings, ask_user with 2–4 short options. Colours: her brand colours when she says "צבע המותג"; otherwise real hex values for what she named.
 
 finish.reply: Hebrew, plural forms (אתם / נסו), 1–2 short sentences, natural spoken Hebrew, saying what's on the card now (she reads it after the change is done). No emojis, no markdown.`
 
@@ -55,8 +62,14 @@ const TOOLS: Anthropic.Tool[] = [
         text: { type: "string", description: "#hex colour of the words" },
         pill: { type: "string", description: "#hex colour of the box behind the words, or \"none\"" },
         scale: { type: "number", minimum: 0.6, maximum: 1.5 },
+        design: { type: "string", description: "Any other look / motion of the caption, as a precise instruction (Hebrew or English). It REPLACES the earlier design wording, so include what should stay from it." },
       },
     },
+  },
+  {
+    name: "replace_media",
+    description: "Use a photo or video she attached to THIS message as the b-roll itself (instead of the current one). The caption is drawn over it again.",
+    input_schema: { type: "object", properties: { attached: { type: "integer", minimum: 1 } }, required: ["attached"] },
   },
   {
     name: "ask_user",
@@ -94,7 +107,7 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
     : "(this is the first message)"
   const state = [
     `THE B-ROLL: her own ${kind}.`,
-    `- Caption now: ${record ? JSON.stringify({ position: prev.position ?? "bottom", style: prev.style ?? "default (white words on a black box)" }) : "none yet (the script will be put on it)"}`,
+    `- Caption now: ${record ? JSON.stringify({ position: prev.position ?? "bottom", style: prev.style ?? "default (white words on a black box)", design: prev.design ?? null }) : "none yet (the script will be put on it)"}`,
     `- The words (the script — not changeable here): ${JSON.stringify([input.script?.headline, input.script?.body].filter(Boolean).join(" / ") || "(no script text)")}`,
     "",
     "THE CONVERSATION SO FAR:",
@@ -102,8 +115,19 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
   ].join("\n")
 
   const client = new Anthropic({ apiKey: input.anthropicKey })
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: `${state}\n\nHER NEW MESSAGE: ${input.request}` }]
-  let change = null as null | { position?: CaptionSpec["position"]; style?: CaptionSpec["style"] }
+  const attached = input.attached ?? []
+  const imageBlocks: Anthropic.ImageBlockParam[] = attached.flatMap((d) => {
+    const m = /^data:(image\/(?:png|jpeg|webp|gif));base64,(.+)$/.exec(d)
+    return m ? [{ type: "image" as const, source: { type: "base64" as const, media_type: m[1] as "image/png", data: m[2] } }] : []
+  })
+  const attachNote = attached.length
+    ? `\n\nShe attached ${attached.length} picture${attached.length > 1 ? "s" : ""} (shown above, numbered in order)${(input.attachedVideos ?? []).some(Boolean) ? "; " + (input.attachedVideos ?? []).map((v, i) => (v ? `#${i + 1} is the first frame of a VIDEO` : null)).filter(Boolean).join(", ") : ""}.`
+    : ""
+  const messages: Anthropic.MessageParam[] = [
+    { role: "user", content: [...imageBlocks, { type: "text", text: `${state}\n\nHER NEW MESSAGE: ${input.request}${attachNote}` }] },
+  ]
+  let newSource: { url: string; kind: "image" | "video" } | null = null
+  let change = null as null | { position?: CaptionSpec["position"]; style?: CaptionSpec["style"]; design?: string }
 
   await input.setProgress("קורא את הבקשה...")
   for (let step = 0; step < 4; step++) {
@@ -130,12 +154,29 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
       if (u.name === "set_caption") {
         const position = a.position === "top" || a.position === "center" || a.position === "bottom" ? a.position : undefined
         const style = cleanCaptionStyle({ text: a.text, pill: a.pill, scale: a.scale })
+        const design = typeof a.design === "string" && a.design.trim() ? a.design.trim() : undefined
         change = {
           ...(change ?? {}),
           ...(position ? { position } : {}),
           ...(style && Object.keys(style).length ? { style: { ...(change?.style ?? {}), ...style } } : {}),
+          ...(design ? { design } : {}),
         }
         results.push({ type: "tool_result", tool_use_id: u.id, content: "Noted (applied when you finish). Now finish with your reply." })
+      } else if (u.name === "replace_media") {
+        const n = Number(a.attached) - 1
+        const video = input.attachedVideos?.[n] ?? null
+        const url = video
+          ? video.startsWith("drive:")
+            ? `https://drive.google.com/file/d/${video.slice(6)}/view`
+            : input.publicUrl?.(video.slice(8)) ?? null
+          : input.attachedUrls?.[n] ?? null
+        if (!url) {
+          results.push({ type: "tool_result", tool_use_id: u.id, content: `FAILED: no attached file ${a.attached}.`, is_error: true })
+        } else {
+          newSource = { url, kind: video ? "video" : "image" }
+          change = change ?? {}
+          results.push({ type: "tool_result", tool_use_id: u.id, content: "Noted: that file becomes the b-roll (applied when you finish)." })
+        }
       } else {
         results.push({ type: "tool_result", tool_use_id: u.id, content: "Unknown tool.", is_error: true })
       }
@@ -152,15 +193,16 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
       body: input.script?.body ?? prev.body,
       position: change.position ?? prev.position ?? "bottom",
       style: change.style ? { ...prev.style, ...change.style } : prev.style,
-      design: prev.design,
+      design: change.design ?? prev.design,
     }
     if (!spec.headline && !spec.body) {
       return { kind: "failed", reply: "אין טקסט בסקריפט של הבי-רול, אז אין כיתוב לעצב. כתבו את הסקריפט ונסו שוב." }
     }
-    const source = record?.sourceUrl ?? mediaUrl
-    await input.setProgress(kind === "video" ? "מעדכן את הכיתוב בסרטון..." : "מעדכן את הכיתוב...")
+    const source = newSource?.url ?? record?.sourceUrl ?? mediaUrl
+    const sourceKind = newSource?.kind ?? kind
+    await input.setProgress(sourceKind === "video" ? "מעדכן את הכיתוב בסרטון..." : "מעדכן את הכיתוב...")
     const r =
-      kind === "video"
+      sourceKind === "video"
         ? await input.call<{ url?: string; message?: string; error?: string }>("/api/story/generate-video-media", {
             postId: input.postId,
             format: "b_roll",

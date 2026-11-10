@@ -151,3 +151,13 @@ export const OWN_BROLL_CAPTION_EDIT_EMAILS = ["hanigirl@gmail.com", "nataliya@na
 export function canEditOwnBRollCaption(email: string | null | undefined): boolean {
   return !!email && OWN_BROLL_CAPTION_EDIT_EMAILS.includes(email.toLowerCase())
 }
+
+/**
+ * Her words are on screen from the first frame — no fade-in, no delayed
+ * entrance — but they may still move a little once there (Hani, 2026-11-10:
+ * "שתהיה אנימציה מסוימת ... אבל שלא יכנס בפייד או באיחור").
+ */
+export const TEXT_AT_ONCE_EMAILS = ["hanigirl@gmail.com"]
+export function textAtOnceBRoll(email: string | null | undefined): boolean {
+  return !!email && TEXT_AT_ONCE_EMAILS.includes(email.toLowerCase())
+}

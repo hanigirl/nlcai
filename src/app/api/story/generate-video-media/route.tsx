@@ -20,7 +20,7 @@ import { getAuthUser } from "@/lib/auth-user"
 import { cleanCaptionSpec, type CaptionSpec } from "@/lib/own-media"
 import { writeCaptionRecord } from "@/lib/caption-record"
 import { guardedFetch } from "@/lib/server-fetch"
-import { canOwnMediaText, staticBRollText } from "@/lib/feature-access"
+import { canOwnMediaText, staticBRollText, textAtOnceBRoll } from "@/lib/feature-access"
 import { NO_SCRIPT_TEXT, scriptTextFor, type TextSource } from "@/lib/script-text"
 import { captionLookFor } from "@/lib/caption-look"
 
@@ -560,7 +560,9 @@ export async function POST(req: NextRequest) {
         }
       }
     }
-    if (!animatedDone) await burnOverlay(srcPath, overlayPath, outputPath, secondaryPath, stillSource ? 7 : undefined, staticText)
+    // No fade on the plate either for text-at-once (Hani).
+    const noFade = staticText || (format === "b_roll" && textAtOnceBRoll(user.email))
+    if (!animatedDone) await burnOverlay(srcPath, overlayPath, outputPath, secondaryPath, stillSource ? 7 : undefined, noFade)
 
     const outBuffer = await fs.readFile(outputPath)
     // "burned-" prefix marks a text-baked output. The client reads this from

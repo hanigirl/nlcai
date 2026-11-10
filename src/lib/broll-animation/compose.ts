@@ -70,6 +70,8 @@ export interface CompositionBrief {
   brandWins?: boolean
   /** Her words appear at once — only elements may move (Nataliya). */
   staticText?: boolean
+  /** Her words are on screen from frame 0 (no fade-in / delayed entrance), but may move a little after (Hani). */
+  textAtOnce?: boolean
   /**
    * EXPERIMENT (lib/broll-animation/library-media): a picture or video from
    * her Drive b-roll folder, her picture or video, whole, on the generated background.
@@ -146,11 +148,17 @@ function briefText(b: CompositionBrief): string {
     "TEXT (verbatim):",
     `- Hook (the hero, the first thing read): ${JSON.stringify(b.hook)}`,
     ...(b.rest
-      ? [b.staticText ? `- Supporting line (smaller): ${JSON.stringify(b.rest)}` : `- Supporting line (smaller, optional to animate subtly): ${JSON.stringify(b.rest)}`]
+      ? [b.staticText || b.textAtOnce ? `- Supporting line (smaller): ${JSON.stringify(b.rest)}` : `- Supporting line (smaller, optional to animate subtly): ${JSON.stringify(b.rest)}`]
       : []),
     ...(b.cta
-      ? [b.staticText ? `- Call to action: ${JSON.stringify(b.cta)}` : `- Call to action, arrives after the hook has been read (around 2–3s): ${JSON.stringify(b.cta)}`]
+      ? [b.staticText || b.textAtOnce ? `- Call to action: ${JSON.stringify(b.cta)}` : `- Call to action, arrives after the hook has been read (around 2–3s): ${JSON.stringify(b.cta)}`]
       : ["- No call-to-action line (the script already has one)."]),
+    ...(b.textAtOnce
+      ? [
+          "",
+          "TEXT ON SCREEN FROM THE FIRST FRAME — a hard rule for this creator, above every other instruction: all the text (hook, supporting line, call to action) is fully visible and legible at t=0. No fade-in, no delayed or staggered entrance, no reveal, typewriter, mask, slide-in or scale-up from nothing, no line that arrives later. Once it's there it may move a little — a gentle float, a subtle scale breathe, a highlight sweep, a colour accent — as long as it stays fully readable the whole time.",
+        ]
+      : []),
     ...(b.staticText
       ? [
           "",

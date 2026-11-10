@@ -44,7 +44,7 @@ type Job = { id: string; status: "running" | "asking" | "done" | "failed"; progr
 
 /** Her own b-roll: the caption look only (lib/edit-agent/own-broll-agent). */
 const OWN_GREETING =
-  "היי, זה הבי-רול שלכם, אז מה שצילמתם נשאר בדיוק כמו שהוא. אפשר להזיז את הכיתוב (למעלה, באמצע או למטה), לשנות את צבע הטקסט, את הקופסה שמאחוריו או להוריד אותה, ואת הגודל. אפשר גם פשוט לשאול."
+  "היי, זה הבי-רול שלכם, אז מה שצילמתם נשאר בדיוק כמו שהוא. על הכיתוב אפשר לבקש כל דבר: מיקום, צבעים, קופסה, גודל, פונט, צל, איך הוא זז. אפשר לצרף רפרנס של מראה שאהבתם, או סרטון ותמונה אחרים שיחליפו את הבי-רול. ואפשר פשוט לשאול."
 
 const GREETING =
   "היי, אני כאן בשביל הבי-רול. אפשר לבקש שינויים בעיצוב, בתנועה או ברקע, לשלב תמונה שלכם או רפרנס, או פשוט לשאול למה משהו נראה כמו שהוא נראה."
@@ -248,7 +248,7 @@ export function EditAgentChat({
       <ReferenceDropHint show={refs.dragging} />
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">
         <AiSparkle />
-        <span className="text-small-bold text-text-primary-default">{own ? "עריכת כיתוב עם AI · בי-רול" : "עריכה עם AI · בי-רול"}</span>
+        <span className="text-small-bold text-text-primary-default">עריכה עם AI · בי-רול</span>
         <div className="ms-auto flex items-center gap-1">
           {messages.some((m) => m.role === "user") && <AiChatNewButton disabled={busy} onClick={() => void startOver()} />}
           <button
@@ -329,7 +329,7 @@ export function EditAgentChat({
             autoFocus
             className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent px-1 py-2 text-small shadow-none focus-visible:ring-0"
           />
-          {own ? null : driveMenu ? <ReferenceAddMenu r={refs} format={format} disabled={busy} /> : <ReferenceButton r={refs} disabled={busy} />}
+          {own || driveMenu ? <ReferenceAddMenu r={refs} format={format} disabled={busy} /> : <ReferenceButton r={refs} disabled={busy} />}
           <Button
             size="icon-sm"
             onClick={() => void send(input)}
