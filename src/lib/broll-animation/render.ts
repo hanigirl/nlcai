@@ -323,7 +323,13 @@ export async function renderComposition(
  * frame is a PNG with alpha, written to `dir` as f0000.png, f0001.png… Only
  * `seconds` of it — the entrance; the caller holds the last frame.
  */
-export async function renderOverlayFrames(html: string, seconds: number, dir: string): Promise<number> {
+export async function renderOverlayFrames(
+  html: string,
+  seconds: number,
+  dir: string,
+  /** Only the last frame, as f0000.png — a quick look (the own-media chat's draft check). */
+  onlyLast = false,
+): Promise<number> {
   const fs = await import("fs/promises")
   const path = await import("path")
   const page0 = html.replace(
@@ -340,7 +346,7 @@ export async function renderOverlayFrames(html: string, seconds: number, dir: st
       await document.fonts.ready
     })
     const frames = Math.round(seconds * FPS)
-    for (let i = 0; i < frames; i++) {
+    for (let i = onlyLast ? frames - 1 : 0; i < frames; i++) {
       const t = i / FPS
       await page.evaluate((s: number) => {
         const w = window as unknown as { gsap?: { globalTimeline: { pause: () => void; totalTime: (t: number) => void } } }
@@ -354,9 +360,9 @@ export async function renderOverlayFrames(html: string, seconds: number, dir: st
         }
       }, t)
       const shot = await page.screenshot({ type: "png", omitBackground: true })
-      await fs.writeFile(path.join(dir, `f${String(i).padStart(4, "0")}.png`), shot)
+      await fs.writeFile(path.join(dir, `f${String(onlyLast ? 0 : i).padStart(4, "0")}.png`), shot)
     }
-    return frames
+    return onlyLast ? 1 : frames
   } finally {
     await browser.close().catch(() => undefined)
   }

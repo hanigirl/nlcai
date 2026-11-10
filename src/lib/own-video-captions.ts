@@ -82,6 +82,14 @@ export async function renderOwnVideoCaption(
   format: OwnVideoFormat,
   spec: CaptionSpec,
   dir: string,
+  opts: {
+    /** A composition made before (the chat's checked draft) — reused, so the clip is exactly what was looked at. */
+    template?: string
+    /** Render only the last frame (f0000.png): the chat's quick draft check. */
+    onlyLast?: boolean
+    /** Receives the composition used. */
+    onTemplate?: (template: string) => void
+  } = {},
 ): Promise<number> {
   const hook = (spec.headline || spec.body || "").trim()
   if (!hook) throw new Error("caption_empty")
@@ -96,9 +104,10 @@ export async function renderOwnVideoCaption(
     notes: notes(format),
     ...(design ? { design } : {}),
   }
-  const template = await composeBRoll(anthropicKey, brief, 0)
+  const template = opts.template?.includes(BACKGROUND_TOKEN) ? opts.template : await composeBRoll(anthropicKey, brief, 0)
   if (!template.includes(BACKGROUND_TOKEN)) throw new Error("composition_invalid")
-  const frames = await renderOverlayFrames(finalizeHtml(template, TRANSPARENT_PNG, brief.fonts), OVERLAY_SECONDS, dir)
+  opts.onTemplate?.(template)
+  const frames = await renderOverlayFrames(finalizeHtml(template, TRANSPARENT_PNG, brief.fonts), OVERLAY_SECONDS, dir, opts.onlyLast === true)
   // Her footage stays the hero: a layer that paints over much of the frame
   // (a wash, a full-screen gradient) is not a caption. Then the still plate
   // is used instead (the caller falls back on any throw).

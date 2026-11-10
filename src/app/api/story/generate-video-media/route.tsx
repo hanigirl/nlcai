@@ -223,6 +223,29 @@ function sameWords(a: { headline?: string; body?: string }, b: { headline?: stri
   return !!b && squashWords([a.headline, a.body].join("")) === squashWords([b.headline, b.body].join(""))
 }
 
+/** One frame of her clip (2.8s in, once the caption has arrived) with the caption layer over it → JPEG base64. */
+async function previewStill(srcPath: string, isStill: boolean, layerPath: string): Promise<string> {
+  const sharp = (await import("sharp")).default
+  const fs = await import("fs/promises")
+  let base: Buffer
+  if (isStill) base = await fs.readFile(srcPath)
+  else {
+    const out = `${srcPath}.look.jpg`
+    const grab = (at: string) =>
+      new Promise<boolean>((resolve) => {
+        const p = spawn(ffmpegPath as unknown as string, ["-y", "-ss", at, "-i", srcPath, "-frames:v", "1", out])
+        p.on("close", (c) => resolve(c === 0))
+      })
+    if (!(await grab("2.8"))) await grab("0")
+    base = await fs.readFile(out)
+    await fs.unlink(out).catch(() => undefined)
+  }
+  const frame = await sharp(base).rotate().resize(1080, 1920, { fit: "cover" }).toBuffer()
+  const layer = await sharp(await fs.readFile(layerPath)).resize(1080, 1920, { fit: "fill" }).png().toBuffer()
+  const merged = await sharp(frame).composite([{ input: layer }]).resize(540, 960).jpeg({ quality: 80 }).toBuffer()
+  return merged.toString("base64")
+}
+
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
   try {
@@ -235,7 +258,17 @@ export async function POST(req: NextRequest) {
       frameCount: rawFrameCount,
       caption: rawCaption,
       animated: rawAnimated,
+      preview: rawPreview,
+      template: rawTemplate,
     } = (await req.json().catch(() => ({}))) as {
+      /**
+       * The own-media chat's quick draft (Hani, 2026-11-10: "העריכה לוקחת
+       * מלא זמן"): nothing burned or stored — one still of the clip with the
+       * caption as it will end up, plus the caption composition used.
+       */
+      preview?: boolean
+      /** A composition from a preview — the final burn reuses it, so it is what was checked. */
+      template?: string
       /**
        * The AI edit of her own video (lib/own-media-edit): the caption is an
        * animated motion design in her visual language (lib/own-video-
@@ -549,7 +582,19 @@ export async function POST(req: NextRequest) {
       if (anthropicKey) {
         const framesDir = await fs.mkdtemp(path.join(tmp, `story-anim-${id}-`))
         try {
-          await renderOwnVideoCaption(supabase, user.id, anthropicKey, format, { ...override, position }, framesDir)
+          if (rawPreview === true) {
+            let used: string | undefined
+            await renderOwnVideoCaption(supabase, user.id, anthropicKey, format, { ...override, position }, framesDir, {
+              template: typeof rawTemplate === "string" ? rawTemplate : undefined,
+              onlyLast: true,
+              onTemplate: (t) => (used = t),
+            })
+            const look = await previewStill(srcPath, stillSource, path.join(framesDir, "f0000.png"))
+            return NextResponse.json({ preview: look, template: used })
+          }
+          await renderOwnVideoCaption(supabase, user.id, anthropicKey, format, { ...override, position }, framesDir, {
+            template: typeof rawTemplate === "string" ? rawTemplate : undefined,
+          })
           await burnAnimatedOverlay(inputPath, path.join(framesDir, "f%04d.png"), RENDER_FPS, outputPath)
           animatedDone = true
         } catch (err) {
@@ -562,6 +607,10 @@ export async function POST(req: NextRequest) {
     }
     // No fade on the plate either for text-at-once (Hani).
     const noFade = staticText || (format === "b_roll" && textAtOnceBRoll(user.email))
+    // Preview of the still plate (no animated caption here): the plate over one frame.
+    if (rawPreview === true && !animatedDone) {
+      return NextResponse.json({ preview: await previewStill(srcPath, stillSource, overlayPath) })
+    }
     if (!animatedDone) await burnOverlay(srcPath, overlayPath, outputPath, secondaryPath, stillSource ? 7 : undefined, noFade)
 
     const outBuffer = await fs.readFile(outputPath)

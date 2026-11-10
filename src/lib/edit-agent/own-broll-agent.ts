@@ -184,6 +184,8 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
     },
   ]
   let draft: string | null = null
+  /** A video draft is only LOOKED at (a quick still); the clip is burned once, at finish, with this. */
+  let videoDraft: { spec: CaptionSpec; source: string; template?: string } | null = null
   let renders = 0
   let newSource: { url: string; kind: "image" | "video" } | null = null
   let change = null as null | { position?: CaptionSpec["position"]; style?: CaptionSpec["style"]; design?: string }
@@ -275,18 +277,34 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
     }
     const source = newSource?.url ?? record?.sourceUrl ?? mediaUrl
     const sourceKind = newSource?.kind ?? kind
-    await input.setProgress(sourceKind === "video" ? "מעדכן את הכיתוב בסרטון..." : "מעדכן את הכיתוב...")
-    const r =
-      sourceKind === "video"
-        ? await input.call<{ url?: string; message?: string; error?: string }>("/api/story/generate-video-media", {
-            postId: input.postId,
-            format: "b_roll",
-            sourceUrl: source,
-            persist: false,
-            caption: spec,
-            animated: true,
-          })
-        : await input.call<{ url?: string; message?: string; error?: string }>("/api/media/caption-image", {
+    const said = `Draft with: ${JSON.stringify({ position: spec.position, style: spec.style ?? null, design: spec.design ?? null })}.`
+    if (sourceKind === "video") {
+      // Quick: the caption designed and drawn over ONE frame — no clip yet (Hani, 2026-11-10).
+      await input.setProgress("מעצב את הכיתוב...")
+      const p = await input.call<{ preview?: string; template?: string; message?: string; error?: string }>("/api/story/generate-video-media", {
+        postId: input.postId,
+        format: "b_roll",
+        sourceUrl: source,
+        persist: false,
+        caption: spec,
+        animated: true,
+        preview: true,
+      })
+      if (!p.ok || !p.data.preview) {
+        return { type: "tool_result", tool_use_id: toolUseId, content: `FAILED to make the draft: ${p.data.message ?? p.data.error ?? "unknown"}. Tell her plainly.`, is_error: true }
+      }
+      videoDraft = { spec, source, template: p.data.template }
+      return {
+        type: "tool_result",
+        tool_use_id: toolUseId,
+        content: [
+          { type: "text", text: `${said} Here is how the clip will look once the caption has arrived — compare it with her request and with the still from before. Fix with set_caption if it isn't right; otherwise finish (the clip is made then).` },
+          imageBlock(p.data.preview),
+        ],
+      }
+    }
+    await input.setProgress("מעדכן את הכיתוב...")
+    const r = await input.call<{ url?: string; message?: string; error?: string }>("/api/media/caption-image", {
             postId: input.postId,
             format: "b_roll",
             sourceUrl: source,
@@ -301,7 +319,6 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
     draft = r.data.url
     await input.setProgress("בודק את התוצאה...")
     const look = await stillOf(r.data.url, sourceKind)
-    const said = `Draft rendered with: ${JSON.stringify({ position: spec.position, style: spec.style ?? null, design: spec.design ?? null })}.`
     return {
       type: "tool_result",
       tool_use_id: toolUseId,
@@ -312,6 +329,21 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
   }
 
   async function finishWith(reply: string): Promise<BRollAgentOutcome> {
+    if (videoDraft) {
+      // The checked draft becomes the clip — same composition, burned once.
+      await input.setProgress("צורב את הכיתוב בסרטון... זה לוקח כדקה-שתיים")
+      const r = await input.call<{ url?: string; message?: string; error?: string }>("/api/story/generate-video-media", {
+        postId: input.postId,
+        format: "b_roll",
+        sourceUrl: videoDraft.source,
+        persist: false,
+        caption: videoDraft.spec,
+        animated: true,
+        ...(videoDraft.template ? { template: videoDraft.template } : {}),
+      })
+      if (!r.ok || !r.data.url) return { kind: "failed", reply: r.data.message ?? "הטמעת הכיתוב בסרטון לא הצליחה הפעם, אז הבי-רול נשאר כמו שהיה. נסו שוב." }
+      draft = r.data.url
+    }
     if (!draft) return { kind: "done", reply: reply || "לא שיניתי כלום.", url: mediaUrl, changed: false }
     await input.setProgress("שומר...")
     const saved = await input.call<{ urls?: string[]; message?: string }>("/api/media/own-edit", {
