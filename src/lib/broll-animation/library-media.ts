@@ -2,8 +2,8 @@
  * EXPERIMENT (Hani, 2026-11-10, branch exp/broll-drive-in-composition):
  * a visual-language b-roll takes one picture or video from her Drive b-roll
  * folder (Settings → מדיה → "מדיה מ-Google Drive" → בי-רול) and the motion
- * file sits WHOLE (never cropped — Hani: "לא לחתוך את התמונה בשום אופן") on
- * the generated visual-language background, its edges melting into it, with
+ * file is BLENDED into the design (full-bleed, brand-graded, dissolving into
+ * the brand background — no hard edge; Hani 2026-11-10 approved examples), with
  * the typography on top. No blurred copy of itself around it (she read those
  * bands as a crop). This deliberately loosens "שפה ויזואלית ≠ דרייב" for a
  * trial; it's gated (lib/feature-access DRIVE_IN_BROLL_EMAILS).

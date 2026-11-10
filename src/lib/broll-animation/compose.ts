@@ -175,10 +175,13 @@ function briefText(b: CompositionBrief): string {
               : `<img src="${m.url}">`
           return [
             "",
-            `HER OWN ${m.kind === "video" ? "VIDEO" : "PICTURE"} (${m.width}×${m.height}) — the hero visual, layered over the background image: ${tag}.`,
-            "- It is shown WHOLE, never cropped: as large as fits the frame with object-fit: contain (width:100% or height:100%, whichever keeps all of it inside the frame), centred or placed where the layout needs it. Never cover-crop it, never clip-path or mask it into a shape, never zoom, push-in, scale, pan or rotate it — it stays untransformed for the whole clip. Never redraw, recolour or filter it.",
-            "- Where its edges meet the background, they melt into it: a soft gradient mask (mask-image linear-gradient) of at most ~6% of the picture on the sides that meet the background, so there's no hard edge or band — the generated background fills the rest of the frame and must read as one design with the picture.",
-            "- The typography sits on top, integrated with it; scrims, plates or shadows in the visual language wherever the text needs them to stay legible.",
+            `HER OWN ${m.kind === "video" ? "VIDEO" : "PICTURE"} (${m.width}×${m.height}) — the hero visual, BLENDED into the design (never a picture pasted on a background): ${tag}.`,
+            "- Full-bleed: it covers the frame (object-fit: cover, position it so the person's face and hands stay fully in frame and clear of the text). It must never sit as a block, a box or a strip with a visible edge — no hard line anywhere between the picture and the design.",
+            "- Grade it into the brand: a colour wash / duotone in the brand colours over it (a brand-colour overlay with mix-blend-mode multiply, color or soft-light, and/or a gradient tint) so the photo and the design share one palette.",
+            "- Dissolve it into the background: a long, soft gradient from transparent to the brand background colour over at least the lower 40% of the frame (and the edges if needed), so the photo melts into a solid brand area where the text sits. Use the generated background image underneath that area, blended in.",
+            "- Let the visual language's graphic elements (shapes, pixels, grids, icons) overlap the photo and the dissolve zone, binding the two together.",
+            "- Never redraw the person, never hide or blur the face, never put text over the face. Keep the picture itself still (no zoom, pan or rotation); motion only on the typography and graphic elements.",
+            "- The typography sits on the dissolved brand area, integrated with the photo; add scrims or plates in the visual language wherever it needs them to stay legible.",
           ]
         })()
       : []),
