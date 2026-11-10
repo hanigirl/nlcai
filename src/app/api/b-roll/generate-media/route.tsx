@@ -43,6 +43,8 @@ export const maxDuration = 800
 
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
+  const started = Date.now()
+  const timing: Record<string, number> = {}
   try {
     const { postId, variationIndex, style, brief: mediaBrief, references, place } = (await req.json().catch(() => ({}))) as {
       postId?: string
@@ -190,6 +192,8 @@ export async function POST(req: NextRequest) {
     // Fixed path (gated): the background is a picture, never the core post's words.
     const context = canOwnMediaText(user.email) ? "" : (post.body ?? variantBody ?? hook).slice(0, 600)
     const mediaStyle = isMediaStyle(style) ? style : undefined
+    timing.setup = Date.now() - started
+    let mark = Date.now()
     const [brief, examples] = await Promise.all([
       buildCompositionBrief(supabase, user.id, { hook, rest: rest || undefined }, direction.lines, mediaStyle),
       // Her own finished b-roll frames (Settings → דוגמאות לשימוש → בי-רול)
@@ -202,11 +206,18 @@ export async function POST(req: NextRequest) {
         : Promise.resolve([]),
     ])
 
+    timing.brief = Date.now() - mark
+    mark = Date.now()
+    const timed = <T,>(k: string, p: Promise<T>) =>
+      p.then((v) => {
+        timing[k] = Date.now() - mark
+        return v
+      })
     // Background and motion design don't depend on each other — run both.
     const [raw, template] = await Promise.all([
       ownBackground
         ? Promise.resolve(null)
-        : generateImage(
+        : timed("background", generateImage(
             openaiKey,
             buildBackgroundPrompt(
               refDirection,
@@ -214,28 +225,38 @@ export async function POST(req: NextRequest) {
               context,
             ),
             { shape: "9:16", references: refDirection.references },
-          ),
-      composeBRoll(anthropicKey, brief, Math.abs(variationIndex ?? 0), examples, refs),
+          )),
+      timed("opus", composeBRoll(anthropicKey, brief, Math.abs(variationIndex ?? 0), examples, refs)),
     ])
+    timing.parallel = Date.now() - mark
+    mark = Date.now()
     const background = ownBackground ?? Buffer.from(cropToCanvas(raw!), "base64")
 
     const stamp = crypto.randomUUID()
     const backgroundUrl = await uploadBackground(supabase, user.id, stamp, background)
+    timing.uploadBackground = Date.now() - mark
 
     const os = await import("os")
     const fs = await import("fs/promises")
     const path = await import("path")
     const outPath = path.join(os.tmpdir(), `broll-${stamp}.mp4`)
     tmpFiles.push(outPath)
-    await renderComposition(finalizeHtml(template, backgroundUrl, brief.fonts), outPath)
+    mark = Date.now()
+    await renderComposition(finalizeHtml(template, backgroundUrl, brief.fonts), outPath, timing)
+    timing.render = Date.now() - mark
     const clip = await fs.readFile(outPath)
 
+    mark = Date.now()
+    timing.total = Date.now() - started
     const publicUrl = await saveBRoll(supabase, user.id, postId, stamp, clip, {
       template,
       brief,
       backgroundUrl,
       edits: [],
+      timing,
     })
+    timing.save = Date.now() - mark
+    console.log("[b-roll timing]", JSON.stringify({ ...timing, total: Date.now() - started }))
 
     return NextResponse.json({ url: publicUrl })
   } catch (error) {

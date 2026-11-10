@@ -80,8 +80,19 @@ function startEncoder(outputPath: string) {
   return { proc, done }
 }
 
-export async function renderComposition(html: string, outputPath: string): Promise<void> {
+export async function renderComposition(
+  html: string,
+  outputPath: string,
+  /** Timing per render stage, ms (Hani, 2026-11-10 — where does b-roll time go). */
+  timing?: Record<string, number>,
+): Promise<void> {
+  let t0 = Date.now()
+  const lap = (k: string) => {
+    if (timing) timing[k] = Date.now() - t0
+    t0 = Date.now()
+  }
   const browser = await launch()
+  lap("renderLaunch")
   try {
     const page = await browser.newPage()
     await page.setViewport({ width: COMPOSITION_WIDTH, height: COMPOSITION_HEIGHT })
@@ -100,6 +111,7 @@ export async function renderComposition(html: string, outputPath: string): Promi
       )
     })
 
+    lap("renderLoad")
     const frames = COMPOSITION_SECONDS * FPS
     const { proc, done } = startEncoder(outputPath)
     for (let i = 0; i < frames; i++) {
@@ -122,8 +134,10 @@ export async function renderComposition(html: string, outputPath: string): Promi
         await new Promise((r) => proc.stdin.once("drain", r))
       }
     }
+    lap("renderFrames")
     proc.stdin.end()
     await done
+    lap("renderEncode")
   } finally {
     await browser.close().catch(() => undefined)
   }

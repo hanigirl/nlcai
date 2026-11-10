@@ -23,6 +23,8 @@ export interface StoredComposition {
    * one: no edit or restyle ever repaints or replaces it.
    */
   ownBackground?: boolean
+  /** How long each stage of the first build took, ms — measurement only. */
+  timing?: Record<string, number>
 }
 
 /**
