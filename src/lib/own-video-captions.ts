@@ -52,8 +52,13 @@ function notes(format: OwnVideoFormat): string[] {
 function specLines(spec: CaptionSpec): string[] {
   const out: string[] = []
   if (spec.position) {
+    // A hard placement, in px (Hani, 2026-11-10: the chat said "moved" and it wasn't).
     out.push(
-      `Place the caption block in the ${spec.position === "center" ? "middle" : spec.position} of the safe area.`,
+      spec.position === "top"
+        ? "POSITION (hard rule, overrides any default about the lower third): the caption block sits at the TOP — its top edge about 260px from the top of the frame, the whole block above 900px."
+        : spec.position === "center"
+          ? "POSITION (hard rule, overrides any default about the lower third): the caption block is vertically CENTRED — its middle at about 960px from the top."
+          : "POSITION (hard rule): the caption block sits at the BOTTOM — its bottom edge about 1480px from the top of the frame.",
     )
   }
   if (spec.style?.text) out.push(`Text colour ${spec.style.text}.`)
@@ -99,7 +104,58 @@ export async function renderOwnVideoCaption(
   // is used instead (the caller falls back on any throw).
   const covered = await overlayCoverage(path.join(dir, `f${String(frames - 1).padStart(4, "0")}.png`))
   if (covered > MAX_COVERAGE) throw new Error(`overlay_covers_footage:${covered.toFixed(2)}`)
+  // Enforced, not hoped for: when the words landed elsewhere, the whole layer
+  // is moved to where she asked.
+  if (spec.position) await placeLayer(dir, frames, spec.position)
   return frames
+}
+
+/** Where each position puts the middle of the caption block (px from the top of 1920). */
+const TARGET_MID: Record<"top" | "center" | "bottom", number> = { top: 470, center: 960, bottom: 1330 }
+/** The safe band the block must stay inside after a move (Reels UI). */
+const SAFE_TOP = 230
+const SAFE_BOTTOM = 1500
+
+async function placeLayer(dir: string, frames: number, position: "top" | "center" | "bottom"): Promise<void> {
+  const sharp = (await import("sharp")).default
+  const fs = await import("fs/promises")
+  const last = path.join(dir, `f${String(frames - 1).padStart(4, "0")}.png`)
+  const { data, info } = await sharp(last).ensureAlpha().extractChannel(3).raw().toBuffer({ resolveWithObject: true })
+  let top = -1
+  let bottom = -1
+  for (let y = 0; y < info.height; y++) {
+    let row = false
+    for (let x = 0; x < info.width; x += 4) if (data[y * info.width + x] > 20) { row = true; break }
+    if (row) {
+      if (top < 0) top = y
+      bottom = y
+    }
+  }
+  if (top < 0) return
+  const scale = 1920 / info.height
+  const mid = ((top + bottom) / 2) * scale
+  const height = (bottom - top) * scale
+  let delta = Math.round(TARGET_MID[position] - mid)
+  // Already where she asked (within ~120px): leave the design as it is.
+  if (Math.abs(delta) < 120) return
+  delta = Math.max(SAFE_TOP - top * scale, Math.min(SAFE_BOTTOM - bottom * scale, delta))
+  if (height > SAFE_BOTTOM - SAFE_TOP) return
+  const d = Math.round(delta / scale)
+  for (let i = 0; i < frames; i++) {
+    const f = path.join(dir, `f${String(i).padStart(4, "0")}.png`)
+    const src = await fs.readFile(f)
+    const w = info.width
+    const h = info.height
+    // Cut the band that stays on the frame, put it back moved by d.
+    const cutTop = Math.max(0, -d)
+    const cutH = h - Math.abs(d)
+    const band = await sharp(src).extract({ left: 0, top: cutTop, width: w, height: cutH }).png().toBuffer()
+    const out = await sharp({ create: { width: w, height: h, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+      .composite([{ input: band, top: Math.max(0, d), left: 0 }])
+      .png()
+      .toBuffer()
+    await fs.writeFile(f, out)
+  }
 }
 
 /** At most this share of the frame may be covered by the caption layer. */
