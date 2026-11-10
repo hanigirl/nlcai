@@ -105,6 +105,61 @@ async function seekVideos(page: import("puppeteer-core").Page, seconds: number):
   }, seconds)
 }
 
+/**
+ * Pages that screenshot at once (Hani, 2026-11-10: the frames took ~8 of the
+ * ~9 minutes on the server). Each takes a contiguous slice of the frames —
+ * every frame is seeked to its own time, so the result is identical to one
+ * page — and ffmpeg still gets them in order.
+ */
+const RENDER_PAGES = Math.max(1, Math.min(4, Number(process.env.BROLL_RENDER_PAGES ?? 2) || 2))
+
+async function preparePage(browser: Browser, html: string) {
+  const page = await browser.newPage()
+  await page.setViewport({ width: COMPOSITION_WIDTH, height: COMPOSITION_HEIGHT })
+  await page.setContent(html, { waitUntil: "load", timeout: 60_000 })
+  // Fonts / GSAP / background come over the network.
+  await page.waitForNetworkIdle({ idleTime: 400, timeout: 30_000 }).catch(() => undefined)
+  // Fonts and the background must be in before frame 0, or the first second
+  // renders in a fallback face / on black.
+  await page.evaluate(async () => {
+    await document.fonts.ready
+    await Promise.all(
+      Array.from(document.images).map((img) =>
+        img.complete ? null : new Promise((r) => { img.onload = img.onerror = r }),
+      ),
+    )
+    await Promise.all(
+      Array.from(document.querySelectorAll("video")).map((v) =>
+        v.readyState >= 2
+          ? null
+          : new Promise((r) => {
+              v.addEventListener("loadeddata", r, { once: true })
+              v.addEventListener("error", r, { once: true })
+              setTimeout(r, 20_000)
+            }),
+      ),
+    )
+  })
+  return page
+}
+
+async function seekTo(page: import("puppeteer-core").Page, seconds: number): Promise<void> {
+  await page.evaluate((t: number) => {
+    const w = window as unknown as {
+      gsap?: { globalTimeline: { pause: () => void; totalTime: (t: number) => void }; ticker?: { lagSmoothing: (n: number) => void } }
+    }
+    if (w.gsap) {
+      w.gsap.globalTimeline.pause()
+      w.gsap.globalTimeline.totalTime(t)
+    }
+    for (const a of document.getAnimations()) {
+      a.pause()
+      a.currentTime = t * 1000
+    }
+  }, seconds)
+  await seekVideos(page, seconds)
+}
+
 export async function renderComposition(
   html: string,
   outputPath: string,
@@ -119,57 +174,41 @@ export async function renderComposition(
   const browser = await launch()
   lap("renderLaunch")
   try {
-    const page = await browser.newPage()
-    await page.setViewport({ width: COMPOSITION_WIDTH, height: COMPOSITION_HEIGHT })
-    await page.setContent(html, { waitUntil: "load", timeout: 60_000 })
-    // Fonts / GSAP / background come over the network.
-    await page.waitForNetworkIdle({ idleTime: 400, timeout: 30_000 }).catch(() => undefined)
-
-    // Fonts and the background must be in before frame 0, or the first second
-    // renders in a fallback face / on black.
-    await page.evaluate(async () => {
-      await document.fonts.ready
-      await Promise.all(
-        Array.from(document.images).map((img) =>
-          img.complete ? null : new Promise((r) => { img.onload = img.onerror = r }),
-        ),
-      )
-      await Promise.all(
-        Array.from(document.querySelectorAll("video")).map((v) =>
-          v.readyState >= 2
-            ? null
-            : new Promise((r) => {
-                v.addEventListener("loadeddata", r, { once: true })
-                v.addEventListener("error", r, { once: true })
-                setTimeout(r, 20_000)
-              }),
-        ),
-      )
-    })
-
+    const pages = await Promise.all(Array.from({ length: RENDER_PAGES }, () => preparePage(browser, html)))
     lap("renderLoad")
     const frames = COMPOSITION_SECONDS * FPS
-    const { proc, done } = startEncoder(outputPath)
-    for (let i = 0; i < frames; i++) {
-      const t = i / FPS
-      await page.evaluate((seconds: number) => {
-        const w = window as unknown as {
-          gsap?: { globalTimeline: { pause: () => void; totalTime: (t: number) => void }; ticker?: { lagSmoothing: (n: number) => void } }
-        }
-        if (w.gsap) {
-          w.gsap.globalTimeline.pause()
-          w.gsap.globalTimeline.totalTime(seconds)
-        }
-        for (const a of document.getAnimations()) {
-          a.pause()
-          a.currentTime = seconds * 1000
-        }
-      }, t)
-      await seekVideos(page, t)
-      const shot = await page.screenshot({ type: "jpeg", quality: 92 })
-      if (!proc.stdin.write(shot)) {
-        await new Promise((r) => proc.stdin.once("drain", r))
+    const shots: (Buffer | undefined)[] = new Array(frames)
+    const waiting = new Map<number, () => void>()
+    let seekMs = 0
+    let shotMs = 0
+    const per = Math.ceil(frames / pages.length)
+    const workers = pages.map(async (page, w) => {
+      for (let i = w * per; i < Math.min(frames, (w + 1) * per); i++) {
+        const a = Date.now()
+        await seekTo(page, i / FPS)
+        const b = Date.now()
+        shots[i] = Buffer.from(await page.screenshot({ type: "jpeg", quality: 88, optimizeForSpeed: true }))
+        seekMs += b - a
+        shotMs += Date.now() - b
+        waiting.get(i)?.()
       }
+    })
+    const { proc, done } = startEncoder(outputPath)
+    // Feed ffmpeg in order as the frames arrive.
+    const feed = (async () => {
+      for (let i = 0; i < frames; i++) {
+        if (!shots[i]) await new Promise<void>((r) => waiting.set(i, r))
+        const shot = shots[i]!
+        shots[i] = undefined
+        if (!proc.stdin.write(shot)) await new Promise((r) => proc.stdin.once("drain", r))
+      }
+    })()
+    await Promise.all(workers)
+    await feed
+    if (timing) {
+      timing.renderPages = pages.length
+      timing.renderSeekMsPerFrame = Math.round(seekMs / frames)
+      timing.renderShotMsPerFrame = Math.round(shotMs / frames)
     }
     lap("renderFrames")
     proc.stdin.end()
