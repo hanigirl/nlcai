@@ -1,9 +1,6 @@
 {
   "functions": {
-    "src/app/api/b-roll/generate-media/route.tsx": { "memory": 3009 },
-    "src/app/api/b-roll/edit/route.ts": { "memory": 3009 },
-    "src/app/api/b-roll/swap-photo/route.ts": { "memory": 3009 },
-    "src/app/api/b-roll/render-chunk/route.ts": { "memory": 3009, "maxConcurrency": 1 },
+    "src/app/api/b-roll/**/*": { "memory": 3009 },
     "src/app/api/edit-agent/**/*": { "memory": 3009 },
     "src/app/api/media/own-edit/**/*": { "memory": 3009 }
   }

@@ -27,6 +27,8 @@ import {
 
 const FPS = 25
 
+let chromiumPath: Promise<string> | null = null
+
 export async function launch(
   viewport: { width: number; height: number } = { width: COMPOSITION_WIDTH, height: COMPOSITION_HEIGHT },
 ): Promise<Browser> {
@@ -34,9 +36,12 @@ export async function launch(
   const onServerless = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME
   if (onServerless) {
     const chromium = (await import("@sparticuz/chromium")).default
+    // Unpacked once per instance: several renders at once in one instance
+    // (the distributed chunks) must not unpack it over each other.
+    chromiumPath ??= chromium.executablePath()
     return puppeteer.launch({
       args: chromium.args,
-      executablePath: await chromium.executablePath(),
+      executablePath: await chromiumPath,
       headless: true,
       defaultViewport: viewport,
     })
