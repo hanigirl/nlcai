@@ -12,7 +12,7 @@ import { getAuthUser } from "@/lib/auth-user"
 import { BACKGROUND_FRAMINGS, OWN_BACKGROUND_LINE, buildBackgroundPrompt, cropToCanvas, pictureAsBackground } from "@/lib/broll-animation/background"
 import { buildCompositionBrief } from "@/lib/broll-animation/brief"
 import { composeBRoll, finalizeHtml } from "@/lib/broll-animation/compose"
-import { renderComposition } from "@/lib/broll-animation/render"
+import { FAST_RENDER_PAGES, renderComposition } from "@/lib/broll-animation/render"
 import { pickLibraryMedia } from "@/lib/broll-animation/library-media"
 import { saveBRoll, uploadBackground } from "@/lib/broll-animation/store"
 import { generateImage } from "@/lib/openai-image"
@@ -255,7 +255,7 @@ export async function POST(req: NextRequest) {
     const outPath = path.join(os.tmpdir(), `broll-${stamp}.mp4`)
     tmpFiles.push(outPath)
     mark = Date.now()
-    await renderComposition(finalizeHtml(template, backgroundUrl, brief.fonts), outPath, timing)
+    await renderComposition(finalizeHtml(template, backgroundUrl, brief.fonts), outPath, timing, driveInBRoll(user.email) ? FAST_RENDER_PAGES : 1)
     timing.render = Date.now() - mark
     const clip = await fs.readFile(outPath)
 

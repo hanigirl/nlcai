@@ -111,7 +111,9 @@ async function seekVideos(page: import("puppeteer-core").Page, seconds: number):
  * every frame is seeked to its own time, so the result is identical to one
  * page — and ffmpeg still gets them in order.
  */
-const RENDER_PAGES = Math.max(1, Math.min(4, Number(process.env.BROLL_RENDER_PAGES ?? 2) || 2))
+const RENDER_PAGES_MAX = 4
+/** Parallel pages for the gated accounts (Hani + Nataliya, 2026-11-10). */
+export const FAST_RENDER_PAGES = 2
 
 async function preparePage(browser: Browser, html: string) {
   const page = await browser.newPage()
@@ -165,6 +167,8 @@ export async function renderComposition(
   outputPath: string,
   /** Timing per render stage, ms (Hani, 2026-11-10 — where does b-roll time go). */
   timing?: Record<string, number>,
+  /** Pages in parallel; 1 = the old one-page render (everyone but the gated accounts, for now). */
+  pagesWanted = 1,
 ): Promise<void> {
   let t0 = Date.now()
   const lap = (k: string) => {
@@ -174,7 +178,8 @@ export async function renderComposition(
   const browser = await launch()
   lap("renderLaunch")
   try {
-    const pages = await Promise.all(Array.from({ length: RENDER_PAGES }, () => preparePage(browser, html)))
+    const n = Math.max(1, Math.min(RENDER_PAGES_MAX, pagesWanted))
+    const pages = await Promise.all(Array.from({ length: n }, () => preparePage(browser, html)))
     lap("renderLoad")
     const frames = COMPOSITION_SECONDS * FPS
     const shots: (Buffer | undefined)[] = new Array(frames)

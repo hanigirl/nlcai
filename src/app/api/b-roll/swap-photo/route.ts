@@ -4,7 +4,7 @@ import { getAuthUser } from "@/lib/auth-user"
 import { getUserApiKey } from "@/lib/api-keys"
 import { driveInBRoll } from "@/lib/feature-access"
 import { finalizeHtml, reviseBRoll } from "@/lib/broll-animation/compose"
-import { renderComposition } from "@/lib/broll-animation/render"
+import { FAST_RENDER_PAGES, renderComposition } from "@/lib/broll-animation/render"
 import { loadComposition, saveBRoll } from "@/lib/broll-animation/store"
 import { driveFileBytes, storeLibraryImage, storeLibraryVideo } from "@/lib/broll-animation/library-media"
 
@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
     const path = await import("path")
     const outPath = path.join(os.tmpdir(), `broll-swap-${stamp}.mp4`)
     tmpFiles.push(outPath)
-    await renderComposition(finalizeHtml(template, composition.backgroundUrl, brief.fonts), outPath)
+    await renderComposition(finalizeHtml(template, composition.backgroundUrl, brief.fonts), outPath, undefined, FAST_RENDER_PAGES)
     const clip = await fs.readFile(outPath)
     const url = await saveBRoll(supabase, user.id, postId, stamp, clip, {
       ...composition,
