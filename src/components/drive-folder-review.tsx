@@ -1146,11 +1146,17 @@ function SinglePickConfirm({ format, items }: { format: string; items: MediaItem
   const busy = s.importing === format
   const [chosen, setChosen] = useState<string | null>(null)
   const item = items.find((i) => i.id === chosen) ?? null
-  const isVideo = items[0]?.kind === "video"
+  // The words follow what's picked — a folder can hold videos AND pictures
+  // (Hani, 2026-11-10); before a pick, what the folder holds.
+  const hasVideo = items.some((i) => i.kind === "video")
+  const hasImage = items.some((i) => i.kind !== "video")
+  const noun = item
+    ? item.kind === "video" ? "video" : "image"
+    : hasVideo && hasImage ? "either" : hasVideo ? "video" : "image"
   return (
     <>
       <p className="text-xs-body text-text-neutral-default">
-        {isVideo ? "בחרו סרטון ואשרו למטה." : "בחרו תמונה ואשרו למטה."}
+        {noun === "either" ? "בחרו סרטון או תמונה ואשרו למטה." : noun === "video" ? "בחרו סרטון ואשרו למטה." : "בחרו תמונה ואשרו למטה."}
       </p>
       <div className={cn("grid gap-3", "grid-cols-3")}>
         {items.map((it) => (
@@ -1176,11 +1182,11 @@ function SinglePickConfirm({ format, items }: { format: string; items: MediaItem
               <span className="h-[50px] w-10 shrink-0 rounded-lg border border-dashed border-border-neutral-default" aria-hidden />
             )}
             <span className="min-w-0 flex-1 truncate text-xs-body text-text-neutral-default">
-              {item ? item.name : isVideo ? "עוד לא נבחר סרטון" : "עוד לא נבחרה תמונה"}
+              {item ? item.name : noun === "either" ? "עוד לא נבחר קובץ" : noun === "video" ? "עוד לא נבחר סרטון" : "עוד לא נבחרה תמונה"}
             </span>
             <Button size="sm" disabled={!item || busy} onClick={() => item && runImport(format, [item])} className="gap-1.5">
               {busy && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
-              {isVideo ? "שימוש בסרטון" : "שימוש בתמונה"}
+              {noun === "video" ? "שימוש בסרטון" : noun === "image" ? "שימוש בתמונה" : "שימוש בקובץ"}
             </Button>
           </div>
         )}
