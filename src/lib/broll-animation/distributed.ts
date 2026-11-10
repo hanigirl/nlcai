@@ -90,7 +90,11 @@ export async function renderDistributed(
     if (timing) timing.renderDistributed = Date.now() - started
   } catch (e) {
     console.error("[broll render] distributed render failed — one-function render instead", e)
-    if (timing) timing.renderDistributedFailedAfter = Date.now() - started
+    if (timing) {
+      timing.renderDistributedFailedAfter = Date.now() - started
+      // Why — kept in the composition's timing record, for the next look.
+      ;(timing as Record<string, unknown>).renderDistributedError = (e instanceof Error ? e.message : String(e)).slice(0, 300)
+    }
     await renderComposition(html, outputPath, timing)
   } finally {
     await admin.storage.from(BUCKET).remove([htmlPath, ...segPaths]).catch(() => undefined)
