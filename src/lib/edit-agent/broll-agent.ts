@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { finalizeHtml, reviseBRoll, type CompositionBrief } from "@/lib/broll-animation/compose"
-import { renderComposition } from "@/lib/broll-animation/render"
+import { FAST_RENDER_PAGES, renderComposition } from "@/lib/broll-animation/render"
 import { hasOwnBackground, saveBRoll, uploadBackground, type StoredComposition } from "@/lib/broll-animation/store"
 import { currentCompositionBrief } from "@/lib/broll-animation/brief"
 import {
@@ -504,7 +504,7 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
     const id = stamp()
     const outPath = path.join(os.tmpdir(), `broll-agent-${id}.mp4`)
     try {
-      await renderComposition(draftHtml(), outPath)
+      await renderComposition(draftHtml(), outPath, undefined, FAST_RENDER_PAGES)
       const clip = await fs.readFile(outPath)
       const url = await saveBRoll(db, userId, postId, id, clip, {
         ...composition,

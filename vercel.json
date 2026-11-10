@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "src/app/api/b-roll/**/*": { "memory": 3009 },
+    "src/app/api/edit-agent/**/*": { "memory": 3009 },
+    "src/app/api/media/own-edit/**/*": { "memory": 3009 }
+  }
+}
