@@ -1,7 +1,10 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ArrowUp, Loader2, X } from "lucide-react"
+import { ArrowUp, ImageIcon, Loader2, X } from "lucide-react"
+import { BRollPhotoSwapDialog } from "@/components/broll-photo-swap"
+import { TooltipLabel } from "@/components/ui/tooltip"
+import { useDriveInBRoll } from "@/lib/use-scheduling-access"
 import { BidiText } from "@/components/bidi-text"
 import { AiSparkle } from "@/components/ai-refine-button"
 import { Button } from "@/components/ui/button"
@@ -115,6 +118,10 @@ export function EditAgentChat({
   const refs = useReferenceImages()
   const scrollRef = useRef<HTMLDivElement>(null)
   const seenJob = useRef<string | null>(null)
+  // "החלפת תמונה" from the chat too (Hani, 2026-11-10) — her own pick in the
+  // pop-up, not the agent: the agent still never touches her Drive.
+  const swapOn = useDriveInBRoll() === true
+  const [swapOpen, setSwapOpen] = useState(false)
 
   const busy = sending || job?.status === "running"
 
@@ -210,6 +217,7 @@ export function EditAgentChat({
       className="fixed bottom-6 right-6 z-40 flex max-h-[72vh] w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white shadow-xl dark:bg-gray-10"
     >
       <ReferenceDropHint show={refs.dragging} />
+      {swapOn && <BRollPhotoSwapDialog open={swapOpen} onOpenChange={setSwapOpen} postId={postId} onSwapped={onMediaChanged} />}
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">
         <AiSparkle />
         <span className="text-small-bold text-text-primary-default">עריכה עם AI · בי-רול</span>
@@ -293,6 +301,21 @@ export function EditAgentChat({
             autoFocus
             className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent px-1 py-2 text-small shadow-none focus-visible:ring-0"
           />
+          {swapOn && (
+            <TooltipLabel label="החלפת תמונה (מהדרייב או מהמחשב)">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => setSwapOpen(true)}
+                disabled={busy}
+                aria-label="החלפת תמונה"
+                className="shrink-0 rounded-full text-text-neutral-default hover:bg-gray-95 hover:text-text-neutral-default dark:hover:bg-gray-20"
+              >
+                <ImageIcon className="size-4" />
+              </Button>
+            </TooltipLabel>
+          )}
           <ReferenceButton r={refs} disabled={busy} />
           <Button
             size="icon-sm"
