@@ -74,7 +74,7 @@ export function MediaPreviewZone({
         />
       )}
       {onSwapPhoto && (
-        <HoverMediaIconButton label="החלפת תמונה" icon={ImageIcon} onClick={onSwapPhoto} visible className="top-2 end-2" />
+        <HoverMediaIconButton label="הוספת תמונה או סרטון משלכם" icon={ImageIcon} onClick={onSwapPhoto} visible className="top-2 end-2" />
       )}
       {onDelete && (
         <HoverMediaIconButton

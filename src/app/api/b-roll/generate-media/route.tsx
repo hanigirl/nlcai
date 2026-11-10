@@ -151,7 +151,12 @@ export async function POST(req: NextRequest) {
     // on the generated background (lib/broll-animation/library-media).
     const stamp = crypto.randomUUID()
     let library: Awaited<ReturnType<typeof pickLibraryMedia>> = null
-    if (!placed.length && driveInBRoll(user.email)) {
+    // OFF (Hani, 2026-11-10, the rule is back): a visual-language b-roll is
+    // generated from elements, fonts and colours only — no media picked for
+    // her. Her own picture / video comes in afterwards, when SHE adds it
+    // ("הוספת תמונה או סרטון" on the b-roll, or in the chat), blended by the same recipe.
+    const AUTO_PICK_LIBRARY_MEDIA = false
+    if (AUTO_PICK_LIBRARY_MEDIA && !placed.length && driveInBRoll(user.email)) {
       const t = Date.now()
       library = await pickLibraryMedia(supabase, user.id, stamp).catch((e) => {
         console.error("[b-roll library]", e)

@@ -98,9 +98,9 @@ export function BRollPhotoSwapDialog({
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
       <DialogContent dir="rtl" className="max-w-lg">
         <DialogHeader className="text-start">
-          <DialogTitle>החלפת תמונה</DialogTitle>
+          <DialogTitle>תמונה או סרטון משלכם</DialogTitle>
           <DialogDescription>
-            התמונה או הסרטון החדשים ישתלבו בבי-רול באותו אופן. הטקסט, העיצוב והתנועה נשארים.
+            מה שתבחרו ישתלב בעיצוב של הבי-רול. הטקסט, האלמנטים והתנועה נשארים.
           </DialogDescription>
         </DialogHeader>
 
@@ -193,7 +193,7 @@ export function BRollPhotoSwapDialog({
 
         <DialogFooter className="gap-2 sm:justify-start">
           <Button type="button" onClick={() => picked && void swap({ driveId: picked.id, kind: picked.kind })} disabled={!picked || busy}>
-            החלפה
+            שילוב בבי-רול
           </Button>
           <Button type="button" variant="outline" onClick={() => inputRef.current?.click()} disabled={busy} className="gap-1.5">
             <Monitor className="size-4" />
