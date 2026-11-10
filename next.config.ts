@@ -23,7 +23,8 @@ const nextConfig: NextConfig = {
   // file tracer doesn't follow a binary loaded via a path string, so include
   // it explicitly or it's missing from the serverless bundle on Vercel.
   outputFileTracingIncludes: {
-    "/api/story/generate-video-media": ["./node_modules/ffmpeg-static/ffmpeg"],
+    // + Chromium: the animated caption on her own video, and the chat's quick draft look.
+    "/api/story/generate-video-media": ["./node_modules/ffmpeg-static/ffmpeg", "./node_modules/@sparticuz/chromium/bin/**"],
     // Talking-head transcript: the audio is pulled out with ffmpeg first.
     "/api/talking-head/transcribe": ["./node_modules/ffmpeg-static/ffmpeg"],
     "/api/talking-head/edit": ["./node_modules/ffmpeg-static/ffmpeg","./node_modules/@sparticuz/chromium/bin/**"],
@@ -36,6 +37,21 @@ const nextConfig: NextConfig = {
       "./node_modules/@sparticuz/chromium/bin/**",
     ],
     "/api/b-roll/edit": [
+      "./node_modules/ffmpeg-static/ffmpeg",
+      "./node_modules/@sparticuz/chromium/bin/**",
+    ],
+    // One slice of a distributed b-roll render (lib/broll-animation/distributed)
+    // — before this it had no Chromium and every slice failed (2026-11-10).
+    "/api/b-roll/render-chunk": [
+      "./node_modules/ffmpeg-static/ffmpeg",
+      "./node_modules/@sparticuz/chromium/bin/**",
+    ],
+    "/api/b-roll/swap-photo": [
+      "./node_modules/ffmpeg-static/ffmpeg",
+      "./node_modules/@sparticuz/chromium/bin/**",
+    ],
+    // The AI chat agent: draft stills (Chromium), her video's look (ffmpeg), the final render.
+    "/api/edit-agent": [
       "./node_modules/ffmpeg-static/ffmpeg",
       "./node_modules/@sparticuz/chromium/bin/**",
     ],
