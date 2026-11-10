@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { getAuthUser } from "@/lib/auth-user"
 import { getUserApiKey } from "@/lib/api-keys"
-import { canBlendBRoll, canUseEditAgent } from "@/lib/feature-access"
+import { canBlendBRoll, driveInBRoll, canUseEditAgent } from "@/lib/feature-access"
 import { loadComposition } from "@/lib/broll-animation/store"
 import { isOwnMediaUrl } from "@/lib/own-media"
 import { scriptTextFor } from "@/lib/script-text"
@@ -223,6 +223,7 @@ export async function POST(req: NextRequest) {
         anthropicKey,
         openaiKey,
         canBlend: canBlendBRoll(user.email),
+        canReplacePhoto: driveInBRoll(user.email),
         clipUrl,
         composition,
         script: scriptTextFor("b_roll", v?.body),

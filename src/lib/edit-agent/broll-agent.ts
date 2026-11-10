@@ -14,6 +14,7 @@ import {
 import { editImage, generateImage } from "@/lib/openai-image"
 import { MOTION_RESTYLE_NOTE, MOTION_RESTYLE_NOTE_OWN_PICTURE } from "@/lib/visual-language/current-brief"
 import { referenceBuffer } from "@/lib/ai-edit-references"
+import { storeLibraryImage } from "@/lib/broll-animation/library-media"
 import { changedArea, editPrompt } from "@/lib/ai-edit-plan"
 import { loadImageForModels, normaliseImage } from "@/lib/visual-language/image-input"
 import { picturesPlaced } from "@/lib/placed-check"
@@ -58,6 +59,8 @@ export interface BRollAgentInput {
   anthropicKey: string
   openaiKey: string | null
   canBlend: boolean
+  /** Her photo blended into the design can be swapped (lib/feature-access driveInBRoll). */
+  canReplacePhoto?: boolean
   clipUrl: string
   composition: StoredComposition
   /** The script's words for the clip — the ONLY words on it. */
@@ -151,6 +154,12 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "picture_as_background",
     description: "Use a picture she attached to THIS message as the background exactly as it is (only when she asked for it as is).",
+    input_schema: { type: "object", properties: { attached: { type: "integer", minimum: 1 } }, required: ["attached"] },
+  },
+  {
+    name: "replace_photo",
+    description:
+      "Replace HER PHOTO that is blended into the design (the hero photo layer over the background) with a picture she attached to THIS message — from her Drive or her computer. Use when she asks to change / swap / replace the picture or photo, or attaches a picture saying 'this one' about the photo. Text, layout and motion stay; the new photo is blended by the same recipe.",
     input_schema: { type: "object", properties: { attached: { type: "integer", minimum: 1 } }, required: ["attached"] },
   },
   {
@@ -249,6 +258,7 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
     "THE CLIP NOW:",
     `- Words on it (the script — exactly these): ${JSON.stringify([script?.headline ?? brief.hook, script ? script.body : brief.rest].filter(Boolean).join(" / "))}`,
     `- Background: ${ownBackground ? "HER OWN picture (never repaint or replace it with a drawn one)" : "a picture we drew in her visual language"}`,
+    ...(brief.libraryMedia ? ["- HER PHOTO is blended into the design over the background (replace_photo swaps it for a picture she attaches)."] : []),
     `- Edits applied so far (oldest first): ${composition.edits.length ? composition.edits.map((e) => JSON.stringify(e)).join("; ") : "none"}`,
     "",
     "HER VISUAL LANGUAGE (and her saved preferences):",
@@ -385,6 +395,28 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
         changed = true
         done.push("blend")
         return "Done (draft). Look at it before finish."
+      }
+      case "replace_photo": {
+        if (!input.canReplacePhoto) return "REFUSED: replacing the photo isn't available on this account."
+        const pic = input.attached[Number(a.attached) - 1]
+        if (!pic) return `FAILED: there is no attached picture ${a.attached} in this message. Ask her to attach the picture (the image button: from her computer or Google Drive).`
+        await input.setProgress("מחליף את התמונה...")
+        const photo = await storeLibraryImage(db, userId, stamp(), referenceBuffer(pic))
+        const old = brief.libraryMedia?.url
+        brief = { ...brief, libraryMedia: { url: photo.url, kind: "image", width: photo.width, height: photo.height } }
+        if (old && template.includes(old)) {
+          template = template.split(old).join(photo.url)
+        } else {
+          template = await reviseBRoll(
+            anthropicKey,
+            brief,
+            template,
+            "Work HER OWN PICTURE (in the brief) into this composition with exactly its layer recipe. Keep the text, typography, graphic elements and motion as they are.",
+          )
+        }
+        changed = true
+        done.push("photo replaced")
+        return "Done (draft): her new photo is in, blended by the same recipe. Look before finish."
       }
       case "picture_as_background": {
         const pic = input.attached[Number(a.attached) - 1]
