@@ -45,7 +45,7 @@ type Msg = {
 type Job = { id: string; status: "running" | "asking" | "done" | "failed"; progress: string; outcome?: { url?: string; urls?: string[]; changed?: boolean } | null }
 
 /** The formats the agent works on (lib/edit-agent). */
-export type EditAgentFormat = "b_roll" | "story"
+export type EditAgentFormat = "b_roll" | "story" | "image_post"
 
 /** Her own b-roll: the caption look only (lib/edit-agent/own-broll-agent). */
 const OWN_GREETING =
@@ -58,7 +58,11 @@ const GREETING =
 const STORY_GREETING =
   "היי, אני כאן בשביל הסטורי. בפריים שעוצב בשפה הוויזואלית שלכם אפשר לבקש שינויים בעיצוב, להזיז טקסט ואלמנטים, לשלב תמונה שלכם או לצייר אותו מחדש. בפריים שהוא מדיה שלכם, מה שצילמתם נשאר כמו שהוא, ואפשר לשנות את הכיתוב: מיקום, צבעים, קופסה, גודל. אפשר גם לצרף תמונה או סרטון שיהיו הפריים עצמו, או פשוט לשאול."
 
-const FORMAT_LABEL: Record<EditAgentFormat, string> = { b_roll: "בי-רול", story: "סטורי" }
+/** An image post: one picture, designed or her own (the same agent as the story's). */
+const IMAGE_POST_GREETING =
+  "היי, אני כאן בשביל פוסט התמונה. אם התמונה עוצבה בשפה הוויזואלית שלכם אפשר לבקש שינויים בעיצוב, להזיז טקסט ואלמנטים, לשלב תמונה שלכם או לצייר אותה מחדש. אם זו תמונה שלכם, היא נשארת כמו שהיא, ואפשר לשנות את הכיתוב: מיקום, צבעים, קופסה, גודל. אפשר גם לצרף תמונה אחרת שתחליף אותה, או פשוט לשאול."
+
+const FORMAT_LABEL: Record<EditAgentFormat, string> = { b_roll: "בי-רול", story: "סטורי", image_post: "פוסט תמונה" }
 
 export const EDIT_AGENT_STARTED = "edit-agent:started"
 
@@ -284,7 +288,7 @@ export function EditAgentChat({
             {messages.length === 0 && (
               <div className="flex flex-col items-end">
                 <div className="max-w-[85%] rounded-2xl rounded-se-sm bg-bg-surface px-3 py-2 text-small leading-relaxed text-text-primary-default">
-                  {format === "story" ? STORY_GREETING : own ? OWN_GREETING : GREETING}
+                  {format === "story" ? STORY_GREETING : format === "image_post" ? IMAGE_POST_GREETING : own ? OWN_GREETING : GREETING}
                 </div>
               </div>
             )}
@@ -348,7 +352,7 @@ export function EditAgentChat({
             autoFocus
             className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent px-1 py-2 text-small shadow-none focus-visible:ring-0"
           />
-          {own || driveMenu || format === "story" ? <ReferenceAddMenu r={refs} format={format} disabled={busy} /> : <ReferenceButton r={refs} disabled={busy} />}
+          {own || driveMenu || format !== "b_roll" ? <ReferenceAddMenu r={refs} format={format} disabled={busy} /> : <ReferenceButton r={refs} disabled={busy} />}
           <Button
             size="icon-sm"
             onClick={() => void send(input)}

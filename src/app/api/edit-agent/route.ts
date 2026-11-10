@@ -127,10 +127,11 @@ export async function POST(req: NextRequest) {
   if (!canUseEditAgent(user.email)) return NextResponse.json({ error: "not_enabled" }, { status: 403 })
   const postId = body.postId ?? ""
   const format = body.format ?? ""
-  if (!postId || (format !== "b_roll" && format !== "story")) {
-    return NextResponse.json({ error: "b_roll and story only for now" }, { status: 400 })
+  if (!postId || (format !== "b_roll" && format !== "story" && format !== "image_post")) {
+    return NextResponse.json({ error: "b_roll, story and image_post only for now" }, { status: 400 })
   }
-  const isStory = format === "story"
+  // The frame agent's formats (lib/edit-agent/story-agent): a story's set, or an image post's one picture.
+  const isStory = format === "story" || format === "image_post"
   const chatKey = keyFor(postId, format)
   const db = untyped(supabase)
   const admin = untyped(createAdminClient())
@@ -189,7 +190,10 @@ export async function POST(req: NextRequest) {
       .order("created_at", { ascending: true })
     const all = ((rows ?? []) as { url: string | null; asset_type: string }[]).filter((r): r is { url: string; asset_type: string } => !!r.url && /^https?:\/\//.test(r.url))
     const images = all.filter((r) => r.asset_type === "image").map((r) => r.url)
-    storyUrls = [...images, ...all.filter((r) => r.asset_type === "video" && !images.includes(r.url)).map((r) => r.url)]
+    storyUrls =
+      format === "image_post"
+        ? images.slice(-1)
+        : [...images, ...all.filter((r) => r.asset_type === "video" && !images.includes(r.url)).map((r) => r.url)]
   }
   const { data: asset } = v && !isStory
     ? await supabase
@@ -219,7 +223,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ refused: true })
   }
   if (isStory && !storyUrls.length) {
-    return refuse("אין עדיין מדיה בסטורי הזה. צרו סטורי בשפה הוויזואלית שלכם או חברו מדיה משלכם, ואז נעבוד עליו יחד.")
+    return refuse(
+      format === "image_post"
+        ? "אין עדיין תמונה בפוסט הזה. צרו אחת בשפה הוויזואלית שלכם או חברו תמונה משלכם, ואז נעבוד עליה יחד."
+        : "אין עדיין מדיה בסטורי הזה. צרו סטורי בשפה הוויזואלית שלכם או חברו מדיה משלכם, ואז נעבוד עליו יחד.",
+    )
   }
   if (!isStory && !ownCaption && (!clipUrl || !composition)) {
     return refuse(
@@ -283,6 +291,7 @@ export async function POST(req: NextRequest) {
             userId: user.id,
             email: user.email,
             postId,
+            format: format === "image_post" ? "image_post" : "story",
             anthropicKey,
             openaiKey,
             canBlend: canBlendBRoll(user.email),
@@ -351,7 +360,7 @@ export async function POST(req: NextRequest) {
         ? CLAUDE_KEY_INVALID_MESSAGE
         : msg === "composition_invalid" || msg === "composition_not_seekable"
           ? "העיצוב שיצא לא היה תקין, אז השארתי את הבי-רול כמו שהיה. נסו שוב, אולי בניסוח אחר."
-          : `משהו נתקע בדרך (${msg.slice(0, 120)}), אז ${isStory ? "הסטורי" : "הבי-רול"} נשאר כמו שהיה. נסו שוב.`
+          : `משהו נתקע בדרך (${msg.slice(0, 120)}), אז ${format === "story" ? "הסטורי" : format === "image_post" ? "פוסט התמונה" : "הבי-רול"} נשאר כמו שהיה. נסו שוב.`
       await appendMessages(admin, user.id, chatKey, [{ role: "assistant", text: reply, error: true, at: now() }])
       await setJob({ status: "failed", progress: "", outcome: { kind: "failed", reply } })
     }

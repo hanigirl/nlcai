@@ -395,7 +395,7 @@ function ProjectPageInner() {
   // The caption-only AI edit on her OWN b-roll (Hani + Nataliya, 2026-11-10).
   const ownBRollCaptionOn = useOwnBRollCaptionEdit() === true
   const [photoSwapOpen, setPhotoSwapOpen] = useState(false)
-  const chatOnFor = (f: string) => aiChatOn || (editAgentOn && (f === "b_roll" || f === "story"))
+  const chatOnFor = (f: string) => aiChatOn || (editAgentOn && (f === "b_roll" || f === "story" || f === "image_post"))
   // A generate button opens the AI edit to ask for a brief first (lib/ai-edit-intent).
   const [aiChatOpening, setAiChatOpening] = useState<AiEditOpening | null>(null)
   useAiEditRequests((req) => {
@@ -514,6 +514,7 @@ function ProjectPageInner() {
     setStoryVideoUrl(null)
   }, [])
   useFollowEditAgentRun(savedPostId, "story", editAgentOn, applyAgentStory)
+  useFollowEditAgentRun(savedPostId, "image_post", editAgentOn, setImagePostUrl)
   // Per-format "media is being made" — drives the skeleton card on the canvas.
   const { busy: mediaBusy, onPanelBusyChange } = useFormatMediaBusy(savedPostId, {
     onStoryImages: setStoryImages,
@@ -2249,7 +2250,7 @@ function ProjectPageInner() {
   /** Her own b-roll still gets the AI edit — the caption's look only (gated). */
   // A story of her own media: the story agent, caption look only on her frames (lib/edit-agent/story-agent).
   const ownCaptionEdit = (fid: string): boolean =>
-    (fid === "b_roll" && ownBRollCaptionOn && ownMediaOn(fid)) || (fid === "story" && editAgentOn && ownMediaOn(fid))
+    (fid === "b_roll" && ownBRollCaptionOn && ownMediaOn(fid)) || ((fid === "story" || fid === "image_post") && editAgentOn && ownMediaOn(fid))
   const aiOwnNow = (() => {
     if (!aiChatFormat) return false
     const storyFrames = [
@@ -3671,6 +3672,18 @@ function ProjectPageInner() {
               format="story"
               onClose={() => { setAiChatFormat(null); setAiChatOpening(null) }}
               onMediaChanged={applyAgentStory}
+            />
+          )
+        }
+        // The same agent on an image post — its one picture, designed or her own.
+        if (editAgentOn && aiChatFormat === "image_post") {
+          return (
+            <EditAgentChat
+              key={`agent:${savedPostId}:image_post`}
+              postId={savedPostId}
+              format="image_post"
+              onClose={() => { setAiChatFormat(null); setAiChatOpening(null) }}
+              onMediaChanged={setImagePostUrl}
             />
           )
         }

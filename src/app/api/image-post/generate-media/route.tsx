@@ -8,17 +8,13 @@ import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
-import { parseImagePostBody, type ImagePostTexts } from "@/lib/image-post-text"
+import { parseImagePostBody } from "@/lib/image-post-text"
+import { buildImagePostPrompt } from "@/lib/image-post-prompt"
 import { assertFeedSafeAspect } from "@/lib/social/media-spec"
-import { generateImage, KEEP_INSIDE_FRAME_RULE } from "@/lib/openai-image"
-import { applyFixedElements, reservedZoneLines } from "@/lib/visual-language/fixed-elements"
+import { generateImage } from "@/lib/openai-image"
+import { applyFixedElements } from "@/lib/visual-language/fixed-elements"
 import { isMediaStyle } from "@/lib/visual-language/types"
-import {
-  noExtrasRule,
-  pickComposition,
-  resolveDesignDirection,
-  type DesignDirection,
-} from "@/lib/visual-language/direction"
+import { pickComposition, resolveDesignDirection } from "@/lib/visual-language/direction"
 
 // gpt-image-2 generation can take 60-120s; leave headroom for the normalize pass.
 export const maxDuration = 300
@@ -52,57 +48,6 @@ assertFeedSafeAspect(IMAGE_WIDTH, IMAGE_HEIGHT, "פוסט תמונה")
  * anything. The client reuses the existing upload path (Storage +
  * POST /api/core-posts/{id}/media) so persistence stays in one place.
  */
-
-/**
- * Full-image prompt: the model designs the whole post, INCLUDING the
- * Hebrew text. We give it the exact lines (quoted, so it copies them
- * verbatim), a clear typographic hierarchy, RTL guidance, and a rule that
- * nothing touches the edge.
- *
- * The LOOK is the user's visual language (or one derived from her niche —
- * see lib/visual-language/direction). Regenerating keeps that language and
- * rotates only the composition.
- */
-function buildImagePrompt(
-  texts: ImagePostTexts,
-  context: string,
-  direction: DesignDirection,
-  composition: string,
-): string {
-  const textLines = [
-    `Headline (largest, boldest, dominant): "${texts.headline}"`,
-    texts.subheadline
-      ? `Sub-headline (medium, below the headline): "${texts.subheadline}"`
-      : null,
-    texts.bottom
-      ? `Bottom line (smallest, near the lower area — a short CTA/closer): "${texts.bottom}"`
-      : null,
-  ]
-    .filter(Boolean)
-    .join("\n")
-
-  return [
-    "Design a complete, polished vertical (portrait) social media post image in HEBREW.",
-    "",
-    ...direction.lines,
-    "",
-    composition,
-    "",
-    "The image MUST contain exactly this Hebrew text, spelled EXACTLY as written, laid out right-to-left (RTL). Do not translate, transliterate, paraphrase, or add any other words:",
-    textLines,
-    "",
-    "Rules that always hold (independent of the style above):",
-    "- Strong visual hierarchy — the headline is clearly dominant.",
-    "- Correct Hebrew letterforms and right-to-left reading order; reproduce every character precisely.",
-    "- High legibility: strong contrast between text and background (use a clean area, scrim, or a solid shape behind the text if the style needs it).",
-    KEEP_INSIDE_FRAME_RULE,
-    ...reservedZoneLines(direction.fixed, "single", IMAGE_WIDTH, IMAGE_HEIGHT),
-    // No context = nothing but the lines above to draw from (the fixed path).
-    ...(context ? ["- The mood should still relate to this post content (written in Hebrew): " + `"""${context}"""`] : []),
-    "",
-    `Do NOT add any text other than the exact lines above. ${noExtrasRule(direction)}`,
-  ].join("\n")
-}
 
 /* ------------------------- normalize pass ------------------------ */
 
@@ -236,7 +181,7 @@ export async function POST(req: NextRequest) {
     )
     const generatedBase64 = await generateImage(
       openaiKey,
-      buildImagePrompt(texts, context, direction, pickComposition(variationIndex)),
+      buildImagePostPrompt(texts, context, direction, pickComposition(variationIndex)),
       // Legible Hebrew glyphs are the whole point here, so we pay for "high".
       { shape: "4:5", quality: "high", references: direction.references, strict: placed.length > 0 },
     )

@@ -15,7 +15,10 @@ import { pickComposition, resolveDesignDirection } from "@/lib/visual-language/d
 import { withGraphicOnly } from "@/lib/visual-language/graphic-only"
 import { withMediaBrief } from "@/lib/media-brief"
 import { applyFixedElements } from "@/lib/visual-language/fixed-elements"
-import { buildStoryPrompt, cropStoryToCanvas, frameRole } from "@/lib/story-frame-prompt"
+import { Resvg } from "@resvg/resvg-js"
+import { buildStoryPrompt, frameRole } from "@/lib/story-frame-prompt"
+import { buildImagePostPrompt } from "@/lib/image-post-prompt"
+import { parseImagePostBody } from "@/lib/image-post-text"
 import { replaceStyleRules, triageVisualMemory } from "@/lib/style-memory"
 import { isRuleScope } from "@/lib/visual-memory"
 import { AGENT_MODEL, type BRollAgentOutcome, type ChatTurn } from "@/lib/edit-agent/broll-agent"
@@ -40,6 +43,27 @@ import { checkFailedNote, checkTask, type CheckShot } from "@/lib/edit-agent/sel
  * Nothing is saved until finish; it looks at every draft before answering.
  */
 
+/**
+ * The same agent runs an IMAGE POST (Hani, 2026-11-10: "נשים את הסוכן החכם
+ * על כל הפורמטים"): one 4:5 picture instead of a set of 9:16 frames — it is
+ * "frame 1" to the tools, designed or her own by the same rules.
+ */
+export type FrameAgentFormat = "story" | "image_post"
+
+const FORMATS = {
+  story: { width: 1080, height: 1920, shape: "9:16" as const, noun: "הסטורי", stayed: "הסטורי נשאר כמו שהיה", updated: "עדכנתי את הסטורי." },
+  image_post: { width: 1080, height: 1350, shape: "4:5" as const, noun: "פוסט התמונה", stayed: "התמונה נשארה כמו שהייתה", updated: "עדכנתי את התמונה." },
+}
+
+/** The model's picture → exactly the format's canvas (object-fit: cover). */
+function toCanvas(base64: string, w: number, h: number): string {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
+    `<image href="data:image/png;base64,${base64}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice"/>` +
+    `</svg>`
+  return Buffer.from(new Resvg(svg).render().asPng()).toString("base64")
+}
+
 const THINK_BUDGET_MS = 420_000
 const MAX_STEPS = 12
 const MAX_DRAFTS = 12
@@ -52,10 +76,12 @@ export interface StoryAgentInput {
   userId: string
   email: string | null | undefined
   postId: string
+  /** Default: story. */
+  format?: FrameAgentFormat
   anthropicKey: string
   openaiKey: string | null
   canBlend: boolean
-  /** The story's frames as saved, in order. */
+  /** The story's frames as saved, in order (an image post: its one picture). */
   urls: string[]
   /** The story script (format_variants.body). */
   scriptBody: string | null
@@ -110,7 +136,23 @@ async function changedShare(before: Buffer, after: Buffer): Promise<number> {
   return moved / a.length
 }
 
-const SYSTEM = `You are the AI edit chat of a content app, working on ONE Instagram STORY: an ordered set of vertical frames (1080×1920), each carrying its own part of the post's script. The creator writes in Hebrew.
+const INTRO: Record<FrameAgentFormat, string> = {
+  story: "working on ONE Instagram STORY: an ordered set of vertical frames (1080×1920), each carrying its own part of the post's script.",
+  image_post:
+    "working on ONE Instagram feed IMAGE POST: a single vertical picture (1080×1350) carrying the post's image text (headline, then the smaller lines). To the tools it is \"frame 1\" — there is only one; never talk to her about frames, say התמונה.",
+}
+const BARS: Record<FrameAgentFormat, string> = {
+  story:
+    "- Instagram covers the top ~14% (profile bar) and the bottom ~24% (reply bar) of a story: keep text and key elements out of there unless she insists, and tell her when a request puts text under them.\n",
+  image_post: "- A feed post shows whole: no area is covered. Keep text away from the very edges.\n",
+}
+const WHICH: Record<FrameAgentFormat, string> = {
+  story:
+    "- Which frame: \"פריים 2\", \"הראשון\", \"האחרון\" are clear. A look change with no frame named (colours, position, size, font) applies to every frame it can. Putting a picture in, or a change that fits only one frame, with no frame named and more than one candidate: ask.\n",
+  image_post: "",
+}
+
+const systemFor = (format: FrameAgentFormat) => `You are the AI edit chat of a content app, ${INTRO[format]} The creator writes in Hebrew.
 
 You talk with her like a sharp, warm designer colleague: you understand what she means (also loose or partial wording), infer the unstated from context and the whole conversation, remember what was said and done, and can explain why something did or didn't work. When she asks a question or wants to talk it through, just answer (finish) — not every message is an edit.
 
@@ -132,13 +174,11 @@ Any frame:
 Rules that always hold:
 - The words on each frame are that frame's part of the script, word for word (given below). Never invent, add, translate, shorten or drop words — no titles, no CTA. You change how they look and where they sit, never what they say. To change the words she edits the script.
 - No invented people: never add a face, person or figure on your own. A person appears only from a picture she attached.
-- Instagram covers the top ~14% (profile bar) and the bottom ~24% (reply bar) of a story: keep text and key elements out of there unless she insists, and tell her when a request puts text under them.
-- Which frame: "פריים 2", "הראשון", "האחרון" are clear. A look change with no frame named (colours, position, size, font) applies to every frame it can. Putting a picture in, or a change that fits only one frame, with no frame named and more than one candidate: ask.
-- Tools change a DRAFT. Nothing is saved until you finish. You SEE the story: stills of every frame come with her message, and every change hands you the new draft. Look at it like a designer: is it exactly what she asked (where things sit, how far they moved, the colours)? On a designed frame also read the Hebrew: every word of the script must still be there, spelled right, in order, nothing added. If not, fix it (another step) and look again — when an edit keeps breaking the words, redraw_frame. Only then finish.
+${BARS[format]}${WHICH[format]}- Tools change a DRAFT. Nothing is saved until you finish. You SEE it: stills of every frame come with her message, and every change hands you the new draft. Look at it like a designer: is it exactly what she asked (where things sit, how far they moved, the colours)? On a designed frame also read the Hebrew: every word of the script must still be there, spelled right, in order, nothing added. If not, fix it (another step) and look again — when an edit keeps breaking the words, redraw_frame. Only then finish.
 - When her request has more than one reasonable reading, ask_user with 2–4 short Hebrew options. Don't ask when the answer is clear.
-- Her saved preferences (Settings → מדיה → העדפות ויזואליות) shape every future story. When she asks to save / remember / keep something ("תשמור", "ככה ארצה שיהיו", "מעכשיו"), call remember with a precise description of exactly that, read off the frames. One call per distinct thing. In your reply name as saved ONLY what a remember result said SAVED.
+- Her saved preferences (Settings → מדיה → העדפות ויזואליות) shape every future piece of this format. When she asks to save / remember / keep something ("תשמור", "ככה ארצה שיהיו", "מעכשיו"), call remember with a precise description of exactly that, read off the frames. One call per distinct thing. In your reply name as saved ONLY what a remember result said SAVED.
 - Tool results tell you when a step failed and why. Never claim something happened that didn't; say only what you SAW on the draft.
-- "זכור לעתיד": when your change is a look choice that could hold for her future stories — on DESIGNED frames only (her saved preferences shape what we draw, not the caption on her own media) — set finish.remember_offer (she gets a button; pressing it asks you to save exactly that with remember). Don't mention the button in your reply, and don't offer what was already saved.
+- "זכור לעתיד": when your change is a look choice that could hold for her future pieces — on DESIGNED frames only (her saved preferences shape what we draw, not the caption on her own media) — set finish.remember_offer (she gets a button; pressing it asks you to save exactly that with remember). Don't mention the button in your reply, and don't offer what was already saved.
 
 finish.reply: Hebrew, plural forms (אתם / נסו), 1–3 short sentences, natural spoken Hebrew. Say what you actually did and on which frames; if something didn't work, say plainly what and why, and what she can do. She reads it after the change is saved and already on her card — never say it will appear later. No emojis, no markdown.`
 
@@ -272,8 +312,24 @@ const TOOLS: Anthropic.Tool[] = [
   },
 ]
 
+/** The same tools; a preference is saved under the format it was made on. */
+const toolsFor = (format: FrameAgentFormat): Anthropic.Tool[] =>
+  format === "story"
+    ? TOOLS
+    : (JSON.parse(
+        JSON.stringify(TOOLS).replaceAll('"story"', '"image_post"').replaceAll("story unless", "image_post unless").replaceAll("future stories", "future image posts"),
+      ) as Anthropic.Tool[])
+
 export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentOutcome> {
   const { db, userId, postId, anthropicKey, openaiKey } = input
+  const format: FrameAgentFormat = input.format ?? "story"
+  const F = FORMATS[format]
+  const SYSTEM = systemFor(format)
+  const TOOLS_NOW = toolsFor(format)
+  const single = format === "image_post"
+  /** " בפריים 2" in a set; nothing on a single picture. */
+  const at = (i: number) => (single ? "" : ` בפריים ${i + 1}`)
+  const crop = (b64: string) => toCanvas(b64, F.width, F.height)
   const started = Date.now()
   const client = new Anthropic({ apiKey: anthropicKey })
   const total = input.urls.length
@@ -284,13 +340,13 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
   let checks = 0
 
   /* ------------------------------ the frames ------------------------------ */
-  const units: (ScriptText | null)[] = scriptTextUnits("story", input.scriptBody)
+  const units: (ScriptText | null)[] = scriptTextUnits(format, input.scriptBody)
   // A designed set is split the generator's way; when the script's own split
   // has another count, that split (asked for this many frames) is the text.
   const designedTexts =
     units.length === total
       ? units.map((u) => [u?.headline, u?.body].filter(Boolean).join("\n"))
-      : input.scriptBody?.trim()
+      : input.scriptBody?.trim() && !single
         ? storyFrames(input.scriptBody, total)
         : []
   const look: CaptionStyle = await captionLookFor(db, userId)
@@ -352,7 +408,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         .join("\n")
     : "(this is the first message)"
 
-  await input.setProgress("מסתכל על הסטורי...")
+  await input.setProgress(`מסתכל על ${F.noun}...`)
   const attachNote = input.attached.length
     ? (input.attachedVideos ?? []).some(Boolean)
       ? ` (${(input.attachedVideos ?? []).map((v, i) => (v ? `#${i + 1} is the first frame of a VIDEO — use_as_is puts the video itself in` : null)).filter(Boolean).join("; ")})`
@@ -364,7 +420,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
     {
       type: "text",
       text: [
-        `THE STORY NOW — ${total} frame${total > 1 ? "s" : ""}:`,
+        single ? "THE IMAGE POST NOW (frame 1):" : `THE STORY NOW — ${total} frame${total > 1 ? "s" : ""}:`,
         ...frames.map(describe),
         "",
         "THE CONVERSATION SO FAR:",
@@ -400,7 +456,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         model: AGENT_MODEL,
         max_tokens: 4000,
         system: SYSTEM,
-        tools: overTime ? TOOLS.filter((t) => t.name === "finish" || t.name === "ask_user") : TOOLS,
+        tools: overTime ? TOOLS_NOW.filter((t) => t.name === "finish" || t.name === "ask_user") : TOOLS_NOW,
         // Opus 5.5 takes no forced tool choice; a plain-text answer is her reply.
         tool_choice: { type: "auto" },
         messages,
@@ -449,7 +505,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
       }
       let out: string | Block[]
       // What it did, step by step — the trail a "why did it do that" starts from.
-      console.log(`[story-agent] ${postId} step ${step + 1}: ${call.name} ${JSON.stringify(a).slice(0, 600)}`)
+      console.log(`[frame-agent] ${postId} step ${step + 1}: ${call.name} ${JSON.stringify(a).slice(0, 600)}`)
       // A step that breaks midway leaves no half-made draft behind.
       const before = frames.map((f) => ({ ...f }))
       try {
@@ -457,7 +513,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
       } catch (e) {
         before.forEach((f, i) => (frames[i] = f))
         const msg = e instanceof Error ? e.message : String(e)
-        console.error(`[story-agent] tool ${call.name} failed:`, msg)
+        console.error(`[frame-agent] tool ${call.name} failed:`, msg)
         out =
           msg === "openai_missing"
             ? "FAILED: changing a designed frame needs her OpenAI key, which isn't connected (Settings → חיבורים). Tell her."
@@ -494,7 +550,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
     const shot = (i: number, b64: string | null | undefined): CheckShot[] => (b64 ? [{ label: `Frame ${i + 1}`, jpeg: b64 }] : [])
     const check = await checkTask({
       apiKey: anthropicKey,
-      media: `an Instagram story of ${total} frame${total > 1 ? "s" : ""} (1080×1920 each). ${frames
+      media: `${single ? "an Instagram feed image post, one picture (1080×1350), called frame 1" : `an Instagram story of ${total} frame${total > 1 ? "s" : ""} (1080×1920 each)`}. ${frames
         .map((f, i) => `Frame ${i + 1}: ${f.kind === "designed" ? "a designed picture with the words drawn in" : f.kind === "own" ? `her own ${f.media} with a caption over it` : "locked (not editable)"}`)
         .join("; ")}. Frames not shown in AFTER were left exactly as in BEFORE.`,
       request: input.request,
@@ -505,11 +561,11 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         ...frames.map((_, i) => `Frame ${i + 1} carries exactly these Hebrew words, every word, spelled right, nothing added or dropped (line breaks may differ): ${JSON.stringify(wordsOf(i) || "(no words)")}`),
         "On a frame that is her own photo / video, her picture itself is untouched — only the caption over it may differ (unless she attached a new file to be the frame).",
         "No person, face or figure appears that wasn't in BEFORE or in a picture she attached.",
-        "Text and key elements stay out of the top ~14% and the bottom ~24% of a frame (Instagram covers them), unless she asked for it there.",
+        ...(single ? [] : ["Text and key elements stay out of the top ~14% and the bottom ~24% of a frame (Instagram covers them), unless she asked for it there."]),
       ],
       reply,
     })
-    console.log(`[story-agent] ${postId} self-check ${checks}: ${check ? (check.met ? `met${check.preexisting.length ? ` (already there: ${check.preexisting.join(" | ")})` : ""}` : `NOT met — ${check.issues.join(" | ")}`) : "couldn't run"}`)
+    console.log(`[frame-agent] ${postId} self-check ${checks}: ${check ? (check.met ? `met${check.preexisting.length ? ` (already there: ${check.preexisting.join(" | ")})` : ""}` : `NOT met — ${check.issues.join(" | ")}`) : "couldn't run"}`)
     if (!check) return null
     if (check.met) {
       if (!check.preexisting.length) return null
@@ -547,7 +603,9 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
       headline: unit ? unit.headline : f.spec?.headline,
       body: unit ? unit.body : f.spec?.body,
       position: f.spec?.position ?? "bottom",
-      style: { ...look, ...(f.spec?.style ?? {}) },
+      // The look it already has stays as it is (a block stays a block, a box per
+      // line stays per line); the default look is only for a frame with none.
+      style: f.spec?.style ?? look,
       ...(f.spec?.design ? { design: f.spec.design } : {}),
     }
   }
@@ -571,7 +629,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
       const animated = !!spec.design
       const p = await input.call<{ preview?: string; template?: string; message?: string; error?: string }>("/api/story/generate-video-media", {
         postId,
-        format: "story",
+        format,
         sourceUrl: source,
         persist: false,
         caption: spec,
@@ -585,7 +643,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
     } else {
       const r = await input.call<{ url?: string; message?: string; error?: string }>("/api/media/caption-image", {
         postId,
-        format: "story",
+        format,
         sourceUrl: source,
         persist: false,
         store: true,
@@ -618,12 +676,12 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
           return `REFUSED: frame${wrong.length > 1 ? "s" : ""} ${wrong.map((i) => i + 1).join(", ")} ${wrong.length > 1 ? "are" : "is"} not designed (her own media / locked). On her own frames only the caption changes (set_caption).`
         }
         const go = idx.filter((i) => frames[i].kind === "designed")
-        await input.setProgress(go.length > 1 ? "משנה את העיצוב בפריימים..." : `משנה את העיצוב בפריים ${go[0] + 1}...`)
+        await input.setProgress(go.length > 1 ? "משנה את העיצוב בפריימים..." : `משנה את העיצוב${at(go[0])}...`)
         const notes: string[] = []
         await Promise.all(
           go.map(async (i) => {
             const before = await designedBytes(i)
-            const out = Buffer.from(cropStoryToCanvas(await editImage(openai(), editPrompt(instruction, 0) + wordsRule(i), await asModel(before), "9:16")), "base64")
+            const out = Buffer.from(crop(await editImage(openai(), editPrompt(instruction, 0) + wordsRule(i), await asModel(before), F.shape)), "base64")
             // Low on purpose: recolouring one small word moves a handful of cells; the agent looks at the draft anyway.
             if ((await changedShare(before, out)) < 0.0008) {
               notes.push(`Frame ${i + 1}: came back unchanged — nothing applied there.`)
@@ -649,10 +707,10 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         if (!pic) return `FAILED: there is no attached picture ${a.attached} in this message (she attached ${input.attached.length}). Ask her to attach it.`
         if (frames[i].kind !== "designed") return `REFUSED: frame ${i + 1} is not a designed frame — her own media is never repainted. Offer use_as_is (her picture as the frame).`
         if (!input.canBlend) return "REFUSED: blending isn't available on this account. Offer use_as_is."
-        await input.setProgress(`משלב את התמונה שלך בפריים ${i + 1}...`)
+        await input.setProgress(`משלב את התמונה שלך${at(i)}...`)
         const her = await normaliseImage(referenceBuffer(pic))
         const before = await designedBytes(i)
-        const out = cropStoryToCanvas(await editImage(openai(), editPrompt(String(a.how ?? ""), 1) + wordsRule(i), await asModel(before), "9:16", [her]))
+        const out = crop(await editImage(openai(), editPrompt(String(a.how ?? ""), 1) + wordsRule(i), await asModel(before), F.shape, [her]))
         const png = Buffer.from(out, "base64")
         if ((await changedShare(before, png)) < 0.03) return "FAILED: the frame came back unchanged — her picture didn't go in. Nothing was applied."
         if ((await picturesPlaced(anthropicKey, [her], out)) === false) {
@@ -671,18 +729,18 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         if (!go.length) return "REFUSED: those frames are her own media — never replaced by a drawn one here. A designed story is made from the media panel (השפה הויזואלית שלך)."
         const missing = go.filter((i) => !designedTexts[i])
         if (missing.length) return `FAILED: the script has no text for frame${missing.length > 1 ? "s" : ""} ${missing.map((i) => i + 1).join(", ")}.`
-        await input.setProgress(go.length > 1 ? "מצייר את הפריימים מחדש בשפה הוויזואלית שלך..." : `מצייר את פריים ${go[0] + 1} מחדש בשפה הוויזואלית שלך...`)
+        await input.setProgress(go.length > 1 ? "מצייר את הפריימים מחדש בשפה הוויזואלית שלך..." : single ? "מצייר את התמונה מחדש בשפה הוויזואלית שלך..." : `מצייר את פריים ${go[0] + 1} מחדש בשפה הוויזואלית שלך...`)
         const steer = typeof a.direction === "string" && a.direction.trim() ? a.direction.trim() : undefined
-        const direction = withMediaBrief(withGraphicOnly(await resolveDesignDirection(db, userId, { format: "story" }), input.email), steer)
+        const direction = withMediaBrief(withGraphicOnly(await resolveDesignDirection(db, userId, { format }), input.email), steer)
         const composition = pickComposition(Math.floor(Math.random() * 1000))
         await Promise.all(
           go.map(async (i) => {
-            const raw = await generateImage(openai(), buildStoryPrompt(designedTexts[i], i, total, direction, composition, ""), {
-              shape: "9:16",
-              quality: "high",
-              references: direction.references,
-            })
-            const done = await applyFixedElements(cropStoryToCanvas(raw), direction.fixed, frameRole(i, total))
+            const texts = single ? parseImagePostBody(input.scriptBody ?? "") : null
+            const prompt = texts
+              ? buildImagePostPrompt(texts, "", direction, composition)
+              : buildStoryPrompt(designedTexts[i], i, total, direction, composition, "")
+            const raw = await generateImage(openai(), prompt, { shape: F.shape, quality: "high", references: direction.references })
+            const done = await applyFixedElements(crop(raw), direction.fixed, single ? "single" : frameRole(i, total))
             frames[i].draftPng = Buffer.from(done, "base64")
             frames[i].look = undefined
             frames[i].dirty = true
@@ -698,7 +756,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         const position = a.position === "top" || a.position === "center" || a.position === "bottom" ? a.position : undefined
         const move = typeof a.move_y === "number" && Number.isFinite(a.move_y) ? a.move_y : 0
         const design = typeof a.design === "string" && a.design.trim() ? a.design.trim() : undefined
-        await input.setProgress(go.length > 1 ? "מעדכן את הכיתוב בפריימים..." : `מעדכן את הכיתוב בפריים ${go[0] + 1}...`)
+        await input.setProgress(go.length > 1 ? "מעדכן את הכיתוב בפריימים..." : `מעדכן את הכיתוב${at(go[0])}...`)
         const notes: string[] = []
         for (const i of go) {
           const f = frames[i]
@@ -732,8 +790,9 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         const pic = input.attached[n]
         if (i === undefined) return "FAILED: no such frame."
         if (!pic) return `FAILED: there is no attached picture ${a.attached} in this message (she attached ${input.attached.length}). Ask her to attach it (the image button: from her computer or Google Drive).`
-        await input.setProgress(`שם את המדיה שלך בפריים ${i + 1}...`)
+        await input.setProgress(`שם את המדיה שלך${at(i)}...`)
         const video = input.attachedVideos?.[n] ?? null
+        if (video && single) return "REFUSED: an image post is a picture — a video can't be it. Ask her for a photo (or tell her a video fits the story / b-roll)."
         let source: string
         if (video) {
           source = video.startsWith("drive:") ? `https://drive.google.com/file/d/${video.slice(6)}/view` : input.publicUrl(video.slice(8))
@@ -777,7 +836,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         if (!what) return "FAILED: nothing to remember."
         const r = await triageVisualMemory(db, userId, anthropicKey, {
           instruction: a.scope === "all" ? `${what}\n(for all my formats)` : what,
-          format: "story",
+          format,
           explicit: true,
         })
         const m = r.memory
@@ -794,7 +853,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
 
       case "replace_preferences": {
         const ids = Array.isArray(a.replace_ids) ? (a.replace_ids as unknown[]).map(String) : []
-        const scope = isRuleScope(a.scope) ? a.scope : "story"
+        const scope = isRuleScope(a.scope) ? a.scope : format
         if (!ids.length) return "FAILED: no ids."
         const rule = await replaceStyleRules(db, userId, ids, { rule: String(a.rule ?? ""), summary_he: String(a.summary_he ?? ""), scope })
         return `SAVED (replaced the old ones): "${rule.summary_he}".`
@@ -805,7 +864,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
 
   async function finishRun(reply: string): Promise<BRollAgentOutcome> {
     if (!anyDirty()) return { kind: "done", reply: reply || "לא שיניתי כלום.", url: input.urls[0], urls: input.urls, changed: false }
-    await input.setProgress("שומר את הסטורי...")
+    await input.setProgress(`שומר את ${F.noun}...`)
     // Offered only for a change on a designed frame: her preferences shape what we draw.
     const offerNow = offer && !remembered && frames.some((f) => f.dirty && f.kind === "designed") ? offer : undefined
     const next: string[] = []
@@ -820,7 +879,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         await input.setProgress(`צורב את הכיתוב בסרטון של פריים ${i + 1}... זה לוקח כדקה`)
         const r = await input.call<{ url?: string; message?: string; error?: string }>("/api/story/generate-video-media", {
           postId,
-          format: "story",
+          format,
           sourceUrl: f.videoDraft.source,
           persist: false,
           caption: f.videoDraft.spec,
@@ -828,13 +887,13 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
           ...(f.videoDraft.template ? { template: f.videoDraft.template } : {}),
         })
         if (!r.ok || !r.data.url) {
-          return { kind: "failed", reply: r.data.message ?? `הטמעת הכיתוב בסרטון של פריים ${i + 1} לא הצליחה הפעם, אז הסטורי נשאר כמו שהיה. נסו שוב.` }
+          return { kind: "failed", reply: r.data.message ?? `הטמעת הכיתוב בסרטון של פריים ${i + 1} לא הצליחה הפעם, אז ${F.stayed}. נסו שוב.` }
         }
         next.push(r.data.url)
       } else if (f.draftPng) {
-        const path = `${userId}/story/${crypto.randomUUID()}.png`
+        const path = `${userId}/${format}/${crypto.randomUUID()}.png`
         const { error } = await db.storage.from("user-media").upload(path, f.draftPng, { contentType: "image/png" })
-        if (error) return { kind: "failed", reply: "השמירה של הפריים החדש לא הצליחה, אז הסטורי נשאר כמו שהיה. נסו שוב." }
+        if (error) return { kind: "failed", reply: `השמירה של הגרסה החדשה לא הצליחה, אז ${F.stayed}. נסו שוב.` }
         next.push(input.publicUrl(path))
       } else if (f.draftUrl) {
         next.push(f.draftUrl)
@@ -845,10 +904,10 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
     const saved = await input.call<{ urls?: string[]; message?: string }>("/api/media/own-edit", {
       action: "save",
       postId,
-      format: "story",
+      format,
       urls: next,
     })
-    if (!saved.ok) return { kind: "failed", reply: saved.data.message ?? "השינוי לא נשמר, והסטורי נשאר כמו שהיה. נסו שוב." }
-    return { kind: "done", reply: reply || "עדכנתי את הסטורי.", url: next[0], urls: next, changed: true, ...(offerNow ? { rememberOffer: offerNow } : {}) }
+    if (!saved.ok) return { kind: "failed", reply: saved.data.message ?? `השינוי לא נשמר, ו${F.stayed}. נסו שוב.` }
+    return { kind: "done", reply: reply || F.updated, url: next[0], urls: next, changed: true, ...(offerNow ? { rememberOffer: offerNow } : {}) }
   }
 }
