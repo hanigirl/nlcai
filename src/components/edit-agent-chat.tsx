@@ -39,8 +39,13 @@ type Msg = {
   images?: string[]
   options?: { label: string; action: string }[]
   error?: boolean
+  /** The change as a lasting preference — "זכור לעתיד" saves it to her visual preferences. */
+  remember?: string
 }
-type Job = { id: string; status: "running" | "asking" | "done" | "failed"; progress: string; outcome?: { url?: string; changed?: boolean } | null }
+type Job = { id: string; status: "running" | "asking" | "done" | "failed"; progress: string; outcome?: { url?: string; urls?: string[]; changed?: boolean } | null }
+
+/** The formats the agent works on (lib/edit-agent). */
+export type EditAgentFormat = "b_roll" | "story"
 
 /** Her own b-roll: the caption look only (lib/edit-agent/own-broll-agent). */
 const OWN_GREETING =
@@ -48,6 +53,12 @@ const OWN_GREETING =
 
 const GREETING =
   "היי, אני כאן בשביל הבי-רול. אפשר לבקש שינויים בעיצוב, בתנועה או ברקע, לשלב תמונה שלכם או רפרנס, או פשוט לשאול למה משהו נראה כמו שהוא נראה."
+
+/** A story: designed frames and her own frames, each by its own rules (lib/edit-agent/story-agent). */
+const STORY_GREETING =
+  "היי, אני כאן בשביל הסטורי. בפריים שעוצב בשפה הוויזואלית שלכם אפשר לבקש שינויים בעיצוב, להזיז טקסט ואלמנטים, לשלב תמונה שלכם או לצייר אותו מחדש. בפריים שהוא מדיה שלכם, מה שצילמתם נשאר כמו שהוא, ואפשר לשנות את הכיתוב: מיקום, צבעים, קופסה, גודל. אפשר גם לצרף תמונה או סרטון שיהיו הפריים עצמו, או פשוט לשאול."
+
+const FORMAT_LABEL: Record<EditAgentFormat, string> = { b_roll: "בי-רול", story: "סטורי" }
 
 export const EDIT_AGENT_STARTED = "edit-agent:started"
 
@@ -61,7 +72,8 @@ export function useFollowEditAgentRun(
   postId: string | null,
   format: string,
   enabled: boolean,
-  onMediaChanged: (url: string) => void,
+  /** `urls`: a story's whole set, in order. */
+  onMediaChanged: (url: string, urls?: string[]) => void,
 ) {
   const [runningId, setRunningId] = useState<string | null>(null)
   const applyRef = useRef(onMediaChanged)
@@ -76,7 +88,7 @@ export function useFollowEditAgentRun(
     if (job.status === "running") return setRunningId(job.id)
     setRunningId((prev) => {
       // Only the run we watched finish — never an old result on page load.
-      if (prev === job.id && job.outcome?.changed && job.outcome.url) applyRef.current(job.outcome.url)
+      if (prev === job.id && job.outcome?.changed && job.outcome.url) applyRef.current(job.outcome.url, job.outcome.urls)
       return null
     })
   }, [enabled, postId, format])
@@ -114,10 +126,10 @@ export function EditAgentChat({
   /** Her own b-roll (Drive / upload): caption look only, no image button. */
   own?: boolean
   postId: string
-  format: "b_roll"
+  format: EditAgentFormat
   onClose: () => void
-  /** The run saved a new version — the card and the panel show it. */
-  onMediaChanged: (url: string) => void
+  /** The run saved a new version — the card and the panel show it (`urls`: a story's set). */
+  onMediaChanged: (url: string, urls?: string[]) => void
 }) {
   const [messages, setMessages] = useState<Msg[]>([])
   const [job, setJob] = useState<Job | null>(null)
@@ -144,7 +156,7 @@ export function EditAgentChat({
     const j = data.job
     if (j && j.status !== "running" && seenJob.current !== j.id) {
       seenJob.current = j.id
-      if (j.outcome?.changed && j.outcome.url) onMediaChanged(j.outcome.url)
+      if (j.outcome?.changed && j.outcome.url) onMediaChanged(j.outcome.url, j.outcome.urls)
     }
   }, [postId, format, onMediaChanged])
 
@@ -177,7 +189,7 @@ export function EditAgentChat({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
   }, [messages.length, job?.progress])
 
-  const send = async (text: string) => {
+  const send = async (text: string, remember?: string) => {
     const words = text.trim()
     const images = refs.refs
     // Checked before anything is sent: a video from her computer over the limit.
@@ -211,7 +223,7 @@ export function EditAgentChat({
       const res = await fetch("/api/edit-agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, format, text: words, images, videos: await Promise.all(images.map((r) => videoOf(r))) }),
+        body: JSON.stringify({ postId, format, text: words, images, videos: await Promise.all(images.map((r) => videoOf(r))), ...(remember ? { remember } : {}) }),
       })
       const data = (await res.json().catch(() => ({}))) as { jobId?: string; message?: string }
       if (!res.ok && data.message) {
@@ -248,7 +260,7 @@ export function EditAgentChat({
       <ReferenceDropHint show={refs.dragging} />
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">
         <AiSparkle />
-        <span className="text-small-bold text-text-primary-default">עריכה עם AI · בי-רול</span>
+        <span className="text-small-bold text-text-primary-default">עריכה עם AI · {FORMAT_LABEL[format]}</span>
         <div className="ms-auto flex items-center gap-1">
           {messages.some((m) => m.role === "user") && <AiChatNewButton disabled={busy} onClick={() => void startOver()} />}
           <button
@@ -272,7 +284,7 @@ export function EditAgentChat({
             {messages.length === 0 && (
               <div className="flex flex-col items-end">
                 <div className="max-w-[85%] rounded-2xl rounded-se-sm bg-bg-surface px-3 py-2 text-small leading-relaxed text-text-primary-default">
-                  {own ? OWN_GREETING : GREETING}
+                  {format === "story" ? STORY_GREETING : own ? OWN_GREETING : GREETING}
                 </div>
               </div>
             )}
@@ -290,6 +302,13 @@ export function EditAgentChat({
                   {m.text && <BidiText text={m.text} />}
                   <ReferenceThumbs images={m.images} className={m.text ? "mt-1.5" : undefined} />
                 </div>
+                {/* Her change becomes a rule for next time (Hani, 2026-11-10): saved to
+                    Settings → העדפות ויזואליות, read by every future generation. */}
+                {!busy && m.role === "assistant" && !!m.remember && i === messages.length - 1 && (
+                  <Button variant="secondary" size="sm" onClick={() => void send("זכור לעתיד", m.remember)}>
+                    זכור לעתיד
+                  </Button>
+                )}
                 {askNow && i === messages.length - 1 && (
                   <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5" role="group" aria-label="בחירה">
                     {m.options!.map((o) => (
@@ -329,7 +348,7 @@ export function EditAgentChat({
             autoFocus
             className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent px-1 py-2 text-small shadow-none focus-visible:ring-0"
           />
-          {own || driveMenu ? <ReferenceAddMenu r={refs} format={format} disabled={busy} /> : <ReferenceButton r={refs} disabled={busy} />}
+          {own || driveMenu || format === "story" ? <ReferenceAddMenu r={refs} format={format} disabled={busy} /> : <ReferenceButton r={refs} disabled={busy} />}
           <Button
             size="icon-sm"
             onClick={() => void send(input)}

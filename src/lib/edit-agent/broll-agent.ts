@@ -79,7 +79,16 @@ export interface BRollAgentInput {
 }
 
 export type BRollAgentOutcome =
-  | { kind: "done"; reply: string; url: string; changed: boolean }
+  | {
+      kind: "done"
+      reply: string
+      url: string
+      changed: boolean
+      /** A story: the whole set, in order. */
+      urls?: string[]
+      /** The change as a lasting preference — she gets a "זכור לעתיד" button that saves it (Hani, 2026-11-10). */
+      rememberOffer?: string
+    }
   | { kind: "ask"; question: string; options: { label: string; action: string }[] }
   | { kind: "failed"; reply: string }
 
@@ -122,6 +131,7 @@ How you work:
 - Her saved preferences (Settings → מדיה → העדפות ויזואליות) shape every future b-roll. When she asks to save / remember / keep something for her b-rolls ("תשמור", "ככה ארצה שיהיו", "מעכשיו"), call remember with a precise description of exactly that — read it off the clip (template + stills): how lines enter, timing, which words get highlighted and how, the shape and place of each element. Call remember once per distinct thing she named (each element separately). In your reply, name as saved ONLY what a remember result said SAVED — anything else, say plainly it wasn't saved and why. Never say you can't save.
 - When her request has more than one reasonable reading, or would cost a long render on a guess, ask_user with 2–4 short options (Hebrew). Don't ask when the answer is clear.
 - Tool results tell you when a step failed and why. Never claim something happened that didn't.
+- "זכור לעתיד": when your change is a look choice that could hold for her future pieces, set finish.remember_offer (she gets a button; pressing it asks you to save exactly that with remember). Don't mention the button in your reply, and don't offer what was already saved.
 
 finish.reply: Hebrew, plural forms (אתם / נסו), 1–3 short sentences, natural spoken Hebrew. Say what you actually did and what she'll see; if something didn't work, say plainly what and why, and what she can do. She reads your reply only after the render is done and the new version is already on her card — so never say it will appear later; say what's on the card now. No emojis, no markdown.`
 
@@ -219,7 +229,18 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "finish",
     description: "End this turn with your reply to her (see the system rules for the reply).",
-    input_schema: { type: "object", properties: { reply: { type: "string" } }, required: ["reply"] },
+    input_schema: {
+      type: "object",
+      properties: {
+        reply: { type: "string" },
+        remember_offer: {
+          type: "string",
+          description:
+            "Optional. Set ONLY when this turn changed the LOOK in a way that reads as her taste and could hold for her future pieces (a colour choice, where text sits, sizes, a way of emphasising, a motion style) — then write that preference precisely and generally, as a rule a designer could follow next time (not this piece's words or picture). She gets a \"זכור לעתיד\" button that saves it. Leave out for one-off fixes, content-specific changes, questions, failures, or when you already saved it with remember this turn.",
+        },
+      },
+      required: ["reply"],
+    },
   },
 ]
 
@@ -244,6 +265,9 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
   let backgroundUrl = composition.backgroundUrl
   let ownBackground = hasOwnBackground(composition)
   let changed = false
+  /** A preference saved this turn — then no "זכור לעתיד" offer. */
+  let remembered = false
+  let offer: string | undefined
   const done: string[] = []
   const stamp = () => crypto.randomUUID()
   const draftHtml = () => finalizeHtml(template, backgroundUrl, brief.fonts)
@@ -316,6 +340,7 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
       const a = (call.input ?? {}) as Record<string, unknown>
       if (call.name === "finish") {
         const reply = String(a.reply ?? "").trim() || "סיימתי."
+        offer = typeof a.remember_offer === "string" && a.remember_offer.trim() ? a.remember_offer.trim().slice(0, 1200) : undefined
         return finishRun(reply)
       }
       if (call.name === "ask_user") {
@@ -476,7 +501,10 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
           explicit: true,
         })
         const m = r.memory
-        if (m.kind === "saved") return `SAVED to her preferences [${m.scope}]: "${m.summary}". Tell her it's saved and shows in Settings → מדיה → העדפות ויזואליות.`
+        if (m.kind === "saved") {
+          remembered = true
+          return `SAVED to her preferences [${m.scope}]: "${m.summary}". Tell her it's saved and shows in Settings → מדיה → העדפות ויזואליות.`
+        }
         if (m.kind === "conflict")
           return `NOT SAVED — it goes against saved preferences: ${m.previous.map((p) => `[id ${p.id}] "${p.summary}"`).join("; ")}. Proposal: rule=${JSON.stringify(m.proposal.rule)}, summary_he=${JSON.stringify(m.proposal.summary_he)}, scope=${m.proposal.scope}. ask_user whether to replace the old one(s) with it; if she says yes, call replace_preferences with these ids and this proposal.`
         if (m.kind === "settings")
@@ -518,7 +546,7 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
         edits: [...composition.edits, input.request],
         ...(ownBackground ? { ownBackground: true } : {}),
       })
-      return { kind: "done", reply, url, changed: true }
+      return { kind: "done", reply, url, changed: true, ...(offer && !remembered ? { rememberOffer: offer } : {}) }
     } finally {
       await fs.unlink(outPath).catch(() => undefined)
     }

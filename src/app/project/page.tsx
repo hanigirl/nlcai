@@ -395,7 +395,7 @@ function ProjectPageInner() {
   // The caption-only AI edit on her OWN b-roll (Hani + Nataliya, 2026-11-10).
   const ownBRollCaptionOn = useOwnBRollCaptionEdit() === true
   const [photoSwapOpen, setPhotoSwapOpen] = useState(false)
-  const chatOnFor = (f: string) => aiChatOn || (editAgentOn && f === "b_roll")
+  const chatOnFor = (f: string) => aiChatOn || (editAgentOn && (f === "b_roll" || f === "story"))
   // A generate button opens the AI edit to ask for a brief first (lib/ai-edit-intent).
   const [aiChatOpening, setAiChatOpening] = useState<AiEditOpening | null>(null)
   useAiEditRequests((req) => {
@@ -507,6 +507,13 @@ function ProjectPageInner() {
   const [savedPostId, setSavedPostId] = useState<string | null>(postId || null)
   // The agent's b-roll lands even when its chat was closed mid-render.
   useFollowEditAgentRun(savedPostId, "b_roll", editAgentOn, setBRollUrl)
+  // The story agent's set lands the same way (lib/edit-agent/story-agent).
+  const applyAgentStory = useCallback((url: string, urls?: string[]) => {
+    setStoryImages(urls?.length ? urls : [url])
+    // The saved set holds every frame; a clip in the video slot moved into it.
+    setStoryVideoUrl(null)
+  }, [])
+  useFollowEditAgentRun(savedPostId, "story", editAgentOn, applyAgentStory)
   // Per-format "media is being made" — drives the skeleton card on the canvas.
   const { busy: mediaBusy, onPanelBusyChange } = useFormatMediaBusy(savedPostId, {
     onStoryImages: setStoryImages,
@@ -2240,7 +2247,9 @@ function ProjectPageInner() {
     return isOwnMediaFormat(fid as AiEditFormat, urls[fid] ?? [], carouselDriveLinks, ownTextGate)
   }
   /** Her own b-roll still gets the AI edit — the caption's look only (gated). */
-  const ownCaptionEdit = (fid: string): boolean => fid === "b_roll" && ownBRollCaptionOn && ownMediaOn(fid)
+  // A story of her own media: the story agent, caption look only on her frames (lib/edit-agent/story-agent).
+  const ownCaptionEdit = (fid: string): boolean =>
+    (fid === "b_roll" && ownBRollCaptionOn && ownMediaOn(fid)) || (fid === "story" && editAgentOn && ownMediaOn(fid))
   const aiOwnNow = (() => {
     if (!aiChatFormat) return false
     const storyFrames = [
@@ -3650,6 +3659,18 @@ function ProjectPageInner() {
               format="b_roll"
               onClose={() => { setAiChatFormat(null); setAiChatOpening(null) }}
               onMediaChanged={setBRollUrl}
+            />
+          )
+        }
+        // The story agent: designed frames and her own frames, each by its rules.
+        if (editAgentOn && aiChatFormat === "story") {
+          return (
+            <EditAgentChat
+              key={`agent:${savedPostId}:story`}
+              postId={savedPostId}
+              format="story"
+              onClose={() => { setAiChatFormat(null); setAiChatOpening(null) }}
+              onMediaChanged={applyAgentStory}
             />
           )
         }

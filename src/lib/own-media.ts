@@ -96,6 +96,8 @@ export function cleanCaptionStyle(style: unknown): CaptionStyle | undefined {
   if (typeof s.text === "string" && HEX.test(s.text)) out.text = s.text
   if (typeof s.scale === "number" && Number.isFinite(s.scale)) out.scale = Math.min(1.5, Math.max(0.6, s.scale))
   if (typeof s.offsetY === "number" && Number.isFinite(s.offsetY)) out.offsetY = Math.round(Math.min(700, Math.max(-700, s.offsetY)))
+  // A box per line (her Drive media look) survives a redraw of the caption.
+  if (s.perLine === true) out.perLine = true
   return Object.keys(out).length ? out : undefined
 }
 

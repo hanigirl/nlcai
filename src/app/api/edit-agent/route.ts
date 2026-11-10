@@ -13,6 +13,7 @@ import { parseReferences } from "@/lib/ai-edit-references"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { runBRollAgent, type BRollAgentOutcome, type ChatTurn } from "@/lib/edit-agent/broll-agent"
 import { runOwnBRollAgent } from "@/lib/edit-agent/own-broll-agent"
+import { runStoryAgent } from "@/lib/edit-agent/story-agent"
 
 /**
  * The AI edit chat as an agent, on the server (Hani, 2026-11-10; lib/edit-agent).
@@ -39,6 +40,8 @@ export interface AgentMessage {
   /** A question's buttons — pressing one sends its action. */
   options?: { label: string; action: string }[]
   error?: boolean
+  /** The change as a lasting preference: the "זכור לעתיד" button under this reply saves it. */
+  remember?: string
   at: string
 }
 
@@ -115,6 +118,8 @@ export async function POST(req: NextRequest) {
     /** Per image (same order): a Drive video's link when that picture is its frame. */
     videos?: unknown
     action?: string
+    /** She pressed "זכור לעתיד" under a reply: the preference that reply offered. */
+    remember?: unknown
   }
   const supabase = await createClient()
   const user = await getAuthUser(supabase)
@@ -122,7 +127,10 @@ export async function POST(req: NextRequest) {
   if (!canUseEditAgent(user.email)) return NextResponse.json({ error: "not_enabled" }, { status: 403 })
   const postId = body.postId ?? ""
   const format = body.format ?? ""
-  if (!postId || format !== "b_roll") return NextResponse.json({ error: "b_roll only for now" }, { status: 400 })
+  if (!postId || (format !== "b_roll" && format !== "story")) {
+    return NextResponse.json({ error: "b_roll and story only for now" }, { status: 400 })
+  }
+  const isStory = format === "story"
   const chatKey = keyFor(postId, format)
   const db = untyped(supabase)
   const admin = untyped(createAdminClient())
@@ -142,6 +150,11 @@ export async function POST(req: NextRequest) {
   }
 
   const text = body.text?.trim() ?? ""
+  const rememberAsk = typeof body.remember === "string" ? body.remember.trim().slice(0, 1200) : ""
+  // What the agent reads: her words, and what the button she pressed stands for.
+  const agentRequest = rememberAsk
+    ? `${text || "זכור לעתיד"}\n(She pressed the "זכור לעתיד" button under your last reply. Save exactly this as a lasting preference with the remember tool, change nothing in the media, then finish saying whether it was saved: ${rememberAsk})`
+    : text || "(she attached pictures without words)"
   const attached = parseReferences(body.images)
   if (!text && !attached.length) return NextResponse.json({ error: "text is required" }, { status: 400 })
 
@@ -161,10 +174,24 @@ export async function POST(req: NextRequest) {
     .from("format_variants")
     .select("id, body")
     .eq("core_post_id", postId)
-    .eq("format", "b_roll")
+    .eq("format", format)
     .maybeSingle()
   const v = variant as { id: string; body: string | null } | null
-  const { data: asset } = v
+  // A story is a SET: its frames in order (the image rows, then a clip left
+  // in the video slot) — the order the card shows (api/media/own-edit).
+  let storyUrls: string[] = []
+  if (isStory && v) {
+    const { data: rows } = await supabase
+      .from("media_assets")
+      .select("url, asset_type")
+      .eq("format_variant_id", v.id)
+      .in("asset_type", ["image", "video"])
+      .order("created_at", { ascending: true })
+    const all = ((rows ?? []) as { url: string | null; asset_type: string }[]).filter((r): r is { url: string; asset_type: string } => !!r.url && /^https?:\/\//.test(r.url))
+    const images = all.filter((r) => r.asset_type === "image").map((r) => r.url)
+    storyUrls = [...images, ...all.filter((r) => r.asset_type === "video" && !images.includes(r.url)).map((r) => r.url)]
+  }
+  const { data: asset } = v && !isStory
     ? await supabase
         .from("media_assets")
         .select("url")
@@ -191,7 +218,10 @@ export async function POST(req: NextRequest) {
     await appendMessages(admin, user.id, chatKey, [{ role: "assistant", text: reply, at: now() }])
     return NextResponse.json({ refused: true })
   }
-  if (!ownCaption && (!clipUrl || !composition)) {
+  if (isStory && !storyUrls.length) {
+    return refuse("אין עדיין מדיה בסטורי הזה. צרו סטורי בשפה הוויזואלית שלכם או חברו מדיה משלכם, ואז נעבוד עליו יחד.")
+  }
+  if (!isStory && !ownCaption && (!clipUrl || !composition)) {
     return refuse(
       clipUrl && isOwnMediaUrl(clipUrl)
         ? "זה בי-רול מהמדיה שלכם, ובו אני לא נוגע. הצ׳אט עובד רק על בי-רול שנוצר בשפה הוויזואלית שלכם."
@@ -237,9 +267,36 @@ export async function POST(req: NextRequest) {
   // The own-b-roll caption runs through our caption routes as her.
   const origin = new URL(req.url).origin
   const cookie = req.headers.get("cookie") ?? ""
+  const asHer = async <T,>(path: string, payload: unknown) => {
+    const res = await fetch(new URL(path, origin), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie },
+      body: JSON.stringify(payload),
+    })
+    return { ok: res.ok, data: (await res.json().catch(() => ({}))) as T }
+  }
   after(async () => {
     try {
-      const outcome: BRollAgentOutcome = ownCaption
+      const outcome: BRollAgentOutcome = isStory
+        ? await runStoryAgent({
+            db: admin,
+            userId: user.id,
+            email: user.email,
+            postId,
+            anthropicKey,
+            openaiKey,
+            canBlend: canBlendBRoll(user.email),
+            urls: storyUrls,
+            scriptBody: v?.body ?? null,
+            history,
+            request: agentRequest,
+            attached,
+            attachedVideos: videoRefs,
+            publicUrl: (p) => admin.storage.from("user-media").getPublicUrl(p).data.publicUrl,
+            setProgress: (progress) => setJob({ progress }),
+            call: asHer,
+          })
+        : ownCaption
         ? await runOwnBRollAgent({
             db: admin,
             postId,
@@ -247,20 +304,13 @@ export async function POST(req: NextRequest) {
             mediaUrl: mediaUrl!,
             script: scriptTextFor("b_roll", v?.body),
             history,
-            request: text || "(she attached pictures without words)",
+            request: agentRequest,
             attached,
             attachedUrls: herImages,
             attachedVideos: videoRefs,
             publicUrl: (p) => admin.storage.from("user-media").getPublicUrl(p).data.publicUrl,
             setProgress: (progress) => setJob({ progress }),
-            call: async <T,>(path: string, payload: unknown) => {
-              const res = await fetch(new URL(path, origin), {
-                method: "POST",
-                headers: { "Content-Type": "application/json", cookie },
-                body: JSON.stringify(payload),
-              })
-              return { ok: res.ok, data: (await res.json().catch(() => ({}))) as T }
-            },
+            call: asHer,
           })
         : await runBRollAgent({
         origin,
@@ -275,7 +325,7 @@ export async function POST(req: NextRequest) {
         composition: composition!,
         script: scriptTextFor("b_roll", v?.body),
         history,
-        request: text || "(she attached pictures without words)",
+        request: agentRequest,
         attached,
         attachedVideos: videoRefs,
         setProgress: (progress) => setJob({ progress }),
@@ -286,7 +336,9 @@ export async function POST(req: NextRequest) {
         ])
         await setJob({ status: "asking", progress: "", outcome })
       } else if (outcome.kind === "done") {
-        await appendMessages(admin, user.id, chatKey, [{ role: "assistant", text: outcome.reply, at: now() }])
+        await appendMessages(admin, user.id, chatKey, [
+          { role: "assistant", text: outcome.reply, ...(outcome.rememberOffer ? { remember: outcome.rememberOffer } : {}), at: now() },
+        ])
         await setJob({ status: "done", progress: "", outcome })
       } else {
         await appendMessages(admin, user.id, chatKey, [{ role: "assistant", text: outcome.reply, error: true, at: now() }])
@@ -299,7 +351,7 @@ export async function POST(req: NextRequest) {
         ? CLAUDE_KEY_INVALID_MESSAGE
         : msg === "composition_invalid" || msg === "composition_not_seekable"
           ? "העיצוב שיצא לא היה תקין, אז השארתי את הבי-רול כמו שהיה. נסו שוב, אולי בניסוח אחר."
-          : `משהו נתקע בדרך (${msg.slice(0, 120)}), אז הבי-רול נשאר כמו שהיה. נסו שוב.`
+          : `משהו נתקע בדרך (${msg.slice(0, 120)}), אז ${isStory ? "הסטורי" : "הבי-רול"} נשאר כמו שהיה. נסו שוב.`
       await appendMessages(admin, user.id, chatKey, [{ role: "assistant", text: reply, error: true, at: now() }])
       await setJob({ status: "failed", progress: "", outcome: { kind: "failed", reply } })
     }

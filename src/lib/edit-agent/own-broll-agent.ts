@@ -13,7 +13,7 @@ import { fetchDriveFile } from "@/lib/drive-fetch"
  * instead of working blind (Hani, 2026-11-10: "שיהיה מאוד חכם כאילו אני
  * מדברת איתך").
  */
-async function stillOf(url: string, kind: "image" | "video"): Promise<string | null> {
+export async function stillOf(url: string, kind: "image" | "video"): Promise<string | null> {
   try {
     const res = isDriveUrl(url) ? await fetchDriveFile(extractDriveFileId(url)!) : await fetch(url, { signal: AbortSignal.timeout(60_000) })
     if (!res.ok) return null

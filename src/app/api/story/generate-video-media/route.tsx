@@ -242,7 +242,12 @@ async function previewStill(srcPath: string, isStill: boolean, layerPath: string
   }
   const frame = await sharp(base).rotate().resize(1080, 1920, { fit: "cover" }).toBuffer()
   const layer = await sharp(await fs.readFile(layerPath)).resize(1080, 1920, { fit: "fill" }).png().toBuffer()
-  const merged = await sharp(frame).composite([{ input: layer }]).resize(540, 960).jpeg({ quality: 80 }).toBuffer()
+  // Two steps: sharp resizes BEFORE it composites whatever the call order, so
+  // one pipeline shrank the frame first and the full-size layer no longer fit
+  // ("Image to composite must have same dimensions or smaller") — every
+  // caption draft on a video failed.
+  const full = await sharp(frame).composite([{ input: layer }]).png().toBuffer()
+  const merged = await sharp(full).resize(540, 960).jpeg({ quality: 80 }).toBuffer()
   return merged.toString("base64")
 }
 
