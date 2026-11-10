@@ -1,3 +1,4 @@
+import { resetAgentChat } from "@/lib/edit-agent/reset-chat"
 import { isMediaStyle } from "@/lib/visual-language/types"
 import { canOwnMediaText } from "@/lib/feature-access"
 import { NextRequest, NextResponse } from "next/server"
@@ -292,6 +293,8 @@ export async function DELETE(
       .delete()
       .eq("format_variant_id", variantRow.id)
       .eq("asset_type", assetType)
+    // Its AI chat goes with it — the next b-roll starts a fresh conversation.
+    if (format === "b_roll") await resetAgentChat(supabase as never, user.id, id).catch(() => undefined)
 
     // Bump core_posts.updated_at so a media removal also counts as an
     // edit for the /core_posts "recently edited" sort.

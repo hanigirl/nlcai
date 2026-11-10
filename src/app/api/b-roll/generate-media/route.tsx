@@ -1,3 +1,4 @@
+import { resetAgentChat } from "@/lib/edit-agent/reset-chat"
 import { canOwnMediaText, driveInBRoll } from "@/lib/feature-access"
 import { withGraphicOnly } from "@/lib/visual-language/graphic-only"
 import { gatePlacement } from "@/lib/feature-access"
@@ -269,6 +270,8 @@ export async function POST(req: NextRequest) {
       timing,
     })
     timing.save = Date.now() - mark
+    // A fresh b-roll: a fresh AI chat (the old one is archived, not deleted).
+    await resetAgentChat(supabase, user.id, postId).catch(() => undefined)
     console.log("[b-roll timing]", JSON.stringify({ ...timing, total: Date.now() - started }))
 
     return NextResponse.json({ url: publicUrl })
