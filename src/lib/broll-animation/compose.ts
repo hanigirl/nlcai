@@ -71,6 +71,11 @@ export interface CompositionBrief {
   /** Her words appear at once — only elements may move (Nataliya). */
   staticText?: boolean
   /**
+   * EXPERIMENT (lib/broll-animation/library-media): a picture or video from
+   * her Drive b-roll folder, built into the composition as an element.
+   */
+  libraryMedia?: { url: string; kind: "image" | "video" }
+  /**
    * What this clip is for, when it isn't a b-roll — e.g. a frame added to
    * her story (lib/own-media-animated): its safe zone, reserved brand areas.
    */
@@ -161,6 +166,16 @@ function briefText(b: CompositionBrief): string {
     "",
     "VISUAL LANGUAGE (the background was generated from this — match its character):",
     b.styleSpec.slice(0, 2500),
+    ...(b.libraryMedia
+      ? [
+          "",
+          `HER OWN ${b.libraryMedia.kind === "video" ? "VIDEO" : "PICTURE"} — build it INTO the composition as a key element of the design (a framed window, a card, a masked shape, a split layout — your call, in the brand's colours and language), not as the full-frame background; the generated background stays visible around it. Use this URL exactly: ${b.libraryMedia.url}`,
+          b.libraryMedia.kind === "video"
+            ? `Embed it as <video src="${b.libraryMedia.url}" muted playsinline preload="auto"></video> (no autoplay, no loop attribute, no JS that plays it — the renderer seeks it frame by frame). You may animate its container like any element. Rule 3's ban on video elements is lifted for this one video only.`
+            : `Embed it as <img src="${b.libraryMedia.url}">. You may animate its container like any element.`,
+          "It must not cover the text; keep the text legible and in the safe area. Show her media as it is — crop it to the frame shape, but never redraw, recolour or hide it.",
+        ]
+      : []),
     ...(b.notes?.length ? ["", "THIS CLIP:", ...b.notes] : []),
     ...(b.design?.trim() ? ["", ...designOverrideLines(b.design)] : []),
     "",

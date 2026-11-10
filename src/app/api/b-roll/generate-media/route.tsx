@@ -1,4 +1,4 @@
-import { canOwnMediaText } from "@/lib/feature-access"
+import { canOwnMediaText, driveInBRoll } from "@/lib/feature-access"
 import { withGraphicOnly } from "@/lib/visual-language/graphic-only"
 import { gatePlacement } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
@@ -13,6 +13,7 @@ import { BACKGROUND_FRAMINGS, OWN_BACKGROUND_LINE, buildBackgroundPrompt, cropTo
 import { buildCompositionBrief } from "@/lib/broll-animation/brief"
 import { composeBRoll, finalizeHtml } from "@/lib/broll-animation/compose"
 import { renderComposition } from "@/lib/broll-animation/render"
+import { pickLibraryMedia } from "@/lib/broll-animation/library-media"
 import { saveBRoll, uploadBackground } from "@/lib/broll-animation/store"
 import { generateImage } from "@/lib/openai-image"
 import { isMediaStyle } from "@/lib/visual-language/types"
@@ -207,6 +208,17 @@ export async function POST(req: NextRequest) {
     ])
 
     timing.brief = Date.now() - mark
+    // EXPERIMENT (gated): one file from her Drive b-roll folder, built into the design.
+    const stamp = crypto.randomUUID()
+    if (!ownBackground && driveInBRoll(user.email)) {
+      mark = Date.now()
+      const lib = await pickLibraryMedia(supabase, user.id, stamp).catch((e) => {
+        console.error("[b-roll library]", e)
+        return null
+      })
+      timing.library = Date.now() - mark
+      if (lib) brief.libraryMedia = { url: lib.url, kind: lib.kind }
+    }
     mark = Date.now()
     const timed = <T,>(k: string, p: Promise<T>) =>
       p.then((v) => {
@@ -232,7 +244,6 @@ export async function POST(req: NextRequest) {
     mark = Date.now()
     const background = ownBackground ?? Buffer.from(cropToCanvas(raw!), "base64")
 
-    const stamp = crypto.randomUUID()
     const backgroundUrl = await uploadBackground(supabase, user.id, stamp, background)
     timing.uploadBackground = Date.now() - mark
 

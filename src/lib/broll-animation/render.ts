@@ -80,6 +80,31 @@ function startEncoder(outputPath: string) {
   return { proc, done }
 }
 
+/**
+ * Her own video inside a composition (lib/broll-animation/library-media):
+ * held paused and seeked to the frame's time, so it renders frame-exact like
+ * every other animation. A clip shorter than the b-roll loops.
+ */
+async function seekVideos(page: import("puppeteer-core").Page, seconds: number): Promise<void> {
+  await page.evaluate(async (s: number) => {
+    const videos = Array.from(document.querySelectorAll("video"))
+    await Promise.all(
+      videos.map(
+        (v) =>
+          new Promise<void>((resolve) => {
+            v.pause()
+            const d = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 0
+            const target = d ? s % d : s
+            if (Math.abs(v.currentTime - target) < 0.001) return resolve()
+            const t = window.setTimeout(resolve, 3000)
+            v.addEventListener("seeked", () => { window.clearTimeout(t); resolve() }, { once: true })
+            v.currentTime = target
+          }),
+      ),
+    )
+  }, seconds)
+}
+
 export async function renderComposition(
   html: string,
   outputPath: string,
@@ -109,6 +134,17 @@ export async function renderComposition(
           img.complete ? null : new Promise((r) => { img.onload = img.onerror = r }),
         ),
       )
+      await Promise.all(
+        Array.from(document.querySelectorAll("video")).map((v) =>
+          v.readyState >= 2
+            ? null
+            : new Promise((r) => {
+                v.addEventListener("loadeddata", r, { once: true })
+                v.addEventListener("error", r, { once: true })
+                setTimeout(r, 20_000)
+              }),
+        ),
+      )
     })
 
     lap("renderLoad")
@@ -129,6 +165,7 @@ export async function renderComposition(
           a.currentTime = seconds * 1000
         }
       }, t)
+      await seekVideos(page, t)
       const shot = await page.screenshot({ type: "jpeg", quality: 92 })
       if (!proc.stdin.write(shot)) {
         await new Promise((r) => proc.stdin.once("drain", r))

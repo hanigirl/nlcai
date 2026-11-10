@@ -132,3 +132,12 @@ export const STATIC_BROLL_TEXT_EMAILS = ["nataliya@nataliyarey.com"]
 export function staticBRollText(email: string | null | undefined): boolean {
   return !!email && STATIC_BROLL_TEXT_EMAILS.includes(email.toLowerCase())
 }
+
+/**
+ * EXPERIMENT (Hani, 2026-11-10): her visual-language b-roll builds one file
+ * from her Drive b-roll folder into the composition (lib/broll-animation/library-media).
+ */
+export const DRIVE_IN_BROLL_EMAILS = ["hanigirl@gmail.com"]
+export function driveInBRoll(email: string | null | undefined): boolean {
+  return !!email && DRIVE_IN_BROLL_EMAILS.includes(email.toLowerCase())
+}
