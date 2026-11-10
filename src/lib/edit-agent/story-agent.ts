@@ -20,6 +20,7 @@ import { replaceStyleRules, triageVisualMemory } from "@/lib/style-memory"
 import { isRuleScope } from "@/lib/visual-memory"
 import { AGENT_MODEL, type BRollAgentOutcome, type ChatTurn } from "@/lib/edit-agent/broll-agent"
 import { stillOf } from "@/lib/edit-agent/own-broll-agent"
+import { checkFailedNote, checkTask, type CheckShot } from "@/lib/edit-agent/self-check"
 
 /**
  * The AI edit chat for a STORY, as an agent (Hani, 2026-11-10: "נכניס אותו
@@ -42,6 +43,8 @@ import { stillOf } from "@/lib/edit-agent/own-broll-agent"
 const THINK_BUDGET_MS = 420_000
 const MAX_STEPS = 12
 const MAX_DRAFTS = 12
+/** Self-checks per turn: a miss is fixed and checked once more (lib/edit-agent/self-check). */
+const MAX_CHECKS = 2
 
 export interface StoryAgentInput {
   /** Service client — storage and reads. */
@@ -278,6 +281,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
   /** A preference saved this turn — then no "זכור לעתיד" offer. */
   let remembered = false
   let offer: string | undefined
+  let checks = 0
 
   /* ------------------------------ the frames ------------------------------ */
   const units: (ScriptText | null)[] = scriptTextUnits("story", input.scriptBody)
@@ -354,6 +358,8 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
       ? ` (${(input.attachedVideos ?? []).map((v, i) => (v ? `#${i + 1} is the first frame of a VIDEO — use_as_is puts the video itself in` : null)).filter(Boolean).join("; ")})`
       : ""
     : ""
+  // The story as she sees it now — also what the self-check compares the draft with.
+  const beforeLooks = await Promise.all(frames.map((_, i) => lookOf(i)))
   const first: Block[] = [
     {
       type: "text",
@@ -365,7 +371,11 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         transcript,
       ].join("\n"),
     },
-    ...(await stillBlocks(frames.map((_, i) => i), "The frames now:")),
+    { type: "text", text: "The frames now:" },
+    ...frames.flatMap((_, i): Block[] => [
+      { type: "text", text: `Frame ${i + 1}:` },
+      beforeLooks[i] ? jpeg(beforeLooks[i]!) : { type: "text", text: "(couldn't take a still of it)" },
+    ]),
     ...input.attached.flatMap((a, i): Block[] => [{ type: "text", text: `Attached picture ${i + 1} (with this message):` }, dataUrlBlock(a)]),
     { type: "text", text: `HER MESSAGE NOW:\n${input.request}${attachNote}` },
   ]
@@ -404,17 +414,25 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         .map((c) => c.text)
         .join("\n")
         .trim()
-      return finishRun(said || (anyDirty() ? "עשיתי את השינויים." : "לא הצלחתי להבין מה לעשות. אפשר לנסח שוב?"))
+      const reply = said || (anyDirty() ? "עשיתי את השינויים." : "לא הצלחתי להבין מה לעשות. אפשר לנסח שוב?")
+      const miss = overTime ? null : await selfCheck(reply)
+      if (miss) {
+        messages.push({ role: "user", content: [{ type: "text", text: miss }] })
+        continue
+      }
+      return finishRun(reply)
     }
 
     const results: Block[] = []
     // A finish / ask beside other calls waits for them: the work is done first.
     let ending: BRollAgentOutcome | "finish" | null = null
     let finishReply = ""
+    let finishId = ""
     for (const call of calls) {
       const a = (call.input ?? {}) as Record<string, unknown>
       if (call.name === "finish") {
         ending = ending ?? "finish"
+        finishId = call.id
         finishReply = String(a.reply ?? "").trim() || "סיימתי."
         offer = typeof a.remember_offer === "string" && a.remember_offer.trim() ? a.remember_offer.trim().slice(0, 1200) : undefined
         continue
@@ -447,12 +465,60 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
       }
       results.push({ type: "tool_result", tool_use_id: call.id, content: typeof out === "string" ? out : (out as Anthropic.ToolResultBlockParam["content"]) } as Block)
     }
-    if (ending === "finish") return finishRun(finishReply)
+    if (ending === "finish") {
+      // It checks itself before she hears "done" — a miss goes back to be fixed.
+      const miss = overTime ? null : await selfCheck(finishReply)
+      if (!miss) return finishRun(finishReply)
+      offer = undefined
+      results.push({ type: "tool_result", tool_use_id: finishId, content: miss } as Block)
+      messages.push({ role: "user", content: results })
+      continue
+    }
     if (ending) return ending
     if (Date.now() - started > THINK_BUDGET_MS) results.push({ type: "text", text: "Time is nearly up: finish now, saying plainly what the last drafts show." })
     messages.push({ role: "user", content: results })
   }
   return finishRun(anyDirty() ? "עשיתי את השינויים, הגרסה החדשה כבר בכרטיס." : "לא הספקתי לסיים הפעם. נסו לכתוב שוב, אולי בבקשה אחת בכל פעם.")
+
+  /**
+   * A fresh look at the draft against her request (lib/edit-agent/self-check).
+   * Returns what to tell the agent when it didn't pass; null when it passed,
+   * nothing changed, or the checks for this turn are used up.
+   */
+  async function selfCheck(reply: string): Promise<string | null> {
+    if (!anyDirty() || checks >= MAX_CHECKS) return null
+    checks++
+    await input.setProgress("בודק שהתוצאה עומדת בבקשה...")
+    const changedIdx = frames.map((f, i) => (f.dirty ? i : -1)).filter((i) => i >= 0)
+    const afterLooks = await Promise.all(changedIdx.map((i) => lookOf(i)))
+    const shot = (i: number, b64: string | null | undefined): CheckShot[] => (b64 ? [{ label: `Frame ${i + 1}`, jpeg: b64 }] : [])
+    const check = await checkTask({
+      apiKey: anthropicKey,
+      media: `an Instagram story of ${total} frame${total > 1 ? "s" : ""} (1080×1920 each). ${frames
+        .map((f, i) => `Frame ${i + 1}: ${f.kind === "designed" ? "a designed picture with the words drawn in" : f.kind === "own" ? `her own ${f.media} with a caption over it` : "locked (not editable)"}`)
+        .join("; ")}. Frames not shown in AFTER were left exactly as in BEFORE.`,
+      request: input.request,
+      conversation: transcript,
+      before: frames.flatMap((_, i) => shot(i, beforeLooks[i])),
+      after: changedIdx.flatMap((i, k) => shot(i, afterLooks[k])),
+      rules: [
+        ...frames.map((_, i) => `Frame ${i + 1} carries exactly these Hebrew words, every word, spelled right, nothing added or dropped (line breaks may differ): ${JSON.stringify(wordsOf(i) || "(no words)")}`),
+        "On a frame that is her own photo / video, her picture itself is untouched — only the caption over it may differ (unless she attached a new file to be the frame).",
+        "No person, face or figure appears that wasn't in BEFORE or in a picture she attached.",
+        "Text and key elements stay out of the top ~14% and the bottom ~24% of a frame (Instagram covers them), unless she asked for it there.",
+      ],
+      reply,
+    })
+    console.log(`[story-agent] ${postId} self-check ${checks}: ${check ? (check.met ? `met${check.preexisting.length ? ` (already there: ${check.preexisting.join(" | ")})` : ""}` : `NOT met — ${check.issues.join(" | ")}`) : "couldn't run"}`)
+    if (!check) return null
+    if (check.met) {
+      if (!check.preexisting.length) return null
+      // Passed; she only needs to hear about what was already off — no further check.
+      checks = MAX_CHECKS
+      return checkFailedNote(check, true)
+    }
+    return checkFailedNote(check, checks >= MAX_CHECKS)
+  }
 
   function anyDirty(): boolean {
     return frames.some((f) => f.dirty)

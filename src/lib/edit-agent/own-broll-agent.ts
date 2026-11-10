@@ -6,6 +6,7 @@ import type { ScriptText } from "@/lib/script-text"
 import { AGENT_MODEL, type BRollAgentOutcome, type ChatTurn } from "@/lib/edit-agent/broll-agent"
 import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
 import { fetchDriveFile } from "@/lib/drive-fetch"
+import { checkFailedNote, checkTask } from "@/lib/edit-agent/self-check"
 
 /**
  * What the b-roll looks like — one still (a video at 2.8s, when the caption
@@ -187,6 +188,9 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
   /** A video draft is only LOOKED at (a quick still); the clip is burned once, at finish, with this. */
   let videoDraft: { spec: CaptionSpec; source: string; template?: string } | null = null
   let renders = 0
+  /** The newest draft's still, and the self-checks used this turn (lib/edit-agent/self-check). */
+  let lastLook: string | null = null
+  let checks = 0
   let newSource: { url: string; kind: "image" | "video" } | null = null
   let change = null as null | { position?: CaptionSpec["position"]; style?: CaptionSpec["style"]; design?: string }
 
@@ -202,7 +206,12 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
     const results: Anthropic.ToolResultBlockParam[] = []
     for (const u of uses) {
       const a = (u.input ?? {}) as Record<string, unknown>
-      if (u.name === "finish") return finishWith(String(a.reply ?? ""))
+      if (u.name === "finish") {
+        const miss = await selfCheck(String(a.reply ?? ""))
+        if (!miss) return finishWith(String(a.reply ?? ""))
+        results.push({ type: "tool_result", tool_use_id: u.id, content: miss })
+        continue
+      }
       if (u.name === "ask_user") {
         const options = Array.isArray(a.options)
           ? (a.options as { label?: unknown; action?: unknown }[])
@@ -253,6 +262,37 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
   }
   return finishWith("")
 
+  /** A fresh look at the draft against her request; a note for the agent when it didn't pass. */
+  async function selfCheck(reply: string): Promise<string | null> {
+    if (!lastLook || !nowStill || checks >= 2) return null
+    checks++
+    await input.setProgress("בודק שהתוצאה עומדת בבקשה...")
+    const spec = currentSpec()
+    const check = await checkTask({
+      apiKey: input.anthropicKey,
+      media: `a vertical b-roll (1080×1920) that is her own ${newSource?.kind ?? kind}, with the script's words as a caption over it. One still of it (a video: once the caption has arrived).`,
+      request: input.request,
+      conversation: transcript,
+      before: [{ label: "Before", jpeg: nowStill }],
+      after: [{ label: "After", jpeg: lastLook }],
+      rules: [
+        `The caption's words are exactly the script's, nothing added or dropped (line breaks may differ): ${JSON.stringify([spec.headline, spec.body].filter(Boolean).join(" / "))}`,
+        "Her photo / video itself is untouched — only the caption over it may differ (unless she attached a new file to be the b-roll).",
+        ...(kind === "image" && !newSource ? ["On a photo the caption is a still plate: font, shadow and motion requests can't be done there — acceptable when the reply says so plainly."] : []),
+      ],
+      reply,
+    })
+    console.log(`[edit-agent own] ${input.postId} self-check ${checks}: ${check ? (check.met ? `met${check.preexisting.length ? ` (already there: ${check.preexisting.join(" | ")})` : ""}` : `NOT met — ${check.issues.join(" | ")}`) : "couldn't run"}`)
+    if (!check) return null
+    if (check.met) {
+      if (!check.preexisting.length) return null
+      // Passed; she only needs to hear about what was already off — no further check.
+      checks = 2
+      return checkFailedNote(check, true)
+    }
+    return checkFailedNote(check, checks >= 2)
+  }
+
   /** The spec as it stands after her changes so far. */
   function currentSpec(): CaptionSpec {
     return {
@@ -294,6 +334,7 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
         return { type: "tool_result", tool_use_id: toolUseId, content: `FAILED to make the draft: ${p.data.message ?? p.data.error ?? "unknown"}. Tell her plainly.`, is_error: true }
       }
       videoDraft = { spec, source, template: p.data.template }
+      lastLook = p.data.preview
       return {
         type: "tool_result",
         tool_use_id: toolUseId,
@@ -319,6 +360,7 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
     draft = r.data.url
     await input.setProgress("בודק את התוצאה...")
     const look = await stillOf(r.data.url, sourceKind)
+    lastLook = look
     return {
       type: "tool_result",
       tool_use_id: toolUseId,

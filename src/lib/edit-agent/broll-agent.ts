@@ -23,6 +23,7 @@ import { snapshotComposition } from "@/lib/edit-agent/snapshot"
 import type { ScriptText } from "@/lib/script-text"
 import { replaceStyleRules, triageVisualMemory } from "@/lib/style-memory"
 import { isRuleScope } from "@/lib/visual-memory"
+import { checkFailedNote, checkTask } from "@/lib/edit-agent/self-check"
 
 /**
  * The AI edit chat for a b-roll, as an AGENT (Hani, 2026-11-10): it sees the
@@ -45,6 +46,8 @@ export const AGENT_MODEL = "claude-opus-5-5"
 const THINK_BUDGET_MS = 380_000
 const MAX_STEPS = 10
 const LOOK_TIMES = [0.9, 2.6, 6.4]
+/** Self-checks per turn: a miss is fixed and checked once more (lib/edit-agent/self-check). */
+const MAX_CHECKS = 2
 
 export interface ChatTurn {
   role: "user" | "assistant"
@@ -268,6 +271,7 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
   /** A preference saved this turn — then no "זכור לעתיד" offer. */
   let remembered = false
   let offer: string | undefined
+  let checks = 0
   const done: string[] = []
   const stamp = () => crypto.randomUUID()
   const draftHtml = () => finalizeHtml(template, backgroundUrl, brief.fonts)
@@ -332,7 +336,13 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
         .map((c) => c.text)
         .join("\n")
         .trim()
-      return finishRun(said || (changed ? "עשיתי את השינויים." : "לא הצלחתי להבין מה לעשות. אפשר לנסח שוב?"))
+      const reply = said || (changed ? "עשיתי את השינויים." : "לא הצלחתי להבין מה לעשות. אפשר לנסח שוב?")
+      const miss = overTime ? null : await selfCheck(reply)
+      if (miss) {
+        messages.push({ role: "user", content: [{ type: "text", text: miss }] })
+        continue
+      }
+      return finishRun(reply)
     }
 
     const results: Block[] = []
@@ -341,7 +351,12 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
       if (call.name === "finish") {
         const reply = String(a.reply ?? "").trim() || "סיימתי."
         offer = typeof a.remember_offer === "string" && a.remember_offer.trim() ? a.remember_offer.trim().slice(0, 1200) : undefined
-        return finishRun(reply)
+        // It checks itself before the long render — a miss goes back to be fixed.
+        const miss = overTime ? null : await selfCheck(reply)
+        if (!miss) return finishRun(reply)
+        offer = undefined
+        results.push({ type: "tool_result", tool_use_id: call.id, content: miss } as Block)
+        continue
       }
       if (call.name === "ask_user") {
         const options = Array.isArray(a.options)
@@ -371,6 +386,38 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
     messages.push({ role: "user", content: results })
   }
   return finishRun(changed ? "עשיתי את השינויים, הגרסה החדשה כבר בכרטיס." : "לא הספקתי לסיים הפעם. נסו לכתוב שוב, אולי בבקשה אחת בכל פעם.")
+
+  /** A fresh look at the draft against her request; a note for the agent when it didn't pass (lib/edit-agent/self-check). */
+  async function selfCheck(reply: string): Promise<string | null> {
+    if (!changed || checks >= MAX_CHECKS || !stills.length) return null
+    checks++
+    await input.setProgress("בודק שהתוצאה עומדת בבקשה...")
+    const after = await snapshotComposition(draftHtml(), LOOK_TIMES).catch(() => [] as string[])
+    const label = ["start", "middle", "end"]
+    const check = await checkTask({
+      apiKey: anthropicKey,
+      media: "a 7-second vertical animated b-roll (1080×1920): a background picture with an animated text design over it. Three stills of it: start, middle, end (the text may still be entering at the start).",
+      request: input.request,
+      conversation: transcript,
+      before: stills.map((jpeg, i) => ({ label: `Before — ${label[i] ?? i}`, jpeg })),
+      after: after.map((jpeg, i) => ({ label: `After — ${label[i] ?? i}`, jpeg })),
+      rules: [
+        `By the end of the clip the words on it are exactly the script's, every word, spelled right, nothing added or dropped: ${JSON.stringify([script?.headline ?? brief.hook, script ? script.body : brief.rest].filter(Boolean).join(" / "))}`,
+        "No person, face or figure appears that wasn't there before or in a picture she attached.",
+        ...(ownBackground ? ["The background is her own picture: it is not repainted or replaced by a drawn one."] : []),
+      ],
+      reply,
+    })
+    console.log(`[edit-agent] ${postId} self-check ${checks}: ${check ? (check.met ? `met${check.preexisting.length ? ` (already there: ${check.preexisting.join(" | ")})` : ""}` : `NOT met — ${check.issues.join(" | ")}`) : "couldn't run"}`)
+    if (!check) return null
+    if (check.met) {
+      if (!check.preexisting.length) return null
+      // Passed; she only needs to hear about what was already off — no further check.
+      checks = MAX_CHECKS
+      return checkFailedNote(check, true)
+    }
+    return checkFailedNote(check, checks >= MAX_CHECKS)
+  }
 
   async function runTool(name: string, a: Record<string, unknown>): Promise<string | Block[]> {
     switch (name) {
