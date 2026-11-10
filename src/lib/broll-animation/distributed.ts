@@ -54,7 +54,8 @@ export async function renderDistributed(
       Array.from({ length: chunks }, async (_, k) => {
         const from = k * per
         const to = Math.min(total, (k + 1) * per)
-        const res = await fetch(new URL("/api/b-roll/render-chunk", origin), {
+        // Each chunk has its own function — its own CPU.
+        const res = await fetch(new URL(`/api/b-roll/render-chunk-${"abcd"[k % 4]}`, origin), {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-render-key": renderChunkKey() },
           body: JSON.stringify({ htmlPath, from, to, segPath: `_render/${id}-${k}.mp4` }),

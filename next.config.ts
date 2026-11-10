@@ -42,7 +42,19 @@ const nextConfig: NextConfig = {
     ],
     // One slice of a distributed b-roll render (lib/broll-animation/distributed)
     // — before this it had no Chromium and every slice failed (2026-11-10).
-    "/api/b-roll/render-chunk": [
+    "/api/b-roll/render-chunk-a": [
+      "./node_modules/ffmpeg-static/ffmpeg",
+      "./node_modules/@sparticuz/chromium/bin/**",
+    ],
+    "/api/b-roll/render-chunk-b": [
+      "./node_modules/ffmpeg-static/ffmpeg",
+      "./node_modules/@sparticuz/chromium/bin/**",
+    ],
+    "/api/b-roll/render-chunk-c": [
+      "./node_modules/ffmpeg-static/ffmpeg",
+      "./node_modules/@sparticuz/chromium/bin/**",
+    ],
+    "/api/b-roll/render-chunk-d": [
       "./node_modules/ffmpeg-static/ffmpeg",
       "./node_modules/@sparticuz/chromium/bin/**",
     ],

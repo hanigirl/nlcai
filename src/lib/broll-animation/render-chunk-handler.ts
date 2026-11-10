@@ -10,11 +10,13 @@ import { renderComposition } from "@/lib/broll-animation/render"
  * stores it for the caller to join.
  *
  * POST { htmlPath, from, to, segPath } → { path, ms }
+ *
+ * Served by FOUR routes (api/b-roll/render-chunk-a…d), each its own function:
+ * four requests to one function landed on one instance and shared its CPU —
+ * the same render took 1.5 to 4.7 minutes by luck (measured 2026-11-10).
  */
 
-export const maxDuration = 300
-
-export async function POST(req: NextRequest) {
+export async function handleRenderChunk(req: NextRequest) {
   if (!isRenderChunkKey(req.headers.get("x-render-key"))) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
   const started = Date.now()
   const { htmlPath, from, to, segPath } = (await req.json().catch(() => ({}))) as {
