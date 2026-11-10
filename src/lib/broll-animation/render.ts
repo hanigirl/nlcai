@@ -106,6 +106,87 @@ async function seekVideos(page: import("puppeteer-core").Page, seconds: number):
 }
 
 /**
+ * Her video inside a composition, WITHOUT playing it in the browser (Hani,
+ * 2026-11-10: b-rolls with a video never finished on the server). The
+ * server's Chromium couldn't seek the clip, so every frame waited out a 3s
+ * timeout and the render ran past the function's limit. Instead ffmpeg cuts
+ * the clip into stills up front (looped to the b-roll's length), the <video>
+ * becomes an <img> with the same class and style (so the blend recipe still
+ * applies), and each frame shows its own still. Frame-exact, and independent
+ * of which codecs the browser has.
+ */
+type VideoStills = Map<string, string[]>
+
+async function extractVideoStills(html: string, frames: number): Promise<VideoStills> {
+  const out: VideoStills = new Map()
+  const srcs = [...new Set([...html.matchAll(/<video\b[^>]*\bsrc="([^"]+)"/gi)].map((m) => m[1]))]
+  if (!srcs.length) return out
+  const os = await import("os")
+  const fs = await import("fs/promises")
+  const path = await import("path")
+  for (const src of srcs) {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "broll-vid-"))
+    try {
+      const res = await fetch(src, { signal: AbortSignal.timeout(60_000) })
+      if (!res.ok) continue
+      const input = path.join(dir, "in")
+      await fs.writeFile(input, Buffer.from(await res.arrayBuffer()))
+      await new Promise<void>((resolve, reject) => {
+        const p = spawn(ffmpegPath as unknown as string, [
+          "-y", "-stream_loop", "-1", "-i", input,
+          "-t", String(frames / FPS),
+          "-vf", `fps=${FPS},scale=-2:1280`,
+          "-q:v", "4",
+          path.join(dir, "f%04d.jpg"),
+        ])
+        let err = ""
+        p.stderr.on("data", (d) => (err = (err + d).slice(-1500)))
+        p.on("close", (c) => (c === 0 ? resolve() : reject(new Error(`video_stills: ${err}`))))
+      })
+      const files = (await fs.readdir(dir)).filter((f) => f.endsWith(".jpg")).sort()
+      if (!files.length) continue
+      const stills: string[] = []
+      for (const f of files) stills.push(`data:image/jpeg;base64,${(await fs.readFile(path.join(dir, f))).toString("base64")}`)
+      out.set(src, stills)
+    } catch (e) {
+      console.error("[broll render] video stills failed, the video element stays", e)
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined)
+    }
+  }
+  return out
+}
+
+/** Each <video> that has stills becomes an <img> with its class / style, showing its first still. */
+function withStillsForVideos(html: string, stills: VideoStills): string {
+  return html.replace(/<video\b([^>]*)>(?:\s*<\/video>)?/gi, (whole, attrs: string) => {
+    const src = /\bsrc="([^"]+)"/i.exec(attrs)?.[1]
+    const list = src ? stills.get(src) : undefined
+    if (!src || !list?.length) return whole
+    const kept = attrs
+      .replace(/\s(?:autoplay|loop|muted|playsinline|preload|controls)(?:="[^"]*")?/gi, "")
+      .replace(/\bsrc="[^"]+"/i, `src="${list[0]}" data-video-src="${src}"`)
+    return `<img${kept}>`
+  })
+}
+
+async function showVideoStills(page: import("puppeteer-core").Page, frame: number, stills: VideoStills): Promise<void> {
+  if (!stills.size) return
+  const now: Record<string, string> = {}
+  for (const [src, list] of stills) now[src] = list[Math.min(frame, list.length - 1)]
+  await page.evaluate(async (map: Record<string, string>) => {
+    await Promise.all(
+      Array.from(document.querySelectorAll<HTMLImageElement>("img[data-video-src]")).map(async (img) => {
+        const next = map[img.getAttribute("data-video-src") ?? ""]
+        if (!next) return
+        img.src = next
+        await img.decode().catch(() => undefined)
+      }),
+    )
+  }, now)
+}
+
+/**
  * Pages that screenshot at once (Hani, 2026-11-10: the frames took ~8 of the
  * ~9 minutes on the server). Each takes a contiguous slice of the frames —
  * every frame is seeked to its own time, so the result is identical to one
@@ -179,7 +260,11 @@ export async function renderComposition(
   lap("renderLaunch")
   try {
     const n = Math.max(1, Math.min(RENDER_PAGES_MAX, pagesWanted))
-    const pages = await Promise.all(Array.from({ length: n }, () => preparePage(browser, html)))
+    const stills = await extractVideoStills(html, COMPOSITION_SECONDS * FPS)
+    if (timing && stills.size) timing.renderVideoStills = Date.now() - t0
+    // Swapped in the markup itself, so the page never waits on a video it can't play.
+    const ready = stills.size ? withStillsForVideos(html, stills) : html
+    const pages = await Promise.all(Array.from({ length: n }, () => preparePage(browser, ready)))
     lap("renderLoad")
     const frames = COMPOSITION_SECONDS * FPS
     const shots: (Buffer | undefined)[] = new Array(frames)
@@ -191,6 +276,7 @@ export async function renderComposition(
       for (let i = w * per; i < Math.min(frames, (w + 1) * per); i++) {
         const a = Date.now()
         await seekTo(page, i / FPS)
+        await showVideoStills(page, i, stills)
         const b = Date.now()
         shots[i] = Buffer.from(await page.screenshot({ type: "jpeg", quality: 88, optimizeForSpeed: true }))
         seekMs += b - a
