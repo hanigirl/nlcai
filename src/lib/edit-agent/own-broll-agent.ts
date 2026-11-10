@@ -4,6 +4,48 @@ import { readCaptionRecord } from "@/lib/caption-record"
 import { cleanCaptionStyle, isCaptionedRenderUrl, isVideoMediaUrl, type CaptionRecord, type CaptionSpec } from "@/lib/own-media"
 import type { ScriptText } from "@/lib/script-text"
 import { AGENT_MODEL, type BRollAgentOutcome, type ChatTurn } from "@/lib/edit-agent/broll-agent"
+import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
+import { fetchDriveFile } from "@/lib/drive-fetch"
+
+/**
+ * What the b-roll looks like — one still (a video at 2.8s, when the caption
+ * has arrived), small JPEG base64 — so the agent sees before and after
+ * instead of working blind (Hani, 2026-11-10: "שיהיה מאוד חכם כאילו אני
+ * מדברת איתך").
+ */
+async function stillOf(url: string, kind: "image" | "video"): Promise<string | null> {
+  try {
+    const res = isDriveUrl(url) ? await fetchDriveFile(extractDriveFileId(url)!) : await fetch(url, { signal: AbortSignal.timeout(60_000) })
+    if (!res.ok) return null
+    const buf = Buffer.from(await res.arrayBuffer())
+    const sharp = (await import("sharp")).default
+    if (kind === "image") return (await sharp(buf).rotate().resize(540, 960, { fit: "inside" }).jpeg({ quality: 80 }).toBuffer()).toString("base64")
+    const os = await import("os")
+    const fs = await import("fs/promises")
+    const path = await import("path")
+    const { spawn } = await import("child_process")
+    const ffmpegPath = (await import("ffmpeg-static")).default as unknown as string
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "own-look-"))
+    try {
+      const input = path.join(dir, "in")
+      const out = path.join(dir, "f.jpg")
+      await fs.writeFile(input, buf)
+      const grab = (at: string) =>
+        new Promise<boolean>((resolve) => {
+          const p = spawn(ffmpegPath, ["-y", "-ss", at, "-i", input, "-frames:v", "1", "-vf", "scale=540:-2", out])
+          p.on("close", (c) => resolve(c === 0))
+        })
+      if (!(await grab("2.8")) && !(await grab("0"))) return null
+      return (await fs.readFile(out)).toString("base64")
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined)
+    }
+  } catch {
+    return null
+  }
+}
+
+const imageBlock = (b64: string): Anthropic.ImageBlockParam => ({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } })
 
 /**
  * The improved AI chat on HER OWN b-roll (Hani, 2026-11-10: "תשים שם את
@@ -46,6 +88,8 @@ What you control — EVERYTHING about the caption (the script's words over her m
 - and any other look or motion of the caption through \`design\` — font weight, letter spacing, line breaks, a rounded / pill / sharp box, outline, shadow, glow, highlight of a word, one box per line or one block, how it enters and moves (on a video), anything she describes. Write \`design\` as a precise instruction for the caption designer, in her words plus whatever detail makes it unambiguous. When she attaches a reference picture of a look she wants, read it and describe that look in \`design\` (and set position / colours / size to match).
 - replace_media: when she attaches a photo or video of hers and wants it AS the b-roll (instead of the current one), put it in; the caption is drawn over it again.
 What you never do: change, retouch, recolour, crop or redraw her photo/video pixels, and never change the words (they are the post's script — changed in the script editor). If she asks for that, say so in one kind sentence and offer what you can do.
+
+You SEE the b-roll: a still of it now comes with her message, and every set_caption / replace_media renders a draft and hands you its still. Look at it like a designer: does it do exactly what she asked (where the caption sits, how far it moved, the colours, the box)? If not, call set_caption again from the draft's state until it does — then finish. In your reply, say only what you SAW happen on the draft. Positions: "למטה/למעלה X פיקסל" = move_y ±X from where it is now; "למעלה / באמצע / למטה" alone = position.
 
 Act with set_caption / replace_media, then finish. Several changes in one turn are fine. Only when her request truly has several readings, ask_user with 2–4 short options. Colours: her brand colours when she says "צבע המותג"; otherwise real hex values for what she named.
 
@@ -127,14 +171,25 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
   const attachNote = attached.length
     ? `\n\nShe attached ${attached.length} picture${attached.length > 1 ? "s" : ""} (shown above, numbered in order)${(input.attachedVideos ?? []).some(Boolean) ? "; " + (input.attachedVideos ?? []).map((v, i) => (v ? `#${i + 1} is the first frame of a VIDEO` : null)).filter(Boolean).join(", ") : ""}.`
     : ""
+  await input.setProgress("מסתכל על הבי-רול...")
+  const nowStill = await stillOf(mediaUrl, isVideoMediaUrl(mediaUrl) ? "video" : kind)
   const messages: Anthropic.MessageParam[] = [
-    { role: "user", content: [...imageBlocks, { type: "text", text: `${state}\n\nHER NEW MESSAGE: ${input.request}${attachNote}` }] },
+    {
+      role: "user",
+      content: [
+        ...(nowStill ? [{ type: "text" as const, text: "THE B-ROLL NOW (a still):" }, imageBlock(nowStill)] : []),
+        ...(imageBlocks.length ? [{ type: "text" as const, text: "HER ATTACHED PICTURES:" }, ...imageBlocks] : []),
+        { type: "text", text: `${state}\n\nHER NEW MESSAGE: ${input.request}${attachNote}` },
+      ],
+    },
   ]
+  let draft: string | null = null
+  let renders = 0
   let newSource: { url: string; kind: "image" | "video" } | null = null
   let change = null as null | { position?: CaptionSpec["position"]; style?: CaptionSpec["style"]; design?: string }
 
   await input.setProgress("קורא את הבקשה...")
-  for (let step = 0; step < 4; step++) {
+  for (let step = 0; step < 6; step++) {
     const res = await client.messages.create({ model: AGENT_MODEL, max_tokens: 1200, system: SYSTEM, tools: TOOLS, messages })
     messages.push({ role: "assistant", content: res.content })
     const uses = res.content.filter((c): c is Anthropic.ToolUseBlock => c.type === "tool_use")
@@ -158,7 +213,7 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
       if (u.name === "set_caption") {
         const position = a.position === "top" || a.position === "center" || a.position === "bottom" ? a.position : undefined
         const move = typeof a.move_y === "number" && Number.isFinite(a.move_y) ? a.move_y : 0
-        const baseOffset = change?.style?.offsetY ?? (position ? 0 : (prev.style?.offsetY ?? 0))
+        const baseOffset = position ? 0 : (change?.style?.offsetY ?? prev.style?.offsetY ?? 0)
         const style = cleanCaptionStyle({
           text: a.text,
           pill: a.pill,
@@ -172,7 +227,7 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
           ...(style && Object.keys(style).length ? { style: { ...(change?.style ?? {}), ...style } } : {}),
           ...(design ? { design } : {}),
         }
-        results.push({ type: "tool_result", tool_use_id: u.id, content: "Noted (applied when you finish). Now finish with your reply." })
+        results.push(await renderDraft(u.id))
       } else if (u.name === "replace_media") {
         const n = Number(a.attached) - 1
         const video = input.attachedVideos?.[n] ?? null
@@ -186,7 +241,7 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
         } else {
           newSource = { url, kind: video ? "video" : "image" }
           change = change ?? {}
-          results.push({ type: "tool_result", tool_use_id: u.id, content: "Noted: that file becomes the b-roll (applied when you finish)." })
+          results.push(await renderDraft(u.id))
         }
       } else {
         results.push({ type: "tool_result", tool_use_id: u.id, content: "Unknown tool.", is_error: true })
@@ -196,18 +251,27 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
   }
   return finishWith("")
 
-  async function finishWith(reply: string): Promise<BRollAgentOutcome> {
-    if (!change) return { kind: "done", reply: reply || "לא שיניתי כלום.", url: mediaUrl, changed: false }
-    const spec: CaptionSpec = {
+  /** The spec as it stands after her changes so far. */
+  function currentSpec(): CaptionSpec {
+    return {
       // The words are the script's (MEDIA TEXT IS THE SCRIPT), else what's on it.
       headline: input.script?.headline ?? prev.headline,
       body: input.script?.body ?? prev.body,
-      position: change.position ?? prev.position ?? "bottom",
-      style: change.style ? { ...prev.style, ...change.style } : prev.style,
-      design: change.design ?? prev.design,
+      position: change?.position ?? prev.position ?? "bottom",
+      style: change?.style ? { ...prev.style, ...change.style } : prev.style,
+      design: change?.design ?? prev.design,
     }
+  }
+
+  /** Render the change as a DRAFT (not saved) and hand its still back to the model. */
+  async function renderDraft(toolUseId: string): Promise<Anthropic.ToolResultBlockParam> {
+    if (renders >= 3) {
+      return { type: "tool_result", tool_use_id: toolUseId, content: "No more drafts this turn — finish now, saying plainly what the last draft shows.", is_error: true }
+    }
+    renders++
+    const spec = currentSpec()
     if (!spec.headline && !spec.body) {
-      return { kind: "failed", reply: "אין טקסט בסקריפט של הבי-רול, אז אין כיתוב לעצב. כתבו את הסקריפט ונסו שוב." }
+      return { type: "tool_result", tool_use_id: toolUseId, content: "FAILED: the b-roll script has no text, so there is no caption. Tell her.", is_error: true }
     }
     const source = newSource?.url ?? record?.sourceUrl ?? mediaUrl
     const sourceKind = newSource?.kind ?? kind
@@ -231,15 +295,32 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
             force: true,
             caption: spec,
           })
-    if (!r.ok || !r.data.url) return { kind: "failed", reply: r.data.message ?? "עדכון הכיתוב לא הצליח הפעם, אז הבי-רול נשאר כמו שהיה. נסו שוב." }
+    if (!r.ok || !r.data.url) {
+      return { type: "tool_result", tool_use_id: toolUseId, content: `FAILED to render: ${r.data.message ?? r.data.error ?? "unknown"}. Tell her plainly.`, is_error: true }
+    }
+    draft = r.data.url
+    await input.setProgress("בודק את התוצאה...")
+    const look = await stillOf(r.data.url, sourceKind)
+    const said = `Draft rendered with: ${JSON.stringify({ position: spec.position, style: spec.style ?? null, design: spec.design ?? null })}.`
+    return {
+      type: "tool_result",
+      tool_use_id: toolUseId,
+      content: look
+        ? [{ type: "text", text: `${said} Here is its still — compare it with her request and with the still from before. Fix with set_caption if it isn't right; otherwise finish.` }, imageBlock(look)]
+        : `${said} (Couldn't take a still of it.)`,
+    }
+  }
+
+  async function finishWith(reply: string): Promise<BRollAgentOutcome> {
+    if (!draft) return { kind: "done", reply: reply || "לא שיניתי כלום.", url: mediaUrl, changed: false }
     await input.setProgress("שומר...")
     const saved = await input.call<{ urls?: string[]; message?: string }>("/api/media/own-edit", {
       action: "save",
       postId: input.postId,
       format: "b_roll",
-      urls: [r.data.url],
+      urls: [draft],
     })
     if (!saved.ok) return { kind: "failed", reply: saved.data.message ?? "השינוי לא נשמר. נסו שוב." }
-    return { kind: "done", reply: reply || "עדכנתי את הכיתוב.", url: r.data.url, changed: true }
+    return { kind: "done", reply: reply || "עדכנתי את הכיתוב.", url: draft, changed: true }
   }
 }
