@@ -145,8 +145,8 @@ export async function POST(req: NextRequest) {
     // Placing is Hani-only for now (lib/feature-access); off it, all are looks.
     const gated = gatePlacement(user.email, parseReferences(place), parseReferences(references))
     const placed = gated.place
-    // EXPERIMENT (gated): one file from her Drive b-roll folder becomes the
-    // background in place of the generated picture — whole, never cropped.
+    // EXPERIMENT (gated): one file from her Drive b-roll folder, placed whole
+    // on the generated background (lib/broll-animation/library-media).
     const stamp = crypto.randomUUID()
     let library: Awaited<ReturnType<typeof pickLibraryMedia>> = null
     if (!placed.length && driveInBRoll(user.email)) {
@@ -157,11 +157,7 @@ export async function POST(req: NextRequest) {
       })
       timing.library = Date.now() - t
     }
-    const ownBackground = placed.length
-      ? await pictureAsBackground(referenceBuffer(placed[0]))
-      : library
-        ? await pictureAsBackground(library.kind === "image" ? library.file : library.firstFrame)
-        : null
+    const ownBackground = placed.length ? await pictureAsBackground(referenceBuffer(placed[0])) : null
     const baseDirection = withMediaBrief(
       // Her language makes graphics only, never a photo (gated).
       withGraphicOnly(
@@ -181,9 +177,6 @@ export async function POST(req: NextRequest) {
             ...baseDirection.lines,
             "",
             OWN_BACKGROUND_LINE,
-            ...(library
-              ? ["Her picture is never cropped: no zoom, push-in, scale, pan or clip on the background — it stays whole and untransformed for the entire clip. Motion only on the typography and graphic elements."]
-              : []),
           ],
         }
       : baseDirection
@@ -227,7 +220,7 @@ export async function POST(req: NextRequest) {
     ])
 
     timing.brief = Date.now() - mark
-    if (library?.kind === "video") brief.libraryMedia = { url: library.url, kind: "video" }
+    if (library) brief.libraryMedia = { url: library.url, kind: library.kind, width: library.width, height: library.height }
     mark = Date.now()
     const timed = <T,>(k: string, p: Promise<T>) =>
       p.then((v) => {

@@ -72,9 +72,9 @@ export interface CompositionBrief {
   staticText?: boolean
   /**
    * EXPERIMENT (lib/broll-animation/library-media): a picture or video from
-   * her Drive b-roll folder, her video as the background, whole.
+   * her Drive b-roll folder, her picture or video, whole, on the generated background.
    */
-  libraryMedia?: { url: string; kind: "video" }
+  libraryMedia?: { url: string; kind: "image" | "video"; width: number; height: number }
   /**
    * What this clip is for, when it isn't a b-roll — e.g. a frame added to
    * her story (lib/own-media-animated): its safe zone, reserved brand areas.
@@ -166,11 +166,21 @@ function briefText(b: CompositionBrief): string {
     "",
     "VISUAL LANGUAGE (the background was generated from this — match its character):",
     b.styleSpec.slice(0, 2500),
-    ...(b.libraryMedia?.kind === "video"
-      ? [
-          "",
-          `THE BACKGROUND IS HER OWN VIDEO. Put it full-frame directly over the background image, as the background layer: <video src="${b.libraryMedia.url}" muted playsinline preload="auto" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain"></video>. object-fit:contain is mandatory — the video is shown WHOLE, never cropped, never scaled past the frame, never redrawn or recoloured; the background image under it is its own blurred first frame and fills the rest. No autoplay, no loop attribute, no JS that plays it — the renderer seeks it frame by frame. Rule 3's ban on video elements is lifted for this one video only. The typography sits on top of it, integrated with it, exactly as it would on a background picture.`,
-        ]
+    ...(b.libraryMedia
+      ? (() => {
+          const m = b.libraryMedia
+          const tag =
+            m.kind === "video"
+              ? `<video src="${m.url}" muted playsinline preload="auto"></video> (no autoplay, no loop attribute, no JS that plays it — the renderer seeks it frame by frame; rule 3's ban on video elements is lifted for this one video only)`
+              : `<img src="${m.url}">`
+          return [
+            "",
+            `HER OWN ${m.kind === "video" ? "VIDEO" : "PICTURE"} (${m.width}×${m.height}) — the hero visual, layered over the background image: ${tag}.`,
+            "- It is shown WHOLE, never cropped: as large as fits the frame with object-fit: contain (width:100% or height:100%, whichever keeps all of it inside the frame), centred or placed where the layout needs it. Never cover-crop it, never clip-path or mask it into a shape, never zoom, push-in, scale, pan or rotate it — it stays untransformed for the whole clip. Never redraw, recolour or filter it.",
+            "- Where its edges meet the background, they melt into it: a soft gradient mask (mask-image linear-gradient) of at most ~6% of the picture on the sides that meet the background, so there's no hard edge or band — the generated background fills the rest of the frame and must read as one design with the picture.",
+            "- The typography sits on top, integrated with it; scrims, plates or shadows in the visual language wherever the text needs them to stay legible.",
+          ]
+        })()
       : []),
     ...(b.notes?.length ? ["", "THIS CLIP:", ...b.notes] : []),
     ...(b.design?.trim() ? ["", ...designOverrideLines(b.design)] : []),

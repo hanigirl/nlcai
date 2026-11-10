@@ -2,9 +2,10 @@
  * EXPERIMENT (Hani, 2026-11-10, branch exp/broll-drive-in-composition):
  * a visual-language b-roll takes one picture or video from her Drive b-roll
  * folder (Settings → מדיה → "מדיה מ-Google Drive" → בי-רול) and the motion
- * file becomes the b-roll's BACKGROUND in place of the generated picture —
- * whole, never cropped (Hani: "לא לחתוך את התמונה בשום אופן"), under the
- * typography, exactly like her own picture (background.ts pictureAsBackground). This deliberately loosens "שפה ויזואלית ≠ דרייב" for a
+ * file sits WHOLE (never cropped — Hani: "לא לחתוך את התמונה בשום אופן") on
+ * the generated visual-language background, its edges melting into it, with
+ * the typography on top. No blurred copy of itself around it (she read those
+ * bands as a crop). This deliberately loosens "שפה ויזואלית ≠ דרייב" for a
  * trial; it's gated (lib/feature-access DRIVE_IN_BROLL_EMAILS).
  *
  * The file is copied to our storage first (the renderer can't read Drive),
@@ -22,13 +23,9 @@ const BUCKET = "user-media"
 const MAX_BYTES = 250 * 1024 * 1024
 const RASTER = /\.(jpe?g|png|webp)$/i
 
-/**
- * image → the file itself (it becomes the background picture).
- * video → the WebM in our storage, plus its first frame for the still layer under it.
- */
-export type LibraryMedia =
-  | { kind: "image"; file: Buffer; name: string }
-  | { kind: "video"; url: string; firstFrame: Buffer; name: string }
+/** Her file in our storage, and its size (to place it whole). */
+export type LibraryMedia = { kind: "image" | "video"; url: string; width: number; height: number; name: string }
+
 
 async function brollFolderId(userId: string): Promise<string | null> {
   const admin = createAdminClient()
@@ -115,18 +112,37 @@ export async function pickLibraryMedia(
   const usable = listing.items.filter((i: DriveFolderItem) => i.kind === "video" || RASTER.test(i.name))
   // Random order, then the first one that downloads.
   const order = usable.sort(() => Math.random() - 0.5).slice(0, 3)
+  const sharp = (await import("sharp")).default
   for (const item of order) {
     const buf = await download(item.id).catch(() => null)
     if (!buf) continue
-    if (item.kind === "image") return { kind: "image", file: buf, name: item.name }
-    const webm = await toWebm(buf).catch(() => null)
-    if (!webm) continue
-    const frame = await firstFrame(webm).catch(() => null)
-    if (!frame) continue
-    const path = `${userId}/b_roll/${stamp}-library.webm`
-    const { error } = await supabase.storage.from(BUCKET).upload(path, webm, { contentType: "video/webm" })
+    let body: Buffer
+    let size: Buffer
+    if (item.kind === "image") {
+      body = await sharp(buf).rotate().resize(1080, 1920, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 88 }).toBuffer()
+      size = body
+    } else {
+      const webm = await toWebm(buf).catch(() => null)
+      if (!webm) continue
+      const frame = await firstFrame(webm).catch(() => null)
+      if (!frame) continue
+      body = webm
+      size = frame
+    }
+    const meta = await sharp(size).metadata()
+    const ext = item.kind === "image" ? "jpg" : "webm"
+    const path = `${userId}/b_roll/${stamp}-library.${ext}`
+    const { error } = await supabase.storage
+      .from(BUCKET)
+      .upload(path, body, { contentType: item.kind === "image" ? "image/jpeg" : "video/webm" })
     if (error) continue
-    return { kind: "video", url: supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl, firstFrame: frame, name: item.name }
+    return {
+      kind: item.kind,
+      url: supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl,
+      width: meta.width ?? 1080,
+      height: meta.height ?? 1920,
+      name: item.name,
+    }
   }
   return null
 }
