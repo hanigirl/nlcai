@@ -549,7 +549,7 @@ export function FormatPanelMedia({
       </div>
     )
   }
-  return (
+  const zone = (
     <MediaPreviewZone
       onAiEdit={onAiEditMedia}
       aiClassName={media.kind === "slides" && media.items.length > 1 ? "bottom-11" : undefined}
@@ -566,6 +566,21 @@ export function FormatPanelMedia({
         <FormatMediaPreview media={media} fid={fid} />
       )}
     </MediaPreviewZone>
+  )
+  if (!onSwapPhoto) return zone
+  // The way to bring her own picture / video in, said in words (Hani, 2026-11-10).
+  return (
+    <div className="flex flex-col items-center gap-2">
+      {zone}
+      <button
+        type="button"
+        onClick={onSwapPhoto}
+        onMouseDown={(e) => e.stopPropagation()}
+        className="cursor-pointer rounded-sm text-small text-text-primary-default underline underline-offset-4 hover:text-text-neutral-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+      >
+        רוצים לשלב תמונה או סרטון משלכם?
+      </button>
+    </div>
   )
 }
 
