@@ -234,7 +234,16 @@ export async function POST(req: NextRequest) {
         request: text || "(she attached pictures without words)",
         attached,
         attachedVideos: Array.isArray(body.videos)
-          ? (body.videos as unknown[]).map((v) => (typeof v === "string" ? extractDriveFileId(v) : null))
+          ? (body.videos as unknown[]).map((v) => {
+              if (typeof v !== "string") return null
+              if (v.startsWith("drive:")) {
+                const id = extractDriveFileId(v.slice(6))
+                return id ? `drive:${id}` : null
+              }
+              // Only her own folder.
+              if (v.startsWith(`storage:${user.id}/`)) return v
+              return null
+            })
           : [],
         setProgress: (progress) => setJob({ progress }),
       })

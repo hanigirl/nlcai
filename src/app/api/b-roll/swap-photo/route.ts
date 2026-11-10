@@ -6,7 +6,7 @@ import { driveInBRoll } from "@/lib/feature-access"
 import { finalizeHtml, reviseBRoll } from "@/lib/broll-animation/compose"
 import { renderComposition } from "@/lib/broll-animation/render"
 import { loadComposition, saveBRoll } from "@/lib/broll-animation/store"
-import { driveFileBytes, storeLibraryImage } from "@/lib/broll-animation/library-media"
+import { driveFileBytes, storeLibraryImage, storeLibraryVideo } from "@/lib/broll-animation/library-media"
 
 export const maxDuration = 800
 
@@ -36,12 +36,15 @@ function fail(message: string, status = 400) {
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
   try {
-    const { postId, driveId, image } = (await req.json().catch(() => ({}))) as {
+    const { postId, driveId, kind, image, video } = (await req.json().catch(() => ({}))) as {
       postId?: string
       driveId?: string
+      kind?: "image" | "video"
       image?: string
+      /** A video from her computer, already in her storage (path). */
+      video?: string
     }
-    if (!postId || (!driveId && !image)) return fail("חסרה תמונה.")
+    if (!postId || (!driveId && !image && !video)) return fail("חסרה תמונה.")
 
     const supabase = await createClient()
     const user = await getAuthUser(supabase)
@@ -72,7 +75,13 @@ export async function POST(req: NextRequest) {
 
     // Her picture → bytes.
     let file: Buffer | null = null
-    if (driveId) {
+    const isVideo = !!video || kind === "video"
+    if (video) {
+      if (!video.startsWith(`${user.id}/`)) return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+      const { data } = await supabase.storage.from("user-media").download(video)
+      file = data ? Buffer.from(await data.arrayBuffer()) : null
+      if (!file) return fail("לא הצלחתי לקרוא את הסרטון. נסו שוב.")
+    } else if (driveId) {
       file = await driveFileBytes(driveId)
       if (!file) return fail("לא הצלחתי להביא את התמונה מהדרייב. נסו שוב או בחרו תמונה אחרת.")
     } else {
@@ -82,14 +91,14 @@ export async function POST(req: NextRequest) {
     }
 
     const stamp = crypto.randomUUID()
-    const photo = await storeLibraryImage(supabase, user.id, stamp, file).catch(() => null)
-    if (!photo) return fail("לא הצלחתי לקרוא את התמונה. נסו קובץ JPG או PNG.")
+    const photo = await (isVideo ? storeLibraryVideo : storeLibraryImage)(supabase, user.id, stamp, file).catch(() => null)
+    if (!photo) return fail(isVideo ? "לא הצלחתי לקרוא את הסרטון. נסו סרטון אחר." : "לא הצלחתי לקרוא את התמונה. נסו קובץ JPG או PNG.")
 
-    const libraryMedia = { url: photo.url, kind: "image" as const, width: photo.width, height: photo.height }
+    const libraryMedia = { url: photo.url, kind: photo.kind, width: photo.width, height: photo.height }
     const brief = { ...composition.brief, libraryMedia }
     const old = composition.brief.libraryMedia?.url
     let template: string
-    if (old && composition.template.includes(old)) {
+    if (old && composition.brief.libraryMedia?.kind === photo.kind && composition.template.includes(old)) {
       template = composition.template.split(old).join(photo.url)
     } else {
       const anthropicKey = await getUserApiKey(supabase, "anthropic_api_key")

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { ArrowUp, Loader2, X } from "lucide-react"
 import { ReferenceAddMenu } from "@/components/ai-edit-drive-reference"
 import { useDriveInBRoll } from "@/lib/use-scheduling-access"
+import { createClient } from "@/lib/supabase/client"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 import { BidiText } from "@/components/bidi-text"
 import { AiSparkle } from "@/components/ai-refine-button"
 import { Button } from "@/components/ui/button"
@@ -170,10 +172,21 @@ export function EditAgentChat({
   const send = async (text: string) => {
     const words = text.trim()
     const images = refs.refs
-    // A Drive video is sent as the video itself (its link), not only its frame.
-    const videoLinkOf = (r: string) => {
+    // A video is sent as the video itself, not only its frame: a Drive one
+    // by its link, one from her computer uploaded to her storage first (too
+    // big for a request body).
+    const videoOf = async (r: string): Promise<string | null> => {
       const o = refs.originOf(r)
-      return o?.kind === "video" && o.drive ? o.drive : null
+      if (o?.kind !== "video") return null
+      if (o.drive) return `drive:${o.drive}`
+      if (!o.file) return null
+      const supabase = createClient()
+      const { data } = await getCurrentUser(supabase)
+      if (!data.user) return null
+      const ext = o.file.name.split(".").pop() || "mp4"
+      const path = `${data.user.id}/b_roll/upload-${crypto.randomUUID()}.${ext}`
+      const { error } = await supabase.storage.from("user-media").upload(path, o.file, { contentType: o.file.type || "video/mp4" })
+      return error ? null : `storage:${path}`
     }
     if ((!words && !images.length) || busy) return
     setSending(true)
@@ -185,7 +198,7 @@ export function EditAgentChat({
       const res = await fetch("/api/edit-agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, format, text: words, images, videos: images.map((r) => videoLinkOf(r)) }),
+        body: JSON.stringify({ postId, format, text: words, images, videos: await Promise.all(images.map((r) => videoOf(r))) }),
       })
       const data = (await res.json().catch(() => ({}))) as { jobId?: string; message?: string }
       if (!res.ok && data.message) {

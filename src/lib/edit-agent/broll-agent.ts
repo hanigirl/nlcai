@@ -70,7 +70,7 @@ export interface BRollAgentInput {
   request: string
   /** Pictures she attached to THIS message (data URLs). */
   attached: string[]
-  /** Per attached picture: the Drive file id when it is a VIDEO's frame (the video is what's used). */
+  /** Per attached picture, when it is a VIDEO's frame: "drive:<id>" or "storage:<path>" — the video is what's used. */
   attachedVideos?: (string | null)[]
   setProgress: (text: string) => Promise<void>
 }
@@ -402,12 +402,17 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
         if (!input.canReplacePhoto) return "REFUSED: replacing the photo isn't available on this account."
         const pic = input.attached[Number(a.attached) - 1]
         if (!pic) return `FAILED: there is no attached picture ${a.attached} in this message. Ask her to attach the picture (the image button: from her computer or Google Drive).`
-        const videoId = input.attachedVideos?.[Number(a.attached) - 1] ?? null
+        const video = input.attachedVideos?.[Number(a.attached) - 1] ?? null
         let photo
-        if (videoId) {
-          await input.setProgress("מביא את הסרטון מהדרייב...")
-          const bytes = await driveFileBytes(videoId)
-          if (!bytes) return "FAILED: couldn't fetch that video from her Drive (too big or not shared). Tell her, and offer a shorter clip or a picture."
+        if (video) {
+          await input.setProgress("מכין את הסרטון...")
+          let bytes: Buffer | null = null
+          if (video.startsWith("drive:")) bytes = await driveFileBytes(video.slice(6))
+          else if (video.startsWith("storage:")) {
+            const { data } = await db.storage.from("user-media").download(video.slice(8))
+            bytes = data ? Buffer.from(await data.arrayBuffer()) : null
+          }
+          if (!bytes) return "FAILED: couldn't fetch that video (too big, or not shared on Drive). Tell her, and offer a shorter clip or a picture."
           photo = await storeLibraryVideo(db, userId, stamp(), bytes).catch(() => null)
           if (!photo) return "FAILED: couldn't read that video. Tell her, and offer another clip or a picture."
         } else {

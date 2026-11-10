@@ -1,7 +1,9 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Check, Loader2, Monitor } from "lucide-react"
+import { Check, Loader2, Monitor, Play } from "lucide-react"
+import { createClient } from "@/lib/supabase/client"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
@@ -67,7 +69,7 @@ export function BRollPhotoSwapDialog({
     void loadDriveFolders().then(() => refreshDriveFolder(FORMAT_FOLDER.b_roll))
   }, [open])
 
-  const swap = async (body: { driveId: string } | { image: string }) => {
+  const swap = async (body: { driveId: string; kind: "image" | "video" } | { image: string } | { video: string }) => {
     if (!postId) return
     setBusy(true)
     setError(null)
@@ -89,7 +91,7 @@ export function BRollPhotoSwapDialog({
     }
   }
 
-  const images = folder?.status === "connected" ? folder.items.filter((i) => i.kind === "image") : []
+  const images = folder?.status === "connected" ? folder.items : []
 
   return (
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
@@ -97,19 +99,37 @@ export function BRollPhotoSwapDialog({
         <DialogHeader className="text-start">
           <DialogTitle>החלפת תמונה</DialogTitle>
           <DialogDescription>
-            התמונה החדשה תשתלב בבי-רול באותו אופן. הטקסט, העיצוב והתנועה נשארים.
+            התמונה או הסרטון החדשים ישתלבו בבי-רול באותו אופן. הטקסט, העיצוב והתנועה נשארים.
           </DialogDescription>
         </DialogHeader>
 
         <input
           ref={inputRef}
           type="file"
-          accept="image/*"
+          accept="image/*,video/*"
           hidden
           onChange={(e) => {
             const f = e.target.files?.[0]
             e.target.value = ""
             if (!f) return
+            if (f.type.startsWith("video/")) {
+              // Too big for a request: straight to her storage, then the server takes it.
+              void (async () => {
+                setBusy(true)
+                const supabase = createClient()
+                const { data } = await getCurrentUser(supabase)
+                const ext = f.name.split(".").pop() || "mp4"
+                const path = data.user ? `${data.user.id}/b_roll/upload-${crypto.randomUUID()}.${ext}` : null
+                const up = path ? await supabase.storage.from("user-media").upload(path, f, { contentType: f.type }) : null
+                if (!path || !up || up.error) {
+                  setBusy(false)
+                  setError("לא הצלחתי להעלות את הסרטון. נסו סרטון קצר יותר.")
+                  return
+                }
+                await swap({ video: path })
+              })()
+              return
+            }
             void shrink(f).then((image) => (image ? swap({ image }) : setError("לא הצלחתי לקרוא את התמונה. נסו קובץ אחר.")))
           }}
         />
@@ -117,7 +137,7 @@ export function BRollPhotoSwapDialog({
         {busy ? (
           <div className="flex items-center gap-2 rounded-lg bg-bg-surface p-4 text-small text-text-primary-default" role="status">
             <Loader2 className="size-4 animate-spin text-text-neutral-default" />
-            משלבת את התמונה ומרנדרת את הבי-רול. זה לוקח כמה דקות.
+            משלבת ומרנדרת את הבי-רול. זה לוקח כמה דקות.
           </div>
         ) : !folder || folder.status === "checking" ? (
           <div className="grid grid-cols-3 gap-2" aria-busy>
@@ -127,10 +147,10 @@ export function BRollPhotoSwapDialog({
           </div>
         ) : images.length === 0 ? (
           <p className="rounded-lg bg-bg-surface p-4 text-small text-text-primary-default">
-            {folder.status === "connected" ? "אין תמונות בתיקיית הבי-רול בדרייב." : "לא חיברתם תיקיית בי-רול מהדרייב."} אפשר לבחור תמונה מהמחשב.
+            {folder.status === "connected" ? "תיקיית הבי-רול בדרייב ריקה." : "לא חיברתם תיקיית בי-רול מהדרייב."} אפשר לבחור מהמחשב.
           </p>
         ) : (
-          <div className="grid max-h-[50vh] auto-rows-max grid-cols-3 gap-2 overflow-y-auto p-0.5" role="radiogroup" aria-label="תמונות בתיקייה">
+          <div className="grid max-h-[50vh] auto-rows-max grid-cols-3 gap-2 overflow-y-auto p-0.5" role="radiogroup" aria-label="קבצים בתיקייה">
             {images.map((item) => {
               const on = picked?.id === item.id
               return (
@@ -147,6 +167,12 @@ export function BRollPhotoSwapDialog({
                   )}
                 >
                   <DriveThumb item={item} alt="" className="size-full object-cover" />
+                  {item.kind === "video" && (
+                    <span className="absolute bottom-1 start-1 inline-flex items-center gap-0.5 rounded bg-black/60 px-1 py-0.5 text-[10px] text-white">
+                      <Play className="size-2.5" />
+                      {item.duration ?? "וידאו"}
+                    </span>
+                  )}
                   {on && (
                     <span className="absolute end-1 top-1 inline-flex size-5 items-center justify-center rounded-full bg-text-primary-default text-white dark:text-gray-10">
                       <Check className="size-3" strokeWidth={3} />
@@ -161,7 +187,7 @@ export function BRollPhotoSwapDialog({
         {error && <p className="text-xs-body text-button-destructive-default">{error}</p>}
 
         <DialogFooter className="gap-2 sm:justify-start">
-          <Button type="button" onClick={() => picked && void swap({ driveId: picked.id })} disabled={!picked || busy}>
+          <Button type="button" onClick={() => picked && void swap({ driveId: picked.id, kind: picked.kind })} disabled={!picked || busy}>
             החלפה
           </Button>
           <Button type="button" variant="outline" onClick={() => inputRef.current?.click()} disabled={busy} className="gap-1.5">
