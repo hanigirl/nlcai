@@ -244,7 +244,13 @@ export function FormatCardsRow({
   onSelect,
   aiEditFor,
   hideWaiting = false,
+  storyPlayer = false,
 }: {
+  /**
+   * The story card plays as a story — progress bars, Instagram's pacing —
+   * as in the panel, instead of paging ‹ › like a carousel (Hani, 2026-11-10).
+   */
+  storyPlayer?: boolean
   variant: FormatCardsVariant
   items: FormatCardItem[]
   selected: string | null
@@ -265,7 +271,7 @@ export function FormatCardsRow({
         <div key={item.fid} className="flex items-start" data-format-card={item.fid}>
           {i > 0 && <TreeConnector />}
           {variant === "a" ? (
-            <WindowCard item={item} selected={selected === item.fid} onSelect={() => onSelect(item.fid)} />
+            <WindowCard item={item} selected={selected === item.fid} onSelect={() => onSelect(item.fid)} storyPlayer={storyPlayer} />
           ) : (
             <UniformCard
               item={item}
@@ -273,6 +279,7 @@ export function FormatCardsRow({
               onSelect={() => onSelect(item.fid)}
               onAiEdit={aiEditFor?.(item.fid)}
               hideWaiting={hideWaiting}
+              storyPlayer={storyPlayer}
             />
           )}
         </div>
@@ -299,10 +306,37 @@ function cardButtonProps(label: string, onSelect: () => void) {
 }
 
 /**
+ * The story on a card, playing as a story. The card itself is one big click
+ * target, so the player's own taps and keys stay with the player.
+ */
+function CardStoryPlayer({ media, className }: { media: FormatCardMedia; className: string }) {
+  return (
+    <div
+      className="flex size-full justify-center"
+      data-media-control=""
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <StoryPlayer frames={media.kind === "slides" ? media.items : [media.url]} className={className} />
+    </div>
+  )
+}
+
+/**
  * A — the media window. Label above (as in the sketch), the window below in
  * the format's own shape; whatever the format holds right now fills it.
  */
-function WindowCard({ item, selected, onSelect }: { item: FormatCardItem; selected: boolean; onSelect: () => void }) {
+function WindowCard({
+  item,
+  selected,
+  onSelect,
+  storyPlayer = false,
+}: {
+  item: FormatCardItem
+  selected: boolean
+  onSelect: () => void
+  storyPlayer?: boolean
+}) {
   const Icon = item.icon
   const aspect = MEDIA_ASPECT[item.fid] ?? "aspect-[4/5]"
   return (
@@ -338,9 +372,12 @@ function WindowCard({ item, selected, onSelect }: { item: FormatCardItem; select
             </div>
           </div>
         )}
-        {item.state === "media" && item.media && (
-          <FormatMediaPreview media={item.media} fid={item.fid} fill navOverlay />
-        )}
+        {item.state === "media" && item.media &&
+          (storyPlayer && item.fid === "story" ? (
+            <CardStoryPlayer media={item.media} className="size-full rounded-none" />
+          ) : (
+            <FormatMediaPreview media={item.media} fid={item.fid} fill navOverlay />
+          ))}
       </div>
     </div>
   )
@@ -356,12 +393,14 @@ function UniformCard({
   onSelect,
   onAiEdit,
   hideWaiting = false,
+  storyPlayer = false,
 }: {
   item: FormatCardItem
   selected: boolean
   onSelect: () => void
   onAiEdit?: () => void
   hideWaiting?: boolean
+  storyPlayer?: boolean
 }) {
   const Icon = item.icon
   const hasMedia = item.state === "media" && !!item.media
@@ -410,7 +449,10 @@ function UniformCard({
             <span className="text-small text-text-neutral-default" role="status">יוצר מדיה</span>
           </div>
         )}
-        {hasMedia && item.media && (
+        {hasMedia && item.media && storyPlayer && item.fid === "story" && (
+          <CardStoryPlayer media={item.media} className="h-[240px] aspect-[9/16]" />
+        )}
+        {hasMedia && item.media && !(storyPlayer && item.fid === "story") && (
           // The format's own shape (4:5 / 9:16) at the card's height — a
           // full-width box was near square and cut a 4:5 post (Hani, 2026-11-10).
           <FormatMediaPreview

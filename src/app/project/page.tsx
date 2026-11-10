@@ -3454,6 +3454,7 @@ function ProjectPageInner() {
                             : undefined
                         }
                         hideWaiting={editAgentOn}
+                        storyPlayer={ownTextGate}
                       />
                     </div>
                   )}
