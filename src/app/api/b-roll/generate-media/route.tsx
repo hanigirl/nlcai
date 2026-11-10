@@ -145,7 +145,23 @@ export async function POST(req: NextRequest) {
     // Placing is Hani-only for now (lib/feature-access); off it, all are looks.
     const gated = gatePlacement(user.email, parseReferences(place), parseReferences(references))
     const placed = gated.place
-    const ownBackground = placed.length ? await pictureAsBackground(referenceBuffer(placed[0])) : null
+    // EXPERIMENT (gated): one file from her Drive b-roll folder becomes the
+    // background in place of the generated picture — whole, never cropped.
+    const stamp = crypto.randomUUID()
+    let library: Awaited<ReturnType<typeof pickLibraryMedia>> = null
+    if (!placed.length && driveInBRoll(user.email)) {
+      const t = Date.now()
+      library = await pickLibraryMedia(supabase, user.id, stamp).catch((e) => {
+        console.error("[b-roll library]", e)
+        return null
+      })
+      timing.library = Date.now() - t
+    }
+    const ownBackground = placed.length
+      ? await pictureAsBackground(referenceBuffer(placed[0]))
+      : library
+        ? await pictureAsBackground(library.kind === "image" ? library.file : library.firstFrame)
+        : null
     const baseDirection = withMediaBrief(
       // Her language makes graphics only, never a photo (gated).
       withGraphicOnly(
@@ -165,6 +181,9 @@ export async function POST(req: NextRequest) {
             ...baseDirection.lines,
             "",
             OWN_BACKGROUND_LINE,
+            ...(library
+              ? ["Her picture is never cropped: no zoom, push-in, scale, pan or clip on the background — it stays whole and untransformed for the entire clip. Motion only on the typography and graphic elements."]
+              : []),
           ],
         }
       : baseDirection
@@ -208,17 +227,7 @@ export async function POST(req: NextRequest) {
     ])
 
     timing.brief = Date.now() - mark
-    // EXPERIMENT (gated): one file from her Drive b-roll folder, built into the design.
-    const stamp = crypto.randomUUID()
-    if (!ownBackground && driveInBRoll(user.email)) {
-      mark = Date.now()
-      const lib = await pickLibraryMedia(supabase, user.id, stamp).catch((e) => {
-        console.error("[b-roll library]", e)
-        return null
-      })
-      timing.library = Date.now() - mark
-      if (lib) brief.libraryMedia = { url: lib.url, kind: lib.kind }
-    }
+    if (library?.kind === "video") brief.libraryMedia = { url: library.url, kind: "video" }
     mark = Date.now()
     const timed = <T,>(k: string, p: Promise<T>) =>
       p.then((v) => {

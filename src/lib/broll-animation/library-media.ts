@@ -2,8 +2,9 @@
  * EXPERIMENT (Hani, 2026-11-10, branch exp/broll-drive-in-composition):
  * a visual-language b-roll takes one picture or video from her Drive b-roll
  * folder (Settings → מדיה → "מדיה מ-Google Drive" → בי-רול) and the motion
- * design builds it INTO the composition — an element of the design, not the
- * whole background. This deliberately loosens "שפה ויזואלית ≠ דרייב" for a
+ * file becomes the b-roll's BACKGROUND in place of the generated picture —
+ * whole, never cropped (Hani: "לא לחתוך את התמונה בשום אופן"), under the
+ * typography, exactly like her own picture (background.ts pictureAsBackground). This deliberately loosens "שפה ויזואלית ≠ דרייב" for a
  * trial; it's gated (lib/feature-access DRIVE_IN_BROLL_EMAILS).
  *
  * The file is copied to our storage first (the renderer can't read Drive),
@@ -21,7 +22,13 @@ const BUCKET = "user-media"
 const MAX_BYTES = 250 * 1024 * 1024
 const RASTER = /\.(jpe?g|png|webp)$/i
 
-export type LibraryMedia = { url: string; kind: "image" | "video"; name: string }
+/**
+ * image → the file itself (it becomes the background picture).
+ * video → the WebM in our storage, plus its first frame for the still layer under it.
+ */
+export type LibraryMedia =
+  | { kind: "image"; file: Buffer; name: string }
+  | { kind: "video"; url: string; firstFrame: Buffer; name: string }
 
 async function brollFolderId(userId: string): Promise<string | null> {
   const admin = createAdminClient()
@@ -71,6 +78,27 @@ async function toWebm(input: Buffer): Promise<Buffer> {
   }
 }
 
+async function firstFrame(webm: Buffer): Promise<Buffer> {
+  const os = await import("os")
+  const fs = await import("fs/promises")
+  const path = await import("path")
+  const { spawn } = await import("child_process")
+  const ffmpegPath = (await import("ffmpeg-static")).default as unknown as string
+  const stamp = crypto.randomUUID()
+  const src = path.join(os.tmpdir(), `lib-${stamp}.webm`)
+  const out = path.join(os.tmpdir(), `lib-${stamp}.png`)
+  await fs.writeFile(src, webm)
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const p = spawn(ffmpegPath, ["-y", "-i", src, "-frames:v", "1", out])
+      p.on("close", (c) => (c === 0 ? resolve() : reject(new Error("library_first_frame"))))
+    })
+    return await fs.readFile(out)
+  } finally {
+    await Promise.all([fs.unlink(src), fs.unlink(out)].map((p) => p.catch(() => undefined)))
+  }
+}
+
 /**
  * One file from her b-roll folder, in our storage, or null when there's no
  * folder / nothing usable — then the b-roll is built as before.
@@ -90,24 +118,15 @@ export async function pickLibraryMedia(
   for (const item of order) {
     const buf = await download(item.id).catch(() => null)
     if (!buf) continue
-    let body: Buffer
-    let ext: string
-    let contentType: string
-    if (item.kind === "video") {
-      body = await toWebm(buf).catch(() => null as unknown as Buffer)
-      if (!body) continue
-      ext = "webm"
-      contentType = "video/webm"
-    } else {
-      const sharp = (await import("sharp")).default
-      body = await sharp(buf).rotate().resize(1080, 1920, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 88 }).toBuffer()
-      ext = "jpg"
-      contentType = "image/jpeg"
-    }
-    const path = `${userId}/b_roll/${stamp}-library.${ext}`
-    const { error } = await supabase.storage.from(BUCKET).upload(path, body, { contentType })
+    if (item.kind === "image") return { kind: "image", file: buf, name: item.name }
+    const webm = await toWebm(buf).catch(() => null)
+    if (!webm) continue
+    const frame = await firstFrame(webm).catch(() => null)
+    if (!frame) continue
+    const path = `${userId}/b_roll/${stamp}-library.webm`
+    const { error } = await supabase.storage.from(BUCKET).upload(path, webm, { contentType: "video/webm" })
     if (error) continue
-    return { url: supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl, kind: item.kind, name: item.name }
+    return { kind: "video", url: supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl, firstFrame: frame, name: item.name }
   }
   return null
 }
