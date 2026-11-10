@@ -83,6 +83,7 @@ import { AI_HOVER_ZONE, AiHoverEditButton } from "@/components/ai-hover-edit"
 import { isOwnMediaUrl } from "@/lib/own-media"
 import { IconActionButton } from "@/components/icon-action-button"
 import { MediaPreviewZone } from "@/components/media-preview-zone"
+import { BRollPhotoSwapDialog } from "@/components/broll-photo-swap"
 import { StoryPlayer, storyFrameSrc } from "@/components/story-player"
 import { ColorSwatchPicker } from "@/components/color-swatch-picker"
 import { CoverColorSwatches } from "@/components/cover-color-swatches"
@@ -113,7 +114,7 @@ import {
   approvalHeaderFill,
 } from "@/components/format-approval/approval-visuals"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
-import { useDescriptionAccess, useFormatCards, useOwnMediaText, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi, useAiChatAccess, useEditAgent } from "@/lib/use-scheduling-access"
+import { useDescriptionAccess, useFormatCards, useOwnMediaText, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi, useAiChatAccess, useEditAgent, useDriveInBRoll } from "@/lib/use-scheduling-access"
 import { EditAgentChat, useFollowEditAgentRun } from "@/components/edit-agent-chat"
 // "עריכה עם AI" on every format's copy (Hani, 2026-10-29).
 import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
@@ -389,6 +390,9 @@ function ProjectPageInner() {
   // The AI edit chat as an agent (lib/edit-agent) — b-roll first; on these
   // accounts it is the chat for that format, even where the old one is off.
   const editAgentOn = useEditAgent() === true
+  // "החלפת תמונה" on a visual-language b-roll (Hani + Nataliya, 2026-11-10).
+  const driveInBRollOn = useDriveInBRoll() === true
+  const [photoSwapOpen, setPhotoSwapOpen] = useState(false)
   const chatOnFor = (f: string) => aiChatOn || (editAgentOn && f === "b_roll")
   // A generate button opens the AI edit to ask for a brief first (lib/ai-edit-intent).
   const [aiChatOpening, setAiChatOpening] = useState<AiEditOpening | null>(null)
@@ -2545,6 +2549,12 @@ function ProjectPageInner() {
                 mediaBusy={ownTextGate && item.state === "media-busy"}
                 onAiEditMedia={onAiEditMedia}
                 onDeleteMedia={onDeleteMedia}
+                // Only after a first generation, on the AI's own clip — never her Drive media.
+                onSwapPhoto={
+                  driveInBRollOn && fid === "b_roll" && item.media?.kind === "video" && !ownMediaOn("b_roll")
+                    ? () => setPhotoSwapOpen(true)
+                    : undefined
+                }
                 storyPlayer={ownTextGate}
               />
             ),
@@ -3595,6 +3605,12 @@ function ProjectPageInner() {
           if (fid) await generateFormatVariants([fid])
         }}
       />
+
+      {driveInBRollOn && (
+
+        <BRollPhotoSwapDialog open={photoSwapOpen} onOpenChange={setPhotoSwapOpen} postId={savedPostId} onSwapped={setBRollUrl} />
+
+      )}
 
       {savedPostId && aiChatFormat && (() => {
         // Her own media (Drive / upload) only gets "add on top / take away"

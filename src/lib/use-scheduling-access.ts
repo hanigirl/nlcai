@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { canUseDescription, canUseFormatCards, canUseFormatGap, canUseMultinetwork, canUsePreview, canUseScheduleAllA, canUseScheduling } from "@/lib/scheduling-access"
-import { canCopyStructure, canOwnMediaText, canTalkingHeadAi, canPlaceRefs, canUseAiChat, canUseEditAgent } from "@/lib/feature-access"
+import { canCopyStructure, driveInBRoll, canOwnMediaText, canTalkingHeadAi, canPlaceRefs, canUseAiChat, canUseEditAgent } from "@/lib/feature-access"
 
 /** null while the session is read, then true/false. */
 export function useSchedulingAccess(): boolean | null {
@@ -37,6 +37,11 @@ export function useRefPlace(): boolean | null {
 }
 
 /** Her own media + the script's text on it, the fixed paths — Hani only (lib/feature-access). */
+/** Her Drive / computer photo blended into a visual-language b-roll (lib/feature-access). */
+export function useDriveInBRoll(): boolean | null {
+  return useEmailGate(driveInBRoll)
+}
+
 export function useOwnMediaText(): boolean | null {
   return useEmailGate(canOwnMediaText)
 }

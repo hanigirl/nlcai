@@ -1,7 +1,7 @@
 "use client"
 
 import type { ReactNode } from "react"
-import { Trash2, type LucideIcon } from "lucide-react"
+import { ImageIcon, Trash2, type LucideIcon } from "lucide-react"
 import { TooltipLabel } from "@/components/ui/tooltip"
 import { AI_HOVER_ZONE, AiHoverEditButton } from "@/components/ai-hover-edit"
 import { cn } from "@/lib/utils"
@@ -32,6 +32,7 @@ export function MediaPreviewZone({
   aiClassName,
   onDelete,
   deleteLabel = "מחיקת המדיה",
+  onSwapPhoto,
   className,
   children,
 }: {
@@ -54,6 +55,8 @@ export function MediaPreviewZone({
   /** Present = a hover delete button at the bottom-left corner (Hani, 2026-11-07). */
   onDelete?: () => void
   deleteLabel?: string
+  /** Present = "החלפת תמונה" at the top corner (b-roll, Hani 2026-11-10). */
+  onSwapPhoto?: () => void
   /** Size / shape of the zone — matches the preview it wraps. */
   className?: string
   children: ReactNode
@@ -69,6 +72,9 @@ export function MediaPreviewZone({
           visible
           className={aiClassName}
         />
+      )}
+      {onSwapPhoto && (
+        <HoverMediaIconButton label="החלפת תמונה" icon={ImageIcon} onClick={onSwapPhoto} visible className="top-2 end-2" />
       )}
       {onDelete && (
         <HoverMediaIconButton

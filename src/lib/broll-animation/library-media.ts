@@ -97,6 +97,34 @@ async function firstFrame(webm: Buffer): Promise<Buffer> {
   }
 }
 
+/** A picture of hers (Drive or her computer) → our storage, sized, with its size. */
+export async function storeLibraryImage(
+  supabase: SupabaseClient,
+  userId: string,
+  stamp: string,
+  file: Buffer,
+  name = "",
+): Promise<LibraryMedia> {
+  const sharp = (await import("sharp")).default
+  const body = await sharp(file).rotate().resize(1080, 1920, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 88 }).toBuffer()
+  const meta = await sharp(body).metadata()
+  const path = `${userId}/b_roll/${stamp}-library.jpg`
+  const { error } = await supabase.storage.from(BUCKET).upload(path, body, { contentType: "image/jpeg" })
+  if (error) throw new Error(error.message)
+  return {
+    kind: "image",
+    url: supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl,
+    width: meta.width ?? 1080,
+    height: meta.height ?? 1920,
+    name,
+  }
+}
+
+/** One Drive file's bytes (capped), or null. */
+export async function driveFileBytes(id: string): Promise<Buffer | null> {
+  return download(id).catch(() => null)
+}
+
 /**
  * One file from her b-roll folder, in our storage, or null when there's no
  * folder / nothing usable — then the b-roll is built as before.

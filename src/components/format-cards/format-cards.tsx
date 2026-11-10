@@ -523,8 +523,11 @@ export function FormatPanelMedia({
   mediaBusy = false,
   onAiEditMedia,
   onDeleteMedia,
+  onSwapPhoto,
   storyPlayer = false,
 }: {
+  /** "החלפת תמונה" on a visual-language b-roll (gated by the page). */
+  onSwapPhoto?: () => void
   fid: string
   media?: FormatCardMedia | null
   mediaBusy?: boolean
@@ -551,6 +554,7 @@ export function FormatPanelMedia({
       onAiEdit={onAiEditMedia}
       aiClassName={media.kind === "slides" && media.items.length > 1 ? "bottom-11" : undefined}
       onDelete={onDeleteMedia}
+      onSwapPhoto={onSwapPhoto}
       className="w-full"
     >
       {storyPlayer && fid === "story" ? (

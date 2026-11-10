@@ -176,12 +176,15 @@ function briefText(b: CompositionBrief): string {
           return [
             "",
             `HER OWN ${m.kind === "video" ? "VIDEO" : "PICTURE"} (${m.width}×${m.height}) — the hero visual, BLENDED into the design (never a picture pasted on a background): ${tag}.`,
-            "- Full-bleed: it covers the frame (object-fit: cover, position it so the person's face and hands stay fully in frame and clear of the text). It must never sit as a block, a box or a strip with a visible edge — no hard line anywhere between the picture and the design.",
-            "- Grade it into the brand: a colour wash / duotone in the brand colours over it (a brand-colour overlay with mix-blend-mode multiply, color or soft-light, and/or a gradient tint) so the photo and the design share one palette.",
-            "- Dissolve it into the background: a long, soft gradient from transparent to the brand background colour over at least the lower 40% of the frame (and the edges if needed), so the photo melts into a solid brand area where the text sits. Use the generated background image underneath that area, blended in.",
-            "- Let the visual language's graphic elements (shapes, pixels, grids, icons) overlap the photo and the dissolve zone, binding the two together.",
-            "- Never redraw the person, never hide or blur the face, never put text over the face. Keep the picture itself still (no zoom, pan or rotation); motion only on the typography and graphic elements.",
-            "- The typography sits on the dissolved brand area, integrated with the photo; add scrims or plates in the visual language wherever it needs them to stay legible.",
+            "Build it with EXACTLY this layer recipe, so every b-roll of hers looks the same way (only the colours come from her brand):",
+            `1. Bottom: the background image (${BACKGROUND_TOKEN}), full-frame.`,
+            "2. Her picture: position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:50% 25%. It stays still for the whole clip (no zoom, pan, rotation, blur or filter on it). It carries class=\"her-photo\".",
+            "3. Its dissolve — a mask on the picture itself, smooth and long, never a hard line or a short fade: mask-image (and -webkit-mask-image): linear-gradient(to bottom, #000 0%, #000 38%, rgba(0,0,0,.92) 46%, rgba(0,0,0,.75) 54%, rgba(0,0,0,.5) 62%, rgba(0,0,0,.27) 70%, rgba(0,0,0,.1) 78%, transparent 86%).",
+            "4. The brand grade over the picture: one full-frame layer in the brand's main dark colour with mix-blend-mode: multiply at opacity 0.35, and one in the brand's accent colour with mix-blend-mode: soft-light at opacity 0.25 — so the photo and the design share one palette. Never strong enough to hide her face.",
+            "5. The brand floor: a full-frame linear-gradient(to bottom, transparent 45%, <brand dark colour at 70% alpha> 70%, <brand dark colour> 92%) — the text sits on it.",
+            "6. The visual language's graphic elements (shapes, pixels, grids, icons) above that, some overlapping the dissolve zone to bind photo and design.",
+            "7. The typography on top, in the lower part (the brand floor), never over the face.",
+            "No other treatment of the picture: no boxes, frames, borders, strips, clip-paths or vignettes around it.",
           ]
         })()
       : []),
