@@ -5,6 +5,7 @@ import { ArrowUp, Loader2, X } from "lucide-react"
 import { ReferenceAddMenu } from "@/components/ai-edit-drive-reference"
 import { useDriveInBRoll } from "@/lib/use-scheduling-access"
 import { createClient } from "@/lib/supabase/client"
+import { BROLL_VIDEO_TOO_BIG, MAX_BROLL_VIDEO_BYTES } from "@/lib/broll-video-limit"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { BidiText } from "@/components/bidi-text"
 import { AiSparkle } from "@/components/ai-refine-button"
@@ -172,6 +173,11 @@ export function EditAgentChat({
   const send = async (text: string) => {
     const words = text.trim()
     const images = refs.refs
+    // Checked before anything is sent: a video from her computer over the limit.
+    if (images.some((r) => { const o = refs.originOf(r); return o?.kind === "video" && !!o.file && o.file.size > MAX_BROLL_VIDEO_BYTES })) {
+      setMessages((m) => [...m, { role: "assistant", text: BROLL_VIDEO_TOO_BIG, error: true }])
+      return
+    }
     // A video is sent as the video itself, not only its frame: a Drive one
     // by its link, one from her computer uploaded to her storage first (too
     // big for a request body).

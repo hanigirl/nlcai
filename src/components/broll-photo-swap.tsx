@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Check, Loader2, Monitor, Play } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
+import { BROLL_VIDEO_TOO_BIG, MAX_BROLL_VIDEO_BYTES } from "@/lib/broll-video-limit"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -113,6 +114,10 @@ export function BRollPhotoSwapDialog({
             e.target.value = ""
             if (!f) return
             if (f.type.startsWith("video/")) {
+              if (f.size > MAX_BROLL_VIDEO_BYTES) {
+                setError(BROLL_VIDEO_TOO_BIG)
+                return
+              }
               // Too big for a request: straight to her storage, then the server takes it.
               void (async () => {
                 setBusy(true)

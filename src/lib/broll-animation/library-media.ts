@@ -20,7 +20,7 @@ import { COMPOSITION_HEIGHT, COMPOSITION_SECONDS } from "@/lib/broll-animation/c
 
 const BUCKET = "user-media"
 /** Bigger files are skipped — the download alone would eat the clip's time. */
-const MAX_BYTES = 250 * 1024 * 1024
+const MAX_BYTES = 150 * 1024 * 1024
 const RASTER = /\.(jpe?g|png|webp)$/i
 const VIDEOS_ON = true
 
