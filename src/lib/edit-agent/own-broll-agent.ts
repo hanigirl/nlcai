@@ -62,6 +62,7 @@ const TOOLS: Anthropic.Tool[] = [
         text: { type: "string", description: "#hex colour of the words" },
         pill: { type: "string", description: "#hex colour of the box behind the words, or \"none\"" },
         scale: { type: "number", minimum: 0.6, maximum: 1.5 },
+        move_y: { type: "number", description: "Fine move of the whole caption from where it is NOW, in px on the 1080×1920 frame: + down, − up (\"40 פיקסל למטה\" → 40). Use for any small nudge." },
         design: { type: "string", description: "Any other look / motion of the caption, as a precise instruction (Hebrew or English). It REPLACES the earlier design wording, so include what should stay from it." },
       },
     },
@@ -108,6 +109,9 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
   const state = [
     `THE B-ROLL: her own ${kind}.`,
     `- Caption now: ${record ? JSON.stringify({ position: prev.position ?? "bottom", style: prev.style ?? "default (white words on a black box)", design: prev.design ?? null }) : "none yet (the script will be put on it)"}`,
+    kind === "image"
+      ? "- On a PHOTO the caption is a still plate: position, move_y, colours, box and size work; `design` (font, shadow, motion…) does NOT apply to a photo. Never say you changed something that has no tool here — say what you can do instead."
+      : "- On a VIDEO everything works: position, move_y, colours, box, size, and `design` for any other look or motion.",
     `- The words (the script — not changeable here): ${JSON.stringify([input.script?.headline, input.script?.body].filter(Boolean).join(" / ") || "(no script text)")}`,
     "",
     "THE CONVERSATION SO FAR:",
@@ -153,7 +157,14 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
       }
       if (u.name === "set_caption") {
         const position = a.position === "top" || a.position === "center" || a.position === "bottom" ? a.position : undefined
-        const style = cleanCaptionStyle({ text: a.text, pill: a.pill, scale: a.scale })
+        const move = typeof a.move_y === "number" && Number.isFinite(a.move_y) ? a.move_y : 0
+        const baseOffset = change?.style?.offsetY ?? (position ? 0 : (prev.style?.offsetY ?? 0))
+        const style = cleanCaptionStyle({
+          text: a.text,
+          pill: a.pill,
+          scale: a.scale,
+          ...(move || position ? { offsetY: baseOffset + move } : {}),
+        })
         const design = typeof a.design === "string" && a.design.trim() ? a.design.trim() : undefined
         change = {
           ...(change ?? {}),

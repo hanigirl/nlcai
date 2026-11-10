@@ -323,6 +323,8 @@ async function renderCaption(
           // feed image has nothing over it at all.
           paddingTop: position === "top" ? canvas.padTop : 0,
           paddingBottom: position === "bottom" ? canvas.padBottom : 0,
+          // Her fine move, px on the 1080-wide canvas (scaled to this one).
+          ...(style?.offsetY ? { position: "relative" as const, top: Math.round(style.offsetY * (W / 1080)) } : {}),
           paddingLeft: canvas.padX,
           paddingRight: canvas.padX,
           // The gap IS the separation between hook and body.

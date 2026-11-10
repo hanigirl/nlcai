@@ -49,6 +49,8 @@ export interface CaptionStyle {
   text?: string
   /** Size relative to the default, 0.6–1.5. */
   scale?: number
+  /** Fine move of the whole caption, px on the 1080×1920 canvas, + = down (Hani, 2026-11-10: "40 פיקסל למטה"). */
+  offsetY?: number
   /**
    * Drive media (Hani, 2026-11-09): every line on its own rounded box that
    * hugs that line — never one block around all of them.
@@ -93,6 +95,7 @@ export function cleanCaptionStyle(style: unknown): CaptionStyle | undefined {
   if (typeof s.pill === "string" && (s.pill === "none" || HEX.test(s.pill))) out.pill = s.pill
   if (typeof s.text === "string" && HEX.test(s.text)) out.text = s.text
   if (typeof s.scale === "number" && Number.isFinite(s.scale)) out.scale = Math.min(1.5, Math.max(0.6, s.scale))
+  if (typeof s.offsetY === "number" && Number.isFinite(s.offsetY)) out.offsetY = Math.round(Math.min(700, Math.max(-700, s.offsetY)))
   return Object.keys(out).length ? out : undefined
 }
 

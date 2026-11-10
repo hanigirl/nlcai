@@ -106,7 +106,7 @@ export async function renderOwnVideoCaption(
   if (covered > MAX_COVERAGE) throw new Error(`overlay_covers_footage:${covered.toFixed(2)}`)
   // Enforced, not hoped for: when the words landed elsewhere, the whole layer
   // is moved to where she asked.
-  if (spec.position) await placeLayer(dir, frames, spec.position)
+  if (spec.position || spec.style?.offsetY) await placeLayer(dir, frames, spec.position, spec.style?.offsetY ?? 0)
   return frames
 }
 
@@ -116,7 +116,7 @@ const TARGET_MID: Record<"top" | "center" | "bottom", number> = { top: 470, cent
 const SAFE_TOP = 230
 const SAFE_BOTTOM = 1500
 
-async function placeLayer(dir: string, frames: number, position: "top" | "center" | "bottom"): Promise<void> {
+async function placeLayer(dir: string, frames: number, position: "top" | "center" | "bottom" | undefined, offsetY = 0): Promise<void> {
   const sharp = (await import("sharp")).default
   const fs = await import("fs/promises")
   const last = path.join(dir, `f${String(frames - 1).padStart(4, "0")}.png`)
@@ -135,9 +135,12 @@ async function placeLayer(dir: string, frames: number, position: "top" | "center
   const scale = 1920 / info.height
   const mid = ((top + bottom) / 2) * scale
   const height = (bottom - top) * scale
-  let delta = Math.round(TARGET_MID[position] - mid)
+  let delta = position ? Math.round(TARGET_MID[position] - mid) : 0
   // Already where she asked (within ~120px): leave the design as it is.
-  if (Math.abs(delta) < 120) return
+  if (Math.abs(delta) < 120) delta = 0
+  // Her fine move on top of that.
+  delta += offsetY
+  if (delta === 0) return
   delta = Math.max(SAFE_TOP - top * scale, Math.min(SAFE_BOTTOM - bottom * scale, delta))
   if (height > SAFE_BOTTOM - SAFE_TOP) return
   const d = Math.round(delta / scale)
