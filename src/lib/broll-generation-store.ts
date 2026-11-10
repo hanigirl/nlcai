@@ -135,6 +135,15 @@ export function getBRollGenerationSnapshot(postId: string | null): BRollState {
  * listener has gone away; this store only carries the PROGRESS and the URL so
  * the UI can catch up without a reload.
  */
+/** Why a generation failed, in her words, when the route said nothing readable. */
+function failureReason(status: number, error?: string): string {
+  if (status === 504 || status === 524) return "הבנייה לקחה יותר מדי זמן והשרת עצר אותה, כנראה בגלל סרטון ארוך או כבד. נסו שוב, ואם זה חוזר בחרו סרטון קצר יותר."
+  if (status === 429) return "יותר מדי בקשות בבת אחת. חכו דקה ונסו שוב."
+  if (status === 401) return "נראה שהתנתקתם. התחברו מחדש ונסו שוב."
+  if (status >= 500) return `תקלה בשרת${error ? ` (${error.slice(0, 80)})` : ""}. נסו שוב.`
+  return error ? `הבקשה לא עברה (${error.slice(0, 80)}). נסו שוב.` : "הבקשה לא עברה. נסו שוב."
+}
+
 export function startBRollGeneration(
   postId: string,
   variationIndex: number,
@@ -147,9 +156,11 @@ export function startBRollGeneration(
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   const toastId = `broll-gen-${++toastSeq}`
   if (!quiet) startLongWait(toastId, "מייצרים בי-רול... זה יכול לקחת כשתי דקות")
-  const fail = (message: string): MediaGenResult => {
-    if (!quiet) toast.error(message, { id: toastId, duration: 10000 })
-    return { ok: false, message }
+  // Failed: the title says so, the line under it says WHY (Hani, 2026-11-10:
+  // "תכתוב למה היא נכשלה") — never the "you can leave this screen" promise.
+  const fail = (reason: string): MediaGenResult => {
+    if (!quiet) toast.error("יצירת הבי-רול נכשלה", { id: toastId, description: reason, duration: 15000 })
+    return { ok: false, message: reason }
   }
 
   return (async (): Promise<MediaGenResult> => {
@@ -175,13 +186,17 @@ export function startBRollGeneration(
         message?: string
       }
       if (!res.ok || !data.url) {
-        return fail(data.message ?? data.error ?? "יצירת הבי-רול נכשלה")
+        return fail(data.message ?? failureReason(res.status, data.error))
       }
       update(postId, (s) => ({ ...s, url: data.url as string }))
       if (!quiet) longWaitDone(toastId, "הבי-רול נוצר", { postId })
       return { ok: true }
     } catch (err) {
-      return fail(`יצירת הבי-רול נכשלה: ${err instanceof Error ? err.message : String(err)}`)
+      return fail(
+        err instanceof TypeError
+          ? "החיבור לשרת נקטע באמצע. בדקו את האינטרנט ונסו שוב."
+          : `משהו השתבש בדרך (${err instanceof Error ? err.message : String(err)}). נסו שוב.`,
+      )
     } finally {
       update(postId, (s) => ({ ...s, inFlight: Math.max(0, s.inFlight - 1) }))
     }
@@ -233,7 +248,7 @@ export function startBRollEdit(
       }
       if (!res.ok || !data.url) {
         const message = data.message ?? data.error ?? "עריכת הבי-רול נכשלה"
-        if (!opts.quiet) toast.error(message, { id: toastId, duration: 10000 })
+        if (!opts.quiet) toast.error(message, { id: toastId, description: "", duration: 10000 })
         return { ok: false as const, message }
       }
       // The edit changed nothing — the clip stays, and the reply says so.
@@ -247,7 +262,7 @@ export function startBRollEdit(
       return { ok: true as const, url: data.url }
     } catch (err) {
       const message = `עריכת הבי-רול נכשלה: ${err instanceof Error ? err.message : String(err)}`
-      if (!opts.quiet) toast.error(message, { id: toastId, duration: 10000 })
+      if (!opts.quiet) toast.error(message, { id: toastId, description: "", duration: 10000 })
       return { ok: false as const, message }
     } finally {
       update(postId, (s) => ({ ...s, inFlight: Math.max(0, s.inFlight - 1) }))
@@ -300,6 +315,7 @@ export function startCaptionBurn(postId: string, format: string): void {
         const message = data.message ?? data.error ?? "הטמעת הכיתוב נכשלה"
         toast.error(message, {
           id: toastId,
+          description: "",
           duration: 10000,
         })
         update(postId, (s) => ({ ...s, burnError: { format, message } }))
@@ -312,7 +328,7 @@ export function startCaptionBurn(postId: string, format: string): void {
       toast.success("הכיתוב הוטמע בסרטון", { id: toastId, duration: 4000 })
     } catch (err) {
       const message = `הטמעת הכיתוב נכשלה: ${err instanceof Error ? err.message : String(err)}`
-      toast.error(message, { id: toastId, duration: 10000 })
+      toast.error(message, { id: toastId, description: "", duration: 10000 })
       update(postId, (s) => ({ ...s, burnError: { format, message } }))
     } finally {
       update(postId, (s) => ({
@@ -413,7 +429,7 @@ export function startImageCaption(
       if (!res.ok || !data.url) {
         const msg = data.message ?? data.error ?? "הטמעת הכיתוב בתמונה נכשלה"
         update(postId, (s) => ({ ...s, captionImageError: msg }))
-        if (!opts?.quiet) toast.error(msg, { id: toastId, duration: 10000 })
+        if (!opts?.quiet) toast.error(msg, { id: toastId, description: "", duration: 10000 })
         return { ok: false, message: msg }
       }
       update(postId, (s) => ({
@@ -433,7 +449,7 @@ export function startImageCaption(
         err instanceof Error ? err.message : String(err)
       }`
       update(postId, (s) => ({ ...s, captionImageError: msg }))
-      if (!opts?.quiet) toast.error(msg, { id: toastId, duration: 10000 })
+      if (!opts?.quiet) toast.error(msg, { id: toastId, description: "", duration: 10000 })
       return { ok: false, message: msg }
     } finally {
       update(postId, (s) => ({

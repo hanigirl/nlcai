@@ -186,7 +186,7 @@ export function startImageGeneration(
   const toastId = `img-gen-${++toastSeq}`
   if (!quiet) startLongWait(toastId, "מייצרים תמונה עם AI... זה יכול לקחת עד דקה")
   const fail = (message: string): MediaGenResult => {
-    if (!quiet) toast.error(message, { id: toastId, duration: 10000 })
+    if (!quiet) toast.error(message, { id: toastId, description: "", duration: 10000 })
     return { ok: false, message }
   }
 

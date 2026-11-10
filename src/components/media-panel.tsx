@@ -2143,7 +2143,7 @@ function CarouselFlow({
         // to `finally`, leaving the `duration: Infinity` loading toast on screen
         // forever with no way to dismiss it.
         setError("שגיאה ביצירת הקרוסלה")
-        if (!fromPanel) toast.error("שגיאה ביצירת הקרוסלה", { id: genToast, duration: 8000 })
+        if (!fromPanel) toast.error("שגיאה ביצירת הקרוסלה", { id: genToast, description: "", duration: 8000 })
       } else if (data.images) {
         // Her clips in their slots (Hani, 2026-11-06): each made a video
         // slide on its slide — her footage untouched, captioned per her brief.
@@ -2206,7 +2206,7 @@ function CarouselFlow({
       const info = carouselErrorInfo(0, null)
       setError(info.message)
       result = { ok: false, message: info.message }
-      if (!fromPanel) toast.error(info.message, { id: genToast, duration: 12000 })
+      if (!fromPanel) toast.error(info.message, { id: genToast, description: "", duration: 12000 })
     } finally {
       setGenerating(false)
       onBusyChange?.("carousel", false)

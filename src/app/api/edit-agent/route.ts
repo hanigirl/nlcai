@@ -5,13 +5,14 @@ import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { getAuthUser } from "@/lib/auth-user"
 import { getUserApiKey } from "@/lib/api-keys"
-import { canBlendBRoll, driveInBRoll, canUseEditAgent } from "@/lib/feature-access"
+import { canBlendBRoll, canEditOwnBRollCaption, driveInBRoll, canUseEditAgent } from "@/lib/feature-access"
 import { loadComposition } from "@/lib/broll-animation/store"
 import { isOwnMediaUrl } from "@/lib/own-media"
 import { scriptTextFor } from "@/lib/script-text"
 import { parseReferences } from "@/lib/ai-edit-references"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
-import { runBRollAgent, type ChatTurn } from "@/lib/edit-agent/broll-agent"
+import { runBRollAgent, type BRollAgentOutcome, type ChatTurn } from "@/lib/edit-agent/broll-agent"
+import { runOwnBRollAgent } from "@/lib/edit-agent/own-broll-agent"
 
 /**
  * The AI edit chat as an agent, on the server (Hani, 2026-11-10; lib/edit-agent).
@@ -41,6 +42,7 @@ export interface AgentMessage {
   at: string
 }
 
+const isVideoLike = (url: string) => !/\.(png|jpe?g|webp|avif|gif)(\?|$)/i.test(url)
 const keyFor = (postId: string, format: string) => `agent:${postId}:${format}`
 // ai_chat_threads / ai_edit_jobs aren't in the generated types yet.
 const untyped = (c: unknown) => c as SupabaseClient
@@ -167,13 +169,16 @@ export async function POST(req: NextRequest) {
         .from("media_assets")
         .select("url")
         .eq("format_variant_id", v.id)
-        .eq("asset_type", "video")
+        .in("asset_type", ["video", "image"])
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle()
     : { data: null }
-  const clipUrl = (asset as { url: string | null } | null)?.url ?? null
-  // IRON RULE: her own media is not the chat's.
+  const mediaUrl = (asset as { url: string | null } | null)?.url ?? null
+  // Her own b-roll: the improved chat, caption look only (gated, Hani 2026-11-10).
+  const ownCaption = !!mediaUrl && isOwnMediaUrl(mediaUrl) && canEditOwnBRollCaption(user.email)
+  const clipUrl = mediaUrl && isVideoLike(mediaUrl) ? mediaUrl : null
+  // IRON RULE: her own media is not the composition agent's.
   const composition = clipUrl && !isOwnMediaUrl(clipUrl) ? await loadComposition(supabase, clipUrl) : null
 
   const herImages = await storeImages(admin, user.id, attached)
@@ -186,7 +191,7 @@ export async function POST(req: NextRequest) {
     await appendMessages(admin, user.id, chatKey, [{ role: "assistant", text: reply, at: now() }])
     return NextResponse.json({ refused: true })
   }
-  if (!clipUrl || !composition) {
+  if (!ownCaption && (!clipUrl || !composition)) {
     return refuse(
       clipUrl && isOwnMediaUrl(clipUrl)
         ? "זה בי-רול מהמדיה שלכם, ובו אני לא נוגע. הצ׳אט עובד רק על בי-רול שנוצר בשפה הוויזואלית שלכם."
@@ -217,9 +222,31 @@ export async function POST(req: NextRequest) {
     await admin.from("ai_edit_jobs").update({ ...patch, updated_at: now() }).eq("id", jobId)
   }
 
+  // The own-b-roll caption runs through our caption routes as her.
+  const origin = new URL(req.url).origin
+  const cookie = req.headers.get("cookie") ?? ""
   after(async () => {
     try {
-      const outcome = await runBRollAgent({
+      const outcome: BRollAgentOutcome = ownCaption
+        ? await runOwnBRollAgent({
+            db: admin,
+            postId,
+            anthropicKey,
+            mediaUrl: mediaUrl!,
+            script: scriptTextFor("b_roll", v?.body),
+            history,
+            request: text || "(she attached pictures without words)",
+            setProgress: (progress) => setJob({ progress }),
+            call: async <T,>(path: string, payload: unknown) => {
+              const res = await fetch(new URL(path, origin), {
+                method: "POST",
+                headers: { "Content-Type": "application/json", cookie },
+                body: JSON.stringify(payload),
+              })
+              return { ok: res.ok, data: (await res.json().catch(() => ({}))) as T }
+            },
+          })
+        : await runBRollAgent({
         db: admin,
         userId: user.id,
         postId,
@@ -227,8 +254,8 @@ export async function POST(req: NextRequest) {
         openaiKey,
         canBlend: canBlendBRoll(user.email),
         canReplacePhoto: driveInBRoll(user.email),
-        clipUrl,
-        composition,
+        clipUrl: clipUrl!,
+        composition: composition!,
         script: scriptTextFor("b_roll", v?.body),
         history,
         request: text || "(she attached pictures without words)",

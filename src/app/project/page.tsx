@@ -3638,11 +3638,13 @@ function ProjectPageInner() {
         const captionChat = own && ownCaptionEdit(aiChatFormat)
         if (ownTextGate && own && !captionChat && aiChatFormat !== "talking_head" && aiChatOpening?.kind !== "generate") return null
         // The agent (lib/edit-agent): b-roll, never her own media (iron rule).
-        if (editAgentOn && aiChatFormat === "b_roll" && !captionChat) {
-          if (own) return null
+        // The agent (lib/edit-agent) — on her own b-roll too, caption look only (gated).
+        if (editAgentOn && aiChatFormat === "b_roll") {
+          if (own && !captionChat) return null
           return (
             <EditAgentChat
               key={`agent:${savedPostId}:b_roll`}
+              own={captionChat}
               postId={savedPostId}
               format="b_roll"
               onClose={() => { setAiChatFormat(null); setAiChatOpening(null) }}
