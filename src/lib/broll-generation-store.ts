@@ -155,7 +155,7 @@ export function startBRollGeneration(
   const { brief, references, place, quiet = false } = opts
   update(postId, (s) => ({ ...s, inFlight: s.inFlight + 1 }))
   const toastId = `broll-gen-${++toastSeq}`
-  if (!quiet) startLongWait(toastId, "מייצרים בי-רול... זה יכול לקחת כשתי דקות")
+  if (!quiet) startLongWait(toastId, "מייצרים בי-רול... זה יכול לקחת כשלוש דקות")
   // Failed: the title says so, the line under it says WHY (Hani, 2026-11-10:
   // "תכתוב למה היא נכשלה") — never the "you can leave this screen" promise.
   const fail = (reason: string): MediaGenResult => {

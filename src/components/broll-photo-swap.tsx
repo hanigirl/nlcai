@@ -142,7 +142,7 @@ export function BRollPhotoSwapDialog({
         {busy ? (
           <div className="flex items-center gap-2 rounded-lg bg-bg-surface p-4 text-small text-text-primary-default" role="status">
             <Loader2 className="size-4 animate-spin text-text-neutral-default" />
-            משלבת ומרנדרת את הבי-רול. זה לוקח כמה דקות.
+            משלבת ומרנדרת את הבי-רול. זה לוקח כשלוש דקות.
           </div>
         ) : !folder || folder.status === "checking" ? (
           <div className="grid grid-cols-3 gap-2" aria-busy>

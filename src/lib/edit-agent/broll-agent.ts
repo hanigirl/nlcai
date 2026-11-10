@@ -500,7 +500,7 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
     if (script && !hasScriptWords(template, script)) {
       template = await reviseBRoll(anthropicKey, brief, template, scriptWordsFix(script))
     }
-    await input.setProgress("מרנדר את הבי-רול החדש... זה לוקח כמה דקות")
+    await input.setProgress("מרנדר את הבי-רול החדש... זה לוקח כשלוש דקות")
     const os = await import("os")
     const fs = await import("fs/promises")
     const path = await import("path")
