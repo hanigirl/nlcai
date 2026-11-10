@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { finalizeHtml, reviseBRoll, type CompositionBrief } from "@/lib/broll-animation/compose"
 import { FAST_RENDER_PAGES, renderComposition } from "@/lib/broll-animation/render"
+import { renderDistributed } from "@/lib/broll-animation/distributed"
 import { hasOwnBackground, saveBRoll, uploadBackground, type StoredComposition } from "@/lib/broll-animation/store"
 import { currentCompositionBrief } from "@/lib/broll-animation/brief"
 import {
@@ -73,6 +74,8 @@ export interface BRollAgentInput {
   /** Per attached picture, when it is a VIDEO's frame: "drive:<id>" or "storage:<path>" — the video is what's used. */
   attachedVideos?: (string | null)[]
   setProgress: (text: string) => Promise<void>
+  /** The app's origin — the final render is split across functions (lib/broll-animation/distributed). */
+  origin?: string
 }
 
 export type BRollAgentOutcome =
@@ -504,7 +507,8 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
     const id = stamp()
     const outPath = path.join(os.tmpdir(), `broll-agent-${id}.mp4`)
     try {
-      await renderComposition(draftHtml(), outPath, undefined, FAST_RENDER_PAGES)
+      if (input.origin) await renderDistributed(draftHtml(), outPath, input.origin)
+      else await renderComposition(draftHtml(), outPath, undefined, FAST_RENDER_PAGES)
       const clip = await fs.readFile(outPath)
       const url = await saveBRoll(db, userId, postId, id, clip, {
         ...composition,

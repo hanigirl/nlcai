@@ -263,6 +263,7 @@ export async function POST(req: NextRequest) {
             },
           })
         : await runBRollAgent({
+        origin,
         db: admin,
         userId: user.id,
         postId,

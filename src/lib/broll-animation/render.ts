@@ -243,6 +243,9 @@ async function seekTo(page: import("puppeteer-core").Page, seconds: number): Pro
   await seekVideos(page, seconds)
 }
 
+/** Frames per second of every b-roll render (the distributed render splits by it). */
+export const RENDER_FPS_BROLL = FPS
+
 export async function renderComposition(
   html: string,
   outputPath: string,
@@ -250,6 +253,8 @@ export async function renderComposition(
   timing?: Record<string, number>,
   /** Pages in parallel; 1 = the old one-page render (everyone but the gated accounts, for now). */
   pagesWanted = 1,
+  /** Only these frames [from, to) — one chunk of a distributed render (lib/broll-animation/distributed). */
+  range?: { from: number; to: number },
 ): Promise<void> {
   let t0 = Date.now()
   const lap = (k: string) => {
@@ -266,7 +271,9 @@ export async function renderComposition(
     const ready = stills.size ? withStillsForVideos(html, stills) : html
     const pages = await Promise.all(Array.from({ length: n }, () => preparePage(browser, ready)))
     lap("renderLoad")
-    const frames = COMPOSITION_SECONDS * FPS
+    const total = COMPOSITION_SECONDS * FPS
+    const first = Math.max(0, Math.min(total, range?.from ?? 0))
+    const frames = Math.max(0, Math.min(total, range?.to ?? total) - first)
     const shots: (Buffer | undefined)[] = new Array(frames)
     const waiting = new Map<number, () => void>()
     let seekMs = 0
@@ -275,8 +282,8 @@ export async function renderComposition(
     const workers = pages.map(async (page, w) => {
       for (let i = w * per; i < Math.min(frames, (w + 1) * per); i++) {
         const a = Date.now()
-        await seekTo(page, i / FPS)
-        await showVideoStills(page, i, stills)
+        await seekTo(page, (first + i) / FPS)
+        await showVideoStills(page, first + i, stills)
         const b = Date.now()
         shots[i] = Buffer.from(await page.screenshot({ type: "jpeg", quality: 88, optimizeForSpeed: true }))
         seekMs += b - a

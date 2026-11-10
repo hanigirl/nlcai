@@ -13,7 +13,8 @@ import { getAuthUser } from "@/lib/auth-user"
 import { BACKGROUND_FRAMINGS, OWN_BACKGROUND_LINE, buildBackgroundPrompt, cropToCanvas, pictureAsBackground } from "@/lib/broll-animation/background"
 import { buildCompositionBrief } from "@/lib/broll-animation/brief"
 import { composeBRoll, finalizeHtml } from "@/lib/broll-animation/compose"
-import { FAST_RENDER_PAGES, renderComposition } from "@/lib/broll-animation/render"
+import { renderComposition } from "@/lib/broll-animation/render"
+import { renderDistributed } from "@/lib/broll-animation/distributed"
 import { pickLibraryMedia } from "@/lib/broll-animation/library-media"
 import { saveBRoll, uploadBackground } from "@/lib/broll-animation/store"
 import { generateImage } from "@/lib/openai-image"
@@ -256,7 +257,12 @@ export async function POST(req: NextRequest) {
     const outPath = path.join(os.tmpdir(), `broll-${stamp}.mp4`)
     tmpFiles.push(outPath)
     mark = Date.now()
-    await renderComposition(finalizeHtml(template, backgroundUrl, brief.fonts), outPath, timing, driveInBRoll(user.email) ? FAST_RENDER_PAGES : 1)
+    // Split across functions for the gated accounts (lib/broll-animation/distributed).
+    if (driveInBRoll(user.email)) {
+      await renderDistributed(finalizeHtml(template, backgroundUrl, brief.fonts), outPath, new URL(req.url).origin, timing)
+    } else {
+      await renderComposition(finalizeHtml(template, backgroundUrl, brief.fonts), outPath, timing)
+    }
     timing.render = Date.now() - mark
     const clip = await fs.readFile(outPath)
 
