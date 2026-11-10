@@ -26,7 +26,7 @@ import {
 } from "@/lib/own-media"
 import { guardedFetch } from "@/lib/server-fetch"
 import { isOwnCarouselSlideUrl } from "@/lib/carousel-own"
-import { canOwnMediaText } from "@/lib/feature-access"
+import { canEditOwnBRollCaption, canOwnMediaText } from "@/lib/feature-access"
 import { scriptTextFor, scriptTextUnits } from "@/lib/script-text"
 
 // Rendering the clip alone takes ~250–270s on our functions (175 frames
@@ -330,6 +330,8 @@ export async function POST(req: NextRequest) {
 
     // B-roll, her own media + the script's text (Hani, 2026-11-09, gated).
     const brollOwn = format === "b_roll" && canOwnMediaText(user.email)
+    // Her own b-roll, caption look only (Hani, 2026-11-10).
+    const captionOnly = format === "b_roll" && canEditOwnBRollCaption(user.email)
     // Any format (gated): her file just imported gets the script's words without a model.
     const ownJustImported = canOwnMediaText(user.email) && input.justImported === true
     let anthropicKey: string | null = null
@@ -412,11 +414,22 @@ export async function POST(req: NextRequest) {
           post: { title: post.title, hook: post.hook_text, body: post.body, formatBody: variant.body },
           history: input.history,
           justImported: input.justImported === true,
+          captionOnly: captionOnly,
         })
       : { reply: "", ops: [], script: scriptTextUnits(format, variant.body) }
-    const plan = brollOwn
+    const held = brollOwn
       ? holdBRollToScript(planned, frames, scriptTextFor("b_roll", variant.body), input.justImported === true)
       : planned
+    // Caption only, enforced here too: set_caption with only position / look
+    // (the words are put back to the frame's own by the client's caption record).
+    const plan: OwnEditPlan = captionOnly
+      ? {
+          ...held,
+          ops: held.ops.flatMap((op) =>
+            op.op === "set_caption" ? [{ op: "set_caption" as const, frames: [1], position: op.position, style: op.style }] : [],
+          ),
+        }
+      : held
     return json({
       plan,
       frames,

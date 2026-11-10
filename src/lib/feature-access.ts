@@ -141,3 +141,13 @@ export const DRIVE_IN_BROLL_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyare
 export function driveInBRoll(email: string | null | undefined): boolean {
   return !!email && DRIVE_IN_BROLL_EMAILS.includes(email.toLowerCase())
 }
+
+/**
+ * "עריכה עם AI" on her OWN b-roll (Drive / upload), the caption only — its
+ * position, colours and size (Hani, 2026-11-10: "רק במה שאמרתי"). Never her
+ * pixels, never the words (the script).
+ */
+export const OWN_BROLL_CAPTION_EDIT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export function canEditOwnBRollCaption(email: string | null | undefined): boolean {
+  return !!email && OWN_BROLL_CAPTION_EDIT_EMAILS.includes(email.toLowerCase())
+}

@@ -50,7 +50,7 @@ import { isTalkingHeadRender } from "@/lib/talking-head-original"
 import { saveTalkingHeadVideo, uploadTalkingHeadFile } from "@/lib/talking-head-upload"
 import { cutMessage, type CutStats } from "@/lib/talking-head-cut-message"
 import { TH_EDIT_MODES, TalkingHeadPlanEditor, TalkingHeadTemplateChip, appendToTalkingHeadTemplate, type ThPlanMoment } from "@/components/talking-head-ai"
-import { useCopyStructure, useOwnMediaText } from "@/lib/use-scheduling-access"
+import { useCopyStructure, useOwnBRollCaptionEdit, useOwnMediaText } from "@/lib/use-scheduling-access"
 import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import type { LaunchFeatureId } from "@/lib/launch-features"
 
@@ -385,6 +385,16 @@ const GEN_STALE = "הבקשה הזאת כבר לא פעילה. לחצו שוב �
  * away — the caption, extra AI slides, the order — and never touches what she
  * filmed. The opening line and the suggestions say exactly that.
  */
+/** Her own b-roll, caption look only (lib/feature-access canEditOwnBRollCaption). */
+const OWN_BROLL_CAPTION_COPY = {
+  intro: "זה הבי-רול שלכם, אז מה שצילמתם נשאר בדיוק כמו שהוא. אפשר להזיז את הכיתוב (למעלה, באמצע או למטה), לשנות את צבע הטקסט, את הקופסה שמאחוריו או להוריד אותה, ואת הגודל.",
+  suggestions: [
+    { label: "להזיז את הכיתוב למעלה", text: "להזיז את הכיתוב למעלה", send: true },
+    { label: "טקסט לבן בלי קופסה", text: "טקסט לבן בלי קופסה", send: true },
+    { label: "להגדיל את הכיתוב", text: "להגדיל את הכיתוב", send: true },
+  ],
+}
+
 const OWN_COPY: Record<AiEditFormat, { title: string; intro: string; busy: string; suggestions: { label: string; text: string; send: boolean }[] }> = {
   // Her talking-head video (Hani, 2026-11-07): three ways in, her footage untouched.
   talking_head: {
@@ -513,7 +523,8 @@ export function MediaAiChat({
    */
   onUpdated?: (format: AiEditFormat, urls: string[], extra?: { driveLinks?: string[] | null }) => void
 }) {
-  const copy = own ? { ...COPY[format], ...OWN_COPY[format] } : COPY[format]
+  const captionOnly = useOwnBRollCaptionEdit() === true && own && format === "b_roll"
+  const copy = own ? { ...COPY[format], ...OWN_COPY[format], ...(captionOnly ? OWN_BROLL_CAPTION_COPY : {}) } : COPY[format]
   // Today's batch (2026-10-29), Hani only: z-50 + outside-click close and the
   // leave-screen note. Off (or loading) = as before.
   const preview = usePreviewAccess() === true

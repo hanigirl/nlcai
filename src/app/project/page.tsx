@@ -114,7 +114,7 @@ import {
   approvalHeaderFill,
 } from "@/components/format-approval/approval-visuals"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
-import { useDescriptionAccess, useFormatCards, useOwnMediaText, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi, useAiChatAccess, useEditAgent, useDriveInBRoll } from "@/lib/use-scheduling-access"
+import { useDescriptionAccess, useFormatCards, useOwnMediaText, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi, useAiChatAccess, useEditAgent, useDriveInBRoll, useOwnBRollCaptionEdit } from "@/lib/use-scheduling-access"
 import { EditAgentChat, useFollowEditAgentRun } from "@/components/edit-agent-chat"
 // "עריכה עם AI" on every format's copy (Hani, 2026-10-29).
 import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
@@ -392,6 +392,8 @@ function ProjectPageInner() {
   const editAgentOn = useEditAgent() === true
   // "החלפת תמונה" on a visual-language b-roll (Hani + Nataliya, 2026-11-10).
   const driveInBRollOn = useDriveInBRoll() === true
+  // The caption-only AI edit on her OWN b-roll (Hani + Nataliya, 2026-11-10).
+  const ownBRollCaptionOn = useOwnBRollCaptionEdit() === true
   const [photoSwapOpen, setPhotoSwapOpen] = useState(false)
   const chatOnFor = (f: string) => aiChatOn || (editAgentOn && f === "b_roll")
   // A generate button opens the AI edit to ask for a brief first (lib/ai-edit-intent).
@@ -2237,6 +2239,8 @@ function ProjectPageInner() {
     }
     return isOwnMediaFormat(fid as AiEditFormat, urls[fid] ?? [], carouselDriveLinks, ownTextGate)
   }
+  /** Her own b-roll still gets the AI edit — the caption's look only (gated). */
+  const ownCaptionEdit = (fid: string): boolean => fid === "b_roll" && ownBRollCaptionOn && ownMediaOn(fid)
   const aiOwnNow = (() => {
     if (!aiChatFormat) return false
     const storyFrames = [
@@ -2485,7 +2489,7 @@ function ProjectPageInner() {
           }
         : undefined
     const onAiEditMedia =
-      chatOnFor(fid) && (fid !== "talking_head" || thAiOn) && !ownMediaOn(fid)
+      (chatOnFor(fid) && (fid !== "talking_head" || thAiOn) && !ownMediaOn(fid)) || ownCaptionEdit(fid)
         ? () => {
             setAiChatFormat(fid as AiEditFormat)
             setAiChatOpening(null)
@@ -3441,7 +3445,7 @@ function ProjectPageInner() {
                         aiEditFor={
                           editAgentOn
                             ? (f) =>
-                                !ownMediaOn(f) && chatOnFor(f)
+                                (!ownMediaOn(f) && chatOnFor(f)) || ownCaptionEdit(f)
                                   ? () => {
                                       setAiChatFormat(f as AiEditFormat)
                                       setAiChatOpening(null)
@@ -3631,9 +3635,10 @@ function ProjectPageInner() {
         // Held from when the panel opened (aiOwn, above).
         const own = aiOwn
         // Her own media never opens a chat — only an AI generation does.
-        if (ownTextGate && own && aiChatFormat !== "talking_head" && aiChatOpening?.kind !== "generate") return null
+        const captionChat = own && ownCaptionEdit(aiChatFormat)
+        if (ownTextGate && own && !captionChat && aiChatFormat !== "talking_head" && aiChatOpening?.kind !== "generate") return null
         // The agent (lib/edit-agent): b-roll, never her own media (iron rule).
-        if (editAgentOn && aiChatFormat === "b_roll") {
+        if (editAgentOn && aiChatFormat === "b_roll" && !captionChat) {
           if (own) return null
           return (
             <EditAgentChat
@@ -3645,8 +3650,8 @@ function ProjectPageInner() {
             />
           )
         }
-        // No chat on this account at all.
-        if (!aiChatOn) return null
+        // No chat on this account at all (her own b-roll's caption edit aside).
+        if (!aiChatOn && !captionChat) return null
         return (
           <MediaAiChat
             // One panel per post + format (+ own media): switching formats

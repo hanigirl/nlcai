@@ -72,6 +72,8 @@ export async function planOwnMediaEdit(
     history?: { role: "user" | "assistant"; content: string }[]
     /** Her attached file was just imported as this media, for this request. */
     justImported?: boolean
+    /** Caption look only — position, colours, size (own b-roll, gated). */
+    captionOnly?: boolean
   },
 ): Promise<OwnEditPlan> {
   const { format, frames } = input
@@ -85,7 +87,12 @@ export async function planOwnMediaEdit(
   const isSet = isSetFormat(format)
   const animated = canAddAnimatedFrame(format)
   const client = new Anthropic({ apiKey })
-  const ops = [
+  const captionOnly = input.captionOnly === true
+  const ops = captionOnly
+    ? [
+        `{"op":"set_caption","frames":[1],"position"?:"top"|"center"|"bottom","style"?:{"pill"?:"#hex"|"none","text"?:"#hex","scale"?:0.6-1.5}} — move the caption or change its look: position, the words' colour (text), the box behind them (pill: a colour, or "none" for no box), the size (scale). Send only what she asked to change; everything else keeps its current value.`,
+      ]
+    : [
     `{"op":"set_caption","frames":[1..${n}],"headline"?:string,"body"?:string,"position"?:"top"|"center"|"bottom","style"?:{"pill"?:"#hex"|"none","text"?:"#hex","scale"?:0.6-1.5}} — add, restyle or move the caption. Omitted fields keep the frame's current caption values; to change only the position or look, send only those. The words come from the script, exactly as written — see the hard rule.`,
     `{"op":"remove_caption","frames":[...]} — take our caption off (back to her file as she brought it).`,
     ...(isSet
@@ -104,6 +111,11 @@ export async function planOwnMediaEdit(
       : []),
   ]
   const system = [
+    ...(captionOnly
+      ? [
+          "CAPTION ONLY (a hard limit for this media): the only things you can change are the caption's position (top / center / bottom), the colour of its words, the box behind them (a colour or none) and its size. Never its words, never the media itself, never anything else. If she asks for anything outside that, return no ops, refused:true, and a short Hebrew reply that says what you can change here: the position of the text, its colour, the box behind it and the size.",
+        ]
+      : []),
     "You plan edits on social media that a Hebrew-speaking creator FILMED OR PHOTOGRAPHED HERSELF. The rule: you may add on top of her media or take away from it — the caption over it, extra AI-made slides, the order — but you NEVER change, regenerate, repaint, retouch, recolour, crop, filter or 'fix' her own photo or video pixels.",
     `If she asks for something that would change HER OWN pixels — a frame marked HER OWN, never one marked AI-MADE — (brighter, remove an object, change the background, make her look different, improve the photo…), do NOT plan it: return no ops, refused:true, and a kind one-line Hebrew reply saying you can't change what she filmed/photographed, plus what you CAN do instead (the caption over it${isSet ? `, or a NEW frame${animated ? " — still or with animated text" : ""}` : ""}).`,
     ...(isSet
