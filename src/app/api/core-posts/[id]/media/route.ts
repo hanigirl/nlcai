@@ -294,7 +294,7 @@ export async function DELETE(
       .eq("format_variant_id", variantRow.id)
       .eq("asset_type", assetType)
     // Its AI chat goes with it — the next b-roll starts a fresh conversation.
-    if (format === "b_roll" || format === "story" || format === "image_post") await resetAgentChat(supabase as never, user.id, id, format).catch(() => undefined)
+    if (format === "b_roll" || format === "story" || format === "image_post" || format === "carousel") await resetAgentChat(supabase as never, user.id, id, format).catch(() => undefined)
 
     // Bump core_posts.updated_at so a media removal also counts as an
     // edit for the /core_posts "recently edited" sort.

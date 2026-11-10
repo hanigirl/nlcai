@@ -45,7 +45,7 @@ type Msg = {
 type Job = { id: string; status: "running" | "asking" | "done" | "failed"; progress: string; outcome?: { url?: string; urls?: string[]; changed?: boolean } | null }
 
 /** The formats the agent works on (lib/edit-agent). */
-export type EditAgentFormat = "b_roll" | "story" | "image_post"
+export type EditAgentFormat = "b_roll" | "story" | "image_post" | "carousel"
 
 /** Her own b-roll: the caption look only (lib/edit-agent/own-broll-agent). */
 const OWN_GREETING =
@@ -62,7 +62,11 @@ const STORY_GREETING =
 const IMAGE_POST_GREETING =
   "היי, אני כאן בשביל פוסט התמונה. אם התמונה עוצבה בשפה הוויזואלית שלכם אפשר לבקש שינויים בעיצוב, להזיז טקסט ואלמנטים, לשלב תמונה שלכם או לצייר אותה מחדש. אם זו תמונה שלכם, היא נשארת כמו שהיא, ואפשר לשנות את הכיתוב: מיקום, צבעים, קופסה, גודל. אפשר גם לצרף תמונה אחרת שתחליף אותה, או פשוט לשאול."
 
-const FORMAT_LABEL: Record<EditAgentFormat, string> = { b_roll: "בי-רול", story: "סטורי", image_post: "פוסט תמונה" }
+/** A carousel: the slides we designed, or her own slides (the same agent). */
+const CAROUSEL_GREETING =
+  "היי, אני כאן בשביל הקרוסלה. בקרוסלה שעוצבה בשפה הוויזואלית שלכם אפשר לבקש שינויים בעיצוב, בטקסט ובאיורים, לשים תמונה שלכם בשקופית, להוסיף לוגו לכל השקופיות או לבנות אותה מחדש בשפה שלכם. בשקופיות שהן מדיה שלכם, מה שצילמתם נשאר כמו שהוא, ואפשר לשנות את הכיתוב: מיקום, צבעים, קופסה, גודל. ואפשר פשוט לשאול."
+
+const FORMAT_LABEL: Record<EditAgentFormat, string> = { b_roll: "בי-רול", story: "סטורי", image_post: "פוסט תמונה", carousel: "קרוסלה" }
 
 export const EDIT_AGENT_STARTED = "edit-agent:started"
 
@@ -288,7 +292,7 @@ export function EditAgentChat({
             {messages.length === 0 && (
               <div className="flex flex-col items-end">
                 <div className="max-w-[85%] rounded-2xl rounded-se-sm bg-bg-surface px-3 py-2 text-small leading-relaxed text-text-primary-default">
-                  {format === "story" ? STORY_GREETING : format === "image_post" ? IMAGE_POST_GREETING : own ? OWN_GREETING : GREETING}
+                  {format === "story" ? STORY_GREETING : format === "image_post" ? IMAGE_POST_GREETING : format === "carousel" ? CAROUSEL_GREETING : own ? OWN_GREETING : GREETING}
                 </div>
               </div>
             )}

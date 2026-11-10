@@ -19,6 +19,8 @@ import { Resvg } from "@resvg/resvg-js"
 import { buildStoryPrompt, frameRole } from "@/lib/story-frame-prompt"
 import { buildImagePostPrompt } from "@/lib/image-post-prompt"
 import { parseImagePostBody } from "@/lib/image-post-text"
+import { carouselLinksAligned, isOwnCarousel, isOwnCarouselSlideUrl } from "@/lib/carousel-own"
+import { loadCarousel, saveCarousel, type StoredCarousel } from "@/lib/carousel-composition"
 import { replaceStyleRules, triageVisualMemory } from "@/lib/style-memory"
 import { isRuleScope } from "@/lib/visual-memory"
 import { AGENT_MODEL, type BRollAgentOutcome, type ChatTurn } from "@/lib/edit-agent/broll-agent"
@@ -48,11 +50,15 @@ import { checkFailedNote, checkTask, type CheckShot } from "@/lib/edit-agent/sel
  * על כל הפורמטים"): one 4:5 picture instead of a set of 9:16 frames — it is
  * "frame 1" to the tools, designed or her own by the same rules.
  */
-export type FrameAgentFormat = "story" | "image_post"
+export type FrameAgentFormat = "story" | "image_post" | "carousel"
 
 const FORMATS = {
   story: { width: 1080, height: 1920, shape: "9:16" as const, noun: "הסטורי", stayed: "הסטורי נשאר כמו שהיה", updated: "עדכנתי את הסטורי." },
   image_post: { width: 1080, height: 1350, shape: "4:5" as const, noun: "פוסט התמונה", stayed: "התמונה נשארה כמו שהייתה", updated: "עדכנתי את התמונה." },
+  // A carousel (Hani, 2026-11-10): its slides are the "frames". A carousel we
+  // designed is edited by the carousel's own edit engine (api/media/ai-edit —
+  // its layout, illustrations and pictures), her own slides by their caption.
+  carousel: { width: 1080, height: 1350, shape: "4:5" as const, noun: "הקרוסלה", stayed: "הקרוסלה נשארה כמו שהייתה", updated: "עדכנתי את הקרוסלה." },
 }
 
 /** The model's picture → exactly the format's canvas (object-fit: cover). */
@@ -81,6 +87,8 @@ export interface StoryAgentInput {
   anthropicKey: string
   openaiKey: string | null
   canBlend: boolean
+  /** A carousel: its Drive links per slide (format_variants.drive_slide_links). */
+  driveLinks?: string[] | null
   /** The story's frames as saved, in order (an image post: its one picture). */
   urls: string[]
   /** The story script (format_variants.body). */
@@ -140,17 +148,31 @@ const INTRO: Record<FrameAgentFormat, string> = {
   story: "working on ONE Instagram STORY: an ordered set of vertical frames (1080×1920), each carrying its own part of the post's script.",
   image_post:
     "working on ONE Instagram feed IMAGE POST: a single vertical picture (1080×1350) carrying the post's image text (headline, then the smaller lines). To the tools it is \"frame 1\" — there is only one; never talk to her about frames, say התמונה.",
+  carousel:
+    "working on ONE Instagram CAROUSEL: an ordered set of slides (1080×1350), each carrying its own part of the post's script. The tools call a slide a \"frame\" (frame 2 = slide 2); to her always say שקופית.",
 }
 const BARS: Record<FrameAgentFormat, string> = {
   story:
     "- Instagram covers the top ~14% (profile bar) and the bottom ~24% (reply bar) of a story: keep text and key elements out of there unless she insists, and tell her when a request puts text under them.\n",
   image_post: "- A feed post shows whole: no area is covered. Keep text away from the very edges.\n",
+  carousel: "- A feed carousel shows whole: no area is covered. Keep text away from the very edges.\n",
 }
 const WHICH: Record<FrameAgentFormat, string> = {
   story:
     "- Which frame: \"פריים 2\", \"הראשון\", \"האחרון\" are clear. A look change with no frame named (colours, position, size, font) applies to every frame it can. Putting a picture in, or a change that fits only one frame, with no frame named and more than one candidate: ask.\n",
   image_post: "",
+  carousel:
+    "- Which slide: \"שקופית 2\", \"הקאבר\" (slide 1), \"האחרונה\" are clear. A look change with no slide named (colours, position, size, font) applies to every slide it can. Putting a picture in, or a change that fits only one slide, with no slide named and more than one candidate: ask.\n",
 }
+
+const DESIGNED_FRAMES = `DESIGNED frames — drawn by us in her visual language; the words are part of the picture.
+- edit_design: change the design in place — move / resize / recolour the text or an element, change the background, add or remove a graphic element, spacing, alignment. Write a precise instruction: what changes, where to (in words and rough proportions), and what stays.
+- blend_picture: work a picture she attached to THIS message into the frame's design (her subject stays recognisably the same). Say where and how big.
+- redraw_frame: draw the frame again from scratch in her CURRENT visual language (optionally steered) — for "השפה שלי", "תעשה חדש", or when edits keep coming out wrong.`
+
+const DESIGNED_CAROUSEL = `DESIGNED slides — a carousel we designed in her visual language (a layout: text, backgrounds, illustrations).
+- edit_carousel: EVERY change to designed slides goes through it — where text sits, its size and colour, the layout, backgrounds, an illustration (redraw it, change it, remove its background), putting a picture she attached on a slide, an element on every slide (her logo / profile picture), or rebuilding the whole carousel in her current visual language (use_my_language). It works on the carousel as a whole: name the slides and say precisely what changes and what stays.
+- Unlike the other tools it is SAVED the moment it returns — not a draft. Look at what came back; if it isn't right, call it again to fix it, and if it can't be made right, revert_changes puts the carousel back exactly as it was when this turn started.`
 
 const systemFor = (format: FrameAgentFormat) => `You are the AI edit chat of a content app, ${INTRO[format]} The creator writes in Hebrew.
 
@@ -158,10 +180,7 @@ You talk with her like a sharp, warm designer colleague: you understand what she
 
 Every frame is one of two kinds (stated per frame below), and each kind has its own tools:
 
-DESIGNED frames — drawn by us in her visual language; the words are part of the picture.
-- edit_design: change the design in place — move / resize / recolour the text or an element, change the background, add or remove a graphic element, spacing, alignment. Write a precise instruction: what changes, where to (in words and rough proportions), and what stays.
-- blend_picture: work a picture she attached to THIS message into the frame's design (her subject stays recognisably the same). Say where and how big.
-- redraw_frame: draw the frame again from scratch in her CURRENT visual language (optionally steered) — for "השפה שלי", "תעשה חדש", or when edits keep coming out wrong.
+${format === "carousel" ? DESIGNED_CAROUSEL : DESIGNED_FRAMES}
 
 HER OWN frames — her photo or video, with the script's words as a caption over it.
 - set_caption: everything about the caption — position (top / center / bottom), a fine move in pixels, the words' colour, the box behind them (a colour or none), size; on a VIDEO also \`design\` for any other look or motion (font weight, shadow, outline, how it enters). On a PHOTO \`design\` does not apply.
@@ -169,7 +188,7 @@ HER OWN frames — her photo or video, with the script's words as a caption over
 
 Any frame:
 - use_as_is: put a photo or video she attached to THIS message in as that frame's media exactly as it is — full frame, with the script's words drawn over it (the frame becomes HER OWN). Use it when she wants her picture as the frame / as the background / "כמו שהיא", or to swap the file of one of her own frames.
-- Her picture can go in two ways: worked INTO a designed frame (blend_picture) or AS the frame (use_as_is). When her words don't say which, ask.
+${format === "carousel" ? "- On a designed carousel her picture goes onto a slide through edit_carousel (attach it there); use_as_is is for swapping the file of one of HER OWN slides." : "- Her picture can go in two ways: worked INTO a designed frame (blend_picture) or AS the frame (use_as_is). When her words don't say which, ask."}
 
 Rules that always hold:
 - The words on each frame are that frame's part of the script, word for word (given below). Never invent, add, translate, shorten or drop words — no titles, no CTA. You change how they look and where they sit, never what they say. To change the words she edits the script.
@@ -224,6 +243,29 @@ const TOOLS: Anthropic.Tool[] = [
       properties: { frames: FRAMES_PROP, direction: { type: "string", description: "Optional steer for the look (Hebrew or English)." } },
       required: ["frames"],
     },
+  },
+  {
+    name: "edit_carousel",
+    description:
+      "DESIGNED carousel only: change the designed slides (layout, text look and place, backgrounds, illustrations, her attached picture on a slide, an element on every slide, or a rebuild in her visual language). SAVED when it returns. Returns the slides it changed.",
+    input_schema: {
+      type: "object",
+      properties: {
+        instruction: {
+          type: "string",
+          description:
+            "Precise, in English: which slides, what changes, what stays. Never write the words 'visual language' or 'brand language' here — for a rebuild in her language set use_my_language instead.",
+        },
+        attached: { type: "array", items: { type: "integer", minimum: 1 }, description: "Which pictures she attached to THIS message the change uses (to place on a slide, or as a look reference). Say in the instruction what each is for." },
+        use_my_language: { type: "boolean", description: "True only when she asks to rebuild / restyle the carousel in her visual language (\"השפה שלי\", \"המיתוג שלי\")." },
+      },
+      required: ["instruction"],
+    },
+  },
+  {
+    name: "revert_changes",
+    description: "DESIGNED carousel only: put the carousel back exactly as it was when this turn started (undo every edit_carousel of this turn).",
+    input_schema: { type: "object", properties: {} },
   },
   {
     name: "set_caption",
@@ -313,12 +355,16 @@ const TOOLS: Anthropic.Tool[] = [
 ]
 
 /** The same tools; a preference is saved under the format it was made on. */
-const toolsFor = (format: FrameAgentFormat): Anthropic.Tool[] =>
-  format === "story"
-    ? TOOLS
-    : (JSON.parse(
-        JSON.stringify(TOOLS).replaceAll('"story"', '"image_post"').replaceAll("story unless", "image_post unless").replaceAll("future stories", "future image posts"),
-      ) as Anthropic.Tool[])
+const CAROUSEL_ONLY = ["edit_carousel", "revert_changes"]
+const NOT_ON_CAROUSEL = ["edit_design", "blend_picture", "redraw_frame"]
+function toolsFor(format: FrameAgentFormat): Anthropic.Tool[] {
+  const mine = TOOLS.filter((t) => (format === "carousel" ? !NOT_ON_CAROUSEL.includes(t.name) : !CAROUSEL_ONLY.includes(t.name)))
+  if (format === "story") return mine
+  const noun = format === "carousel" ? "carousels" : "image posts"
+  return JSON.parse(
+    JSON.stringify(mine).replaceAll('"story"', `"${format}"`).replaceAll("story unless", `${format} unless`).replaceAll("future stories", `future ${noun}`),
+  ) as Anthropic.Tool[]
+}
 
 export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentOutcome> {
   const { db, userId, postId, anthropicKey, openaiKey } = input
@@ -327,8 +373,14 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
   const SYSTEM = systemFor(format)
   const TOOLS_NOW = toolsFor(format)
   const single = format === "image_post"
+  const carousel = format === "carousel"
+  const UNIT = carousel ? "שקופית" : "פריים"
+  const UNITS = carousel ? "שקופיות" : "פריימים"
   /** " בפריים 2" in a set; nothing on a single picture. */
-  const at = (i: number) => (single ? "" : ` בפריים ${i + 1}`)
+  const at = (i: number) => (single ? "" : ` ב${UNIT} ${i + 1}`)
+  /** A designed carousel's edits are saved as they are made (edit_carousel). */
+  let savedChange = false
+  const startComposition: StoredCarousel | null = carousel ? await loadCarousel(db, userId, postId).catch(() => null) : null
   const crop = (b64: string) => toCanvas(b64, F.width, F.height)
   const started = Date.now()
   const client = new Anthropic({ apiKey: anthropicKey })
@@ -338,6 +390,8 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
   let remembered = false
   let offer: string | undefined
   let checks = 0
+  /** A designed carousel whose slide count changed under an edit: the set as it is now. */
+  let movedOn: string[] | null = null
 
   /* ------------------------------ the frames ------------------------------ */
   const units: (ScriptText | null)[] = scriptTextUnits(format, input.scriptBody)
@@ -346,14 +400,31 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
   const designedTexts =
     units.length === total
       ? units.map((u) => [u?.headline, u?.body].filter(Boolean).join("\n"))
-      : input.scriptBody?.trim() && !single
+      : input.scriptBody?.trim() && format === "story"
         ? storyFrames(input.scriptBody, total)
         : []
   const look: CaptionStyle = await captionLookFor(db, userId)
 
+  const links = (input.driveLinks ?? []).filter((l): l is string => typeof l === "string")
+  const ownSet = carousel && isOwnCarousel(input.urls, links)
+  const aligned = carousel && carouselLinksAligned(input.urls, links)
   const frames: Frame[] = await Promise.all(
-    input.urls.map(async (url): Promise<Frame> => {
+    input.urls.map(async (url, i): Promise<Frame> => {
       const media = isVideoMediaUrl(url) ? "video" : "image"
+      if (carousel) {
+        // A video slide is kept exactly as it is (its caption is made with the slide).
+        if (media === "video") return { kind: "locked", media, url, dirty: false, lockedWhy: "a video slide — kept exactly as it is here" }
+        const record = await readCaptionRecord(db, url)
+        if (record) return { kind: "own", media, url, source: record.sourceUrl, spec: record.caption, dirty: false }
+        // Her stored picture, never captioned by us: it IS the original.
+        if (isOwnCarouselSlideUrl(url)) return { kind: "own", media, url, source: url, dirty: false }
+        if (ownSet) {
+          // Saved as bytes with its caption in; the Drive link that lines up is the original.
+          if (aligned && links[i]) return { kind: "own", media, url, source: links[i], dirty: false }
+          return { kind: "locked", media, url, dirty: false, lockedWhy: "a slide in her own carousel whose original isn't kept (or one the AI added) — it can't be changed here" }
+        }
+        return { kind: "designed", media, url, dirty: false }
+      }
       if (!isOwnMediaUrl(url)) {
         if (media === "video") {
           return { kind: "locked", media, url, dirty: false, lockedWhy: "an animated clip made earlier — it can't be edited here, only replaced (use_as_is)" }
@@ -534,7 +605,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
     if (Date.now() - started > THINK_BUDGET_MS) results.push({ type: "text", text: "Time is nearly up: finish now, saying plainly what the last drafts show." })
     messages.push({ role: "user", content: results })
   }
-  return finishRun(anyDirty() ? "עשיתי את השינויים, הגרסה החדשה כבר בכרטיס." : "לא הספקתי לסיים הפעם. נסו לכתוב שוב, אולי בבקשה אחת בכל פעם.")
+  return finishRun(anyDirty() || savedChange ? "עשיתי את השינויים, הגרסה החדשה כבר בכרטיס." : "לא הספקתי לסיים הפעם. נסו לכתוב שוב, אולי בבקשה אחת בכל פעם.")
 
   /**
    * A fresh look at the draft against her request (lib/edit-agent/self-check).
@@ -542,15 +613,15 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
    * nothing changed, or the checks for this turn are used up.
    */
   async function selfCheck(reply: string): Promise<string | null> {
-    if (!anyDirty() || checks >= MAX_CHECKS) return null
+    if ((!anyDirty() && !savedChange) || checks >= MAX_CHECKS) return null
     checks++
     await input.setProgress("בודק שהתוצאה עומדת בבקשה...")
-    const changedIdx = frames.map((f, i) => (f.dirty ? i : -1)).filter((i) => i >= 0)
+    const changedIdx = frames.map((f, i) => (f.dirty || f.url !== input.urls[i] ? i : -1)).filter((i) => i >= 0)
     const afterLooks = await Promise.all(changedIdx.map((i) => lookOf(i)))
     const shot = (i: number, b64: string | null | undefined): CheckShot[] => (b64 ? [{ label: `Frame ${i + 1}`, jpeg: b64 }] : [])
     const check = await checkTask({
       apiKey: anthropicKey,
-      media: `${single ? "an Instagram feed image post, one picture (1080×1350), called frame 1" : `an Instagram story of ${total} frame${total > 1 ? "s" : ""} (1080×1920 each)`}. ${frames
+      media: `${single ? "an Instagram feed image post, one picture (1080×1350), called frame 1" : carousel ? `an Instagram carousel of ${total} slides (1080×1350 each; a slide is called a frame here)` : `an Instagram story of ${total} frame${total > 1 ? "s" : ""} (1080×1920 each)`}. ${frames
         .map((f, i) => `Frame ${i + 1}: ${f.kind === "designed" ? "a designed picture with the words drawn in" : f.kind === "own" ? `her own ${f.media} with a caption over it` : "locked (not editable)"}`)
         .join("; ")}. Frames not shown in AFTER were left exactly as in BEFORE.`,
       request: input.request,
@@ -558,10 +629,15 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
       before: frames.flatMap((_, i) => shot(i, beforeLooks[i])),
       after: changedIdx.flatMap((i, k) => shot(i, afterLooks[k])),
       rules: [
-        ...frames.map((_, i) => `Frame ${i + 1} carries exactly these Hebrew words, every word, spelled right, nothing added or dropped (line breaks may differ): ${JSON.stringify(wordsOf(i) || "(no words)")}`),
+        ...frames.flatMap((_, i) =>
+          // A designed carousel whose slides don't line up with the script's: its words are judged against BEFORE.
+          carousel && frames[i].kind === "designed" && !designedTexts[i]
+            ? [`Frame ${i + 1}: its Hebrew words are the same as in BEFORE (unless she asked to change them), spelled right.`]
+            : [`Frame ${i + 1} carries exactly these Hebrew words, every word, spelled right, nothing added or dropped (line breaks may differ): ${JSON.stringify(wordsOf(i) || "(no words)")}`],
+        ),
         "On a frame that is her own photo / video, her picture itself is untouched — only the caption over it may differ (unless she attached a new file to be the frame).",
         "No person, face or figure appears that wasn't in BEFORE or in a picture she attached.",
-        ...(single ? [] : ["Text and key elements stay out of the top ~14% and the bottom ~24% of a frame (Instagram covers them), unless she asked for it there."]),
+        ...(format !== "story" ? [] : ["Text and key elements stay out of the top ~14% and the bottom ~24% of a frame (Instagram covers them), unless she asked for it there."]),
       ],
       reply,
     })
@@ -676,7 +752,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
           return `REFUSED: frame${wrong.length > 1 ? "s" : ""} ${wrong.map((i) => i + 1).join(", ")} ${wrong.length > 1 ? "are" : "is"} not designed (her own media / locked). On her own frames only the caption changes (set_caption).`
         }
         const go = idx.filter((i) => frames[i].kind === "designed")
-        await input.setProgress(go.length > 1 ? "משנה את העיצוב בפריימים..." : `משנה את העיצוב${at(go[0])}...`)
+        await input.setProgress(go.length > 1 ? `משנה את העיצוב ב${UNITS}...` : `משנה את העיצוב${at(go[0])}...`)
         const notes: string[] = []
         await Promise.all(
           go.map(async (i) => {
@@ -749,6 +825,66 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         return stillBlocks(go, `Drawn again in her visual language (draft). ${CHECK}`)
       }
 
+      case "edit_carousel": {
+        if (!carousel) return "Unknown tool edit_carousel."
+        const instruction0 = String(a.instruction ?? "").trim()
+        if (!instruction0) return "FAILED: write the instruction."
+        if (!frames.some((f) => f.kind === "designed")) {
+          return "REFUSED: this carousel is her own media — her pictures are never redesigned. Only the caption on her slides changes (set_caption)."
+        }
+        const mine = a.use_my_language === true
+        // The engine reads those words as "rebuild in her language" — only when she asked for that.
+        const instruction = mine
+          ? `${instruction0}\n(להחיל את השפה הוויזואלית שלי על הקרוסלה)`
+          : instruction0.replace(/visual\s+language|brand\s+language/gi, "style")
+        const refs = (Array.isArray(a.attached) ? (a.attached as unknown[]) : [])
+          .map((n) => input.attached[Number(n) - 1])
+          .filter((r): r is string => !!r)
+        await input.setProgress(mine ? "בונה את הקרוסלה מחדש בשפה הוויזואלית שלך... זה לוקח כמה דקות" : "משנה את העיצוב של הקרוסלה... זה לוקח דקה-שתיים")
+        const r = await input.call<{ urls?: string[]; edited?: number[]; unchanged?: boolean; message?: string; error?: string }>("/api/media/ai-edit", {
+          postId,
+          format: "carousel",
+          instruction,
+          references: refs,
+          history: input.history.slice(-20).map((t) => ({ role: t.role, content: t.text })),
+        })
+        if (!r.ok || !r.data.urls) {
+          return `FAILED — nothing was changed: ${r.data.message ?? r.data.error ?? "unknown"}. Tell her plainly what this says, or try another way.`
+        }
+        if (r.data.unchanged) return "Nothing changed — the slides came back exactly as they were. Write a more specific instruction (which slide, what exactly), or tell her."
+        const urls = r.data.urls
+        if (urls.length !== frames.length) {
+          savedChange = true
+          movedOn = urls
+          return `SAVED, but the carousel now has ${urls.length} slides instead of ${frames.length}. Finish now and tell her exactly that.`
+        }
+        const changedNow: number[] = []
+        urls.forEach((u, i) => {
+          if (u === frames[i].url) return
+          frames[i] = { ...frames[i], url: u, look: undefined }
+          changedNow.push(i)
+        })
+        if (!changedNow.length) return "Nothing changed — the slides are the same files as before. Try a more specific instruction, or tell her."
+        savedChange = true
+        return stillBlocks(changedNow.slice(0, 10), `SAVED. The slides that changed (${changedNow.map((i) => i + 1).join(", ")}). ${CHECK} If it can't be made right, revert_changes.`)
+      }
+
+      case "revert_changes": {
+        if (!carousel) return "Unknown tool revert_changes."
+        if (!savedChange) return "Nothing was saved this turn — there is nothing to revert."
+        await input.setProgress("מחזיר את הקרוסלה למצב שהייתה בו...")
+        const back = await input.call<{ urls?: string[]; message?: string }>("/api/media/own-edit", { action: "save", postId, format: "carousel", urls: input.urls })
+        if (!back.ok) return `FAILED to revert: ${back.data.message ?? "unknown"}. Tell her the carousel stayed in its changed state.`
+        // The layout goes back with the slides, so the next edit works on it again.
+        if (startComposition) await saveCarousel(db, userId, postId, startComposition).catch(() => undefined)
+        input.urls.forEach((u, i) => {
+          if (frames[i] && frames[i].url !== u) frames[i] = { ...frames[i], url: u, look: undefined }
+        })
+        movedOn = null
+        savedChange = false
+        return "Reverted: the carousel is exactly as it was when this turn started. Tell her so, and why."
+      }
+
       case "set_caption": {
         const idx = pick(a.frames, true)
         const go = idx.filter((i) => frames[i].kind === "own")
@@ -756,7 +892,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         const position = a.position === "top" || a.position === "center" || a.position === "bottom" ? a.position : undefined
         const move = typeof a.move_y === "number" && Number.isFinite(a.move_y) ? a.move_y : 0
         const design = typeof a.design === "string" && a.design.trim() ? a.design.trim() : undefined
-        await input.setProgress(go.length > 1 ? "מעדכן את הכיתוב בפריימים..." : `מעדכן את הכיתוב${at(go[0])}...`)
+        await input.setProgress(go.length > 1 ? `מעדכן את הכיתוב ב${UNITS}...` : `מעדכן את הכיתוב${at(go[0])}...`)
         const notes: string[] = []
         for (const i of go) {
           const f = frames[i]
@@ -792,6 +928,10 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         if (!pic) return `FAILED: there is no attached picture ${a.attached} in this message (she attached ${input.attached.length}). Ask her to attach it (the image button: from her computer or Google Drive).`
         await input.setProgress(`שם את המדיה שלך${at(i)}...`)
         const video = input.attachedVideos?.[n] ?? null
+        if (carousel && frames[i].kind !== "own") {
+          return "REFUSED: on a designed carousel her picture goes onto a slide through edit_carousel (pass it in `attached`). use_as_is only swaps the file of one of her OWN slides."
+        }
+        if (video && carousel) return "REFUSED: a video can't be put on a carousel slide from here. Ask her for a photo, or tell her to add the video slide from the media panel."
         if (video && single) return "REFUSED: an image post is a picture — a video can't be it. Ask her for a photo (or tell her a video fits the story / b-roll)."
         let source: string
         if (video) {
@@ -863,7 +1003,19 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
   }
 
   async function finishRun(reply: string): Promise<BRollAgentOutcome> {
-    if (!anyDirty()) return { kind: "done", reply: reply || "לא שיניתי כלום.", url: input.urls[0], urls: input.urls, changed: false }
+    if (movedOn) return { kind: "done", reply: reply || F.updated, url: movedOn[0], urls: movedOn, changed: true }
+    if (!anyDirty()) {
+      // Nothing left to save: a designed carousel's edits were saved as they were made.
+      const now = frames.map((f) => f.url)
+      return {
+        kind: "done",
+        reply: reply || (savedChange ? F.updated : "לא שיניתי כלום."),
+        url: now[0],
+        urls: now,
+        changed: savedChange,
+        ...(savedChange && offer && !remembered ? { rememberOffer: offer } : {}),
+      }
+    }
     await input.setProgress(`שומר את ${F.noun}...`)
     // Offered only for a change on a designed frame: her preferences shape what we draw.
     const offerNow = offer && !remembered && frames.some((f) => f.dirty && f.kind === "designed") ? offer : undefined

@@ -127,11 +127,11 @@ export async function POST(req: NextRequest) {
   if (!canUseEditAgent(user.email)) return NextResponse.json({ error: "not_enabled" }, { status: 403 })
   const postId = body.postId ?? ""
   const format = body.format ?? ""
-  if (!postId || (format !== "b_roll" && format !== "story" && format !== "image_post")) {
-    return NextResponse.json({ error: "b_roll, story and image_post only for now" }, { status: 400 })
+  if (!postId || (format !== "b_roll" && format !== "story" && format !== "image_post" && format !== "carousel")) {
+    return NextResponse.json({ error: "b_roll, story, image_post and carousel only for now" }, { status: 400 })
   }
   // The frame agent's formats (lib/edit-agent/story-agent): a story's set, or an image post's one picture.
-  const isStory = format === "story" || format === "image_post"
+  const isStory = format === "story" || format === "image_post" || format === "carousel"
   const chatKey = keyFor(postId, format)
   const db = untyped(supabase)
   const admin = untyped(createAdminClient())
@@ -173,11 +173,11 @@ export async function POST(req: NextRequest) {
 
   const { data: variant } = await supabase
     .from("format_variants")
-    .select("id, body")
+    .select("id, body, drive_slide_links")
     .eq("core_post_id", postId)
     .eq("format", format)
     .maybeSingle()
-  const v = variant as { id: string; body: string | null } | null
+  const v = variant as { id: string; body: string | null; drive_slide_links?: string[] | null } | null
   // A story is a SET: its frames in order (the image rows, then a clip left
   // in the video slot) — the order the card shows (api/media/own-edit).
   let storyUrls: string[] = []
@@ -193,7 +193,10 @@ export async function POST(req: NextRequest) {
     storyUrls =
       format === "image_post"
         ? images.slice(-1)
-        : [...images, ...all.filter((r) => r.asset_type === "video" && !images.includes(r.url)).map((r) => r.url)]
+        : format === "carousel"
+          ? // Pictures and video slides, in her order.
+            all.map((r) => r.url)
+          : [...images, ...all.filter((r) => r.asset_type === "video" && !images.includes(r.url)).map((r) => r.url)]
   }
   const { data: asset } = v && !isStory
     ? await supabase
@@ -226,6 +229,8 @@ export async function POST(req: NextRequest) {
     return refuse(
       format === "image_post"
         ? "אין עדיין תמונה בפוסט הזה. צרו אחת בשפה הוויזואלית שלכם או חברו תמונה משלכם, ואז נעבוד עליה יחד."
+        : format === "carousel"
+          ? "אין עדיין קרוסלה בפוסט הזה. צרו אחת בשפה הוויזואלית שלכם או חברו מדיה משלכם, ואז נעבוד עליה יחד."
         : "אין עדיין מדיה בסטורי הזה. צרו סטורי בשפה הוויזואלית שלכם או חברו מדיה משלכם, ואז נעבוד עליו יחד.",
     )
   }
@@ -291,7 +296,8 @@ export async function POST(req: NextRequest) {
             userId: user.id,
             email: user.email,
             postId,
-            format: format === "image_post" ? "image_post" : "story",
+            format: format === "image_post" ? "image_post" : format === "carousel" ? "carousel" : "story",
+            driveLinks: v?.drive_slide_links ?? null,
             anthropicKey,
             openaiKey,
             canBlend: canBlendBRoll(user.email),
@@ -360,7 +366,7 @@ export async function POST(req: NextRequest) {
         ? CLAUDE_KEY_INVALID_MESSAGE
         : msg === "composition_invalid" || msg === "composition_not_seekable"
           ? "העיצוב שיצא לא היה תקין, אז השארתי את הבי-רול כמו שהיה. נסו שוב, אולי בניסוח אחר."
-          : `משהו נתקע בדרך (${msg.slice(0, 120)}), אז ${format === "story" ? "הסטורי" : format === "image_post" ? "פוסט התמונה" : "הבי-רול"} נשאר כמו שהיה. נסו שוב.`
+          : `משהו נתקע בדרך (${msg.slice(0, 120)}), אז ${format === "story" ? "הסטורי" : format === "image_post" ? "פוסט התמונה" : format === "carousel" ? "מה שלא נשמר בקרוסלה" : "הבי-רול"} נשאר כמו שהיה. נסו שוב.`
       await appendMessages(admin, user.id, chatKey, [{ role: "assistant", text: reply, error: true, at: now() }])
       await setJob({ status: "failed", progress: "", outcome: { kind: "failed", reply } })
     }

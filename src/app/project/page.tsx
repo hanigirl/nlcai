@@ -395,7 +395,7 @@ function ProjectPageInner() {
   // The caption-only AI edit on her OWN b-roll (Hani + Nataliya, 2026-11-10).
   const ownBRollCaptionOn = useOwnBRollCaptionEdit() === true
   const [photoSwapOpen, setPhotoSwapOpen] = useState(false)
-  const chatOnFor = (f: string) => aiChatOn || (editAgentOn && (f === "b_roll" || f === "story" || f === "image_post"))
+  const chatOnFor = (f: string) => aiChatOn || (editAgentOn && (f === "b_roll" || f === "story" || f === "image_post" || f === "carousel"))
   // A generate button opens the AI edit to ask for a brief first (lib/ai-edit-intent).
   const [aiChatOpening, setAiChatOpening] = useState<AiEditOpening | null>(null)
   useAiEditRequests((req) => {
@@ -515,6 +515,8 @@ function ProjectPageInner() {
   }, [])
   useFollowEditAgentRun(savedPostId, "story", editAgentOn, applyAgentStory)
   useFollowEditAgentRun(savedPostId, "image_post", editAgentOn, setImagePostUrl)
+  const applyAgentCarousel = useCallback((url: string, urls?: string[]) => setCarouselImages(urls?.length ? urls : [url]), [])
+  useFollowEditAgentRun(savedPostId, "carousel", editAgentOn, applyAgentCarousel)
   // Per-format "media is being made" — drives the skeleton card on the canvas.
   const { busy: mediaBusy, onPanelBusyChange } = useFormatMediaBusy(savedPostId, {
     onStoryImages: setStoryImages,
@@ -2250,7 +2252,7 @@ function ProjectPageInner() {
   /** Her own b-roll still gets the AI edit — the caption's look only (gated). */
   // A story of her own media: the story agent, caption look only on her frames (lib/edit-agent/story-agent).
   const ownCaptionEdit = (fid: string): boolean =>
-    (fid === "b_roll" && ownBRollCaptionOn && ownMediaOn(fid)) || ((fid === "story" || fid === "image_post") && editAgentOn && ownMediaOn(fid))
+    (fid === "b_roll" && ownBRollCaptionOn && ownMediaOn(fid)) || ((fid === "story" || fid === "image_post" || fid === "carousel") && editAgentOn && ownMediaOn(fid))
   const aiOwnNow = (() => {
     if (!aiChatFormat) return false
     const storyFrames = [
@@ -3672,6 +3674,18 @@ function ProjectPageInner() {
               format="story"
               onClose={() => { setAiChatFormat(null); setAiChatOpening(null) }}
               onMediaChanged={applyAgentStory}
+            />
+          )
+        }
+        // The same agent on a carousel — designed slides and her own slides.
+        if (editAgentOn && aiChatFormat === "carousel" && aiChatOpening?.kind !== "generate") {
+          return (
+            <EditAgentChat
+              key={`agent:${savedPostId}:carousel`}
+              postId={savedPostId}
+              format="carousel"
+              onClose={() => { setAiChatFormat(null); setAiChatOpening(null) }}
+              onMediaChanged={applyAgentCarousel}
             />
           )
         }
