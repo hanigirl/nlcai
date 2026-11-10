@@ -1,3 +1,4 @@
+import { extractDriveFileId } from "@/lib/drive-media"
 import { after, NextRequest, NextResponse } from "next/server"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/server"
@@ -109,6 +110,8 @@ export async function POST(req: NextRequest) {
     format?: string
     text?: string
     images?: unknown
+    /** Per image (same order): a Drive video's link when that picture is its frame. */
+    videos?: unknown
     action?: string
   }
   const supabase = await createClient()
@@ -230,6 +233,9 @@ export async function POST(req: NextRequest) {
         history,
         request: text || "(she attached pictures without words)",
         attached,
+        attachedVideos: Array.isArray(body.videos)
+          ? (body.videos as unknown[]).map((v) => (typeof v === "string" ? extractDriveFileId(v) : null))
+          : [],
         setProgress: (progress) => setJob({ progress }),
       })
       if (outcome.kind === "ask") {

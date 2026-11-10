@@ -185,7 +185,9 @@ export function useReferenceImages(
     },
   }
 
-  return { refs, add, remove, clear, restore, split, originals, onPaste, dropProps, dragging, full: refs.length >= max }
+  /** What one attachment stands for (a Drive video → its link), when not the picture itself. */
+  const originOf = useCallback((r: string): AsIsItem | undefined => origins[r], [origins])
+  return { refs, add, remove, clear, restore, split, originals, originOf, onPaste, dropProps, dragging, full: refs.length >= max }
 }
 
 export type ReferenceImages = ReturnType<typeof useReferenceImages>

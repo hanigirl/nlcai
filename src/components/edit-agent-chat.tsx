@@ -170,6 +170,11 @@ export function EditAgentChat({
   const send = async (text: string) => {
     const words = text.trim()
     const images = refs.refs
+    // A Drive video is sent as the video itself (its link), not only its frame.
+    const videoLinkOf = (r: string) => {
+      const o = refs.originOf(r)
+      return o?.kind === "video" && o.drive ? o.drive : null
+    }
     if ((!words && !images.length) || busy) return
     setSending(true)
     setInput("")
@@ -180,7 +185,7 @@ export function EditAgentChat({
       const res = await fetch("/api/edit-agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ postId, format, text: words, images }),
+        body: JSON.stringify({ postId, format, text: words, images, videos: images.map((r) => videoLinkOf(r)) }),
       })
       const data = (await res.json().catch(() => ({}))) as { jobId?: string; message?: string }
       if (!res.ok && data.message) {

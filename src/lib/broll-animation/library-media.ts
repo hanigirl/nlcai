@@ -120,6 +120,30 @@ export async function storeLibraryImage(
   }
 }
 
+/** A video of hers → cut, WebM, our storage, with its size. */
+export async function storeLibraryVideo(
+  supabase: SupabaseClient,
+  userId: string,
+  stamp: string,
+  file: Buffer,
+  name = "",
+): Promise<LibraryMedia> {
+  const sharp = (await import("sharp")).default
+  const webm = await toWebm(file)
+  const frame = await firstFrame(webm)
+  const meta = await sharp(frame).metadata()
+  const path = `${userId}/b_roll/${stamp}-library.webm`
+  const { error } = await supabase.storage.from(BUCKET).upload(path, webm, { contentType: "video/webm" })
+  if (error) throw new Error(error.message)
+  return {
+    kind: "video",
+    url: supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl,
+    width: meta.width ?? 1080,
+    height: meta.height ?? 1920,
+    name,
+  }
+}
+
 /** One Drive file's bytes (capped), or null. */
 export async function driveFileBytes(id: string): Promise<Buffer | null> {
   return download(id).catch(() => null)
@@ -142,7 +166,9 @@ export async function pickLibraryMedia(
   // (2026-11-10); her video inside the composition isn't tested on the server yet.
   const usable = listing.items.filter((i: DriveFolderItem) => (VIDEOS_ON && i.kind === "video") || (i.kind === "image" && RASTER.test(i.name)))
   // Random order, then the first one that downloads.
-  const order = usable.sort(() => Math.random() - 0.5).slice(0, 3)
+  // Videos first when they're on (Hani, 2026-11-10: "אני צריכה סרטונים בבירול").
+  const shuffled = usable.sort(() => Math.random() - 0.5)
+  const order = (VIDEOS_ON ? [...shuffled.filter((i) => i.kind === "video"), ...shuffled.filter((i) => i.kind !== "video")] : shuffled).slice(0, 3)
   const sharp = (await import("sharp")).default
   for (const item of order) {
     const buf = await download(item.id).catch(() => null)

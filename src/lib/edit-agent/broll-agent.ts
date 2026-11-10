@@ -14,7 +14,7 @@ import {
 import { editImage, generateImage } from "@/lib/openai-image"
 import { MOTION_RESTYLE_NOTE, MOTION_RESTYLE_NOTE_OWN_PICTURE } from "@/lib/visual-language/current-brief"
 import { referenceBuffer } from "@/lib/ai-edit-references"
-import { storeLibraryImage } from "@/lib/broll-animation/library-media"
+import { driveFileBytes, storeLibraryImage, storeLibraryVideo } from "@/lib/broll-animation/library-media"
 import { changedArea, editPrompt } from "@/lib/ai-edit-plan"
 import { loadImageForModels, normaliseImage } from "@/lib/visual-language/image-input"
 import { picturesPlaced } from "@/lib/placed-check"
@@ -70,6 +70,8 @@ export interface BRollAgentInput {
   request: string
   /** Pictures she attached to THIS message (data URLs). */
   attached: string[]
+  /** Per attached picture: the Drive file id when it is a VIDEO's frame (the video is what's used). */
+  attachedVideos?: (string | null)[]
   setProgress: (text: string) => Promise<void>
 }
 
@@ -159,7 +161,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "replace_photo",
     description:
-      "Replace HER PHOTO that is blended into the design (the hero photo layer over the background) with a picture she attached to THIS message — from her Drive or her computer. Use when she asks to change / swap / replace the picture or photo, or attaches a picture saying 'this one' about the photo. Text, layout and motion stay; the new photo is blended by the same recipe.",
+      "Replace HER PHOTO / VIDEO that is blended into the design (the hero layer over the background) with a picture or video she attached to THIS message — from her Drive or her computer (an attached Drive video is used as the video itself, not its frame). Use when she asks to change / swap / replace the picture or photo, or attaches a picture saying 'this one' about the photo. Text, layout and motion stay; the new photo is blended by the same recipe.",
     input_schema: { type: "object", properties: { attached: { type: "integer", minimum: 1 } }, required: ["attached"] },
   },
   {
@@ -400,11 +402,22 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
         if (!input.canReplacePhoto) return "REFUSED: replacing the photo isn't available on this account."
         const pic = input.attached[Number(a.attached) - 1]
         if (!pic) return `FAILED: there is no attached picture ${a.attached} in this message. Ask her to attach the picture (the image button: from her computer or Google Drive).`
-        await input.setProgress("מחליף את התמונה...")
-        const photo = await storeLibraryImage(db, userId, stamp(), referenceBuffer(pic))
-        const old = brief.libraryMedia?.url
-        brief = { ...brief, libraryMedia: { url: photo.url, kind: "image", width: photo.width, height: photo.height } }
-        if (old && template.includes(old)) {
+        const videoId = input.attachedVideos?.[Number(a.attached) - 1] ?? null
+        let photo
+        if (videoId) {
+          await input.setProgress("מביא את הסרטון מהדרייב...")
+          const bytes = await driveFileBytes(videoId)
+          if (!bytes) return "FAILED: couldn't fetch that video from her Drive (too big or not shared). Tell her, and offer a shorter clip or a picture."
+          photo = await storeLibraryVideo(db, userId, stamp(), bytes).catch(() => null)
+          if (!photo) return "FAILED: couldn't read that video. Tell her, and offer another clip or a picture."
+        } else {
+          await input.setProgress("מחליף את התמונה...")
+          photo = await storeLibraryImage(db, userId, stamp(), referenceBuffer(pic))
+        }
+        const oldMedia = brief.libraryMedia
+        const old = oldMedia?.url
+        brief = { ...brief, libraryMedia: { url: photo.url, kind: photo.kind, width: photo.width, height: photo.height } }
+        if (old && oldMedia?.kind === photo.kind && template.includes(old)) {
           template = template.split(old).join(photo.url)
         } else {
           template = await reviseBRoll(
@@ -416,7 +429,7 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
         }
         changed = true
         done.push("photo replaced")
-        return "Done (draft): her new photo is in, blended by the same recipe. Look before finish."
+        return `Done (draft): her new ${photo.kind === "video" ? "video" : "photo"} is in, blended by the same recipe. Look before finish.`
       }
       case "picture_as_background": {
         const pic = input.attached[Number(a.attached) - 1]
