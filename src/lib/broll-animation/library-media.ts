@@ -22,7 +22,7 @@ const BUCKET = "user-media"
 /** Bigger files are skipped — the download alone would eat the clip's time. */
 const MAX_BYTES = 250 * 1024 * 1024
 const RASTER = /\.(jpe?g|png|webp)$/i
-const VIDEOS_ON = false
+const VIDEOS_ON = true
 
 /** Her file in our storage, and its size (to place it whole). */
 export type LibraryMedia = { kind: "image" | "video"; url: string; width: number; height: number; name: string }
