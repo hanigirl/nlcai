@@ -58,7 +58,7 @@ export function RollbackNotice({ className }: { className?: string }) {
       </div>
       <div className="relative flex min-w-0 flex-col items-start gap-[7px] text-right text-[14px]">
         <p className="font-semibold leading-6 text-text-primary-default">
-          האפליקציה תקבל שדרוג ותתעדכן בקרוב
+          האפליקציה תקבל שדרוג ותתעדכן בקרוב!
         </p>
         <p className="leading-[1.4] text-[#475568]">
           אנו נודיע על תאריך השקה מחודש ביום חמישי 12.11 כדי שתוכלו להנות ממש בקרוב מכל השדרוגים החדשים
