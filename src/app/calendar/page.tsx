@@ -2023,7 +2023,7 @@ function ArrangeNotice({
           ? "פוסט אחד סודר בלוח."
           : `${placed} פוסטים סודרו בלוח.`
   const noRoomLine = noRoom
-    ? `${noRoom === 1 ? "פוסט אחד לא נכנס" : `${noRoom} פוסטים לא נכנסו`}: אין משבצת פנויה ב-${Math.round(HORIZON_DAYS / 30)} החודשים הקרובים.`
+    ? `${noRoom === 1 ? "פוסט אחד לא נכנס" : `${noRoom} פוסטים לא נכנסו`}: אין משבצת פנויה ב-${Math.round(HORIZON_DAYS / 365)} השנים הקרובות.`
     : ""
   const missing = formatsWithoutDay.length > 0
   const title = missing

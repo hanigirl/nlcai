@@ -32,8 +32,12 @@ export type SchedulePlan = {
   noRoom: PlanInputCard[]
 }
 
-/** How far ahead the planner is allowed to look before giving up on a card. */
-export const HORIZON_DAYS = 120
+/**
+ * How far ahead the planner may look. Every card goes in, however far ahead
+ * that is (Hani, 2026-11-11: "תמיד להכניס פוסטים גם אם זה עובר את 4 החודשים
+ * הקרובים") — this is only a guard against a loop, three years out.
+ */
+export const HORIZON_DAYS = 3 * 365
 
 function dateKey(d: Date): string {
   const y = d.getFullYear()
