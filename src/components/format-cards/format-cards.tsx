@@ -39,6 +39,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { IconActionButton } from "@/components/icon-action-button"
 import { HoverMediaIconButton, MediaPreviewZone } from "@/components/media-preview-zone"
+import { PictureCropEditor } from "@/components/picture-crop-editor"
 import { AiHoverEditButton } from "@/components/ai-hover-edit"
 import { LaneStem, TreeConnector } from "@/components/format-lanes"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
@@ -146,7 +147,10 @@ export function FormatMediaPreview({
   fill = false,
   navOverlay = false,
   box,
+  onIndexChange,
 }: {
+  /** The slide shown now — the panel's crop acts on it. */
+  onIndexChange?: (index: number) => void
   media: FormatCardMedia
   fid: string
   fill?: boolean
@@ -155,7 +159,11 @@ export function FormatMediaPreview({
   /** ‹ › floats on the media (window) instead of sitting under it. */
   navOverlay?: boolean
 }) {
-  const [i, setI] = useState(0)
+  const [i, setIRaw] = useState(0)
+  const setI = (n: number) => {
+    setIRaw(n)
+    onIndexChange?.(n)
+  }
   const items = media.kind === "slides" ? media.items : [media.url]
   const index = Math.min(i, items.length - 1)
   const src = items[index] ?? ""
@@ -584,8 +592,15 @@ export function FormatPanelMedia({
   onAiEditMedia,
   onDeleteMedia,
   onSwapPhoto,
+  crop,
   storyPlayer = false,
 }: {
+  /**
+   * "חיתוך" on her own picture (Hani, 2026-11-11): `urlAt` = the picture at
+   * that slide when it can be cut (null: not hers / a video / not stored),
+   * `apply` puts the new one in its place and saves.
+   */
+  crop?: { urlAt: (index: number) => string | null; apply: (index: number, url: string) => Promise<void> }
   /** "החלפת תמונה" on a visual-language b-roll (gated by the page). */
   onSwapPhoto?: () => void
   fid: string
@@ -601,6 +616,8 @@ export function FormatPanelMedia({
   onAiEditMedia?: () => void
   onDeleteMedia: () => void
 }) {
+  const [slide, setSlide] = useState(0)
+  const [cropping, setCropping] = useState<number | null>(null)
   if (mediaBusy || !media) {
     return (
       <div className="flex flex-col items-center gap-2">
@@ -609,8 +626,24 @@ export function FormatPanelMedia({
       </div>
     )
   }
+  const cropUrl = cropping !== null ? crop?.urlAt(cropping) : null
+  if (cropping !== null && crop && cropUrl) {
+    return (
+      <PictureCropEditor
+        key={cropUrl}
+        url={cropUrl}
+        onCancel={() => setCropping(null)}
+        onDone={async (u) => {
+          await crop.apply(cropping, u)
+          setCropping(null)
+        }}
+      />
+    )
+  }
+  const shown = media.kind === "slides" ? Math.min(slide, media.items.length - 1) : 0
   const zone = (
     <MediaPreviewZone
+      onCrop={crop?.urlAt(shown) ? () => setCropping(shown) : undefined}
       onAiEdit={onAiEditMedia}
       aiClassName={media.kind === "slides" && media.items.length > 1 ? "bottom-11" : undefined}
       onDelete={onDeleteMedia}
@@ -623,7 +656,7 @@ export function FormatPanelMedia({
           className="w-full aspect-[9/16] rounded-xl"
         />
       ) : (
-        <FormatMediaPreview media={media} fid={fid} />
+        <FormatMediaPreview media={media} fid={fid} onIndexChange={setSlide} />
       )}
     </MediaPreviewZone>
   )

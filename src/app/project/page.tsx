@@ -20,7 +20,7 @@ import {
   markCarouselSaved,
   useCarouselCaption,
 } from "@/lib/carousel-caption"
-import { isOwnCarousel } from "@/lib/carousel-own"
+import { isOwnCarousel, isOwnCarouselSlideUrl } from "@/lib/carousel-own"
 import { useStillCaption } from "@/lib/still-caption"
 import { toast } from "sonner"
 import { registerPendingSaveFlusher } from "@/lib/pending-saves"
@@ -2422,6 +2422,45 @@ function ProjectPageInner() {
     return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2) }
   }, [savedPostLoading, cardsVariant, duplicatedFormats.length])
 
+  // "חיתוך" on her own picture — image post and carousel slides (Hani,
+  // 2026-11-11; own-media text gate). The new 4:5 picture replaces the old
+  // one in the set, saved like the agent's edits (media/own-edit "save").
+  const cropFor = (fid: string) => {
+    if (!ownTextGate || !savedPostId || (fid !== "image_post" && fid !== "carousel")) return undefined
+    const stored = (u: string | null | undefined): u is string =>
+      !!u && /^https?:\/\//i.test(u) && !/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)
+    const postId = savedPostId
+    const save = async (format: "image_post" | "carousel", urls: string[]) => {
+      const r = await fetch("/api/media/own-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "save", postId, format, urls }),
+      })
+      if (!r.ok) throw new Error("החיתוך לא נשמר. נסו שוב.")
+    }
+    if (fid === "image_post") {
+      return {
+        urlAt: () => (stored(imagePostUrl) && isOwnMediaUrl(imagePostUrl) ? imagePostUrl : null),
+        apply: async (_: number, url: string) => {
+          await save("image_post", [url])
+          setImagePostUrl(url)
+        },
+      }
+    }
+    return {
+      urlAt: (i: number) => {
+        const u = carouselImages?.[i]
+        return stored(u) && isOwnCarouselSlideUrl(u) ? u : null
+      },
+      apply: async (i: number, url: string) => {
+        const urls = (carouselImages ?? []).map((u, j) => (j === i ? url : u))
+        await save("carousel", urls)
+        markCarouselSaved(postId, urls)
+        setCarouselImages(urls)
+      },
+    }
+  }
+
   const cardMediaOf = (fid: string): FormatCardMedia | null => {
     const one = (url: string | null): FormatCardMedia | null => {
       if (!url) return null
@@ -2600,6 +2639,7 @@ function ProjectPageInner() {
                 mediaBusy={ownTextGate && item.state === "media-busy"}
                 onAiEditMedia={onAiEditMedia}
                 onDeleteMedia={onDeleteMedia}
+                crop={cropFor(fid)}
                 // Only after a first generation, on the AI's own clip — never her Drive media.
                 onSwapPhoto={
                   driveInBRollOn && fid === "b_roll" && item.media?.kind === "video" && !ownMediaOn("b_roll")

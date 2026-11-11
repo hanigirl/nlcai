@@ -1,7 +1,7 @@
 "use client"
 
 import type { ReactNode } from "react"
-import { ImageIcon, Trash2, type LucideIcon } from "lucide-react"
+import { ImageIcon, Trash2, type LucideIcon, Crop } from "lucide-react"
 import { TooltipLabel } from "@/components/ui/tooltip"
 import { AI_HOVER_ZONE, AiHoverEditButton } from "@/components/ai-hover-edit"
 import { cn } from "@/lib/utils"
@@ -33,9 +33,12 @@ export function MediaPreviewZone({
   onDelete,
   deleteLabel = "מחיקת המדיה",
   onSwapPhoto,
+  onCrop,
   className,
   children,
 }: {
+  /** Present = "חיתוך התמונה" at the top corner (her own picture, Hani 2026-11-11). */
+  onCrop?: () => void
   /**
    * Opens the media panel for this format. Absent = the media isn't a click
    * target at all (the canvas panel, Hani 2026-11-09: tapping her picture
@@ -75,6 +78,9 @@ export function MediaPreviewZone({
       )}
       {onSwapPhoto && (
         <HoverMediaIconButton label="הוספת תמונה או סרטון משלכם" icon={ImageIcon} onClick={onSwapPhoto} visible className="top-2 end-2" />
+      )}
+      {onCrop && (
+        <HoverMediaIconButton label="חיתוך התמונה" icon={Crop} onClick={onCrop} visible className="top-2 start-2" />
       )}
       {onDelete && (
         <HoverMediaIconButton
