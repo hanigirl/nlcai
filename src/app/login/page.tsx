@@ -79,6 +79,9 @@ function LoginPageInner() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  // "שכחתי סיסמא" with no valid email: the email field turns red too (its
+  // message is in the box below, so no second line under the field).
+  const [emailNeeded, setEmailNeeded] = useState(false);
 
   const supabase = createClient();
 
@@ -364,8 +367,10 @@ function LoginPageInner() {
   async function handleResetPassword(targetEmail: string) {
     if (!targetEmail || !validateEmail(targetEmail)) {
       setMessage({ text: "הזינו את כתובת המייל שלכם ואז לחצו על 'שכחתי סיסמא'", type: "error" });
+      setEmailNeeded(true);
       return;
     }
+    setEmailNeeded(false);
     setLoading(true);
     // The link lands on "סיסמה חדשה" (2026-11-11 — it used to sign her in
     // and never ask for one, so the old password stayed).
@@ -465,9 +470,10 @@ function LoginPageInner() {
                   value={email}
                   onChange={(e) => {
                     setEmail(e.target.value);
+                    setEmailNeeded(false);
                     if (fieldErrors.email) setFieldErrors((prev) => ({ ...prev, email: undefined }));
                   }}
-                  aria-invalid={!!fieldErrors.email}
+                  aria-invalid={!!fieldErrors.email || emailNeeded}
                 />
                 {fieldErrors.email && (
                   <p className="mt-1 text-xs text-button-destructive-default">{fieldErrors.email}</p>
