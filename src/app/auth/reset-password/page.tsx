@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import Image from "next/image"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import logoNew from "../../../../images/logo-new.png"
 import { createClient } from "@/lib/supabase/client"
@@ -86,6 +87,12 @@ export default function ResetPasswordPage() {
                 {saving ? "שומרים..." : "שמירת הסיסמא"}
               </Button>
             </form>
+            {/* Not now: back to the sign-in screen (signed in by the link → the app). */}
+            <p className="mt-6 text-center text-small text-text-neutral-default">
+              <Link href="/login" className="font-semibold text-text-primary-default hover:underline">
+                חזרה למסך הכניסה
+              </Link>
+            </p>
           </CardContent>
         </Card>
       </div>
