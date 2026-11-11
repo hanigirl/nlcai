@@ -494,7 +494,7 @@ function LoginPageInner() {
                     type="button"
                     onClick={() => handleResetPassword(email)}
                     disabled={loading}
-                    className="mt-1.5 rounded text-xs-body text-text-neutral-default underline-offset-2 hover:text-text-primary-default hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70"
+                    className="mt-1.5 rounded text-xs-body text-text-primary-default underline underline-offset-2 hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70"
                   >
                     שכחתי סיסמא
                   </button>
