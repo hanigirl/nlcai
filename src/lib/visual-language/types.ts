@@ -69,30 +69,6 @@ export function userExampleKind(metadata: Record<string, unknown> | null | undef
   return typeof k === "string" && (USER_EXAMPLE_KINDS as readonly string[]).includes(k) ? (k as UserExampleKind) : null
 }
 
-/**
- * Usage examples belong to her visual language (Hani, 2026-11-11): each one
- * is checked against it — on upload when that's quick, and on every analysis
- * — and the verdict is kept on user_media.metadata (`fit`, `fit_reason`).
- * An example marked "mismatch" never reaches a generator; it waits, with a
- * red X, until she removes it or her language changes to fit it.
- */
-export type ExampleFit = "ok" | "mismatch"
-
-export function exampleFit(metadata: Record<string, unknown> | null | undefined): ExampleFit | null {
-  const f = metadata?.fit
-  return f === "ok" || f === "mismatch" ? f : null
-}
-
-/** Why it doesn't fit (Hebrew), when it doesn't. */
-export function exampleFitReason(metadata: Record<string, unknown> | null | undefined): string | null {
-  return exampleFit(metadata) === "mismatch" && typeof metadata?.fit_reason === "string" ? metadata.fit_reason : null
-}
-
-/** False only for an example marked as not fitting her language. */
-export function exampleUsable(metadata: Record<string, unknown> | null | undefined): boolean {
-  return exampleFit(metadata) !== "mismatch"
-}
-
 export type ElementAnchor =
   | "top-left"
   | "top-right"

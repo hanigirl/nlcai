@@ -165,11 +165,11 @@ export function textAtOnceBRoll(email: string | null | undefined): boolean {
 /**
  * "דוגמאות לשימוש" are part of the visual language (Hani, 2026-11-11): one
  * more accordion on שפה ויזואלית, after the graphic elements, instead of a
- * page of their own. Every example is checked against her language — right
- * after upload when that takes seconds, and in every analysis — and one that
- * doesn't fit gets a red X, is greyed out and never reaches a generator. Her
- * colours, fonts and elements decide; one stray example no longer turns the
- * whole language "inconsistent". Hani + Nataliya while they try it.
+ * page of their own, with a "מומלץ!" tip. Examples teach structure only:
+ * each generation takes a few at random, so uneven examples give uneven
+ * results; the colours are always her brand colours (with none set, the
+ * examples' colours too). Uneven examples never make the language
+ * "inconsistent". Hani + Nataliya while they try it.
  */
 export const EXAMPLES_IN_LANGUAGE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 export function examplesInLanguage(email: string | null | undefined): boolean {

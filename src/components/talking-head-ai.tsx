@@ -14,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
-import { exampleUsable, userExampleKind } from "@/lib/visual-language/types"
+import { userExampleKind } from "@/lib/visual-language/types"
 
 /**
  * Talking head AI edit (Notion: "עריכת דיבור למצלמה, עריכה עם כתוביות, שפה
@@ -215,7 +215,7 @@ export function useHasCoverSettings(enabled = true): boolean | null {
         .eq("user_id", user.id)
         .eq("category", "brand_example")
       const rows = (data ?? []) as { metadata: Record<string, unknown> | null }[]
-      if (live) setHas(rows.some((r) => userExampleKind(r.metadata) === "cover" && exampleUsable(r.metadata)))
+      if (live) setHas(rows.some((r) => userExampleKind(r.metadata) === "cover"))
     })()
     return () => {
       live = false

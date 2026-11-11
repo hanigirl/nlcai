@@ -131,7 +131,6 @@ export async function POST() {
     (e): e is { id: string; label: string; image: ModelImage; palette?: string[] } => e !== null,
   )
 
-  const examplesFit = examplesInLanguage(user.email)
   let result
   try {
     result = await analyzeVisualLanguage(apiKey, {
@@ -140,7 +139,7 @@ export async function POST() {
       examples: okExamples,
       niche: (identityRow as { niche?: string | null } | null)?.niche ?? null,
       brandWins: canOwnMediaText(user.email),
-      examplesFit,
+      examplesStructure: examplesInLanguage(user.email),
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -219,27 +218,5 @@ export async function POST() {
     return NextResponse.json({ error: "save_failed", message: "הניתוח הצליח אבל לא נשמר. נסו שוב." }, { status: 500 })
   }
 
-  // Each example's verdict on its own row (lib/visual-language/types
-  // exampleFit): a mismatch never reaches a generator. Read again every
-  // analysis, so an example that fits a changed language comes back.
-  const fits: { id: string; fit: "ok" | "mismatch"; reason?: string }[] = []
-  if (examplesFit && result.example_fit) {
-    for (const v of result.example_fit) {
-      const ex = okExamples[v.example - 1]
-      if (!ex || fits.some((f) => f.id === ex.id)) continue
-      fits.push({ id: ex.id, fit: v.fits ? "ok" : "mismatch", reason: v.fits ? undefined : v.reason_he.trim() || "לא תואם לשפה הוויזואלית שלכם" })
-    }
-    await Promise.all(
-      fits.map(async (f) => {
-        const metadata = exampleRows.find((r) => r.id === f.id)?.metadata ?? {}
-        const { error: fitError } = await supabase
-          .from("user_media")
-          .update({ metadata: { ...metadata, fit: f.fit, fit_reason: f.reason ?? "" } } as never)
-          .eq("id", f.id)
-        if (fitError) console.error("[visual-language][example-fit]", f.id, fitError)
-      }),
-    )
-  }
-
-  return NextResponse.json({ visual_language: visualLanguage, ...(examplesFit ? { example_fit: fits } : {}) })
+  return NextResponse.json({ visual_language: visualLanguage })
 }

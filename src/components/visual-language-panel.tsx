@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { HexColorPicker } from "react-colorful"
-import { AlertTriangle, ChevronDown, Link2, Loader2, Plus, Sparkles, Trash2, Upload, X } from "lucide-react"
+import { AlertTriangle, ChevronDown, Link2, Loader2, Plus, Sparkles, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -10,7 +10,6 @@ import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import {
@@ -19,12 +18,9 @@ import {
   MAX_BRAND_COLORS,
   MAX_BRAND_ELEMENTS,
   MAX_BRAND_EXAMPLES,
-  exampleFit,
-  exampleFitReason,
   isHexColor,
   userExampleKind,
   visualLanguageSignature,
-  type ExampleFit,
   type UserExampleKind,
   type VisualLanguage,
 } from "@/lib/visual-language/types"
@@ -64,11 +60,6 @@ interface ExampleItem {
   isLink: boolean
   /** The format she filed it under; null for examples added before filing existed. */
   filedKind: UserExampleKind | null
-  /** Checked against her language (gated examplesInside); null = not checked yet. */
-  fit?: ExampleFit | null
-  fitReason?: string | null
-  /** The quick check right after upload is running. */
-  checking?: boolean
 }
 
 /** The tabs under דוגמאות לשימוש. */
@@ -91,8 +82,8 @@ interface VisualLanguagePanelProps {
   examplesTab?: ExamplesTab
   onExamplesTabChange?: (tab: ExamplesTab) => void
   /**
-   * דוגמאות לשימוש as one more accordion on the "visual" view, each example
-   * checked against her language (lib/feature-access examplesInLanguage).
+   * דוגמאות לשימוש as one more accordion on the "visual" view, after the
+   * graphic elements (lib/feature-access examplesInLanguage).
    */
   examplesInside?: boolean
   /** Which accordion opens first ("examples" for an old דוגמאות לשימוש link). */
@@ -193,8 +184,6 @@ export function VisualLanguagePanel({
               url: link ?? publicUrl(r.storage_path),
               isLink: !!link,
               filedKind: userExampleKind(r.metadata),
-              fit: exampleFit(r.metadata),
-              fitReason: exampleFitReason(r.metadata),
             }
           }),
       )
@@ -276,34 +265,10 @@ export function VisualLanguagePanel({
     for (const file of picked) {
       const res = await uploadFile(file, "brand_example", { kind })
       setUploadingExamples((n) => n - 1)
-      if (res) {
-        setExamples((prev) => [...prev, { ...res, name: file.name, isLink: false, filedKind: kind, checking: examplesInside }])
-        if (examplesInside) void checkFit(res.id)
-      } else toast.error(`ההעלאה של ${file.name} נכשלה`)
+      if (res) setExamples((prev) => [...prev, { ...res, name: file.name, isLink: false, filedKind: kind }])
+      else toast.error(`ההעלאה של ${file.name} נכשלה`)
     }
     if (exampleInputRef.current) exampleInputRef.current.value = ""
-  }
-
-  // Right after upload: does it fit her language? Seconds at most; slower or
-  // without an analysed language it stays unmarked and the analysis decides.
-  const checkFit = async (id: string) => {
-    let fit: ExampleFit | null = null
-    let reason: string | null = null
-    try {
-      const res = await fetch("/api/visual-language/check-example", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
-      })
-      const data = (await res.json().catch(() => ({}))) as { fit?: ExampleFit | null; reason?: string }
-      if (res.ok) {
-        fit = data.fit ?? null
-        reason = data.reason ?? null
-      }
-    } catch (err) {
-      console.error("[visual-language][check-example]", err)
-    }
-    setExamples((prev) => prev.map((x) => (x.id === id ? { ...x, checking: false, fit, fitReason: reason } : x)))
   }
 
   const addLink = async () => {
@@ -450,14 +415,6 @@ export function VisualLanguagePanel({
         return
       }
       setVisualLanguage(data.visual_language as VisualLanguage)
-      const fits = data.example_fit as { id: string; fit: ExampleFit; reason?: string }[] | undefined
-      if (fits)
-        setExamples((prev) =>
-          prev.map((x) => {
-            const f = fits.find((v) => v.id === x.id)
-            return f ? { ...x, fit: f.fit, fitReason: f.reason ?? null } : x
-          }),
-        )
     } catch (err) {
       console.error("[visual-language][analyze]", err)
       toast.error("הניתוח נכשל. נסו שוב.")
@@ -552,22 +509,9 @@ export function VisualLanguagePanel({
     ex.isLink ? (
       <div
         key={ex.id}
-        className={`flex items-center gap-2 rounded-lg border border-border-neutral-default px-3 h-10 max-w-full ${ex.fit === "mismatch" ? "opacity-60" : ""}`}
+        className="flex items-center gap-2 rounded-lg border border-border-neutral-default px-3 h-10 max-w-full"
       >
-        {ex.fit === "mismatch" ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button type="button" aria-label={`לא תואם לשפה: ${ex.fitReason ?? ""}`} className="cursor-help rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70">
-                <span className="flex size-5 items-center justify-center rounded-full bg-button-destructive-default">
-                  <X className="size-3 text-white" strokeWidth={3} />
-                </span>
-              </button>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-56 text-start">לא תואם לשפה ולא ישמש ביצירה. {ex.fitReason}</TooltipContent>
-          </Tooltip>
-        ) : (
-          <Link2 className="size-4 shrink-0 text-text-neutral-default" />
-        )}
+        <Link2 className="size-4 shrink-0 text-text-neutral-default" />
         <a
           href={ex.url}
           target="_blank"
@@ -586,55 +530,25 @@ export function VisualLanguagePanel({
       </div>
     ) : (
       <div key={ex.id} className="relative size-24 rounded-lg overflow-hidden bg-bg-surface group">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={ex.url}
-        alt={ex.name}
-        className={`size-full object-cover ${ex.fit === "mismatch" ? "opacity-40 grayscale" : ""}`}
-      />
-      {/* In the image tab, say what the analysis saw (banner, poster…) when she didn't file it. */}
-      {!ex.filedKind && tabOf(ex) === "image" && kindLabel(ex.id) && ex.fit !== "mismatch" && !ex.checking && (
-        <span className="absolute bottom-1 start-1 rounded-md bg-black/60 px-1.5 py-0.5 text-xs text-white">
-          {kindLabel(ex.id)}
-        </span>
-      )}
-      {/* The quick check right after upload. */}
-      {ex.checking && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/45 text-xs text-white" role="status">
-          <Loader2 className="size-4 animate-spin" />
-          מנתח...
-        </div>
-      )}
-      {/* Doesn't fit her language: greyed out, a red X, never used. */}
-      {ex.fit === "mismatch" && !ex.checking && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label={`לא תואם לשפה: ${ex.fitReason ?? ""}`}
-              className="absolute inset-0 flex items-center justify-center cursor-help focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 rounded-lg"
-            >
-              <span className="flex size-8 items-center justify-center rounded-full bg-button-destructive-default">
-                <X className="size-5 text-white" strokeWidth={3} />
-              </span>
-            </button>
-          </TooltipTrigger>
-          <TooltipContent className="max-w-56 text-start">
-            לא תואם לשפה ולא ישמש ביצירה. {ex.fitReason}
-          </TooltipContent>
-        </Tooltip>
-      )}
-      <button
-        type="button"
-        aria-label={`מחיקת ${ex.name}`}
-        onClick={async () => {
-          if (await removeMedia(ex.id, ex.storagePath)) setExamples((prev) => prev.filter((x) => x.id !== ex.id))
-        }}
-        className="absolute top-1 end-1 z-10 size-6 rounded-full bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity cursor-pointer"
-      >
-        {examplesInside ? <Trash2 className="size-3.5 text-white" /> : <X className="size-3.5 text-white" />}
-      </button>
-    </div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={ex.url} alt={ex.name} className="size-full object-cover" />
+        {/* In the image tab, say what the analysis saw (banner, poster…) when she didn't file it. */}
+        {!ex.filedKind && tabOf(ex) === "image" && kindLabel(ex.id) && (
+          <span className="absolute bottom-1 start-1 rounded-md bg-black/60 px-1.5 py-0.5 text-xs text-white">
+            {kindLabel(ex.id)}
+          </span>
+        )}
+        <button
+          type="button"
+          aria-label={`מחיקת ${ex.name}`}
+          onClick={async () => {
+            if (await removeMedia(ex.id, ex.storagePath)) setExamples((prev) => prev.filter((x) => x.id !== ex.id))
+          }}
+          className="absolute top-1 end-1 size-6 rounded-full bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity cursor-pointer"
+        >
+          <X className="size-3.5 text-white" />
+        </button>
+      </div>
     )
 
   const examplesInput = (
@@ -706,7 +620,6 @@ export function VisualLanguagePanel({
       })}
     </Tabs>
   )
-  const fitCount = examples.filter((x) => x.fit === "mismatch").length
 
   if (view === "examples") {
     return (
@@ -891,15 +804,9 @@ export function VisualLanguagePanel({
           title="דוגמאות לשימוש"
           open={openSection === "examples"}
           onOpenChange={(o) => setOpenSection(o ? "examples" : null)}
-          summary={
-            examples.length > 0
-              ? `${examples.length} ${examples.length === 1 ? "דוגמה" : "דוגמאות"}${fitCount ? `, ${fitCount} לא ${fitCount === 1 ? "תואמת" : "תואמות"}` : ""}`
-              : "עוד לא הועלו דוגמאות"
-          }
+          summary={examples.length > 0 ? `${examples.length} ${examples.length === 1 ? "דוגמה" : "דוגמאות"}` : "עוד לא הועלו דוגמאות"}
         >
-          <p className="text-small text-text-neutral-default">
-            איך השפה שלכם נראית בפועל, לפי פורמט. כל דוגמה נבדקת מול השפה הוויזואלית שלכם, ודוגמה שלא תואמת תסומן ולא תשמש ביצירה.
-          </p>
+          <ExamplesTip />
           {examplesInput}
           {examplesTabs}
         </AccordionSection>
@@ -1078,6 +985,29 @@ function DropZone({
       <Upload className="size-5 text-text-neutral-default" />
       <span className="text-xs text-text-neutral-default">{label}</span>
     </button>
+  )
+}
+
+/**
+ * "מומלץ!" (Hani, 2026-11-11, Figma 724:3606): examples work best in her
+ * brand colours; ones that aren't still give their structure — never colours.
+ */
+function ExamplesTip() {
+  return (
+    <div className="flex items-start gap-2.5 rounded-lg bg-bg-surface-primary-default p-2 dark:bg-gray-20">
+      <p className="flex-1 text-small text-gray-40 dark:text-gray-80">
+        <span className="font-semibold text-text-primary-default">מומלץ!</span> שימו דוגמאות לשימוש שתואמות את הצבעים
+        שמוגדרים אצלכם. דוגמאות שונות משפת המותג לא יילקחו בחשבון בצבעוניות המותג, אלא רק במבנה האלמנטים.
+      </p>
+      <div className="relative h-[54px] w-[50px] shrink-0 overflow-hidden" aria-hidden>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/images/examples-tip.png"
+          alt=""
+          className="absolute left-[-13.42%] top-[-4.92%] h-[111.68%] w-[120.62%] max-w-none"
+        />
+      </div>
+    </div>
   )
 }
 

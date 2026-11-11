@@ -3,9 +3,9 @@ import type { SlideData } from "@/lib/carousel-templates"
 import type { CarouselBrief } from "@/lib/carousel-composition"
 import { loadBrandFonts } from "@/lib/broll-animation/brief"
 import { reservedZoneLines } from "@/lib/visual-language/fixed-elements"
-import { canOwnMediaText } from "@/lib/feature-access"
-import { brandPalette, resolveDesignDirection, type DesignDirection } from "@/lib/visual-language/direction"
-import { exampleUsable, userExampleKind, type MediaStyle, type VisualLanguage } from "@/lib/visual-language/types"
+import { canOwnMediaText, examplesInLanguage } from "@/lib/feature-access"
+import { brandPalette, resolveDesignDirection, shuffled, type DesignDirection } from "@/lib/visual-language/direction"
+import { userExampleKind, type MediaStyle, type VisualLanguage } from "@/lib/visual-language/types"
 import { languageKey, languageLines, pieceLines, styleOfLines } from "@/lib/visual-language/current-brief"
 
 /**
@@ -27,6 +27,8 @@ export async function carouselExamples(
   supabase: SupabaseClient,
   userId: string,
   vl: VisualLanguage | null | undefined,
+  /** The examples a stored carousel was made from — kept while they all still exist. */
+  keep?: string[],
 ): Promise<string[]> {
   const { data } = await supabase
     .from("user_media")
@@ -34,24 +36,33 @@ export async function carouselExamples(
     .eq("user_id", userId)
     .eq("category", "brand_example")
     .order("created_at", { ascending: true })
-  const rows = ((data ?? []) as { id: string; storage_path: string; metadata: Record<string, unknown> | null }[])
-    // One that doesn't fit her language never goes out.
-    .filter((r) => exampleUsable(r.metadata))
+  const rows = (data ?? []) as { id: string; storage_path: string; metadata: Record<string, unknown> | null }[]
   const filed = rows.filter((r) => userExampleKind(r.metadata) === "carousel")
   const carouselIds = new Set((vl?.example_kinds ?? []).filter((k) => k.kind === "carousel").map((k) => k.id))
   const recognised = rows.filter((r) => carouselIds.has(r.id))
   const picked = filed.length ? filed : recognised.length ? recognised : rows
-  return picked
+  const urls = picked
     .filter((r) => /\.(png|jpe?g|webp|gif)$/i.test(r.storage_path))
-    .slice(0, 6)
     .map((r) => supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl)
+  // A different structure every carousel (Hani, 2026-11-11, lib/feature-access
+  // examplesInLanguage): a few of her examples at random, so uneven examples
+  // give uneven carousels. An edit keeps the ones its carousel was made from.
+  const { data: me } = await supabase.from("users").select("email").eq("id", userId).maybeSingle()
+  if (examplesInLanguage((me as { email?: string | null } | null)?.email)) {
+    if (keep?.length && keep.every((u) => urls.includes(u))) return keep
+    return shuffled(urls).slice(0, RANDOM_CAROUSEL_EXAMPLES)
+  }
+  return urls.slice(0, 6)
 }
+
+/** How many of her carousel examples one carousel is built from (gated). */
+const RANDOM_CAROUSEL_EXAMPLES = 3
 
 /** `direction`: already carrying her direction for this piece (withMediaBrief), if any. */
 export async function buildCarouselBrief(
   supabase: SupabaseClient,
   userId: string,
-  input: { slides: SlideData[]; style: MediaStyle; direction: DesignDirection },
+  input: { slides: SlideData[]; style: MediaStyle; direction: DesignDirection; keepExamples?: string[] },
 ): Promise<CarouselBrief> {
   const isBrand = input.style === "brand"
   const isBlank = input.style === "blank"
@@ -81,7 +92,7 @@ export async function buildCarouselBrief(
     palette,
     styleLines: input.direction.lines,
     reservedLines: reservedZoneLines(input.direction.fixed, "content", W, H),
-    examples: isBrand ? await carouselExamples(supabase, userId, row?.visual_language) : [],
+    examples: isBrand ? await carouselExamples(supabase, userId, row?.visual_language, input.keepExamples) : [],
     // Gated: her brand colours set the palette — the examples go out in
     // grayscale and the prompt says they set the composition only.
     ...(brandWins ? { brandWins: true, examplesGray: (row?.brand_colors ?? []).length > 0 } : {}),
@@ -126,6 +137,6 @@ export async function currentCarouselBrief(
   // takes its place — never the old one.
   const style: MediaStyle = wanted === "brand" && base.source !== "brand" ? "niche" : wanted
   const direction = { ...base, lines: [...base.lines, ...pieceLines(stored.styleLines)] }
-  const brief = await buildCarouselBrief(supabase, userId, { slides: stored.slides, style, direction })
+  const brief = await buildCarouselBrief(supabase, userId, { slides: stored.slides, style, direction, keepExamples: stored.examples })
   return { brief, direction, changed: carouselLanguageKey(brief) !== carouselLanguageKey(stored) }
 }

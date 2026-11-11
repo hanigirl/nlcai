@@ -3,14 +3,13 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { deriveNicheVisualLanguage } from "@/lib/agents/visual-language-analyzer"
 import { loadExampleForModels, loadImageForModels, type ModelImage } from "@/lib/visual-language/image-input"
 import { stripLookWords } from "@/lib/visual-language/composition-only"
-import { canOwnMediaText } from "@/lib/feature-access"
+import { canOwnMediaText, examplesInLanguage } from "@/lib/feature-access"
 import { loadBrandFonts } from "@/lib/broll-animation/brief"
 import type { BrandFont } from "@/lib/broll-animation/compose"
 import { measureElement, type FixedElement } from "@/lib/visual-language/fixed-elements"
 import sharp from "sharp"
 import { loadStyleRules, styleRuleLines } from "@/lib/style-memory"
 import {
-  exampleUsable,
   userExampleKind,
   type ExampleKind,
   type MediaStyle,
@@ -78,6 +77,16 @@ const FORMAT_NAMES: Record<VisualFormat, string> = {
   b_roll: "b-roll reel frames",
 }
 
+/** A random order (Fisher–Yates). */
+export function shuffled<T>(items: T[]): T[] {
+  const out = [...items]
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[out[i], out[j]] = [out[j], out[i]]
+  }
+  return out
+}
+
 /**
  * Up to `max` of her examples of one kind (Settings → דוגמאות לשימוש): the
  * ones she filed under its tab first, then older unfiled ones the last
@@ -96,11 +105,12 @@ export async function loadBrandExamples(
    */
   gray?: boolean,
 ): Promise<ModelImage[]> {
-  if (gray === undefined) {
-    const { data: u } = await supabase.from("users").select("brand_colors, email").eq("id", userId).single()
-    const me = u as { brand_colors?: string[] | null; email?: string | null } | null
-    gray = canOwnMediaText(me?.email) && (me?.brand_colors ?? []).length > 0
-  }
+  const { data: u } = await supabase.from("users").select("brand_colors, email").eq("id", userId).single()
+  const me = u as { brand_colors?: string[] | null; email?: string | null } | null
+  if (gray === undefined) gray = canOwnMediaText(me?.email) && (me?.brand_colors ?? []).length > 0
+  // A different pick every time (Hani, 2026-11-11): the structure is taken
+  // from her examples at random, so uneven examples give uneven results.
+  const random = examplesInLanguage(me?.email)
   const { data, error } = await supabase
     .from("user_media")
     .select("id, storage_path, metadata")
@@ -110,12 +120,10 @@ export async function loadBrandExamples(
   if (error) console.error("[visual-language][format-examples]", error)
   const rows = ((data ?? []) as { id: string; storage_path: string; metadata: Record<string, unknown> | null }[])
     .filter((r) => !r.storage_path.startsWith("url:") && typeof r.metadata?.url !== "string")
-    // One that doesn't fit her language never goes out (lib/visual-language/types exampleFit).
-    .filter((r) => exampleUsable(r.metadata))
   const recognised = new Set((exampleKinds ?? []).filter((k) => k.kind === kind).map((k) => k.id))
   const filed = rows.filter((r) => userExampleKind(r.metadata) === kind)
   const unfiled = rows.filter((r) => !userExampleKind(r.metadata) && recognised.has(r.id))
-  const picked = [...filed, ...unfiled].slice(0, max)
+  const picked = (random ? shuffled([...filed, ...unfiled]) : [...filed, ...unfiled]).slice(0, max)
   const images = await Promise.all(
     picked.map((r) =>
       loadExampleForModels(supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl, gray).catch(
