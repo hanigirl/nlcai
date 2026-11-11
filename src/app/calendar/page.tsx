@@ -4,6 +4,7 @@ import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
+  AlertTriangle,
   CalendarCheck,
   CalendarClock,
   Settings,
@@ -24,7 +25,7 @@ import {
 
   unfilledSlots,
 } from "@/components/calendar-routine"
-import { defaultPostingSchedule, slotsForDate, type PostingSchedule } from "@/lib/posting-schedule"
+import { defaultPostingSchedule, effectiveDaySlots, slotsForDate, type PostingSchedule } from "@/lib/posting-schedule"
 import { AppShell } from "@/components/app-shell"
 import { FORMAT_LABELS } from "@/components/format-status-chip"
 import { defaultDescription } from "@/lib/default-description"
@@ -783,6 +784,8 @@ export default function CalendarPage() {
   const [railCards, setRailCards] = useState<PlanInputCard[]>([])
   const [planned, setPlanned] = useState<PlannedSlot[] | null>(null)
   const [plannedUnmatched, setPlannedUnmatched] = useState<PlanInputCard[]>([])
+  // Cards the last arrange found no free slot for within its horizon.
+  const [plannedNoRoom, setPlannedNoRoom] = useState(0)
   const [noSettingsOpen, setNoSettingsOpen] = useState(false)
   const [scheduleSettingsOpen, setScheduleSettingsOpen] = useState(false)
   // When the drafts were laid out — a confirm right after is a double click.
@@ -808,33 +811,7 @@ export default function CalendarPage() {
         const [y, m, d] = first.scheduledDate.split("-").map((n) => parseInt(n, 10))
         setWeekStart(startOfWeek(new Date(y, m - 1, d)))
       }
-      // Say where everything went (Hani, 2026-11-11): the plan runs over the
-      // coming weeks, and a format with no day in her settings stays aside.
-      const toWeek = (k: string) => {
-        const [y, m, d] = k.split("-").map((n) => parseInt(n, 10))
-        return toDateKey(startOfWeek(new Date(y, m - 1, d)))
-      }
-      const weeks = new Set(sorted.map((p) => toWeek(p.scheduledDate))).size
-      const placedLine =
-        weeks > 1
-          ? `${plan.placed.length} פוסטים סודרו על פני ${weeks} שבועות. עברו בין השבועות בחיצים כדי לראות.`
-          : plan.placed.length === 1
-            ? "פוסט אחד סודר בלוח."
-            : `${plan.placed.length} פוסטים סודרו בלוח.`
-      const missing = [...new Set(plan.unmatched.map((c) => FORMAT_LABELS[c.format] ?? c.format))]
-      const notes = [
-        missing.length
-          ? `אין בהגדרות התזמון יום ל${missing.join(" ול")}, ולכן ${missing.length === 1 ? "הפורמט נשאר" : "הפורמטים נשארו"} ברשימה בצד.`
-          : "",
-        plan.noRoom.length
-          ? `${plan.noRoom.length === 1 ? "פוסט אחד לא נכנס" : `${plan.noRoom.length} פוסטים לא נכנסו`}: אין משבצת פנויה ב-${Math.round(HORIZON_DAYS / 30)} החודשים הקרובים.`
-          : "",
-      ].filter(Boolean)
-      toast(placedLine, {
-        description: notes.length ? notes.join(" ") : undefined,
-        ...(notes.length ? { action: { label: "הגדרות תזמון", onClick: () => setScheduleSettingsOpen(true) } } : {}),
-        duration: 8000,
-      })
+      setPlannedNoRoom(plan.noRoom.length)
       return
     }
     if (!hasAnySlot(routine.saved)) {
@@ -880,6 +857,38 @@ export default function CalendarPage() {
     for (const list of map.values()) list.sort((a, b) => a.scheduledTime.localeCompare(b.scheduledTime))
     return map
   }, [planned])
+  // The warning at the top of "פוסטים לתזמון" (Hani, 2026-11-11): after an
+  // arrange, where it went (weeks) and what didn't fit; always, the ready
+  // formats her schedule settings give no day — they never get arranged.
+  const arrangeRoutine = hasAnySlot(routine.saved) ? routine.saved : defaultPostingSchedule()
+  const formatsWithoutDay = useMemo(() => {
+    if (!scheduleAllA) return []
+    const withDay = new Set(
+      [0, 1, 2, 3, 4, 5, 6].flatMap((i) => effectiveDaySlots(arrangeRoutine, i)).map((x) => x.format),
+    )
+    return [...new Set(railCards.map((c) => c.format))].filter((f) => !withDay.has(f))
+  }, [scheduleAllA, arrangeRoutine, railCards])
+  const plannedWeeks = useMemo(
+    () =>
+      new Set(
+        (planned ?? []).map((p) => {
+          const [y, m, d] = p.scheduledDate.split("-").map((n) => parseInt(n, 10))
+          return toDateKey(startOfWeek(new Date(y, m - 1, d)))
+        }),
+      ).size,
+    [planned],
+  )
+  const arrangeNotice =
+    scheduleAllA && (planned || formatsWithoutDay.length > 0) ? (
+      <ArrangeNotice
+        placed={planned?.length ?? 0}
+        weeks={plannedWeeks}
+        noRoom={planned ? plannedNoRoom : 0}
+        formatsWithoutDay={formatsWithoutDay.map((f) => FORMAT_LABELS[f] ?? f)}
+        onOpenSettings={() => setScheduleSettingsOpen(true)}
+      />
+    ) : null
+
   const plannedIds = useMemo(
     () => (planned ? new Set(planned.map((p) => `${p.corePostId}:${p.format}`)) : undefined),
     [planned],
@@ -1804,6 +1813,7 @@ export default function CalendarPage() {
         <QueuePanel
           onReadyCardsChange={schedulingOn ? setRailCards : undefined}
           previewPlacedIds={plannedIds}
+          notice={arrangeNotice}
           headerAction={
             scheduleAllA ? (
               planned ? (
@@ -1983,5 +1993,68 @@ export default function CalendarPage() {
       />
 
     </AppShell>
+  )
+}
+
+/**
+ * The warning at the top of "פוסטים לתזמון" (Hani, 2026-11-11, warning
+ * surface yellow-97): what the auto-arrange did and what it can't do.
+ */
+function ArrangeNotice({
+  placed,
+  weeks,
+  noRoom,
+  formatsWithoutDay,
+  onOpenSettings,
+}: {
+  placed: number
+  weeks: number
+  noRoom: number
+  formatsWithoutDay: string[]
+  onOpenSettings: () => void
+}) {
+  const lines: string[] = []
+  if (placed > 0)
+    lines.push(
+      weeks > 1
+        ? `${placed} פוסטים סודרו על פני ${weeks} שבועות. עברו בין השבועות בחיצים כדי לראות.`
+        : placed === 1
+          ? "פוסט אחד סודר בלוח."
+          : `${placed} פוסטים סודרו בלוח.`,
+    )
+  if (noRoom > 0)
+    lines.push(
+      `${noRoom === 1 ? "פוסט אחד לא נכנס" : `${noRoom} פוסטים לא נכנסו`}: אין משבצת פנויה ב-${Math.round(HORIZON_DAYS / 30)} החודשים הקרובים.`,
+    )
+  if (formatsWithoutDay.length > 0)
+    lines.push(
+      `אין בהגדרות התזמון יום ל${formatsWithoutDay.join(" ול")}, ולכן ${formatsWithoutDay.length === 1 ? "הפורמט לא נכנס" : "הפורמטים לא נכנסים"} לסידור האוטומטי.`,
+    )
+  if (lines.length === 0) return null
+  const warn = noRoom > 0 || formatsWithoutDay.length > 0
+  return (
+    <div role="status" className="flex items-start gap-2 rounded-lg bg-bg-surface-warning-default p-3">
+      {warn ? (
+        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-yellow-30" aria-hidden />
+      ) : (
+        <CalendarCheck className="mt-0.5 size-4 shrink-0 text-text-neutral-default" aria-hidden />
+      )}
+      <div className="flex flex-1 flex-col gap-1">
+        {lines.map((l) => (
+          <p key={l} className="text-small text-text-primary-default">
+            {l}
+          </p>
+        ))}
+        {warn && (
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="self-start text-small-bold text-text-primary-default underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 rounded"
+          >
+            להגדרות התזמון
+          </button>
+        )}
+      </div>
+    </div>
   )
 }

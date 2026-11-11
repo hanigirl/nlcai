@@ -216,6 +216,8 @@ export type QueuePanelProps = {
   headerAction?: React.ReactNode
   /** Card ids laid out on the board as a not-yet-confirmed preview — dimmed here. */
   previewPlacedIds?: Set<string>
+  /** A warning under the header (the auto-arrange's leftovers, formats with no day). */
+  notice?: React.ReactNode
 }
 
 /**
@@ -254,6 +256,7 @@ export function QueuePanel({
   onReadyCardsChange,
   headerAction,
   previewPlacedIds,
+  notice,
 }: QueuePanelProps) {
   const [allPosts, setAllPosts] = useState<PanelItem[]>([])
   const [scheduledIds, setScheduledIds] = useState<Set<string>>(new Set())
@@ -660,6 +663,8 @@ export function QueuePanel({
           </Tooltip>
         )}
       </div>
+
+      {notice && <div className="shrink-0 px-4 pt-3">{notice}</div>}
 
       {/* Variant A — the rail stays strictly "approved only"; formats that
           still wait for approval are one quiet row right under the header
