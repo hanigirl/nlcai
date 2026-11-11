@@ -4,7 +4,6 @@ import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
-  AlertTriangle,
   CalendarCheck,
   CalendarClock,
   Settings,
@@ -1997,8 +1996,10 @@ export default function CalendarPage() {
 }
 
 /**
- * The warning at the top of "פוסטים לתזמון" (Hani, 2026-11-11, warning
- * surface yellow-97): what the auto-arrange did and what it can't do.
+ * The warning at the top of "פוסטים לתזמון" (Hani, 2026-11-11, Figma
+ * 726:3660, warning surface yellow-97): the ready formats her schedule
+ * settings give no day, and after an auto-arrange where it went and what
+ * didn't fit.
  */
 function ArrangeNotice({
   placed,
@@ -2013,46 +2014,50 @@ function ArrangeNotice({
   formatsWithoutDay: string[]
   onOpenSettings: () => void
 }) {
-  const lines: string[] = []
-  if (placed > 0)
-    lines.push(
-      weeks > 1
+  const arranged =
+    placed === 0
+      ? ""
+      : weeks > 1
         ? `${placed} פוסטים סודרו על פני ${weeks} שבועות. עברו בין השבועות בחיצים כדי לראות.`
         : placed === 1
           ? "פוסט אחד סודר בלוח."
-          : `${placed} פוסטים סודרו בלוח.`,
-    )
-  if (noRoom > 0)
-    lines.push(
-      `${noRoom === 1 ? "פוסט אחד לא נכנס" : `${noRoom} פוסטים לא נכנסו`}: אין משבצת פנויה ב-${Math.round(HORIZON_DAYS / 30)} החודשים הקרובים.`,
-    )
-  if (formatsWithoutDay.length > 0)
-    lines.push(
-      `אין בהגדרות התזמון יום ל${formatsWithoutDay.join(" ול")}, ולכן ${formatsWithoutDay.length === 1 ? "הפורמט לא נכנס" : "הפורמטים לא נכנסים"} לסידור האוטומטי.`,
-    )
-  if (lines.length === 0) return null
-  const warn = noRoom > 0 || formatsWithoutDay.length > 0
+          : `${placed} פוסטים סודרו בלוח.`
+  const noRoomLine = noRoom
+    ? `${noRoom === 1 ? "פוסט אחד לא נכנס" : `${noRoom} פוסטים לא נכנסו`}: אין משבצת פנויה ב-${Math.round(HORIZON_DAYS / 30)} החודשים הקרובים.`
+    : ""
+  const missing = formatsWithoutDay.length > 0
+  const title = missing
+    ? `חשוב! אין לך הגדרות תזמון ל${formatsWithoutDay.join(" ו")}`
+    : noRoom
+      ? `חשוב! ${noRoomLine}`
+      : arranged
+  if (!title) return null
+  const lines = missing ? [arranged, noRoomLine].filter(Boolean) : noRoom ? [arranged].filter(Boolean) : []
+  const warn = missing || noRoom > 0
   return (
-    <div role="status" className="flex items-start gap-2 rounded-lg bg-bg-surface-warning-default p-3">
-      {warn ? (
-        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-yellow-30" aria-hidden />
-      ) : (
-        <CalendarCheck className="mt-0.5 size-4 shrink-0 text-text-neutral-default" aria-hidden />
+    <div role="status" className="flex items-center gap-2.5 rounded-lg bg-bg-surface-warning-default p-2">
+      {warn && (
+        <div className="relative h-[54px] w-[50px] shrink-0 overflow-hidden" aria-hidden>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/images/schedule-warning.png" alt="" className="absolute inset-0 size-full object-cover" />
+        </div>
       )}
-      <div className="flex flex-1 flex-col gap-1">
+      <div className="flex flex-1 flex-col text-small text-gray-40 dark:text-gray-80">
+        <p className="font-semibold text-text-primary-default">{title}</p>
         {lines.map((l) => (
-          <p key={l} className="text-small text-text-primary-default">
-            {l}
-          </p>
+          <p key={l}>{l}</p>
         ))}
         {warn && (
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            className="self-start text-small-bold text-text-primary-default underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 rounded"
-          >
-            להגדרות התזמון
-          </button>
+          <p>
+            {missing ? "כדי לתזמן את הפורמטים האלה, יש לקבוע להם זמן " : "אפשר לפנות מקום "}
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="rounded text-button-primary-default underline underline-offset-2 hover:text-button-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 dark:text-yellow-80"
+            >
+              בהגדרות התזמון
+            </button>
+          </p>
         )}
       </div>
     </div>
