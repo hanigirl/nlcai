@@ -28,10 +28,12 @@ export type SchedulePlan = {
   placed: PlannedSlot[]
   /** Cards whose format has no slot in the routine. */
   unmatched: PlanInputCard[]
+  /** Cards whose format has slots, but none free within HORIZON_DAYS. */
+  noRoom: PlanInputCard[]
 }
 
 /** How far ahead the planner is allowed to look before giving up on a card. */
-const HORIZON_DAYS = 120
+export const HORIZON_DAYS = 120
 
 function dateKey(d: Date): string {
   const y = d.getFullYear()
@@ -70,6 +72,7 @@ export function planScheduleAll(
   )
   const placed: PlannedSlot[] = []
   const unmatched: PlanInputCard[] = []
+  const noRoom: PlanInputCard[] = []
   const formatsWithASlot = new Set(
     [0, 1, 2, 3, 4, 5, 6].flatMap((i) => effectiveDaySlots(schedule, i)).map((s) => s.format),
   )
@@ -128,8 +131,8 @@ export function planScheduleAll(
         break
       }
     }
-    if (!done) unmatched.push(card)
+    if (!done) noRoom.push(card)
   }
 
-  return { placed, unmatched }
+  return { placed, unmatched, noRoom }
 }

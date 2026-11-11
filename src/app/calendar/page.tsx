@@ -59,6 +59,7 @@ import {
 import { useFormatGap, useMultinetwork, useScheduleAllA, useSchedulingAccess, useSchedulingPreview, useDescriptionAccess } from "@/lib/use-scheduling-access"
 import {
   hasAnySlot,
+  HORIZON_DAYS,
   planScheduleAll,
   type PlanInputCard,
   type PlannedSlot,
@@ -821,11 +822,17 @@ export default function CalendarPage() {
             ? "פוסט אחד סודר בלוח."
             : `${plan.placed.length} פוסטים סודרו בלוח.`
       const missing = [...new Set(plan.unmatched.map((c) => FORMAT_LABELS[c.format] ?? c.format))]
-      toast(placedLine, {
-        description: missing.length
+      const notes = [
+        missing.length
           ? `אין בהגדרות התזמון יום ל${missing.join(" ול")}, ולכן ${missing.length === 1 ? "הפורמט נשאר" : "הפורמטים נשארו"} ברשימה בצד.`
-          : undefined,
-        ...(missing.length ? { action: { label: "הגדרות תזמון", onClick: () => setScheduleSettingsOpen(true) } } : {}),
+          : "",
+        plan.noRoom.length
+          ? `${plan.noRoom.length === 1 ? "פוסט אחד לא נכנס" : `${plan.noRoom.length} פוסטים לא נכנסו`}: אין משבצת פנויה ב-${Math.round(HORIZON_DAYS / 30)} החודשים הקרובים.`
+          : "",
+      ].filter(Boolean)
+      toast(placedLine, {
+        description: notes.length ? notes.join(" ") : undefined,
+        ...(notes.length ? { action: { label: "הגדרות תזמון", onClick: () => setScheduleSettingsOpen(true) } } : {}),
         duration: 8000,
       })
       return
