@@ -360,7 +360,7 @@ function WindowCard({
       <div
         {...cardButtonProps(`${item.label} — פתיחה בפאנל`, onSelect)}
         className={cn(
-          "relative w-full overflow-hidden rounded-[20px] border bg-white transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 dark:bg-gray-10",
+          "group/ai relative w-full overflow-hidden rounded-[20px] border bg-white transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 dark:bg-gray-10",
           aspect,
           selected
             ? "border-yellow-50 ring-2 ring-yellow-50"
@@ -388,7 +388,7 @@ function WindowCard({
             <FormatMediaPreview media={item.media} fid={item.fid} fill navOverlay />
           ))}
         {item.state === "media" && item.media && onDelete && (
-          <HoverMediaIconButton label="מחיקת המדיה" icon={Trash2} destructive onClick={onDelete} visible className="bottom-2 end-2" />
+          <HoverMediaIconButton label="מחיקת המדיה" icon={Trash2} destructive onClick={onDelete} className="bottom-2 end-2" />
         )}
       </div>
     </div>
@@ -435,7 +435,7 @@ function UniformCard({
       {...cardButtonProps(`${item.label} — פתיחה בפאנל`, onSelect)}
       dir="rtl"
       className={cn(
-        "flex w-[280px] flex-col overflow-hidden rounded-[20px] border bg-white transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 dark:bg-gray-10",
+        "group/ai flex w-[280px] flex-col overflow-hidden rounded-[20px] border bg-white transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 dark:bg-gray-10",
         selected
           ? "border-yellow-50 ring-2 ring-yellow-50"
           : "border-border-neutral-default hover:border-gray-80",
@@ -480,9 +480,9 @@ function UniformCard({
       <div className="relative flex min-h-12 items-center px-5 py-3">
         {status && <span className="text-xs text-text-neutral-default">{status}</span>}
         {hasMedia && onAiEdit && <AiHoverEditButton target="media" onClick={onAiEdit} visible className="bottom-3 start-3" />}
-        {/* The panel's delete, on the other corner (Hani, 2026-11-11). */}
+        {/* The panel's delete, on the other corner — on the card only on hover (Hani, 2026-11-11). */}
         {hasMedia && onDelete && (
-          <HoverMediaIconButton label="מחיקת המדיה" icon={Trash2} destructive onClick={onDelete} visible className="bottom-3 end-3" />
+          <HoverMediaIconButton label="מחיקת המדיה" icon={Trash2} destructive onClick={onDelete} className="bottom-3 end-3" />
         )}
       </div>
     </div>
