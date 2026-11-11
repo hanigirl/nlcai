@@ -1781,6 +1781,25 @@ export default function CalendarPage() {
                 // everything for real (Hani, 2026-10-29 — that is how 18
                 // posts went into the Instagram queue).
                 <div className="flex items-center gap-1.5">
+                  {/* ⋮ — "הגדרות תזמון" opens the same settings as Settings → תזמון (Hani, 2026-11-11). */}
+                  <DropdownMenu>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon-sm" aria-label="אפשרויות תזמון">
+                            <MoreVertical className="size-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>אפשרויות</TooltipContent>
+                    </Tooltip>
+                    <DropdownMenuContent align="end" sideOffset={6} className="min-w-[160px]">
+                      <DropdownMenuItem onSelect={() => setScheduleSettingsOpen(true)}>
+                        <Settings className="size-4" aria-hidden />
+                        הגדרות תזמון
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                   <Button
                     size="sm"
                     onClick={() => {
@@ -1804,25 +1823,30 @@ export default function CalendarPage() {
                   </Button>
                 </div>
               ) : (
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1.5">
+                  {/* ⋮ — "הגדרות תזמון" opens the same settings as Settings → תזמון (Hani, 2026-11-11). */}
+                  <DropdownMenu>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon-sm" aria-label="אפשרויות תזמון">
+                            <MoreVertical className="size-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>אפשרויות</TooltipContent>
+                    </Tooltip>
+                    <DropdownMenuContent align="end" sideOffset={6} className="min-w-[160px]">
+                      <DropdownMenuItem onSelect={() => setScheduleSettingsOpen(true)}>
+                        <Settings className="size-4" aria-hidden />
+                        הגדרות תזמון
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                   <Button size="sm" variant="outline" data-demo="calendar-arrange" onClick={onArrange} disabled={railCards.length === 0}>
                     <CalendarClock className="size-4" aria-hidden />
                     סידור אוטומטי בלוח
                   </Button>
-                  {/* Schedule settings (Hani, 2026-10-29) — the modal's design is on its way. */}
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => setScheduleSettingsOpen(true)}
-                        aria-label="הגדרות תזמון"
-                      >
-                        <Settings className="size-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>הגדרות תזמון</TooltipContent>
-                  </Tooltip>
                 </div>
               )
             ) : schedulingOn ? (
