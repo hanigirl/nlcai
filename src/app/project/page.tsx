@@ -515,6 +515,9 @@ function ProjectPageInner() {
   }, [])
   useFollowEditAgentRun(savedPostId, "story", editAgentOn, applyAgentStory)
   useFollowEditAgentRun(savedPostId, "image_post", editAgentOn, setImagePostUrl)
+  const prevCarouselSigRef = useRef<string>("")
+  /** The slide set as decoded on open — already saved, never re-saved. */
+  const hydratedCarouselRef = useRef<string[] | null>(null)
   const applyAgentCarousel = useCallback((url: string, urls?: string[]) => setCarouselImages(urls?.length ? urls : [url]), [])
   useFollowEditAgentRun(savedPostId, "carousel", editAgentOn, applyAgentCarousel)
   // Per-format "media is being made" — drives the skeleton card on the canvas.
@@ -1136,6 +1139,11 @@ function ProjectPageInner() {
                 // caption record (lib/carousel-own).
                 if (await keepCarouselAsUrls(urls, data.post.carouselDriveLinks)) return
                 prevCarouselSigRef.current = carouselSignature(b64s)
+                // The same slides, only decoded: nothing to save. (The
+                // autosave signs with another function under own-media-text,
+                // so the signature alone let this through — a 10MB+ re-save
+                // of the whole set on every open, which failed.)
+                hydratedCarouselRef.current = b64s
                 setCarouselImages(b64s)
               })
               .catch((err) => {
@@ -1641,7 +1649,6 @@ function ProjectPageInner() {
 
   // Auto-save carousel images. Skips when null/empty so a delete-all flow
   // uses the explicit carousel-clear path instead of a no-op POST.
-  const prevCarouselSigRef = useRef<string>("")
   useEffect(() => {
     if (!savedPostId) return
     // own-media-text: the whole URL counts — two stored sets of the same
@@ -1652,6 +1659,7 @@ function ProjectPageInner() {
     if (sig === prevCarouselSigRef.current) return
     prevCarouselSigRef.current = sig
     if (!carouselImages || carouselImages.length === 0) return
+    if (carouselImages === hydratedCarouselRef.current) return
     if (ownTextGate && isCarouselAlreadySaved(savedPostId, carouselImages)) return
     markCarouselSaved(savedPostId, carouselImages)
     // What the carousel is (AI-made / brought, words designed in) rides
