@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react"
 import { Loader2, ZoomIn, ZoomOut } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
 import { Slider } from "@/components/ui/slider"
 import { CROP_ASPECT, MAX_ZOOM, cropRect, type PictureCrop } from "@/lib/picture-crop"
 
@@ -24,7 +23,7 @@ export function PictureCropEditor({
   onDone: (newUrl: string) => Promise<void> | void
   onCancel: () => void
 }) {
-  const [src, setSrc] = useState<{ original: string; width: number; height: number } | null>(null)
+  const [src, setSrc] = useState<{ original: string; width: number; height: number; caption?: string } | null>(null)
   const [crop, setCrop] = useState<PictureCrop>({ cx: 0.5, cy: 0.5, zoom: 1 })
   const [saving, setSaving] = useState(false)
   const frameRef = useRef<HTMLDivElement>(null)
@@ -37,11 +36,11 @@ export function PictureCropEditor({
       .then(async (r) => {
         const data = await r.json().catch(() => ({}))
         if (!r.ok) throw new Error(data.message || "load_failed")
-        return data as { original: string; width: number; height: number; crop: PictureCrop }
+        return data as { original: string; width: number; height: number; crop: PictureCrop; caption?: string }
       })
       .then((d) => {
         if (!live) return
-        setSrc({ original: d.original, width: d.width, height: d.height })
+        setSrc({ original: d.original, width: d.width, height: d.height, caption: d.caption })
         setCrop(d.crop)
       })
       .catch((e) => {
@@ -125,7 +124,17 @@ export function PictureCropEditor({
         role="application"
       >
         {!src || !rect || !scale ? (
-          <Skeleton className="absolute inset-0 rounded-none" />
+          // The picture as it is now while the whole one loads — never a grey box (Hani, 2026-11-11).
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={url} alt="" draggable={false} className="pointer-events-none absolute inset-0 size-full object-cover" />
+            <div className="absolute inset-0 flex items-center justify-center bg-black/30" role="status">
+              <span className="flex items-center gap-2 rounded-full bg-white/95 px-3 py-1.5 text-small text-text-primary-default shadow-sm dark:bg-gray-10/95">
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+                מכינים את התמונה לחיתוך
+              </span>
+            </div>
+          </>
         ) : (
           <>
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -141,6 +150,11 @@ export function PictureCropEditor({
                 top: -rect.top * scale,
               }}
             />
+            {/* Her words where they will sit on the cut (Hani, 2026-11-11). */}
+            {src.caption && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={src.caption} alt="" draggable={false} className="pointer-events-none absolute inset-0 size-full" />
+            )}
             {/* Thirds, so she can place the subject (shown while cropping). */}
             <div aria-hidden className="pointer-events-none absolute inset-0 cursor-grab border-2 border-white/80 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.15)]">
               <div className="absolute inset-y-0 left-1/3 w-px bg-white/50" />

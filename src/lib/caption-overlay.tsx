@@ -448,14 +448,15 @@ async function renderCaption(
   )
 }
 
-/** Transparent 9:16 caption layer, for ffmpeg to burn onto real footage. */
+/** Transparent caption layer (9:16 by default), for ffmpeg to burn onto real footage — or shown over a picture being cut. */
 export function renderCaptionOverlayPng(
   hook: string | undefined,
   body?: string,
   position: CaptionPosition = "bottom",
   style?: CaptionStyle,
+  canvas: CaptionCanvas = CANVAS_9_16,
 ): Promise<Buffer> {
-  return renderCaption(hook, body, undefined, CANVAS_9_16, position, style)
+  return renderCaption(hook, body, undefined, canvas, position, style)
 }
 
 /**

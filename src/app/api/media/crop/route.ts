@@ -7,7 +7,7 @@ import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
 import { fetchDriveFile } from "@/lib/drive-fetch"
 import { guardedFetch } from "@/lib/server-fetch"
 import { readCaptionRecord, writeCaptionRecord } from "@/lib/caption-record"
-import { CANVAS_4_5, renderCaptionOverImagePng } from "@/lib/caption-overlay"
+import { CANVAS_4_5, renderCaptionOverImagePng, renderCaptionOverlayPng } from "@/lib/caption-overlay"
 import { isCaptionedRenderUrl } from "@/lib/own-media"
 import { CENTRED, CROP_OUT, cleanCrop, cropRect, type CropRecord, type PictureCrop } from "@/lib/picture-crop"
 
@@ -85,7 +85,17 @@ export async function GET(req: NextRequest) {
     const width = (turned ? meta.height : meta.width) ?? 0
     const height = (turned ? meta.width : meta.height) ?? 0
     const preview = await img.resize(PREVIEW_MAX, PREVIEW_MAX, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer()
-    return json({ original: `data:image/jpeg;base64,${preview.toString("base64")}`, width, height, crop: found.crop })
+    // Her words over the frame while she cuts (Hani, 2026-11-11) — the same
+    // layer the save draws, on a transparent 4:5 canvas.
+    const c = found.caption?.caption
+    const layer = c ? await renderCaptionOverlayPng(c.headline ?? "", c.body ?? "", c.position ?? "bottom", c.style, CANVAS_4_5).catch(() => null) : null
+    return json({
+      original: `data:image/jpeg;base64,${preview.toString("base64")}`,
+      width,
+      height,
+      crop: found.crop,
+      ...(layer ? { caption: `data:image/png;base64,${layer.toString("base64")}` } : {}),
+    })
   } catch (err) {
     console.error("[media/crop][GET]", err instanceof Error ? err.message : err)
     return json({ error: "load_failed", message: "לא הצלחנו לטעון את התמונה המקורית. נסו שוב." }, 500)
