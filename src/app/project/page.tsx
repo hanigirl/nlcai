@@ -913,7 +913,9 @@ function ProjectPageInner() {
     : flow === "hook"
       ? editableHook
       : flow === "saved"
-        ? savedHookText
+        // Her edit in the saved post's hook card wins (2026-11-11: an edited
+        // hook used to be ignored here — not saved, not on /core_posts).
+        ? editableHook.trim() || savedHookText
         : ""
 
   // Sync cover text with active hook (only set if empty)
@@ -1415,6 +1417,30 @@ function ProjectPageInner() {
     }, 800)
     return () => clearTimeout(timer)
   }, [savedPostId, flow, selectedHook, hooks, hookIds])
+
+  // The single hook card (a saved post, or one opened from /hooks, without a
+  // list of hooks): her edit is saved to the post, so /core_posts shows the
+  // new hook as the post's title and a reload keeps it (2026-11-11 — the
+  // textarea changed only the screen).
+  useEffect(() => {
+    if (!savedPostId) return
+    if (flow !== "saved" && flow !== "hook") return
+    if (hooks.length > 0) return
+    const text = editableHook.trim()
+    if (!text || text === savedHookText.trim()) return
+    const timer = setTimeout(() => {
+      fetch(`/api/core-posts/${savedPostId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hookText: text }),
+      })
+        .then((r) => {
+          if (r.ok) setSavedHookText(text)
+        })
+        .catch(() => {})
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [savedPostId, flow, hooks.length, editableHook, savedHookText])
 
   // Auto-save video URL when it changes
   const prevVideoUrlRef = useRef<string | null>(null)
