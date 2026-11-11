@@ -19,6 +19,9 @@ function safeNext(origin: string, next: string | null): string | null {
   }
 }
 
+/** Where a password-reset link lands: set a new password. */
+const RESET_PATH = "/auth/reset-password"
+
 async function routeByOnboardingState(
   supabase: SupabaseClient,
   origin: string,
@@ -51,6 +54,10 @@ export async function GET(request: Request) {
   // Path A — token_hash / OTP flow (cross-device email confirmation, magic links, password reset)
   if (tokenHash && type) {
     const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
+    // A password-reset link always lands on "סיסמה חדשה" (2026-11-11).
+    if (type === "recovery") {
+      return NextResponse.redirect(`${origin}${error ? "/login?error=reset" : RESET_PATH}`);
+    }
     if (!error) return routeByOnboardingState(supabase, origin, explicitNext);
     // Disambiguate common failure modes for better messaging.
     const msg = error.message.toLowerCase();
@@ -73,6 +80,7 @@ export async function GET(request: Request) {
     if (msg.includes("database error") || msg.includes("not allowed")) {
       return NextResponse.redirect(`${origin}/login?error=notallowed`);
     }
+    if (explicitNext === RESET_PATH) return NextResponse.redirect(`${origin}/login?error=reset`);
     return NextResponse.redirect(`${origin}/login?error=auth`);
   }
 

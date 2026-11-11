@@ -110,6 +110,15 @@ function LoginPageInner() {
           onClick: () => handleResendConfirmation(emailRef.current),
         },
       });
+    } else if (err === "reset") {
+      setMessage({
+        text: "קישור האיפוס פג תוקף או כבר שומש. הזינו את המייל שלכם ונשלח קישור חדש.",
+        type: "error",
+        action: {
+          label: "שכחתי סיסמא",
+          onClick: () => handleResetPassword(emailRef.current),
+        },
+      });
     } else if (err === "notallowed") {
       // Google signup blocked by the allowlist (we can't pre-check OAuth emails).
       setMessage({ text: EMAIL_NOT_ALLOWED_MSG, type: "error" });
@@ -358,8 +367,10 @@ function LoginPageInner() {
       return;
     }
     setLoading(true);
+    // The link lands on "סיסמה חדשה" (2026-11-11 — it used to sign her in
+    // and never ask for one, so the old password stayed).
     const { error } = await supabase.auth.resetPasswordForEmail(targetEmail, {
-      redirectTo: `${window.location.origin}/auth/callback`,
+      redirectTo: `${window.location.origin}/auth/callback?next=/auth/reset-password`,
     });
     setLoading(false);
     if (error) {
@@ -476,6 +487,17 @@ function LoginPageInner() {
                 />
                 {fieldErrors.password && (
                   <p className="mt-1 text-xs text-button-destructive-default">{fieldErrors.password}</p>
+                )}
+                {/* Always there on sign-in, not only after a wrong password (2026-11-11). */}
+                {!isSignUp && (
+                  <button
+                    type="button"
+                    onClick={() => handleResetPassword(email)}
+                    disabled={loading}
+                    className="mt-1.5 rounded text-xs-body text-text-neutral-default underline-offset-2 hover:text-text-primary-default hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70"
+                  >
+                    שכחתי סיסמא
+                  </button>
                 )}
               </div>
 
