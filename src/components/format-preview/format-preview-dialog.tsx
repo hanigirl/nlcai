@@ -132,9 +132,17 @@ function DialogBody({
   const slotDirty =
     !!draftDate && (draftDate !== data.scheduledDate || draftTime !== data.scheduledTime)
   const captionDirty = captionDraft !== descriptionOf(data)
+  // A post not on the board yet: its description is saved on its own, no date
+  // needed (Hani, 2026-11-11 — "תזמון פוסט" stayed off until a date was
+  // picked, so the only way to fix a description was the canvas).
+  const captionOnly = captionDirty && !slotDirty && !data.scheduledDate && !draftDate
   // One button for every edit here (Hani, 2026-10-21): "תזמון פוסט" saves the
   // caption and the slot together. No separate caption save.
   const commit = () => {
+    if (captionOnly) {
+      onCaptionSave(captionDraft)
+      return
+    }
     if (slotDirty || !data.scheduledDate) {
       const check = draftDate
         ? checkSlot(draftDate, draftTime)
@@ -353,7 +361,7 @@ function DialogBody({
           </Button>
           {!isPublished && (
             <Button size="sm" disabled={!(slotDirty || captionDirty) || loading} onClick={commit}>
-              {data.publish.kind === "draft" ? "שמירה" : "תזמון פוסט"}
+              {data.publish.kind === "draft" || captionOnly ? "שמירה" : "תזמון פוסט"}
             </Button>
           )}
         </div>
