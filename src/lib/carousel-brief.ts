@@ -5,7 +5,7 @@ import { loadBrandFonts } from "@/lib/broll-animation/brief"
 import { reservedZoneLines } from "@/lib/visual-language/fixed-elements"
 import { canOwnMediaText } from "@/lib/feature-access"
 import { brandPalette, resolveDesignDirection, type DesignDirection } from "@/lib/visual-language/direction"
-import { userExampleKind, type MediaStyle, type VisualLanguage } from "@/lib/visual-language/types"
+import { exampleUsable, userExampleKind, type MediaStyle, type VisualLanguage } from "@/lib/visual-language/types"
 import { languageKey, languageLines, pieceLines, styleOfLines } from "@/lib/visual-language/current-brief"
 
 /**
@@ -34,7 +34,9 @@ export async function carouselExamples(
     .eq("user_id", userId)
     .eq("category", "brand_example")
     .order("created_at", { ascending: true })
-  const rows = (data ?? []) as { id: string; storage_path: string; metadata: Record<string, unknown> | null }[]
+  const rows = ((data ?? []) as { id: string; storage_path: string; metadata: Record<string, unknown> | null }[])
+    // One that doesn't fit her language never goes out.
+    .filter((r) => exampleUsable(r.metadata))
   const filed = rows.filter((r) => userExampleKind(r.metadata) === "carousel")
   const carouselIds = new Set((vl?.example_kinds ?? []).filter((k) => k.kind === "carousel").map((k) => k.id))
   const recognised = rows.filter((r) => carouselIds.has(r.id))

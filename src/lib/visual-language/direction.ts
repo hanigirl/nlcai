@@ -10,6 +10,7 @@ import { measureElement, type FixedElement } from "@/lib/visual-language/fixed-e
 import sharp from "sharp"
 import { loadStyleRules, styleRuleLines } from "@/lib/style-memory"
 import {
+  exampleUsable,
   userExampleKind,
   type ExampleKind,
   type MediaStyle,
@@ -109,6 +110,8 @@ export async function loadBrandExamples(
   if (error) console.error("[visual-language][format-examples]", error)
   const rows = ((data ?? []) as { id: string; storage_path: string; metadata: Record<string, unknown> | null }[])
     .filter((r) => !r.storage_path.startsWith("url:") && typeof r.metadata?.url !== "string")
+    // One that doesn't fit her language never goes out (lib/visual-language/types exampleFit).
+    .filter((r) => exampleUsable(r.metadata))
   const recognised = new Set((exampleKinds ?? []).filter((k) => k.kind === kind).map((k) => k.id))
   const filed = rows.filter((r) => userExampleKind(r.metadata) === kind)
   const unfiled = rows.filter((r) => !userExampleKind(r.metadata) && recognised.has(r.id))

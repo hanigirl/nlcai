@@ -45,7 +45,7 @@ import {
 } from "@/components/identity-gap-dialog"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { ScheduleSettings } from "@/components/schedule-settings"
-import { useMultinetwork, useScheduleAllA } from "@/lib/use-scheduling-access"
+import { useExamplesInLanguage, useMultinetwork, useScheduleAllA } from "@/lib/use-scheduling-access"
 import { DriveFoldersSettings } from "@/components/drive-folder-review"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 
@@ -208,8 +208,10 @@ function SettingsPageInner() {
   const initialTab = (searchParams.get("tab") as SettingsTab) || "connections"
   // Settings → מדיה → "מדיה מ-Google Drive": one shared folder per kind of
   // media, read on the canvas by "מדיה משלכם מ Google Drive" (Hani, 2026-10-22).
+  // דוגמאות לשימוש live inside שפה ויזואלית for these accounts (lib/feature-access examplesInLanguage).
+  const examplesInside = useExamplesInLanguage() === true
   const mediaSections = [
-    ...SUB_SECTIONS.media,
+    ...SUB_SECTIONS.media.filter((s) => !(examplesInside && s.id === "examples")),
     { id: "drive", label: "מדיה מ-Google Drive", icon: FolderOpen },
   ]
   // Optional sub-section deep link via `?sub=...`. The home-page profile-
@@ -1403,15 +1405,21 @@ function SettingsPageInner() {
             {/* ==================== MEDIA TAB ==================== */}
             {activeTab === "media" && (
               <div className="flex gap-8">
-                <SettingsSubNav sections={mediaSections} active={activeMediaSection} onChange={(id) => { setActiveMediaSection(id as MediaSection); setActiveSubSection(id) }} />
+                <SettingsSubNav sections={mediaSections} active={examplesInside && activeMediaSection === "examples" ? "visual" : activeMediaSection} onChange={(id) => { setActiveMediaSection(id as MediaSection); setActiveSubSection(id) }} />
 
                 <div className="flex-1 min-w-0 max-w-lg">
                   {activeMediaSection === "preferences" && <VisualPreferencesPanel />}
 
                   {/* ── Visual language: colours, fonts, graphic elements + the analysis ── */}
-                  {activeMediaSection === "visual" && (
+                  {(activeMediaSection === "visual" || (examplesInside && activeMediaSection === "examples")) && (
                     <VisualLanguagePanel
+                      // An old דוגמאות לשימוש link opens the examples accordion.
+                      key={examplesInside && activeMediaSection === "examples" ? "vl-examples" : "vl"}
                       view="visual"
+                      examplesInside={examplesInside}
+                      initialOpen={examplesInside && activeMediaSection === "examples" ? "examples" : "colors"}
+                      examplesTab={examplesTab}
+                      onExamplesTabChange={setExamplesTab}
                       fontsCount={fontItems.length}
                       fontsSection={
                         <div className="flex flex-col gap-3">
@@ -1520,7 +1528,7 @@ function SettingsPageInner() {
                   {activeMediaSection === "drive" && <DriveFoldersSettings />}
 
                   {/* ── Examples per format ── */}
-                  {activeMediaSection === "examples" && (
+                  {activeMediaSection === "examples" && !examplesInside && (
                     <VisualLanguagePanel
                       view="examples"
                       examplesTab={examplesTab}

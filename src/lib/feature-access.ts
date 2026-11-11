@@ -161,3 +161,17 @@ export const TEXT_AT_ONCE_EMAILS = ["hanigirl@gmail.com"]
 export function textAtOnceBRoll(email: string | null | undefined): boolean {
   return !!email && TEXT_AT_ONCE_EMAILS.includes(email.toLowerCase())
 }
+
+/**
+ * "דוגמאות לשימוש" are part of the visual language (Hani, 2026-11-11): one
+ * more accordion on שפה ויזואלית, after the graphic elements, instead of a
+ * page of their own. Every example is checked against her language — right
+ * after upload when that takes seconds, and in every analysis — and one that
+ * doesn't fit gets a red X, is greyed out and never reaches a generator. Her
+ * colours, fonts and elements decide; one stray example no longer turns the
+ * whole language "inconsistent". Hani + Nataliya while they try it.
+ */
+export const EXAMPLES_IN_LANGUAGE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export function examplesInLanguage(email: string | null | undefined): boolean {
+  return !!email && EXAMPLES_IN_LANGUAGE_EMAILS.includes(email.toLowerCase())
+}

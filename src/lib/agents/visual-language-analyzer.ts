@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk"
 import type { ModelImage } from "@/lib/visual-language/image-input"
+import { FIT_RULES } from "@/lib/agents/example-fit"
 import type {
   ElementAnchor,
   ElementSlides,
@@ -194,6 +195,8 @@ export interface AnalyzeInput {
    * the palette is her brand colours; the examples set composition only.
    */
   brandWins?: boolean
+  /** Judge each example against her language (lib/feature-access examplesInLanguage). */
+  examplesFit?: boolean
   elements: { id: string; description: string; image: ModelImage }[]
   examples: { label: string; image: ModelImage; palette?: string[] }[]
   niche: string | null
@@ -217,6 +220,8 @@ export interface AnalyzeOutput {
     slides: ElementSlides
     formats: VisualFormat[]
   }[]
+  /** Only with `examplesFit`: 1-based example number → does it fit her language. */
+  example_fit?: { example: number; fits: boolean; reason_he: string }[]
   /** 1-based example number → what kind of design it is. */
   example_kinds: { example: number; kind: ExampleKind }[]
   preview: { bg: string; accent: string; title: string; body: string }
@@ -260,6 +265,52 @@ const ANALYZE_SYSTEM_BRAND_WINS = ANALYZE_SYSTEM.replace(
   "- style_spec: the brief (rules below). The brand colours she chose are authoritative — they ARE the palette. Take layout, type, imagery and devices from the examples, never their hues: a colour that appears in the examples but isn't one of her brand colours is not part of her language (give its role to the brand colour that fits; white, black and tints of her colours are fine). With no brand colours chosen, take the palette from the examples.\n- palette: the colours in priority order with a short English role each — only her brand colours (plus white / black / tints of them) when she chose any.\n- preview: four hex colours for a tiny mock slide of her carousel — bg (slide background), accent (her highlight colour), title (headline text colour), body (body text colour). Must be readable together, and drawn from the same palette.",
 )
 
+/**
+ * Gated (`examplesFit`, lib/feature-access examplesInLanguage — Hani,
+ * 2026-11-11): her colours, fonts and elements decide; every example is
+ * judged against them and the language is written from the fitting ones
+ * only. One stray example is marked, never a reason to drop the language.
+ */
+const CONSISTENCY_BLOCK = ANALYZE_SYSTEM.slice(
+  ANALYZE_SYSTEM.indexOf("Decide first:"),
+  ANALYZE_SYSTEM.indexOf("Classify every example"),
+)
+const FIT_BLOCK = `Judge every example first (example_fit, one entry per example number):
+${FIT_RULES}
+- With brand colours or graphic elements: they are the anchor; examples are judged against them.
+- With neither: the examples ARE the language — what most of them share decides, and the outliers do not fit.
+- fits=false needs reason_he: one short, kind, specific Hebrew sentence (max 12 words) naming what differs, addressed in plural ("השפה שלכם"). Empty when it fits.
+Write summary_he, style_spec, palette, preview, formats and everything else ONLY from the fitting examples (plus her colours and elements) — ignore the rest entirely, as if she never uploaded them.
+
+Then decide consistent:
+- consistent = true in every normal case — even when some (or all) examples don't fit, her colours and elements still are her language.
+- consistent = false only when her brand colours and graphic elements clash with each other, or when she gave neither and the examples share no language at all.
+
+`
+function withExampleFit(system: string): string {
+  return system.replace(CONSISTENCY_BLOCK, FIT_BLOCK)
+}
+const ANALYZE_SCHEMA_FIT = {
+  ...ANALYZE_SCHEMA,
+  required: [...ANALYZE_SCHEMA.required, "example_fit"],
+  properties: {
+    ...ANALYZE_SCHEMA.properties,
+    example_fit: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["example", "fits", "reason_he"],
+        properties: {
+          example: { type: "integer" },
+          fits: { type: "boolean" },
+          reason_he: { type: "string" },
+        },
+      },
+    },
+  },
+} as const
+
 export async function analyzeVisualLanguage(
   apiKey: string,
   input: AnalyzeInput,
@@ -302,7 +353,10 @@ export async function analyzeVisualLanguage(
     text: "Analyse these inputs as instructed and return the JSON result.",
   })
 
-  return runJson<AnalyzeOutput>(apiKey, input.brandWins ? ANALYZE_SYSTEM_BRAND_WINS : ANALYZE_SYSTEM, content, ANALYZE_SCHEMA)
+  const system = input.brandWins ? ANALYZE_SYSTEM_BRAND_WINS : ANALYZE_SYSTEM
+  return input.examplesFit
+    ? runJson<AnalyzeOutput>(apiKey, withExampleFit(system), content, ANALYZE_SCHEMA_FIT)
+    : runJson<AnalyzeOutput>(apiKey, system, content, ANALYZE_SCHEMA)
 }
 
 export async function deriveNicheVisualLanguage(

@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import type { BrandStyle } from "@/lib/supabase/types"
 import { getUserApiKey } from "@/lib/api-keys"
 import { analyzeBrandStyle } from "@/lib/agents/brand-style-analyzer"
-import { userExampleKind } from "@/lib/visual-language/types"
+import { exampleUsable, userExampleKind } from "@/lib/visual-language/types"
 
 /**
  * Her cover examples as the cover's style (Hani, 2026-11-07: "הקאבר — לפי
@@ -25,7 +25,7 @@ export async function coverStyleFromExamples(supabase: SupabaseClient, userId: s
     .eq("category", "brand_example")
   const rows = ((data ?? []) as { id: string; storage_path: string; metadata: Record<string, unknown> | null }[])
     // Pictures only — a saved link is a page, not an image to read.
-    .filter((r) => userExampleKind(r.metadata) === "cover" && typeof r.metadata?.url !== "string")
+    .filter((r) => userExampleKind(r.metadata) === "cover" && typeof r.metadata?.url !== "string" && exampleUsable(r.metadata))
   if (!rows.length) return null
   const sig = rows.map((r) => r.id).sort().join(",")
 

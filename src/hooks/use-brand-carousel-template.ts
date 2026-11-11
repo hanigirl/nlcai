@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { buildBrandTemplate, type TemplateConfig } from "@/lib/carousel-templates"
-import type { VisualLanguage } from "@/lib/visual-language/types"
+import { exampleUsable, type VisualLanguage } from "@/lib/visual-language/types"
 
 /**
  * The per-user "השפה הוויזואלית שלך" carousel template, or null when she has
@@ -47,25 +47,29 @@ export function useBrandCarouselTemplateState(): { template: TemplateConfig | nu
       let thumbnailUrl: string | undefined
       // A carousel she filed herself (Settings → דוגמאות לשימוש) beats the
       // analysis's guess, which may predate the filing.
-      const { data: filed } = await supabase
+      // One that doesn't fit her language is never her carousel's face.
+      const { data: filedRows } = await supabase
         .from("user_media")
-        .select("storage_path")
+        .select("storage_path, metadata")
         .eq("user_id", user.id)
         .eq("category", "brand_example")
         .eq("metadata->>kind", "carousel")
         .order("created_at", { ascending: true })
-        .limit(1)
-        .maybeSingle()
+      const filed =
+        ((filedRows ?? []) as { storage_path: string; metadata: Record<string, unknown> | null }[]).find((r) =>
+          exampleUsable(r.metadata),
+        ) ?? null
       const carouselExampleId = vl.example_kinds?.find((k) => k.kind === "carousel")?.id
       if (filed || carouselExampleId) {
         const { data: row } = filed
           ? { data: filed }
           : await supabase
               .from("user_media")
-              .select("storage_path")
+              .select("storage_path, metadata")
               .eq("id", carouselExampleId!)
               .maybeSingle()
-        const path = (row as { storage_path?: string } | null)?.storage_path
+        const picked = row as { storage_path?: string; metadata?: Record<string, unknown> | null } | null
+        const path = picked && exampleUsable(picked.metadata) ? picked.storage_path : undefined
         if (path && !path.startsWith("url:")) {
           thumbnailUrl = supabase.storage.from("user-media").getPublicUrl(path).data.publicUrl
         }
