@@ -11,6 +11,18 @@ export const MAX_BRAND_COLORS = 3
 export const MAX_BRAND_ELEMENTS = 8
 /** Per format (carousel / cover / story / image / b-roll), not in total. */
 export const MAX_BRAND_EXAMPLES = 6
+/**
+ * Carousels: up to 8 examples (Hani, 2026-11-11: "שלא יעלו בלי סוף"); each
+ * carousel is built from a few of them at random. Gated with the examples
+ * inside the visual language (lib/feature-access examplesInLanguage).
+ */
+export const MAX_CAROUSEL_EXAMPLES = 8
+/** One example image, at most (a phone screenshot is ~2-5MB). */
+export const MAX_EXAMPLE_BYTES = 10 * 1024 * 1024
+
+export function maxExamplesOf(kind: string, wide: boolean): number {
+  return wide && kind === "carousel" ? MAX_CAROUSEL_EXAMPLES : MAX_BRAND_EXAMPLES
+}
 
 /**
  * The look a story / b-roll is generated in, picked per generation:

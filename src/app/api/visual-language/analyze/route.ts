@@ -14,13 +14,14 @@ import {
 import {
   MAX_BRAND_ELEMENTS,
   MAX_BRAND_EXAMPLES,
+  maxExamplesOf,
   USER_EXAMPLE_KINDS,
   userExampleKind,
   visualLanguageSignature,
   type VisualLanguage,
 } from "@/lib/visual-language/types"
 
-// Website screenshots + an Opus vision call over up to 38 images (8 elements + 6 examples per format, 5 formats).
+// Website screenshots + an Opus vision call over up to 40 images (8 elements + 6 examples per format, 8 carousels on the gate).
 export const maxDuration = 300
 
 /**
@@ -69,10 +70,19 @@ export async function POST() {
     metadata: Record<string, unknown> | null
   }[]
   const elementRows = rows.filter((r) => r.category === "element").slice(0, MAX_BRAND_ELEMENTS)
-  // The cap is per format, so the analysis can see up to one full set of each.
+  // The cap is per format, so the analysis can see up to one full set of each
+  // (carousels: 8 on the gate, lib/visual-language/types maxExamplesOf).
+  const wide = examplesInLanguage(user.email)
+  const seen = new Map<string, number>()
   const exampleRows = rows
     .filter((r) => r.category === "brand_example")
-    .slice(0, MAX_BRAND_EXAMPLES * USER_EXAMPLE_KINDS.length)
+    .filter((r) => {
+      const kind = userExampleKind(r.metadata) ?? "unfiled"
+      const n = (seen.get(kind) ?? 0) + 1
+      seen.set(kind, n)
+      return n <= maxExamplesOf(kind, wide)
+    })
+    .slice(0, MAX_BRAND_EXAMPLES * USER_EXAMPLE_KINDS.length + 2)
 
   if (!colors.length && !elementRows.length && !exampleRows.length) {
     return NextResponse.json(

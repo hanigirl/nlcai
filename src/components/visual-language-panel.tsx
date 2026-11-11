@@ -18,7 +18,9 @@ import {
   MAX_BRAND_COLORS,
   MAX_BRAND_ELEMENTS,
   MAX_BRAND_EXAMPLES,
+  MAX_EXAMPLE_BYTES,
   isHexColor,
+  maxExamplesOf,
   userExampleKind,
   visualLanguageSignature,
   type UserExampleKind,
@@ -258,9 +260,20 @@ export function VisualLanguagePanel({
 
   const handleExampleFiles = async (files: FileList | null, kind: UserExampleKind) => {
     if (!files) return
-    const room = roomFor(kind === "feed_post" ? "image" : kind)
-    const picked = Array.from(files).filter((f) => f.type.startsWith("image/")).slice(0, room)
-    if (files.length > room) toast.message(`אפשר עד ${MAX_BRAND_EXAMPLES} דוגמאות מכל סוג`)
+    const tab = kind === "feed_post" ? "image" : kind
+    const room = roomFor(tab)
+    const images = Array.from(files).filter((f) => f.type.startsWith("image/"))
+    // A sane size per file (gated with the examples inside the language).
+    const tooBig = examplesInside ? images.filter((f) => f.size > MAX_EXAMPLE_BYTES) : []
+    if (tooBig.length)
+      toast.error(
+        tooBig.length === 1
+          ? `הקובץ ${tooBig[0].name} גדול מ-10MB. נסו צילום מסך או תמונה קטנה יותר.`
+          : `${tooBig.length} קבצים גדולים מ-10MB ולא הועלו. נסו צילומי מסך או תמונות קטנות יותר.`,
+      )
+    const fitting = images.filter((f) => !tooBig.includes(f))
+    const picked = fitting.slice(0, room)
+    if (fitting.length > room) toast.message(`אפשר עד ${maxOf(tab)} דוגמאות ${tab === "carousel" && examplesInside ? "של קרוסלות" : "מכל סוג"}`)
     setUploadingExamples((n) => n + picked.length)
     for (const file of picked) {
       const res = await uploadFile(file, "brand_example", { kind })
@@ -392,7 +405,8 @@ export function VisualLanguagePanel({
     return "image"
   }
   // The cap is per format: six carousels don't crowd out her stories.
-  const roomFor = (tab: ExamplesTab) => MAX_BRAND_EXAMPLES - examples.filter((ex) => tabOf(ex) === tab).length
+  const maxOf = (tab: ExamplesTab) => maxExamplesOf(tab, examplesInside)
+  const roomFor = (tab: ExamplesTab) => maxOf(tab) - examples.filter((ex) => tabOf(ex) === tab).length
   // Where the analysis pinned an element (pasted at exact pixels).
   const SLIDE_LABELS = { all: "בכל השקופיות", cover: "בשקופית הפתיחה", content: "בשקופיות התוכן", closing: "בשקופית הסיום", not_cover: "בכל השקופיות חוץ מהפתיחה" } as const
   const FORMAT_LABELS = { carousel: "קרוסלה", story: "סטורי", image_post: "פוסט תמונה", b_roll: "בי-רול" } as const
@@ -576,13 +590,13 @@ export function VisualLanguagePanel({
 
       {EXAMPLE_TABS.map((t) => {
         const items = examples.filter((ex) => tabOf(ex) === t.id)
-        const room = MAX_BRAND_EXAMPLES - items.length
+        const room = maxOf(t.id) - items.length
         return (
           <TabsContent key={t.id} value={t.id} className="flex flex-col gap-4 pt-3">
             {room > 0 ? (
               <>
                 <DropZone
-                  label="PNG, JPG"
+                  label={examplesInside ? "PNG, JPG · עד 10MB לקובץ" : "PNG, JPG"}
                   onClick={() => exampleInputRef.current?.click()}
                   onFiles={(files) => handleExampleFiles(files, t.kind)}
                 />
@@ -610,7 +624,7 @@ export function VisualLanguagePanel({
                 )}
               </>
             ) : (
-              <p className="text-sm text-text-neutral-default">הגעתם למקסימום {MAX_BRAND_EXAMPLES} דוגמאות בסוג הזה. מחקו אחת כדי להוסיף.</p>
+              <p className="text-sm text-text-neutral-default">הגעתם למקסימום {maxOf(t.id)} דוגמאות בסוג הזה. מחקו אחת כדי להוסיף.</p>
             )}
             {uploadingExamples > 0 && <UploadingNote count={uploadingExamples} />}
 
