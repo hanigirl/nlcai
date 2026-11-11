@@ -38,7 +38,7 @@ import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { IconActionButton } from "@/components/icon-action-button"
-import { MediaPreviewZone } from "@/components/media-preview-zone"
+import { HoverMediaIconButton, MediaPreviewZone } from "@/components/media-preview-zone"
 import { AiHoverEditButton } from "@/components/ai-hover-edit"
 import { LaneStem, TreeConnector } from "@/components/format-lanes"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
@@ -243,9 +243,15 @@ export function FormatCardsRow({
   selected,
   onSelect,
   aiEditFor,
+  deleteFor,
   hideWaiting = false,
   storyPlayer = false,
 }: {
+  /**
+   * "מחיקת המדיה" on a card's media, as in the panel (Hani, 2026-11-11) —
+   * the same confirm dialog. Returns nothing where there is nothing to delete.
+   */
+  deleteFor?: (fid: string) => (() => void) | undefined
   /**
    * The story card plays as a story — progress bars, Instagram's pacing —
    * as in the panel, instead of paging ‹ › like a carousel (Hani, 2026-11-10).
@@ -271,13 +277,14 @@ export function FormatCardsRow({
         <div key={item.fid} className="flex items-start" data-format-card={item.fid}>
           {i > 0 && <TreeConnector />}
           {variant === "a" ? (
-            <WindowCard item={item} selected={selected === item.fid} onSelect={() => onSelect(item.fid)} storyPlayer={storyPlayer} />
+            <WindowCard item={item} selected={selected === item.fid} onSelect={() => onSelect(item.fid)} onDelete={deleteFor?.(item.fid)} storyPlayer={storyPlayer} />
           ) : (
             <UniformCard
               item={item}
               selected={selected === item.fid}
               onSelect={() => onSelect(item.fid)}
               onAiEdit={aiEditFor?.(item.fid)}
+              onDelete={deleteFor?.(item.fid)}
               hideWaiting={hideWaiting}
               storyPlayer={storyPlayer}
             />
@@ -330,11 +337,13 @@ function WindowCard({
   item,
   selected,
   onSelect,
+  onDelete,
   storyPlayer = false,
 }: {
   item: FormatCardItem
   selected: boolean
   onSelect: () => void
+  onDelete?: () => void
   storyPlayer?: boolean
 }) {
   const Icon = item.icon
@@ -378,6 +387,9 @@ function WindowCard({
           ) : (
             <FormatMediaPreview media={item.media} fid={item.fid} fill navOverlay />
           ))}
+        {item.state === "media" && item.media && onDelete && (
+          <HoverMediaIconButton label="מחיקת המדיה" icon={Trash2} destructive onClick={onDelete} visible className="bottom-2 end-2" />
+        )}
       </div>
     </div>
   )
@@ -392,6 +404,7 @@ function UniformCard({
   selected,
   onSelect,
   onAiEdit,
+  onDelete,
   hideWaiting = false,
   storyPlayer = false,
 }: {
@@ -399,6 +412,7 @@ function UniformCard({
   selected: boolean
   onSelect: () => void
   onAiEdit?: () => void
+  onDelete?: () => void
   hideWaiting?: boolean
   storyPlayer?: boolean
 }) {
@@ -466,6 +480,10 @@ function UniformCard({
       <div className="relative flex min-h-12 items-center px-5 py-3">
         {status && <span className="text-xs text-text-neutral-default">{status}</span>}
         {hasMedia && onAiEdit && <AiHoverEditButton target="media" onClick={onAiEdit} visible className="bottom-3 start-3" />}
+        {/* The panel's delete, on the other corner (Hani, 2026-11-11). */}
+        {hasMedia && onDelete && (
+          <HoverMediaIconButton label="מחיקת המדיה" icon={Trash2} destructive onClick={onDelete} visible className="bottom-3 end-3" />
+        )}
       </div>
     </div>
   )

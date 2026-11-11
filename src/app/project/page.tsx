@@ -3473,6 +3473,9 @@ function ProjectPageInner() {
                                   : undefined
                             : undefined
                         }
+                        deleteFor={(f) => () =>
+                          f === "talking_head" ? setPendingVideoDelete(true) : setPendingMediaDelete(f as AiEditFormat)
+                        }
                         hideWaiting={editAgentOn}
                         storyPlayer={ownTextGate}
                       />
