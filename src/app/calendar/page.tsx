@@ -867,21 +867,9 @@ export default function CalendarPage() {
     )
     return [...new Set(railCards.map((c) => c.format))].filter((f) => !withDay.has(f))
   }, [scheduleAllA, arrangeRoutine, railCards])
-  const plannedWeeks = useMemo(
-    () =>
-      new Set(
-        (planned ?? []).map((p) => {
-          const [y, m, d] = p.scheduledDate.split("-").map((n) => parseInt(n, 10))
-          return toDateKey(startOfWeek(new Date(y, m - 1, d)))
-        }),
-      ).size,
-    [planned],
-  )
   const arrangeNotice =
-    scheduleAllA && (planned || formatsWithoutDay.length > 0) ? (
+    scheduleAllA && (formatsWithoutDay.length > 0 || (planned && plannedNoRoom > 0)) ? (
       <ArrangeNotice
-        placed={planned?.length ?? 0}
-        weeks={plannedWeeks}
         noRoom={planned ? plannedNoRoom : 0}
         formatsWithoutDay={formatsWithoutDay.map((f) => FORMAT_LABELS[f] ?? f)}
         onOpenSettings={() => setScheduleSettingsOpen(true)}
@@ -1998,67 +1986,47 @@ export default function CalendarPage() {
 /**
  * The warning at the top of "פוסטים לתזמון" (Hani, 2026-11-11, Figma
  * 726:3660, warning surface yellow-97): the ready formats her schedule
- * settings give no day, and after an auto-arrange where it went and what
- * didn't fit.
+ * settings give no day. Not how the arrange spread — the board shows that
+ * ("אף אחד לא קורא את זה").
  */
 function ArrangeNotice({
-  placed,
-  weeks,
   noRoom,
   formatsWithoutDay,
   onOpenSettings,
 }: {
-  placed: number
-  weeks: number
   noRoom: number
   formatsWithoutDay: string[]
   onOpenSettings: () => void
 }) {
-  const arranged =
-    placed === 0
-      ? ""
-      : weeks > 1
-        ? `${placed} פוסטים סודרו על פני ${weeks} שבועות. עברו בין השבועות בחיצים כדי לראות.`
-        : placed === 1
-          ? "פוסט אחד סודר בלוח."
-          : `${placed} פוסטים סודרו בלוח.`
   const noRoomLine = noRoom
     ? `${noRoom === 1 ? "פוסט אחד לא נכנס" : `${noRoom} פוסטים לא נכנסו`}: אין משבצת פנויה ב-${Math.round(HORIZON_DAYS / 365)} השנים הקרובות.`
     : ""
   const missing = formatsWithoutDay.length > 0
-  const title = missing
-    ? `חשוב! אין לך הגדרות תזמון ל${formatsWithoutDay.join(" ו")}`
-    : noRoom
-      ? `חשוב! ${noRoomLine}`
-      : arranged
+  const title = missing ? `חשוב! אין לך הגדרות תזמון ל${formatsWithoutDay.join(" ו")}` : noRoom ? `חשוב! ${noRoomLine}` : ""
   if (!title) return null
-  const lines = missing ? [arranged, noRoomLine].filter(Boolean) : noRoom ? [arranged].filter(Boolean) : []
-  const warn = missing || noRoom > 0
+  // The board shows where things went; the warning only says what can't go.
+  const lines = missing && noRoomLine ? [noRoomLine] : []
   return (
     <div role="status" className="flex items-center gap-2.5 rounded-lg bg-bg-surface-warning-default p-2">
-      {warn && (
-        <div className="relative h-[54px] w-[50px] shrink-0 overflow-hidden" aria-hidden>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/images/schedule-warning.png" alt="" className="absolute inset-0 size-full object-cover" />
-        </div>
-      )}
+      <div className="relative h-[54px] w-[50px] shrink-0 overflow-hidden" aria-hidden>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/images/schedule-warning.png" alt="" className="absolute inset-0 size-full object-cover" />
+      </div>
       <div className="flex flex-1 flex-col text-small text-gray-40 dark:text-gray-80">
         <p className="font-semibold text-text-primary-default">{title}</p>
         {lines.map((l) => (
           <p key={l}>{l}</p>
         ))}
-        {warn && (
-          <p>
-            {missing ? "כדי לתזמן את הפורמטים האלה, יש לקבוע להם זמן " : "אפשר לפנות מקום "}
-            <button
-              type="button"
-              onClick={onOpenSettings}
-              className="rounded text-button-primary-default underline underline-offset-2 hover:text-button-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 dark:text-yellow-80"
-            >
-              בהגדרות התזמון
-            </button>
-          </p>
-        )}
+        <p>
+          {missing ? "כדי לתזמן את הפורמטים האלה, יש לקבוע להם זמן " : "אפשר לפנות מקום "}
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="rounded text-button-primary-default underline underline-offset-2 hover:text-button-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 dark:text-yellow-80"
+          >
+            בהגדרות התזמון
+          </button>
+        </p>
       </div>
     </div>
   )
