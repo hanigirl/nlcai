@@ -65,7 +65,7 @@ import type { FormatId, FormatReadiness } from "@/lib/timing-storage"
  * Hebrew labels for format ids. Kept in this file so callers don't pass them
  * — the component owns the visual language top-to-bottom (icon, label, copy).
  */
-const FORMAT_LABELS: Record<string, string> = {
+export const FORMAT_LABELS: Record<string, string> = {
   story: "סטורי",
   talking_head: "דיבור למצלמה",
   carousel: "קרוסלה",

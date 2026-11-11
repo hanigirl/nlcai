@@ -26,6 +26,7 @@ import {
 } from "@/components/calendar-routine"
 import { defaultPostingSchedule, slotsForDate, type PostingSchedule } from "@/lib/posting-schedule"
 import { AppShell } from "@/components/app-shell"
+import { FORMAT_LABELS } from "@/components/format-status-chip"
 import { defaultDescription } from "@/lib/default-description"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -800,11 +801,33 @@ export default function CalendarPage() {
       arrangedAtRef.current = Date.now()
       setPlanned(plan.placed)
       setPlannedUnmatched(plan.unmatched)
-      const first = [...plan.placed].sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate))[0]
+      const sorted = [...plan.placed].sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate))
+      const first = sorted[0]
       if (first) {
         const [y, m, d] = first.scheduledDate.split("-").map((n) => parseInt(n, 10))
         setWeekStart(startOfWeek(new Date(y, m - 1, d)))
       }
+      // Say where everything went (Hani, 2026-11-11): the plan runs over the
+      // coming weeks, and a format with no day in her settings stays aside.
+      const toWeek = (k: string) => {
+        const [y, m, d] = k.split("-").map((n) => parseInt(n, 10))
+        return toDateKey(startOfWeek(new Date(y, m - 1, d)))
+      }
+      const weeks = new Set(sorted.map((p) => toWeek(p.scheduledDate))).size
+      const placedLine =
+        weeks > 1
+          ? `${plan.placed.length} פוסטים סודרו על פני ${weeks} שבועות. עברו בין השבועות בחיצים כדי לראות.`
+          : plan.placed.length === 1
+            ? "פוסט אחד סודר בלוח."
+            : `${plan.placed.length} פוסטים סודרו בלוח.`
+      const missing = [...new Set(plan.unmatched.map((c) => FORMAT_LABELS[c.format] ?? c.format))]
+      toast(placedLine, {
+        description: missing.length
+          ? `אין בהגדרות התזמון יום ל${missing.join(" ול")}, ולכן ${missing.length === 1 ? "הפורמט נשאר" : "הפורמטים נשארו"} ברשימה בצד.`
+          : undefined,
+        ...(missing.length ? { action: { label: "הגדרות תזמון", onClick: () => setScheduleSettingsOpen(true) } } : {}),
+        duration: 8000,
+      })
       return
     }
     if (!hasAnySlot(routine.saved)) {
