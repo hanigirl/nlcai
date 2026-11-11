@@ -59,7 +59,6 @@ import {
 import { useFormatGap, useMultinetwork, useScheduleAllA, useSchedulingAccess, useSchedulingPreview, useDescriptionAccess } from "@/lib/use-scheduling-access"
 import {
   hasAnySlot,
-  HORIZON_DAYS,
   planScheduleAll,
   type PlanInputCard,
   type PlannedSlot,
@@ -783,8 +782,6 @@ export default function CalendarPage() {
   const [railCards, setRailCards] = useState<PlanInputCard[]>([])
   const [planned, setPlanned] = useState<PlannedSlot[] | null>(null)
   const [plannedUnmatched, setPlannedUnmatched] = useState<PlanInputCard[]>([])
-  // Cards the last arrange found no free slot for within its horizon.
-  const [plannedNoRoom, setPlannedNoRoom] = useState(0)
   const [noSettingsOpen, setNoSettingsOpen] = useState(false)
   const [scheduleSettingsOpen, setScheduleSettingsOpen] = useState(false)
   // When the drafts were laid out — a confirm right after is a double click.
@@ -810,7 +807,6 @@ export default function CalendarPage() {
         const [y, m, d] = first.scheduledDate.split("-").map((n) => parseInt(n, 10))
         setWeekStart(startOfWeek(new Date(y, m - 1, d)))
       }
-      setPlannedNoRoom(plan.noRoom.length)
       return
     }
     if (!hasAnySlot(routine.saved)) {
@@ -868,9 +864,8 @@ export default function CalendarPage() {
     return [...new Set(railCards.map((c) => c.format))].filter((f) => !withDay.has(f))
   }, [scheduleAllA, arrangeRoutine, railCards])
   const arrangeNotice =
-    scheduleAllA && (formatsWithoutDay.length > 0 || (planned && plannedNoRoom > 0)) ? (
+    scheduleAllA && formatsWithoutDay.length > 0 ? (
       <ArrangeNotice
-        noRoom={planned ? plannedNoRoom : 0}
         formatsWithoutDay={formatsWithoutDay.map((f) => FORMAT_LABELS[f] ?? f)}
         onOpenSettings={() => setScheduleSettingsOpen(true)}
       />
@@ -1986,26 +1981,16 @@ export default function CalendarPage() {
 /**
  * The warning at the top of "פוסטים לתזמון" (Hani, 2026-11-11, Figma
  * 726:3660, warning surface yellow-97): the ready formats her schedule
- * settings give no day. Not how the arrange spread — the board shows that
- * ("אף אחד לא קורא את זה").
+ * settings give no day — only that (Hani: not how the arrange spread, not
+ * what didn't fit; the board shows those).
  */
 function ArrangeNotice({
-  noRoom,
   formatsWithoutDay,
   onOpenSettings,
 }: {
-  noRoom: number
   formatsWithoutDay: string[]
   onOpenSettings: () => void
 }) {
-  const noRoomLine = noRoom
-    ? `${noRoom === 1 ? "פוסט אחד לא נכנס" : `${noRoom} פוסטים לא נכנסו`}: אין משבצת פנויה ב-${Math.round(HORIZON_DAYS / 365)} השנים הקרובות.`
-    : ""
-  const missing = formatsWithoutDay.length > 0
-  const title = missing ? `חשוב! אין לך הגדרות תזמון ל${formatsWithoutDay.join(" ו")}` : noRoom ? `חשוב! ${noRoomLine}` : ""
-  if (!title) return null
-  // The board shows where things went; the warning only says what can't go.
-  const lines = missing && noRoomLine ? [noRoomLine] : []
   return (
     <div role="status" className="flex items-center gap-2.5 rounded-lg bg-bg-surface-warning-default p-2">
       <div className="relative h-[54px] w-[50px] shrink-0 overflow-hidden" aria-hidden>
@@ -2013,12 +1998,11 @@ function ArrangeNotice({
         <img src="/images/schedule-warning.png" alt="" className="absolute inset-0 size-full object-cover" />
       </div>
       <div className="flex flex-1 flex-col text-small text-gray-40 dark:text-gray-80">
-        <p className="font-semibold text-text-primary-default">{title}</p>
-        {lines.map((l) => (
-          <p key={l}>{l}</p>
-        ))}
+        <p className="font-semibold text-text-primary-default">
+          חשוב! אין לך הגדרות תזמון ל{formatsWithoutDay.join(" ו")}
+        </p>
         <p>
-          {missing ? "כדי לתזמן את הפורמטים האלה, יש לקבוע להם זמן " : "אפשר לפנות מקום "}
+          כדי לתזמן את הפורמטים האלה, יש לקבוע להם זמן{" "}
           <button
             type="button"
             onClick={onOpenSettings}
