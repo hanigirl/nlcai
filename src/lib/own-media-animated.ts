@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { BACKGROUND_FRAMINGS, buildBackgroundPrompt, cropToCanvas } from "@/lib/broll-animation/background"
 import { buildCompositionBrief, currentCompositionBrief } from "@/lib/broll-animation/brief"
 import { MOTION_RESTYLE_NOTE, wantsOwnLanguage } from "@/lib/visual-language/current-brief"
-import { composeBRoll, finalizeHtml, reviseBRoll, type CompositionBrief } from "@/lib/broll-animation/compose"
+import { composeBRoll, finalizeHtml, holdsText, reviseBRoll, type CompositionBrief } from "@/lib/broll-animation/compose"
 import { renderComposition } from "@/lib/broll-animation/render"
 import type { StoredComposition } from "@/lib/broll-animation/store"
 import { generateImage } from "@/lib/openai-image"
@@ -276,7 +276,7 @@ async function renderAndStore(supabase: SupabaseClient, prefix: string, composit
   const path = await import("path")
   const outPath = path.join(os.tmpdir(), `story-anim-${stamp}.mp4`)
   try {
-    await renderComposition(withBrandLayer(finalizeHtml(template, backgroundUrl, brief.fonts), layerUrl), outPath)
+    await renderComposition(withBrandLayer(finalizeHtml(template, backgroundUrl, brief.fonts, { holdText: holdsText(brief) }), layerUrl), outPath)
     const clip = await fs.readFile(outPath)
     const url = await upload(`${prefix}.mp4`, clip, "video/mp4")
     // Best effort: the frame is already made; losing the recipe only costs a later edit.

@@ -338,12 +338,38 @@ export async function reviseBRoll(
   )
 }
 
+/** Her words must be on screen from frame 0 (textAtOnce / staticText). */
+export function holdsText(b: Pick<CompositionBrief, "textAtOnce" | "staticText">): boolean {
+  return !!(b.textAtOnce || b.staticText)
+}
+
+/**
+ * The words on screen from the first frame — in code, not only asked of the
+ * model (Hani, 2026-11-11: "מהרגע הראשון בלי fade או דיליי"; elements and
+ * the highlights on the words may still animate). Every element that holds
+ * text, and every wrapper around it, is pinned fully opaque, visible and
+ * unclipped: an !important rule beats CSS / Web animations and GSAP's inline
+ * styles alike, at every seek. Movement (transform) is left alone, and so
+ * are ::before / ::after and the shapes beside the words — where highlights
+ * and decorations live. Words split into spans later by the page's own
+ * script are caught by the observer.
+ */
+const TEXT_HOLD = `<style data-text-hold>[data-text-hold]{opacity:1!important;visibility:visible!important;clip-path:none!important;-webkit-clip-path:none!important;mask-image:none!important;-webkit-mask-image:none!important}</style><script data-text-hold>(function(){var SKIP={SCRIPT:1,STYLE:1,TITLE:1,HEAD:1,HTML:1,BODY:1,NOSCRIPT:1};function mark(root){var w=document.createTreeWalker(root||document.body,NodeFilter.SHOW_TEXT);var n;while((n=w.nextNode())){if(!n.nodeValue||!n.nodeValue.trim())continue;var e=n.parentElement;while(e&&!SKIP[e.tagName]){if(e.hasAttribute("data-text-hold"))break;e.setAttribute("data-text-hold","");e=e.parentElement}}}function go(){if(!document.body)return;mark(document.body);new MutationObserver(function(){mark(document.body)}).observe(document.body,{childList:true,subtree:true,characterData:true})}if(document.body)go();else document.addEventListener("DOMContentLoaded",go);document.addEventListener("DOMContentLoaded",function(){mark(document.body)});window.addEventListener("load",function(){mark(document.body)})})();</script>`
+
 /** The stored template → a page the renderer can load. */
-export function finalizeHtml(template: string, backgroundUrl: string, fonts: BrandFont[]): string {
+export function finalizeHtml(
+  template: string,
+  backgroundUrl: string,
+  fonts: BrandFont[],
+  opts: { holdText?: boolean } = {},
+): string {
   const head = fontHead(fonts)
   let html = template.split(BACKGROUND_TOKEN).join(backgroundUrl)
   html = html.includes(FONT_MARKER)
     ? html.replace(FONT_MARKER, head)
     : html.replace(/<head[^>]*>/i, (m) => `${m}${head}`)
+  if (opts.holdText) {
+    html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, (m) => `${TEXT_HOLD}${m}`) : `${html}${TEXT_HOLD}`
+  }
   return html
 }

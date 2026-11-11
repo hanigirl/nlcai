@@ -1,7 +1,7 @@
 import path from "path"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { buildCompositionBrief } from "@/lib/broll-animation/brief"
-import { BACKGROUND_TOKEN, composeBRoll, finalizeHtml, type CompositionBrief } from "@/lib/broll-animation/compose"
+import { BACKGROUND_TOKEN, composeBRoll, finalizeHtml, holdsText, type CompositionBrief } from "@/lib/broll-animation/compose"
 import { renderOverlayFrames } from "@/lib/broll-animation/render"
 import { resolveDesignDirection } from "@/lib/visual-language/direction"
 import type { CaptionSpec } from "@/lib/own-media"
@@ -107,7 +107,7 @@ export async function renderOwnVideoCaption(
   const template = opts.template?.includes(BACKGROUND_TOKEN) ? opts.template : await composeBRoll(anthropicKey, brief, 0)
   if (!template.includes(BACKGROUND_TOKEN)) throw new Error("composition_invalid")
   opts.onTemplate?.(template)
-  const frames = await renderOverlayFrames(finalizeHtml(template, TRANSPARENT_PNG, brief.fonts), OVERLAY_SECONDS, dir, opts.onlyLast === true)
+  const frames = await renderOverlayFrames(finalizeHtml(template, TRANSPARENT_PNG, brief.fonts, { holdText: holdsText(brief) }), OVERLAY_SECONDS, dir, opts.onlyLast === true)
   // Her footage stays the hero: a layer that paints over much of the frame
   // (a wash, a full-screen gradient) is not a caption. Then the still plate
   // is used instead (the caller falls back on any throw).

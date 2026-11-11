@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
 import { getUserApiKey } from "@/lib/api-keys"
-import { driveInBRoll } from "@/lib/feature-access"
-import { finalizeHtml, reviseBRoll } from "@/lib/broll-animation/compose"
+import { driveInBRoll, holdsBRollText } from "@/lib/feature-access"
+import { finalizeHtml, holdsText, reviseBRoll } from "@/lib/broll-animation/compose"
 import { renderDistributed } from "@/lib/broll-animation/distributed"
 import { loadComposition, saveBRoll } from "@/lib/broll-animation/store"
 import { driveFileBytes, storeLibraryImage, storeLibraryVideo } from "@/lib/broll-animation/library-media"
@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
     const path = await import("path")
     const outPath = path.join(os.tmpdir(), `broll-swap-${stamp}.mp4`)
     tmpFiles.push(outPath)
-    await renderDistributed(finalizeHtml(template, composition.backgroundUrl, brief.fonts), outPath, new URL(req.url).origin)
+    await renderDistributed(finalizeHtml(template, composition.backgroundUrl, brief.fonts, { holdText: holdsText(brief) || holdsBRollText(user.email) }), outPath, new URL(req.url).origin)
     const clip = await fs.readFile(outPath)
     const url = await saveBRoll(supabase, user.id, postId, stamp, clip, {
       ...composition,

@@ -4,7 +4,8 @@ import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-cre
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
-import { finalizeHtml, reviseBRoll } from "@/lib/broll-animation/compose"
+import { finalizeHtml, holdsText, reviseBRoll } from "@/lib/broll-animation/compose"
+import { holdTextAtStart } from "@/lib/broll-animation/text-hold"
 import { renderComposition } from "@/lib/broll-animation/render"
 import { hasOwnBackground, loadComposition, saveBRoll, uploadBackground } from "@/lib/broll-animation/store"
 import { currentCompositionBrief } from "@/lib/broll-animation/brief"
@@ -25,7 +26,7 @@ import { parseReferences, referenceBuffer } from "@/lib/ai-edit-references"
 import { changedArea, editPrompt, IMAGE_MISSING, planImageEdit } from "@/lib/ai-edit-plan"
 import { loadImageForModels, normaliseImage } from "@/lib/visual-language/image-input"
 import { picturesPlaced } from "@/lib/placed-check"
-import { canBlendBRoll, canOwnMediaText } from "@/lib/feature-access"
+import { canBlendBRoll, canOwnMediaText, holdsBRollText } from "@/lib/feature-access"
 import { scriptTextFor, type ScriptText } from "@/lib/script-text"
 
 const squashWords = (t: string) => t.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, "").replace(/[\s"'`״׳.,!?:;—–\-\[\]()+]+/g, "")
@@ -313,6 +314,10 @@ export async function POST(req: NextRequest) {
       template = await reviseBRoll(anthropicKey, brief, template, scriptWordsFix(scriptText))
       if (!hasScriptWords(template, scriptText)) console.warn("[b-roll/edit] words still differ from the script after the fix-up")
     }
+    // Her words at full size in the frame from t=0 (lib/broll-animation/text-hold).
+    if (holdsText(brief) || holdsBRollText(user.email)) {
+      template = await holdTextAtStart(anthropicKey, brief, template, (t) => finalizeHtml(t, backgroundUrl, brief.fonts, { holdText: true }))
+    }
 
     const os = await import("os")
     const fs = await import("fs/promises")
@@ -320,7 +325,7 @@ export async function POST(req: NextRequest) {
     const outPath = path.join(os.tmpdir(), `broll-edit-${stamp}.mp4`)
     tmpFiles.push(outPath)
     await renderComposition(
-      finalizeHtml(template, backgroundUrl, brief.fonts),
+      finalizeHtml(template, backgroundUrl, brief.fonts, { holdText: holdsText(brief) || holdsBRollText(user.email) }),
       outPath,
     )
     const clip = await fs.readFile(outPath)

@@ -1,5 +1,5 @@
 import { resetAgentChat } from "@/lib/edit-agent/reset-chat"
-import { canOwnMediaText, driveInBRoll } from "@/lib/feature-access"
+import { canOwnMediaText, driveInBRoll, holdsBRollText } from "@/lib/feature-access"
 import { withGraphicOnly } from "@/lib/visual-language/graphic-only"
 import { gatePlacement } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
@@ -12,7 +12,8 @@ import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
 import { BACKGROUND_FRAMINGS, OWN_BACKGROUND_LINE, buildBackgroundPrompt, cropToCanvas, pictureAsBackground } from "@/lib/broll-animation/background"
 import { buildCompositionBrief } from "@/lib/broll-animation/brief"
-import { composeBRoll, finalizeHtml } from "@/lib/broll-animation/compose"
+import { composeBRoll, finalizeHtml, holdsText } from "@/lib/broll-animation/compose"
+import { holdTextAtStart } from "@/lib/broll-animation/text-hold"
 import { renderComposition } from "@/lib/broll-animation/render"
 import { renderDistributed } from "@/lib/broll-animation/distributed"
 import { pickLibraryMedia } from "@/lib/broll-animation/library-media"
@@ -235,7 +236,7 @@ export async function POST(req: NextRequest) {
         return v
       })
     // Background and motion design don't depend on each other — run both.
-    const [raw, template] = await Promise.all([
+    const [raw, composed] = await Promise.all([
       ownBackground
         ? Promise.resolve(null)
         : timed("background", generateImage(
@@ -255,6 +256,11 @@ export async function POST(req: NextRequest) {
 
     const backgroundUrl = await uploadBackground(supabase, user.id, stamp, background)
     timing.uploadBackground = Date.now() - mark
+    // Her words at full size in the frame from t=0 (lib/broll-animation/text-hold).
+    const holdText = holdsText(brief) || holdsBRollText(user.email)
+    const template = holdText
+      ? await holdTextAtStart(anthropicKey, brief, composed, (t) => finalizeHtml(t, backgroundUrl, brief.fonts, { holdText }))
+      : composed
 
     const os = await import("os")
     const fs = await import("fs/promises")
@@ -264,9 +270,9 @@ export async function POST(req: NextRequest) {
     mark = Date.now()
     // Split across functions for the gated accounts (lib/broll-animation/distributed).
     if (driveInBRoll(user.email)) {
-      await renderDistributed(finalizeHtml(template, backgroundUrl, brief.fonts), outPath, new URL(req.url).origin, timing)
+      await renderDistributed(finalizeHtml(template, backgroundUrl, brief.fonts, { holdText: holdsText(brief) || holdsBRollText(user.email) }), outPath, new URL(req.url).origin, timing)
     } else {
-      await renderComposition(finalizeHtml(template, backgroundUrl, brief.fonts), outPath, timing)
+      await renderComposition(finalizeHtml(template, backgroundUrl, brief.fonts, { holdText: holdsText(brief) || holdsBRollText(user.email) }), outPath, timing)
     }
     timing.render = Date.now() - mark
     const clip = await fs.readFile(outPath)

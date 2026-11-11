@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk"
 import type { SupabaseClient } from "@supabase/supabase-js"
-import { finalizeHtml, reviseBRoll, type CompositionBrief } from "@/lib/broll-animation/compose"
+import { finalizeHtml, holdsText, reviseBRoll, type CompositionBrief } from "@/lib/broll-animation/compose"
+import { holdTextAtStart } from "@/lib/broll-animation/text-hold"
 import { FAST_RENDER_PAGES, renderComposition } from "@/lib/broll-animation/render"
 import { renderDistributed } from "@/lib/broll-animation/distributed"
 import { hasOwnBackground, saveBRoll, uploadBackground, type StoredComposition } from "@/lib/broll-animation/store"
@@ -274,9 +275,12 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
   let checks = 0
   const done: string[] = []
   const stamp = () => crypto.randomUUID()
-  const draftHtml = () => finalizeHtml(template, backgroundUrl, brief.fonts)
+  let holdText = holdsText(brief)
+  const draftHtml = () => finalizeHtml(template, backgroundUrl, brief.fonts, { holdText })
 
-  const { direction } = await currentCompositionBrief(db, userId, composition.brief, { format: "b_roll" })
+  const { direction, brief: freshBrief } = await currentCompositionBrief(db, userId, composition.brief, { format: "b_roll" })
+  // A b-roll made before her text rule still follows it now.
+  holdText = holdText || holdsText(freshBrief)
 
   await input.setProgress("מסתכל על הבי-רול...")
   const stills = await snapshotComposition(draftHtml(), LOOK_TIMES).catch(() => [] as string[])
@@ -575,6 +579,8 @@ export async function runBRollAgent(input: BRollAgentInput): Promise<BRollAgentO
     if (script && !hasScriptWords(template, script)) {
       template = await reviseBRoll(anthropicKey, brief, template, scriptWordsFix(script))
     }
+    // Her words at full size in the frame from t=0 (lib/broll-animation/text-hold).
+    if (holdText) template = await holdTextAtStart(anthropicKey, brief, template, (t) => finalizeHtml(t, backgroundUrl, brief.fonts, { holdText }))
     await input.setProgress("מרנדר את הבי-רול החדש... זה לוקח כשלוש דקות")
     const os = await import("os")
     const fs = await import("fs/promises")

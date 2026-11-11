@@ -162,6 +162,11 @@ export function textAtOnceBRoll(email: string | null | undefined): boolean {
   return !!email && TEXT_AT_ONCE_EMAILS.includes(email.toLowerCase())
 }
 
+/** Her b-roll words on screen from frame 0, enforced in the page (lib/broll-animation/compose TEXT_HOLD). */
+export function holdsBRollText(email: string | null | undefined): boolean {
+  return textAtOnceBRoll(email) || staticBRollText(email)
+}
+
 /**
  * "דוגמאות לשימוש" are part of the visual language (Hani, 2026-11-11): one
  * more accordion on שפה ויזואלית, after the graphic elements, instead of a
