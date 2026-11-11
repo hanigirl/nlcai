@@ -121,6 +121,7 @@ import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
 import { useChatRevealer } from "@/lib/ai-chat-reveal"
 import { isCopyFormat } from "@/lib/format-copy-refine"
 import { FormatCopyActionRow, FormatCopyAiHoverButton } from "@/components/format-copy-ai/format-copy-entry"
+import { defaultDescription } from "@/lib/default-description"
 import type { FormatCopyAiController } from "@/components/format-copy-ai/use-format-copy-ai"
 
 type Flow = "idea" | "hook" | "saved"
@@ -2619,8 +2620,9 @@ function ProjectPageInner() {
               fid={fid}
               hasMedia={hasMedia}
               onGoToMedia={() => setPanelStep("media")}
-              // No description of its own yet: the core post's script, editable (Hani, 2026-11-11).
-              description={formatDescriptions[fid] ?? corePost ?? ""}
+              // No description of its own yet: the format's default, editable
+              // (Hani, 2026-11-11, lib/default-description).
+              description={formatDescriptions[fid] ?? defaultDescription(fid, corePost)}
               onDescriptionChange={descriptionOn ? (t) => changeDescription(fid, t) : undefined}
             />
           ),

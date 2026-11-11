@@ -727,7 +727,11 @@ export function FormatPanelSchedule({
             onChange={(e) => onDescriptionChange(e.target.value)}
             rows={6}
             dir="rtl"
-            placeholder="הטקסט שעולה עם הפוסט. בלי תיאור, יעלה פוסט הליבה."
+            placeholder={
+              fid === "carousel" || fid === "talking_head"
+                ? "הטקסט שעולה עם הפוסט. בלי תיאור, תעלה הקריאה לפעולה מפוסט הליבה."
+                : "הטקסט שעולה עם הפוסט. בלי תיאור, יעלה פוסט הליבה."
+            }
             className="min-h-32 text-small leading-relaxed"
           />
         </label>

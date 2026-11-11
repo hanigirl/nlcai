@@ -326,7 +326,13 @@ function DialogBody({
                   value={captionDraft}
                   onChange={(e) => setCaptionDraft(e.target.value)}
                   rows={8}
-                  placeholder={data.description !== undefined ? "הטקסט שעולה עם הפוסט. בלי תיאור, יעלה פוסט הליבה." : undefined}
+                  placeholder={
+                    data.description !== undefined
+                      ? data.format === "carousel" || data.format === "talking_head"
+                        ? "הטקסט שעולה עם הפוסט. בלי תיאור, תעלה הקריאה לפעולה מפוסט הליבה."
+                        : "הטקסט שעולה עם הפוסט. בלי תיאור, יעלה פוסט הליבה."
+                      : undefined
+                  }
                   dir="rtl"
                   aria-labelledby="pv-caption"
                   className="min-h-40 text-small leading-relaxed"

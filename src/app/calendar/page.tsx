@@ -26,6 +26,7 @@ import {
 } from "@/components/calendar-routine"
 import { defaultPostingSchedule, slotsForDate, type PostingSchedule } from "@/lib/posting-schedule"
 import { AppShell } from "@/components/app-shell"
+import { defaultDescription } from "@/lib/default-description"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -1127,10 +1128,10 @@ export default function CalendarPage() {
         } else if (format === "talking_head") urls = p.videoUrl ? [p.videoUrl] : []
         else if (p.formatMedia?.[format]) urls = [p.formatMedia[format]]
         const script = p.formatPosts?.[format] ?? ""
-        // No description of its own yet: the core post's script (Hani,
-        // 2026-11-11) — what the publish sends (lib/social/assemble). A story
-        // has none.
-        const description = format === "story" ? "" : p.formatDescriptions?.[format] || p.body || ""
+        // No description of its own yet: the format's default (Hani,
+        // 2026-11-11, lib/default-description) — what the publish sends
+        // (lib/social/assemble). A story has none.
+        const description = format === "story" ? "" : p.formatDescriptions?.[format] || defaultDescription(format, p.body)
         setPreviewDetail({
           key,
           caption: descriptionOn ? description.trim() || script : script,
