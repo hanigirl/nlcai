@@ -2593,7 +2593,8 @@ function ProjectPageInner() {
               fid={fid}
               hasMedia={hasMedia}
               onGoToMedia={() => setPanelStep("media")}
-              description={formatDescriptions[fid] ?? ""}
+              // No description of its own yet: the core post's script, editable (Hani, 2026-11-11).
+              description={formatDescriptions[fid] ?? corePost ?? ""}
               onDescriptionChange={descriptionOn ? (t) => changeDescription(fid, t) : undefined}
             />
           ),

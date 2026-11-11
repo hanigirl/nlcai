@@ -1108,6 +1108,7 @@ export default function CalendarPage() {
           | {
               formatPosts?: Record<string, string>
               formatDescriptions?: Record<string, string>
+              body?: string | null
               formatMedia?: Record<string, string>
               videoUrl?: string | null
               coverUrl?: string | null
@@ -1126,7 +1127,10 @@ export default function CalendarPage() {
         } else if (format === "talking_head") urls = p.videoUrl ? [p.videoUrl] : []
         else if (p.formatMedia?.[format]) urls = [p.formatMedia[format]]
         const script = p.formatPosts?.[format] ?? ""
-        const description = p.formatDescriptions?.[format] ?? ""
+        // No description of its own yet: the core post's script (Hani,
+        // 2026-11-11) — what the publish sends (lib/social/assemble). A story
+        // has none.
+        const description = format === "story" ? "" : p.formatDescriptions?.[format] || p.body || ""
         setPreviewDetail({
           key,
           caption: descriptionOn ? description.trim() || script : script,

@@ -28,6 +28,7 @@ import {
 } from "./media-spec"
 import { SocialPublishError, type SchedulePostInput, type SocialMedia } from "./types"
 import { slotToInstant } from "./slot-time"
+import { canUseDescription } from "@/lib/scheduling-access"
 import { MAX_CAPTION_BY_NETWORK, NETWORK_LABEL, youtubeTitleFromHook } from "./networks"
 
 export { slotToInstant } from "./slot-time"
@@ -71,9 +72,19 @@ export async function assembleScheduledPost(
     )
   }
 
-  // The post's description goes out (Hani, 2026-11-09); without one, its
-  // script, as before.
-  const body = (variant.description?.trim() || variant.body || "").trim()
+  // The post's description goes out (Hani, 2026-11-09). Without one: for the
+  // description's users the core post's script (Hani, 2026-11-11 — what the
+  // תזמון tab and the calendar show), for everyone else the format's script.
+  let fallback = variant.body || ""
+  if (!variant.description?.trim()) {
+    const { data: who } = await db.from("users").select("email").eq("id", userId).maybeSingle()
+    if (canUseDescription((who as { email?: string | null } | null)?.email)) {
+      const { data: core } = await db.from("core_posts").select("body").eq("id", corePostId).maybeSingle()
+      const coreBody = (core as { body?: string | null } | null)?.body?.trim()
+      if (coreBody) fallback = coreBody
+    }
+  }
+  const body = (variant.description?.trim() || fallback).trim()
 
   // A story carries no caption at all — Instagram accepts zero characters and
   // no API can add text or stickers to one. So the body is simply not sent;
