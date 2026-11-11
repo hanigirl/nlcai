@@ -994,11 +994,7 @@ function DropZone({
  */
 function ExamplesTip() {
   return (
-    <div className="flex items-start gap-2.5 rounded-lg bg-bg-surface-primary-default p-2 dark:bg-gray-20">
-      <p className="flex-1 text-small text-gray-40 dark:text-gray-80">
-        <span className="font-semibold text-text-primary-default">מומלץ!</span> שימו דוגמאות לשימוש שתואמות את הצבעים
-        שמוגדרים אצלכם. דוגמאות שונות משפת המותג לא יילקחו בחשבון בצבעוניות המותג, אלא רק במבנה האלמנטים.
-      </p>
+    <div className="flex items-start gap-2.5 rounded-lg bg-bg-surface-warning-default p-2">
       <div className="relative h-[54px] w-[50px] shrink-0 overflow-hidden" aria-hidden>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
@@ -1007,6 +1003,10 @@ function ExamplesTip() {
           className="absolute left-[-13.42%] top-[-4.92%] h-[111.68%] w-[120.62%] max-w-none"
         />
       </div>
+      <p className="flex-1 text-small text-gray-40 dark:text-gray-80">
+        <span className="font-semibold text-text-primary-default">מומלץ!</span> שימו דוגמאות לשימוש שתואמות את הצבעים
+        שמוגדרים אצלכם. דוגמאות שונות משפת המותג לא יילקחו בחשבון בצבעוניות המותג, אלא רק במבנה האלמנטים.
+      </p>
     </div>
   )
 }

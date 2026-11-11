@@ -27,7 +27,7 @@ When generating a reel cover:
 ## Design Tokens Reference
 
 Primitives are defined in `src/app/globals.css` under `@theme inline`:
-- Yellow scale: `yellow-10` (darkest) through `yellow-95` (lightest)
+- Yellow scale: `yellow-10` (darkest) through `yellow-97` (lightest; 97 = its HSL lightness)
 - Red scale: `red-50` (darkest) through `red-95` (lightest)
 - Gray scale: `gray-10` (darkest) through `gray-98` (lightest)
 
@@ -46,6 +46,7 @@ Semantic tokens map primitives to usage:
 - `text-danger-disabled` → red-80
 - `bg-surface` → gray-98
 - `bg-surface-primary-default` → yellow-95
+- `bg-surface-warning-default` → yellow-97 (#FFFBF0, warning / tip notices)
 - `bg-surface-primary-default-80` → yellow-80
 - `bg-surface-hover` → yellow-90
 - `border-neutral-default` → gray-90
