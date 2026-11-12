@@ -5,7 +5,17 @@ import { BidiText } from "@/components/bidi-text"
 import { useEffect, useRef } from "react"
 import { X } from "lucide-react"
 import { AiSparkle } from "@/components/ai-refine-button"
-import { COPY_NOUN } from "@/lib/format-copy-refine"
+import { COPY_NOUN, type CopyFormat } from "@/lib/format-copy-refine"
+
+/**
+ * The chat edits the words only, so it says so (Hani, 2026-11-12): "עריכת
+ * הטקסט של הסטורי", not "עריכת הסטורי".
+ */
+const TEXT_NOUN: Record<CopyFormat, string> = {
+  ...COPY_NOUN,
+  carousel: "הטקסט של הקרוסלה",
+  story: "הטקסט של הסטורי",
+}
 import { AiChatNewButton } from "@/components/ai-chat-new-button"
 import { AiChatArchiveButton } from "@/components/ai-chat-archive-button"
 import { useWatchChat } from "@/lib/ai-chat-session-store"
@@ -79,14 +89,14 @@ export function FormatCopyChat({
       data-demo="copy-ai-panel"
       dir="rtl"
       role="dialog"
-      aria-label={`עריכת ${COPY_NOUN[fid]} עם AI`}
+      aria-label={`עריכת ${TEXT_NOUN[fid]} עם AI`}
       {...refs.dropProps}
       className={`${floating ? "fixed bottom-6 right-6 z-50 max-h-[72vh]" : "relative max-h-[560px]"} flex w-[380px] flex-col overflow-hidden rounded-[20px] border border-border-neutral-default bg-white dark:bg-gray-10 shadow-xl`}
     >
       <ReferenceDropHint show={refs.dragging} />
       <div className="flex items-center gap-2 border-b border-border-neutral-default bg-bg-surface px-4 py-3">
         <AiSparkle />
-        <span className="text-small-bold text-text-primary-default">עריכת {COPY_NOUN[fid]}</span>
+        <span className="text-small-bold text-text-primary-default">עריכת {TEXT_NOUN[fid]}</span>
         <div className="ms-auto flex items-center gap-1">
           <AiChatArchiveButton chatKey={ctrl.chatKey(fid)} disabled={session.loading} />
           {!fresh && <AiChatNewButton disabled={session.loading} onClick={() => ctrl.reset(fid)} />}
@@ -104,7 +114,7 @@ export function FormatCopyChat({
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
         <div className="flex flex-col items-end gap-2">
           <div className="max-w-[85%] rounded-2xl rounded-se-sm bg-bg-surface px-3 py-2 text-small leading-relaxed text-text-primary-default">
-            מה לשנות ב{COPY_NOUN[fid]}? כתבו לי, או בחרו אחת מההצעות.
+            מה לשנות ב{TEXT_NOUN[fid].slice(1)}? כתבו לי, או בחרו אחת מההצעות.
           </div>
           {fresh && (
             <CopySuggestionChips fid={fid} disabled={session.loading} onPick={send} className="justify-end max-w-[85%]" />
