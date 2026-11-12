@@ -671,7 +671,7 @@ export function FormatPanelMedia({
         onMouseDown={(e) => e.stopPropagation()}
         className="cursor-pointer rounded-sm text-small text-text-primary-default underline underline-offset-4 hover:text-text-neutral-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
       >
-        רוצים לשלב תמונה או סרטון משלכם?
+        רוצים לשלב תמונה או סרטון משלכם בעיצוב הזה?
       </button>
     </div>
   )
