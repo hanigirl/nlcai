@@ -96,6 +96,7 @@ import {
   carouselCaptionedSlides,
   captionCarouselSlide,
   slideHasBakedText,
+  bakedOf,
   forgetCarouselSlides,
   captionOwnSlides,
   ownCaptionNote,
@@ -2389,7 +2390,7 @@ function CarouselFlow({
       }
       // Finished designs keep their own words (2026-10-22): a new set's
       // cover decides once. Slots keep what the set already said.
-      let baked = opts.at && base.length ? getFormatMeta(postId, "carousel").bakedText : undefined
+      let baked = opts.at && base.length ? bakedOf(getFormatMeta(postId, "carousel").bakedText) : undefined
       if (!(opts.at && base.length)) {
         const cover = staged.find((s) => !s.video)
         if (cover) {

@@ -407,13 +407,13 @@ export async function POST(req: NextRequest) {
             : { url, kind, aiMade, caption: "ours-legacy" }
         }
         if (format === "carousel") {
-          if (carouselMeta.bakedText === true) return { url, kind, aiMade, caption: "baked" }
+          // "Has its own text" no longer stops the script's text (Hani, 2026-11-12).
           // Her stored picture, never captioned by us: it IS the original
           // (own-media-text) — captioned from here, not re-pulled from Drive.
           if (ownText && isOwnCarouselSlideUrl(url)) return { url, kind, aiMade, caption: "none" }
           // Imported slides are captioned on arrival by default; with the
           // Drive link lined up the original can always be pulled again.
-          if (driveLink && carouselMeta.bakedText === false) {
+          if (driveLink && typeof carouselMeta.bakedText === "boolean") {
             return { url, kind, aiMade, caption: "ours", record: { v: 1, sourceUrl: driveLink, caption: {} } }
           }
           return { url, kind, aiMade, caption: "unknown" }
