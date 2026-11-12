@@ -329,7 +329,7 @@ export function EditAgentChat({
                 {/* Her change becomes a rule for next time (Hani, 2026-11-10): saved to
                     Settings → העדפות ויזואליות, read by every future generation. */}
                 {!busy && m.role === "assistant" && !!m.remember && i === messages.length - 1 && (
-                  <Button variant="secondary" size="sm" onClick={() => void send("זכור לעתיד", m.remember)}>
+                  <Button size="sm" onClick={() => void send("זכור לעתיד", m.remember)}>
                     זכור לעתיד
                   </Button>
                 )}
