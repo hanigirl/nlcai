@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
 import { getUserApiKey } from "@/lib/api-keys"
 import { imageHasBakedText } from "@/lib/baked-text"
+import { qaFixes1112 } from "@/lib/feature-access"
 
 /**
  * POST { imageBase64 } → { hasText: boolean | null }
@@ -22,6 +23,12 @@ export async function POST(req: NextRequest) {
   if (!imageBase64) {
     return NextResponse.json({ error: "imageBase64 is required" }, { status: 400 })
   }
+
+  // The rule (Hani, 2026-11-12, gated until launch): her media ALWAYS gets
+  // the script's text — text already on her picture is hers to avoid
+  // ("אנחנו רק נוסיף טקסט" says so up front). No guess, which once skipped
+  // a whole set.
+  if (qaFixes1112(user.email)) return NextResponse.json({ hasText: false })
 
   let apiKey: string
   try {

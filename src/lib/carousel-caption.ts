@@ -367,10 +367,6 @@ export async function pullBareSlidesFromDrive(
  * tell (no Anthropic key, model error) — callers keep the old behaviour.
  */
 export async function slideHasBakedText(imageBase64: string): Promise<boolean | null> {
-  // The rule (Hani, 2026-11-12): her media ALWAYS gets the script's text.
-  // Text already on her pictures is hers to avoid ("אנחנו רק נוסיף טקסט"
-  // says so up front) — no more guessing, which once skipped a whole set.
-  if (ALWAYS_CAPTION_OWN_MEDIA) return false
   try {
     const res = await fetch("/api/media/has-text", {
       method: "POST",
@@ -383,11 +379,6 @@ export async function slideHasBakedText(imageBase64: string): Promise<boolean | 
     return null
   }
 }
-
-/** Her media always gets the script's text — see slideHasBakedText. */
-export const ALWAYS_CAPTION_OWN_MEDIA = true
-/** An older post marked "has its own text" is captioned like any other now. */
-export const bakedOf = (b: boolean | undefined): boolean | undefined => (ALWAYS_CAPTION_OWN_MEDIA && b ? false : b)
 
 /**
  * What the carousel IS, as the post stores it — made here by the AI (and from
@@ -422,7 +413,7 @@ export function applyCarouselMetaFromServer(postId: string, meta: unknown) {
   } else if (m.source === "import") {
     setFormatMeta(postId, "carousel", {
       templateId: undefined,
-      bakedText: typeof m.bakedText === "boolean" ? bakedOf(m.bakedText) : undefined,
+      bakedText: typeof m.bakedText === "boolean" ? m.bakedText : undefined,
     })
   }
 }
@@ -520,7 +511,7 @@ export function useCarouselCaption({
   // Slides she brought with their words already designed in — nothing to
   // caption, so no caption controls (Hani, 2026-10-22).
   const [bakedText, setBakedText] = useState<boolean | undefined>(() =>
-    postId ? bakedOf(getFormatMeta(postId, "carousel").bakedText) : undefined,
+    postId ? getFormatMeta(postId, "carousel").bakedText : undefined,
   )
 
   useEffect(() => {
@@ -528,7 +519,7 @@ export function useCarouselCaption({
     const sync = () => {
       const meta = getFormatMeta(postId, "carousel")
       setIsImport(!meta.templateId)
-      setBakedText(bakedOf(meta.bakedText))
+      setBakedText(meta.bakedText)
       setSettings(readCarouselCaptionSettings(postId))
     }
     sync()

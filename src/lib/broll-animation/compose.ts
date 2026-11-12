@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk"
+import { withNoOrphans } from "@/lib/no-orphans"
 import { referenceBlocks } from "@/lib/ai-edit-references"
 import type { ModelImage } from "@/lib/visual-language/image-input"
 
@@ -369,6 +370,8 @@ export function finalizeHtml(
     ? html.replace(FONT_MARKER, head)
     : html.replace(/<head[^>]*>/i, (m) => `${m}${head}`)
   if (opts.holdText) {
+    // Never one word alone on a line (Hani, 2026-11-12) — the same gate.
+    html = withNoOrphans(html)
     html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, (m) => `${TEXT_HOLD}${m}`) : `${html}${TEXT_HOLD}`
   }
   return html

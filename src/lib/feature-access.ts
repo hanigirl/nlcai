@@ -157,13 +157,24 @@ export function canEditOwnBRollCaption(email: string | null | undefined): boolea
  * entrance — but they may still move a little once there (Hani, 2026-11-10:
  * "שתהיה אנימציה מסוימת ... אבל שלא יכנס בפייד או באיחור").
  */
-export const TEXT_AT_ONCE_EMAILS = ["hanigirl@gmail.com"]
 /**
- * Everyone, every format, since 2026-11-12 (Hani: "All text, in all formats,
- * should always appear right away") — the email is kept for the call sites.
+ * Every format since 2026-11-12 (Hani: "All text, in all formats, should
+ * always appear right away") — Hani + Nataliya until launch.
  */
-export function textAtOnceBRoll(_email?: string | null): boolean {
-  return true
+export const TEXT_AT_ONCE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export function textAtOnceBRoll(email: string | null | undefined): boolean {
+  return !!email && TEXT_AT_ONCE_EMAILS.includes(email.toLowerCase())
+}
+
+/**
+ * The QA round of 2026-11-12 (Hani + Nataliya until launch): no visual
+ * language → the "שפת המותג" tile says so; "שפת המותג" copy; the text chat's
+ * "עריכת הטקסט של…"; her own media always gets the script's text; never one
+ * word alone on a line.
+ */
+export const QA_1112_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export function qaFixes1112(email: string | null | undefined): boolean {
+  return !!email && QA_1112_EMAILS.includes(email.toLowerCase())
 }
 
 /** Her b-roll words on screen from frame 0, enforced in the page (lib/broll-animation/compose TEXT_HOLD). */

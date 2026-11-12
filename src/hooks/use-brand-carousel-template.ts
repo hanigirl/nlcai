@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { buildBrandTemplate, type TemplateConfig } from "@/lib/carousel-templates"
 import type { VisualLanguage } from "@/lib/visual-language/types"
+import { qaFixes1112 } from "@/lib/feature-access"
 
 /**
  * The per-user "השפה הוויזואלית שלך" carousel template, or null when she has
@@ -72,8 +73,7 @@ export function useBrandCarouselTemplateState(): { template: TemplateConfig | nu
       }
 
       if (cancelled) return
-      setTemplate(
-        buildBrandTemplate({
+      const built = buildBrandTemplate({
           thumbnailUrl,
           preview: vl.preview
             ? {
@@ -83,8 +83,9 @@ export function useBrandCarouselTemplateState(): { template: TemplateConfig | nu
                 bodyColor: vl.preview.body,
               }
             : undefined,
-        }),
-      )
+        })
+      // "שפת המותג" (Hani, 2026-11-12 — gated until launch).
+      setTemplate(qaFixes1112(user.email) ? { ...built, name: "שפת המותג" } : built)
       setLoading(false)
     }).catch(() => {
       if (!cancelled) setLoading(false)

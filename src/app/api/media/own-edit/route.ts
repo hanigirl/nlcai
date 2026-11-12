@@ -26,7 +26,7 @@ import {
 } from "@/lib/own-media"
 import { guardedFetch } from "@/lib/server-fetch"
 import { isOwnCarouselSlideUrl } from "@/lib/carousel-own"
-import { canEditOwnBRollCaption, canOwnMediaText } from "@/lib/feature-access"
+import { canEditOwnBRollCaption, canOwnMediaText, qaFixes1112 } from "@/lib/feature-access"
 import { scriptTextFor, scriptTextUnits } from "@/lib/script-text"
 
 // Rendering the clip alone takes ~250–270s on our functions (175 frames
@@ -407,13 +407,14 @@ export async function POST(req: NextRequest) {
             : { url, kind, aiMade, caption: "ours-legacy" }
         }
         if (format === "carousel") {
-          // "Has its own text" no longer stops the script's text (Hani, 2026-11-12).
+          // "Has its own text" no longer stops the script's text (Hani, 2026-11-12, gated).
+          if (carouselMeta.bakedText === true && !qaFixes1112(user.email)) return { url, kind, aiMade, caption: "baked" }
           // Her stored picture, never captioned by us: it IS the original
           // (own-media-text) — captioned from here, not re-pulled from Drive.
           if (ownText && isOwnCarouselSlideUrl(url)) return { url, kind, aiMade, caption: "none" }
           // Imported slides are captioned on arrival by default; with the
           // Drive link lined up the original can always be pulled again.
-          if (driveLink && typeof carouselMeta.bakedText === "boolean") {
+          if (driveLink && (carouselMeta.bakedText === false || (carouselMeta.bakedText === true && qaFixes1112(user.email)))) {
             return { url, kind, aiMade, caption: "ours", record: { v: 1, sourceUrl: driveLink, caption: {} } }
           }
           return { url, kind, aiMade, caption: "unknown" }

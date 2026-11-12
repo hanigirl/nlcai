@@ -1,4 +1,6 @@
 import { canEditPictures } from "@/lib/feature-access"
+import { withNoOrphans } from "@/lib/no-orphans"
+import { qaFixes1112 } from "@/lib/feature-access"
 import { withGraphicOnly } from "@/lib/visual-language/graphic-only"
 import { PICTURE_UNCHANGED, adaptPictureForSlide, editPicture, wantsPictureAsIs } from "@/lib/picture-edit"
 import { canCopyStructure, gatePlacement, PICTURE_IS_BACKGROUND, refusesPlacingIntoDesign } from "@/lib/feature-access"
@@ -441,7 +443,7 @@ export async function POST(req: NextRequest) {
           const adapt = pictureEditsOn && !wantsPictureAsIs(normalizeMediaBrief(mediaBrief))
           const slots = adapt
             ? await measureArtSlots(
-                layout.html,
+                qaFixes1112(user.email) ? withNoOrphans(layout.html) : layout.html,
                 await Promise.all(
                   slides!.map(async (_, i) => {
                     const p = placedOn.find((x) => x.i === i)
@@ -507,7 +509,7 @@ export async function POST(req: NextRequest) {
           }
         }
         await Promise.all(Array.from({ length: Math.min(ART_CONCURRENCY, wanted.length) }, () => artWorker()))
-        const shots = await renderCarousel(layout.html, illustrations, fonts)
+        const shots = await renderCarousel(qaFixes1112(user.email) ? withNoOrphans(layout.html) : layout.html, illustrations, fonts)
         for (let i = 0; i < total; i++) {
           const shot = shots[i]
           if (!shot) throw new Error("render_missing_slide")

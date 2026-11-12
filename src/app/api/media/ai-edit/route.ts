@@ -1,4 +1,6 @@
 import { PICTURE_IS_BACKGROUND, refusesPlacingIntoDesign } from "@/lib/feature-access"
+import { withNoOrphans } from "@/lib/no-orphans"
+import { qaFixes1112 } from "@/lib/feature-access"
 import type { OwnEditFormat } from "@/lib/own-media"
 import { scriptTextNote } from "@/lib/script-text-note"
 import { NextRequest, NextResponse } from "next/server"
@@ -350,7 +352,7 @@ export async function POST(req: NextRequest) {
       const adaptOn = placed.filter(({ i }) => adapt && !cutouts.has(i))
       const slots = adaptOn.length
         ? await measureArtSlots(
-            revised.html,
+            qaFixes1112(user.email) ? withNoOrphans(revised.html) : revised.html,
             await Promise.all(
               stored.brief.slides.map(async (_, i) => {
                 const p = adaptOn.find((x) => x.i === i)
@@ -428,7 +430,7 @@ export async function POST(req: NextRequest) {
         if (miss && !miss.ok) return NextResponse.json({ error: "picture_edit_failed", message: miss.message }, { status: 422 })
       }
       const direction = current.direction
-      const shots = await renderCarousel(revised.html, illustrations, stored.brief.fonts)
+      const shots = await renderCarousel(qaFixes1112(user.email) ? withNoOrphans(revised.html) : revised.html, illustrations, stored.brief.fonts)
       const nextSet = await Promise.all(
         shots.map((shot, i) =>
           applyFixedElements(

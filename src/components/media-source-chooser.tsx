@@ -7,6 +7,7 @@ import { Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { TemplateConfig } from "@/lib/carousel-templates"
+import { useQaFixes1112 } from "@/lib/use-scheduling-access"
 
 /**
  * "הוספת מדיה לסקריפט" (Hani, 2026-11-10 — Figma 711:2289): the media tab's
@@ -50,7 +51,8 @@ export function MediaSourceChooser({
   // No visual language yet → picking the AI tile says where to set one and
   // holds the button until she picks the other tile (Hani, 2026-11-12: it
   // rendered something unknown without one).
-  const noLanguage = !brandLoading && !brandTemplate
+  const qa = useQaFixes1112() === true
+  const noLanguage = qa && !brandLoading && !brandTemplate
   const blocked = source === "ai" && noLanguage
 
   const tiles: { id: MediaSource; title: string; sub: string; thumb: React.ReactNode }[] = [
@@ -67,7 +69,7 @@ export function MediaSourceChooser({
     },
     {
       id: "ai",
-      title: "שפת המותג",
+      title: qa ? "שפת המותג" : "השפה הויזואלית שלך",
       sub: "נייצר מדיה חדשה עם AI",
       thumb:
         brandLoading && !brandTemplate ? (
