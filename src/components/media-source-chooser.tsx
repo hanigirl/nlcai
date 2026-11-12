@@ -67,7 +67,7 @@ export function MediaSourceChooser({
     },
     {
       id: "ai",
-      title: "השפה הויזואלית שלך",
+      title: "שפת המותג",
       sub: "נייצר מדיה חדשה עם AI",
       thumb:
         brandLoading && !brandTemplate ? (

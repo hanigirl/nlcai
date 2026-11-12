@@ -98,7 +98,7 @@ export function buildBrandTemplate(opts: {
 }): TemplateConfig {
   return {
     id: BRAND_TEMPLATE_ID,
-    name: "השפה הוויזואלית שלך",
+    name: "שפת המותג",
     kind: "ai",
     size: { width: 1080, height: 1350 },
     thumbnailUrl: opts.thumbnailUrl,
