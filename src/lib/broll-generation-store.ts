@@ -553,6 +553,11 @@ export function startStoryDriveImport(
       return null
     }
   }
+  // One more go before keeping the raw frame — a raw Drive frame shows black
+  // (Hani, 2026-11-12).
+  const burnFrameOnce = burnFrame
+  const burnFrameRetry = async (url: string, frameIndex: number, frameCount: number) =>
+    (await burnFrameOnce(url, frameIndex, frameCount)) ?? (await burnFrameOnce(url, frameIndex, frameCount))
 
   void (async () => {
     try {
@@ -608,7 +613,7 @@ export function startStoryDriveImport(
         // Position in the FINAL set, not in the pull order — the script is
         // divided by where a frame sits in the story, and `i` is exactly that
         // even when earlier rows were left blank.
-        const burned = await burnFrame(data.url as string, i, totalFrames)
+        const burned = await burnFrameRetry(data.url as string, i, totalFrames)
         frames.push(burned ?? (data.url as string))
         lastPulled = data.url as string
       }
@@ -618,7 +623,7 @@ export function startStoryDriveImport(
       if (lastPulled && existing.length <= rows.length) {
         for (let i = frames.length; i < scriptStories; i++) {
           setProgress(`מטמיעים כיתוב בפריים ${i + 1} מתוך ${scriptStories}...`)
-          const burned = await burnFrame(lastPulled, i, totalFrames)
+          const burned = await burnFrameRetry(lastPulled, i, totalFrames)
           frames.push(burned ?? lastPulled)
         }
       }
@@ -812,7 +817,10 @@ export async function startStoryOwnImport(
         return raw
       }
       setProgress(`שמים את הטקסט מהסקריפט על פריים ${i + 1}...`)
-      const done = await captionStoryFrame(postId, raw, kind, unit)
+      // One more go before keeping the raw frame — a raw Drive clip shows
+      // black in the player (Hani, 2026-11-12).
+      let done = await captionStoryFrame(postId, raw, kind, unit)
+      if ("error" in done) done = await captionStoryFrame(postId, raw, kind, unit)
       if ("error" in done) {
         failed.push(i + 1)
         return raw

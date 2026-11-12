@@ -251,6 +251,23 @@ async function previewStill(srcPath: string, isStill: boolean, layerPath: string
   return merged.toString("base64")
 }
 
+/**
+ * Drive is sometimes slow to answer — most of all for the second of two
+ * clips pulled at once (Hani's story, 2026-11-12: frame 2 timed out after
+ * 12s and stayed black). Two more tries before giving up.
+ */
+async function fetchDriveWithRetry(id: string): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetchDriveFile(id)
+    } catch (err) {
+      const timedOut = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")
+      if (!timedOut || attempt >= 2) throw err
+      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)))
+    }
+  }
+}
+
 export async function POST(req: NextRequest) {
   const tmpFiles: string[] = []
   try {
@@ -498,7 +515,7 @@ export async function POST(req: NextRequest) {
     // straight to the temp file instead.
     const [videoRes, overlayPng] = await Promise.all([
       isDriveUrl(videoUrl)
-        ? fetchDriveFile(extractDriveFileId(videoUrl)!)
+        ? fetchDriveWithRetry(extractDriveFileId(videoUrl)!)
         : guardedFetch(videoUrl),
       // Her own video: the Drive look always — white words, a box per line,
       // her primary colour or black (Hani, 2026-11-09).
