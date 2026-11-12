@@ -95,10 +95,13 @@ export function ReferenceAddMenu({
   disabled,
   menuOpen,
   onMenuOpenChange,
+  pickRef,
 }: {
   r: ReferenceImages
   format: string
   disabled?: boolean
+  /** Opens "מהמחשב" / "מגוגל דרייב" from outside (the agent chat's question buttons). */
+  pickRef?: React.MutableRefObject<{ computer: () => void; drive: () => void } | null>
   /** Controlled open (the carousel's "להוסיף עוד מדיה" chip opens it). */
   menuOpen?: boolean
   onMenuOpenChange?: (open: boolean) => void
@@ -106,6 +109,13 @@ export function ReferenceAddMenu({
   const inputRef = useRef<HTMLInputElement>(null)
   // Opened straight on Drive by the media panel's "מדיה מוכנה מ Google Drive".
   const [driveOpen, setDriveOpen] = useState(() => takeDrivePickerRequest(format))
+  useEffect(() => {
+    if (!pickRef) return
+    pickRef.current = { computer: () => inputRef.current?.click(), drive: () => setDriveOpen(true) }
+    return () => {
+      pickRef.current = null
+    }
+  }, [pickRef])
   useEffect(
     () =>
       onDrivePickerRequest(() => {

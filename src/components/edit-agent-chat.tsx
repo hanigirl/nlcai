@@ -130,7 +130,13 @@ export function EditAgentChat({
   onClose,
   onMediaChanged,
   own = false,
+  askAddMedia = false,
 }: {
+  /**
+   * Opened from "רוצים לשלב תמונה או סרטון משלכם בעיצוב הזה?" (Hani,
+   * 2026-11-12): the chat asks which one, with the two ways to bring it in.
+   */
+  askAddMedia?: boolean
   /** Her own b-roll (Drive / upload): caption look only, no image button. */
   own?: boolean
   postId: string
@@ -150,6 +156,14 @@ export function EditAgentChat({
   // One image button (Hani, 2026-11-10): "מהמחשב" / "מגוגל דרייב" — the
   // AI panel's menu. She picks; the agent never reads her Drive itself.
   const driveMenu = useDriveInBRoll() === true
+  const pickRef = useRef<{ computer: () => void; drive: () => void } | null>(null)
+  // The question asked here, not by the server — gone once she attaches one.
+  const [addAsk, setAddAsk] = useState(askAddMedia)
+  useEffect(() => {
+    if (!addAsk || !refs.refs.length) return
+    setAddAsk(false)
+    setInput((t) => t || "לשלב את זה בעיצוב")
+  }, [addAsk, refs.refs.length])
 
   const busy = sending || job?.status === "running"
 
@@ -256,6 +270,8 @@ export function EditAgentChat({
 
   const last = messages[messages.length - 1]
   const askNow = !busy && last?.role === "assistant" && !!last.options?.length
+  // Buttons on screen → they are the answer; the send button waits (Hani, 2026-11-12).
+  const choosing = askNow || (addAsk && !busy)
 
   return (
     <div
@@ -289,7 +305,7 @@ export function EditAgentChat({
           </div>
         ) : (
           <>
-            {messages.length === 0 && (
+            {messages.length === 0 && !addAsk && (
               <div className="flex flex-col items-end">
                 <div className="max-w-[85%] rounded-2xl rounded-se-sm bg-bg-surface px-3 py-2 text-small leading-relaxed text-text-primary-default">
                   {format === "story" ? STORY_GREETING : format === "image_post" ? IMAGE_POST_GREETING : format === "carousel" ? CAROUSEL_GREETING : own ? OWN_GREETING : GREETING}
@@ -328,6 +344,17 @@ export function EditAgentChat({
                 )}
               </div>
             ))}
+            {addAsk && !busy && (
+              <div className="flex flex-col items-end gap-1.5">
+                <div className="max-w-[85%] rounded-2xl rounded-se-sm bg-bg-surface px-3 py-2 text-small leading-relaxed text-text-primary-default">
+                  איזו תמונה או סרטון תרצו לשלב?
+                </div>
+                <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5" role="group" aria-label="בחירה">
+                  <Chip onClick={() => pickRef.current?.drive()}>מגוגל דרייב</Chip>
+                  <Chip onClick={() => pickRef.current?.computer()}>מהמחשב שלי</Chip>
+                </div>
+              </div>
+            )}
             {busy && (
               <div className="flex items-center justify-end gap-2 text-xs-body text-text-neutral-default" role="status">
                 <span>{job?.status === "running" && job.progress ? job.progress : "רגע..."}</span>
@@ -348,7 +375,7 @@ export function EditAgentChat({
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault()
-                void send(input)
+                if (!choosing) void send(input)
               }
             }}
             placeholder={busy ? "אני עובד על זה, אפשר לכתוב כשאסיים" : "מה תרצו לשנות, או לשאול?"}
@@ -356,11 +383,11 @@ export function EditAgentChat({
             autoFocus
             className="max-h-28 min-h-[36px] flex-1 resize-none border-none bg-transparent px-1 py-2 text-small shadow-none focus-visible:ring-0"
           />
-          {own || driveMenu || format !== "b_roll" ? <ReferenceAddMenu r={refs} format={format} disabled={busy} /> : <ReferenceButton r={refs} disabled={busy} />}
+          {own || driveMenu || format !== "b_roll" ? <ReferenceAddMenu r={refs} format={format} disabled={busy} pickRef={pickRef} /> : <ReferenceButton r={refs} disabled={busy} />}
           <Button
             size="icon-sm"
             onClick={() => void send(input)}
-            disabled={(!input.trim() && !refs.refs.length) || busy}
+            disabled={(!input.trim() && !refs.refs.length) || busy || choosing}
             aria-label="שליחה"
             className="shrink-0 rounded-full"
           >

@@ -396,6 +396,11 @@ function ProjectPageInner() {
   // The caption-only AI edit on her OWN b-roll (Hani + Nataliya, 2026-11-10).
   const ownBRollCaptionOn = useOwnBRollCaptionEdit() === true
   const [photoSwapOpen, setPhotoSwapOpen] = useState(false)
+  // The agent chat opened from "רוצים לשלב תמונה או סרטון משלכם בעיצוב הזה?".
+  const [addMediaAsk, setAddMediaAsk] = useState(false)
+  useEffect(() => {
+    if (aiChatFormat !== "b_roll") setAddMediaAsk(false)
+  }, [aiChatFormat])
   const chatOnFor = (f: string) => aiChatOn || (editAgentOn && (f === "b_roll" || f === "story" || f === "image_post" || f === "carousel"))
   // A generate button opens the AI edit to ask for a brief first (lib/ai-edit-intent).
   const [aiChatOpening, setAiChatOpening] = useState<AiEditOpening | null>(null)
@@ -2643,7 +2648,14 @@ function ProjectPageInner() {
                 // Only after a first generation, on the AI's own clip — never her Drive media.
                 onSwapPhoto={
                   driveInBRollOn && fid === "b_roll" && item.media?.kind === "video" && !ownMediaOn("b_roll")
-                    ? () => setPhotoSwapOpen(true)
+                    ? editAgentOn
+                      // In the agent chat, which asks which one (Hani, 2026-11-12) — not a pop-up.
+                      ? () => {
+                          setAddMediaAsk(true)
+                          setAiChatOpening(null)
+                          setAiChatFormat("b_roll")
+                        }
+                      : () => setPhotoSwapOpen(true)
                     : undefined
                 }
                 storyPlayer={ownTextGate}
@@ -3736,11 +3748,12 @@ function ProjectPageInner() {
           if (own && !captionChat) return null
           return (
             <EditAgentChat
-              key={`agent:${savedPostId}:b_roll`}
+              key={`agent:${savedPostId}:b_roll${addMediaAsk ? ":add" : ""}`}
               own={captionChat}
+              askAddMedia={addMediaAsk && !captionChat}
               postId={savedPostId}
               format="b_roll"
-              onClose={() => { setAiChatFormat(null); setAiChatOpening(null) }}
+              onClose={() => { setAiChatFormat(null); setAiChatOpening(null); setAddMediaAsk(false) }}
               onMediaChanged={setBRollUrl}
             />
           )
