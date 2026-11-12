@@ -158,8 +158,12 @@ export function canEditOwnBRollCaption(email: string | null | undefined): boolea
  * "שתהיה אנימציה מסוימת ... אבל שלא יכנס בפייד או באיחור").
  */
 export const TEXT_AT_ONCE_EMAILS = ["hanigirl@gmail.com"]
-export function textAtOnceBRoll(email: string | null | undefined): boolean {
-  return !!email && TEXT_AT_ONCE_EMAILS.includes(email.toLowerCase())
+/**
+ * Everyone, every format, since 2026-11-12 (Hani: "All text, in all formats,
+ * should always appear right away") — the email is kept for the call sites.
+ */
+export function textAtOnceBRoll(_email?: string | null): boolean {
+  return true
 }
 
 /** Her b-roll words on screen from frame 0, enforced in the page (lib/broll-animation/compose TEXT_HOLD). */

@@ -610,8 +610,9 @@ export async function POST(req: NextRequest) {
         }
       }
     }
-    // No fade on the plate either for text-at-once (Hani).
-    const noFade = staticText || (format === "b_roll" && textAtOnceBRoll(user.email))
+    // Never a fade-in: the words are on screen from the first frame, in every
+    // format (Hani, 2026-11-12).
+    const noFade = staticText || textAtOnceBRoll(user.email)
     // Preview of the still plate (no animated caption here): the plate over one frame.
     if (rawPreview === true && !animatedDone) {
       return NextResponse.json({ preview: await previewStill(srcPath, stillSource, overlayPath) })
