@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -46,6 +47,9 @@ export function MediaSourceChooser({
 }) {
   const [source, setSource] = useState<MediaSource>("existing")
   const ratio = aspect === "4/5" ? "aspect-[4/5]" : "aspect-[9/16]"
+  // No visual language yet → the AI tile is off and says where to set one
+  // (Hani, 2026-11-12: it rendered something unknown without one).
+  const noLanguage = !brandLoading && !brandTemplate
 
   const tiles: { id: MediaSource; title: string; sub: string; thumb: React.ReactNode }[] = [
     {
@@ -90,16 +94,23 @@ export function MediaSourceChooser({
 
       <div role="radiogroup" aria-label="איך ניצור את המדיה" className="grid grid-cols-2 gap-1.5">
         {tiles.map((t) => {
-          const selected = source === t.id
+          const off = t.id === "ai" && noLanguage
+          const selected = source === t.id && !off
           return (
             <button
               key={t.id}
               type="button"
               role="radio"
               aria-checked={selected}
+              aria-disabled={off || undefined}
+              disabled={off}
               onClick={() => setSource(t.id)}
-              className={`flex w-full flex-col gap-1 rounded-[10px] border p-1 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
-                selected ? "border-yellow-50 ring-1 ring-yellow-50" : "border-border-neutral-default hover:border-gray-80"
+              className={`flex w-full flex-col gap-1 rounded-[10px] border p-1 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
+                off
+                  ? "cursor-not-allowed border-border-neutral-default opacity-50"
+                  : selected
+                    ? "cursor-pointer border-yellow-50 ring-1 ring-yellow-50"
+                    : "cursor-pointer border-border-neutral-default hover:border-gray-80"
               }`}
             >
               <div className={`${ratio} w-full overflow-hidden rounded-md`}>{t.thumb}</div>
@@ -112,8 +123,23 @@ export function MediaSourceChooser({
         })}
       </div>
 
+      {noLanguage && (
+        <div role="status" className="flex flex-col items-start gap-1 rounded-lg bg-bg-surface-warning-default p-3">
+          <p className="text-small-bold text-text-primary-default">עדיין לא הגדרת שפת מותג</p>
+          <p className="text-xs-body text-gray-40 dark:text-gray-80">
+            שפת מותג עוזרת לייצר פוסטים שמעוצבים בצבעים, פונטים ואלמנטים מהמותג שלך
+          </p>
+          <Link
+            href="/settings?tab=media&sub=visual"
+            className="mt-1 rounded text-xs-body font-semibold text-button-primary-default underline underline-offset-2 hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
+          >
+            להגדרות שפת מותג
+          </Link>
+        </div>
+      )}
+
       <Button
-        onClick={() => (source === "existing" ? onExisting() : onAi())}
+        onClick={() => (source === "ai" && !noLanguage ? onAi() : onExisting())}
         disabled={disabled || busy || (source === "ai" && brandLoading)}
         className="w-full gap-1.5"
       >
