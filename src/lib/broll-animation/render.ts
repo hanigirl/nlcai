@@ -1,4 +1,5 @@
 import { spawn } from "child_process"
+import { withNoOrphans } from "@/lib/no-orphans"
 import ffmpegPath from "ffmpeg-static"
 import type { Browser } from "puppeteer-core"
 import {
@@ -204,7 +205,7 @@ export const FAST_RENDER_PAGES = 2
 async function preparePage(browser: Browser, html: string) {
   const page = await browser.newPage()
   await page.setViewport({ width: COMPOSITION_WIDTH, height: COMPOSITION_HEIGHT })
-  await page.setContent(html, { waitUntil: "load", timeout: 60_000 })
+  await page.setContent(withNoOrphans(html), { waitUntil: "load", timeout: 60_000 })
   // Fonts / GSAP / background come over the network.
   await page.waitForNetworkIdle({ idleTime: 400, timeout: 30_000 }).catch(() => undefined)
   // Fonts and the background must be in before frame 0, or the first second
@@ -345,7 +346,7 @@ export async function renderOverlayFrames(
   try {
     const page = await browser.newPage()
     await page.setViewport({ width: COMPOSITION_WIDTH, height: COMPOSITION_HEIGHT })
-    await page.setContent(page0, { waitUntil: "load", timeout: 60_000 })
+    await page.setContent(withNoOrphans(page0), { waitUntil: "load", timeout: 60_000 })
     await page.waitForNetworkIdle({ idleTime: 400, timeout: 30_000 }).catch(() => undefined)
     await page.evaluate(async () => {
       await document.fonts.ready

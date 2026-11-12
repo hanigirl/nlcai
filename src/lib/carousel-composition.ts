@@ -1,4 +1,5 @@
 import { createHash } from "crypto"
+import { withNoOrphans } from "@/lib/no-orphans"
 import Anthropic from "@anthropic-ai/sdk"
 import { structureNote, type CardIdentityForPrompt, type StructureMode } from "@/lib/carousel-structure"
 import { referenceBlocks } from "@/lib/ai-edit-references"
@@ -518,7 +519,7 @@ export async function renderCarousel(
   try {
     const tab = await browser.newPage()
     await tab.setViewport({ width: SLIDE_W, height: SLIDE_H })
-    await tab.setContent(page, { waitUntil: "load", timeout: 60_000 })
+    await tab.setContent(withNoOrphans(page), { waitUntil: "load", timeout: 60_000 })
     await tab.waitForNetworkIdle({ idleTime: 400, timeout: 30_000 }).catch(() => undefined)
     // A string, not a function: bundlers wrap named inner functions in
     // helpers (e.g. __name) that don't exist inside the page.
@@ -652,7 +653,7 @@ export async function measureArtSlots(
   try {
     const tab = await browser.newPage()
     await tab.setViewport({ width: SLIDE_W, height: SLIDE_H })
-    await tab.setContent(page, { waitUntil: "load", timeout: 60_000 })
+    await tab.setContent(withNoOrphans(page), { waitUntil: "load", timeout: 60_000 })
     const found = (await tab.evaluate(`Array.from(document.querySelectorAll(".slide")).map((s) => {
       s.style.display = "";
       const img = s.querySelector("img.art");

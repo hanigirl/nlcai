@@ -1,4 +1,5 @@
 import { launch } from "@/lib/broll-animation/render"
+import { withNoOrphans } from "@/lib/no-orphans"
 import { COMPOSITION_HEIGHT, COMPOSITION_WIDTH } from "@/lib/broll-animation/compose"
 
 /**
@@ -16,7 +17,7 @@ export async function snapshotComposition(html: string, times: number[]): Promis
   try {
     const page = await browser.newPage()
     await page.setViewport({ width: COMPOSITION_WIDTH, height: COMPOSITION_HEIGHT, deviceScaleFactor: scale })
-    await page.setContent(html, { waitUntil: "load", timeout: 60_000 })
+    await page.setContent(withNoOrphans(html), { waitUntil: "load", timeout: 60_000 })
     await page.waitForNetworkIdle({ idleTime: 400, timeout: 30_000 }).catch(() => undefined)
     await page.evaluate(async () => {
       await document.fonts.ready
