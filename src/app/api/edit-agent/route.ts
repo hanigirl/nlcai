@@ -1,11 +1,12 @@
 import { extractDriveFileId } from "@/lib/drive-media"
+import { brandTerms } from "@/lib/brand-terms"
 import { after, NextRequest, NextResponse } from "next/server"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { getAuthUser } from "@/lib/auth-user"
 import { getUserApiKey } from "@/lib/api-keys"
-import { canBlendBRoll, canEditOwnBRollCaption, driveInBRoll, canUseEditAgent } from "@/lib/feature-access"
+import { canBlendBRoll, canEditOwnBRollCaption, driveInBRoll, canUseEditAgent, qaFixes1112 } from "@/lib/feature-access"
 import { loadComposition } from "@/lib/broll-animation/store"
 import { isOwnMediaUrl } from "@/lib/own-media"
 import { scriptTextFor } from "@/lib/script-text"
@@ -221,7 +222,8 @@ export async function POST(req: NextRequest) {
   const earlier = (await loadThread(db, user.id, chatKey))?.messages ?? []
   await appendMessages(admin, user.id, chatKey, [userMsg])
 
-  const refuse = async (reply: string) => {
+  const refuse = async (said: string) => {
+    const reply = brandTerms(said, qaFixes1112(user.email))
     await appendMessages(admin, user.id, chatKey, [{ role: "assistant", text: reply, at: now() }])
     return NextResponse.json({ refused: true })
   }
@@ -308,7 +310,7 @@ export async function POST(req: NextRequest) {
             attached,
             attachedVideos: videoRefs,
             publicUrl: (p) => admin.storage.from("user-media").getPublicUrl(p).data.publicUrl,
-            setProgress: (progress) => setJob({ progress }),
+            setProgress: (progress) => setJob({ progress: brandTerms(progress, qaFixes1112(user.email)) }),
             call: asHer,
           })
         : ownCaption
@@ -324,7 +326,7 @@ export async function POST(req: NextRequest) {
             attachedUrls: herImages,
             attachedVideos: videoRefs,
             publicUrl: (p) => admin.storage.from("user-media").getPublicUrl(p).data.publicUrl,
-            setProgress: (progress) => setJob({ progress }),
+            setProgress: (progress) => setJob({ progress: brandTerms(progress, qaFixes1112(user.email)) }),
             call: asHer,
           })
         : await runBRollAgent({
@@ -343,16 +345,16 @@ export async function POST(req: NextRequest) {
         request: agentRequest,
         attached,
         attachedVideos: videoRefs,
-        setProgress: (progress) => setJob({ progress }),
+        setProgress: (progress) => setJob({ progress: brandTerms(progress, qaFixes1112(user.email)) }),
       })
       if (outcome.kind === "ask") {
         await appendMessages(admin, user.id, chatKey, [
-          { role: "assistant", text: outcome.question, options: outcome.options, at: now() },
+          { role: "assistant", text: brandTerms(outcome.question, qaFixes1112(user.email)), options: outcome.options, at: now() },
         ])
         await setJob({ status: "asking", progress: "", outcome })
       } else if (outcome.kind === "done") {
         await appendMessages(admin, user.id, chatKey, [
-          { role: "assistant", text: outcome.reply, ...(outcome.rememberOffer ? { remember: outcome.rememberOffer } : {}), at: now() },
+          { role: "assistant", text: brandTerms(outcome.reply, qaFixes1112(user.email)), ...(outcome.rememberOffer ? { remember: outcome.rememberOffer } : {}), at: now() },
         ])
         await setJob({ status: "done", progress: "", outcome })
       } else {

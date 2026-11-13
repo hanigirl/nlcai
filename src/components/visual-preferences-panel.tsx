@@ -1,6 +1,8 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useQaFixes1112 } from "@/lib/use-scheduling-access"
+import { brandTerms } from "@/lib/brand-terms"
 import Link from "next/link"
 import { Loader2, Pencil, Trash2 } from "lucide-react"
 import { toast } from "sonner"
@@ -34,6 +36,8 @@ function formatDate(iso: string): string {
  * Colours, fonts and brand elements are not here: they live in שפה ויזואלית.
  */
 export function VisualPreferencesPanel() {
+  const qaTerms = useQaFixes1112() === true
+  const bt = (t: string) => brandTerms(t, qaTerms)
   const [prefs, setPrefs] = useState<VisualPreference[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -145,7 +149,7 @@ export function VisualPreferencesPanel() {
             href={VISUAL_SETTINGS_HREF}
             className="font-semibold text-text-primary-default underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 rounded-sm"
           >
-            שפה ויזואלית
+            {bt("שפה ויזואלית")}
           </Link>
           .
         </p>

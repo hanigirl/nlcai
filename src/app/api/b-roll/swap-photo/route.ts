@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
+import { brandTerms } from "@/lib/brand-terms"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
 import { getUserApiKey } from "@/lib/api-keys"
-import { driveInBRoll, holdsBRollText } from "@/lib/feature-access"
+import { driveInBRoll, holdsBRollText, qaFixes1112 } from "@/lib/feature-access"
 import { finalizeHtml, holdsText, reviseBRoll } from "@/lib/broll-animation/compose"
 import { renderDistributed } from "@/lib/broll-animation/distributed"
 import { loadComposition, saveBRoll } from "@/lib/broll-animation/store"
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
       : { data: null }
     const clipUrl = (asset as { url: string | null } | null)?.url ?? null
     const composition = clipUrl ? await loadComposition(supabase, clipUrl) : null
-    if (!composition) return fail("אפשר להחליף תמונה רק בבי-רול שנוצר בשפה הויזואלית. צרו בי-רול ואז החליפו.")
+    if (!composition) return fail(brandTerms("אפשר להחליף תמונה רק בבי-רול שנוצר בשפה הויזואלית. צרו בי-רול ואז החליפו.", qaFixes1112(user.email)))
 
     // Her picture → bytes.
     let file: Buffer | null = null

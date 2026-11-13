@@ -14,6 +14,8 @@
  * (‹ › + "1/2"), each slide with its own title, line and video.
  */
 
+import { brandTerms } from "@/lib/brand-terms"
+import { useQaFixes1112 } from "@/lib/use-scheduling-access"
 import { useState } from "react"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -110,6 +112,7 @@ export function NewFeatureNoteView({
  */
 export function FeatureCarousel({ features, review }: { features: LaunchFeature[]; review: boolean }) {
   const [i, setI] = useState(0)
+  const qaTerms = useQaFixes1112() === true
   const f = features[Math.min(i, features.length - 1)]
   const video = demoVideoFor(f, review)
   const many = features.length > 1
@@ -122,8 +125,8 @@ export function FeatureCarousel({ features, review }: { features: LaunchFeature[
   return (
     <div dir="rtl" className="flex flex-col">
       <div aria-live="polite">
-        <p className="text-p-bold text-text-primary-default">{f.title}</p>
-        <p className="mt-0.5 text-small text-text-neutral-default">{f.body}</p>
+        <p className="text-p-bold text-text-primary-default">{brandTerms(f.title, qaTerms)}</p>
+        <p className="mt-0.5 text-small text-text-neutral-default">{brandTerms(f.body, qaTerms)}</p>
       </div>
 
       {video && <DemoVideo key={video} feature={f} video={video} className="mt-3" />}

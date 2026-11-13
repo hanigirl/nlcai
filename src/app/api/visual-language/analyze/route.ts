@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server"
+import { brandTerms } from "@/lib/brand-terms"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
-import { canOwnMediaText, examplesInLanguage } from "@/lib/feature-access"
+import { canOwnMediaText, examplesInLanguage, qaFixes1112 } from "@/lib/feature-access"
 import { analyzeVisualLanguage } from "@/lib/agents/visual-language-analyzer"
 import { measureElement } from "@/lib/visual-language/fixed-elements"
 import {
@@ -44,7 +45,7 @@ export async function POST() {
     return NextResponse.json(
       {
         error: "anthropic_not_connected",
-        message: "כדי לנתח את השפה הוויזואלית צריך לחבר מפתח Claude בהגדרות ← חיבורים ← Claude.",
+        message: brandTerms("כדי לנתח את השפה הוויזואלית צריך לחבר מפתח Claude בהגדרות ← חיבורים ← Claude.", qaFixes1112(user.email)),
       },
       { status: 402 },
     )

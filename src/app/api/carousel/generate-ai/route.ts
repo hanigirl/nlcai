@@ -1,4 +1,5 @@
 import { canEditPictures } from "@/lib/feature-access"
+import { brandTerms } from "@/lib/brand-terms"
 import { withNoOrphans } from "@/lib/no-orphans"
 import { qaFixes1112 } from "@/lib/feature-access"
 import { withGraphicOnly } from "@/lib/visual-language/graphic-only"
@@ -328,7 +329,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
           {
             error: "no_visual_language",
-            message: "עדיין אין שפה ויזואלית מנותחת. הגדירו אותה בהגדרות ← מדיה ← שפה ויזואלית, או בחרו טמפלט אחר.",
+            message: brandTerms("עדיין אין שפה ויזואלית מנותחת. הגדירו אותה בהגדרות ← מדיה ← שפה ויזואלית, או בחרו טמפלט אחר.", qaFixes1112(user.email)),
           },
           { status: 400 },
         )

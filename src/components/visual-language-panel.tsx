@@ -1,6 +1,8 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useQaFixes1112 } from "@/lib/use-scheduling-access"
+import { brandTerms } from "@/lib/brand-terms"
 import { HexColorPicker } from "react-colorful"
 import { AlertTriangle, ChevronDown, Link2, Loader2, Plus, Sparkles, Upload, X } from "lucide-react"
 import { toast } from "sonner"
@@ -109,6 +111,8 @@ export function VisualLanguagePanel({
   examplesInside = false,
   initialOpen = "colors",
 }: VisualLanguagePanelProps) {
+  const qaTerms = useQaFixes1112() === true
+  const bt = (t: string) => brandTerms(t, qaTerms)
   const supabase = useMemo(() => createClient(), [])
   const [userId, setUserId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -450,7 +454,7 @@ export function VisualLanguagePanel({
   // she can re-run the analysis right there and see its result (Hani,
   // 2026-11-05). It reads every input, the examples included.
   const analysisSection = (
-    <section className="flex flex-col gap-3" aria-label="ניתוח השפה הוויזואלית">
+    <section className="flex flex-col gap-3" aria-label={bt("ניתוח השפה הוויזואלית")}>
 
       {visualLanguage?.status === "ok" && (
         <div className="flex flex-col gap-3 rounded-xl bg-bg-surface p-4">
@@ -483,7 +487,7 @@ export function VisualLanguagePanel({
             </ul>
           )}
           <p className="text-sm text-text-primary-default">
-            ודאו שהצבעים, האלמנטים והדוגמאות מציגים שפה ויזואלית אחת, ספציפית וברורה, ונתחו שוב. עד אז נעצב לפי הנישה שלכם.
+            {bt("ודאו שהצבעים, האלמנטים והדוגמאות מציגים שפה ויזואלית אחת, ספציפית וברורה, ונתחו שוב. עד אז נעצב לפי הנישה שלכם.")}
           </p>
         </div>
       )}
@@ -506,10 +510,10 @@ export function VisualLanguagePanel({
       >
         {analyzing ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
         {analyzing
-          ? "מנתח את השפה הוויזואלית..."
+          ? bt("מנתח את השפה הוויזואלית...")
           : visualLanguage
-            ? "ניתוח מחדש של שפה ויזואלית"
-            : "ניתוח שפה ויזואלית"}
+            ? bt("ניתוח מחדש של שפה ויזואלית")
+            : bt("ניתוח שפה ויזואלית")}
       </Button>
       {analyzing && (
         <p className="text-xs text-text-neutral-default" aria-live="polite">
@@ -641,7 +645,7 @@ export function VisualLanguagePanel({
         <div>
           <h3 className="text-p-bold text-text-primary-default">דוגמאות לשימוש</h3>
           <p className="text-small text-text-neutral-default mt-1">
-            עיצובים שמראים את המותג בפעולה, לפי סוג. הם נכנסים לניתוח השפה הוויזואלית, וכל סוג מלמד איך נראה אצלכם הפורמט הזה.
+            {bt("עיצובים שמראים את המותג בפעולה, לפי סוג. הם נכנסים לניתוח השפה הוויזואלית, וכל סוג מלמד איך נראה אצלכם הפורמט הזה.")}
           </p>
         </div>
 
@@ -656,9 +660,9 @@ export function VisualLanguagePanel({
   return (
     <div className="flex flex-col gap-8">
       <div>
-        <h3 className="text-p-bold text-text-primary-default">שפה ויזואלית</h3>
+        <h3 className="text-p-bold text-text-primary-default">{bt("שפה ויזואלית")}</h3>
         <p className="text-small text-text-neutral-default mt-1">
-          ספרו לנו איך המותג שלכם נראה. ננתח את מה שתעלו לשפה ויזואלית אחת, וכל הסטוריז, פוסטי התמונה, קרוסלות ה-AI והבי-רול ייוצרו לפיה.
+          {bt("ספרו לנו איך המותג שלכם נראה. ננתח את מה שתעלו לשפה ויזואלית אחת, וכל הסטוריז, פוסטי התמונה, קרוסלות ה-AI והבי-רול ייוצרו לפיה.")}
         </p>
       </div>
 

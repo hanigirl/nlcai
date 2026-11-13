@@ -45,7 +45,8 @@ import {
 } from "@/components/identity-gap-dialog"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { ScheduleSettings } from "@/components/schedule-settings"
-import { useExamplesInLanguage, useMultinetwork, useScheduleAllA } from "@/lib/use-scheduling-access"
+import { useExamplesInLanguage, useMultinetwork, useQaFixes1112, useScheduleAllA } from "@/lib/use-scheduling-access"
+import { brandTerms } from "@/lib/brand-terms"
 import { DriveFoldersSettings } from "@/components/drive-folder-review"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 
@@ -210,8 +211,11 @@ function SettingsPageInner() {
   // media, read on the canvas by "מדיה משלכם מ Google Drive" (Hani, 2026-10-22).
   // דוגמאות לשימוש live inside שפה ויזואלית for these accounts (lib/feature-access examplesInLanguage).
   const examplesInside = useExamplesInLanguage() === true
+  const qaTerms = useQaFixes1112() === true
   const mediaSections = [
-    ...SUB_SECTIONS.media.filter((s) => !(examplesInside && s.id === "examples")),
+    ...SUB_SECTIONS.media
+      .filter((s) => !(examplesInside && s.id === "examples"))
+      .map((s) => ({ ...s, label: brandTerms(s.label, qaTerms) })),
     { id: "drive", label: "מדיה מ-Google Drive", icon: FolderOpen },
   ]
   // Optional sub-section deep link via `?sub=...`. The home-page profile-
