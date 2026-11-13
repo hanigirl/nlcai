@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { BrandStyle } from "@/lib/supabase/types"
 import type { CaptionStyle } from "@/lib/own-media"
+import { loadOwnCaptionLook } from "@/lib/own-caption-look"
 
 /**
  * The look of the script's text on HER media — one answer for every format
@@ -54,6 +55,10 @@ export function driveCaptionLook(brandColors: unknown): CaptionStyle {
 }
 
 export async function captionLookFor(supabase: SupabaseClient, userId: string): Promise<CaptionStyle> {
-  const { data } = await supabase.from("users").select("brand_colors").eq("id", userId).maybeSingle()
-  return driveCaptionLook((data as { brand_colors?: unknown } | null)?.brand_colors)
+  const [{ data }, saved] = await Promise.all([
+    supabase.from("users").select("brand_colors").eq("id", userId).maybeSingle(),
+    loadOwnCaptionLook(supabase, userId),
+  ])
+  // What she saved with "זכור לעתיד" on her media wins over the default.
+  return { ...driveCaptionLook((data as { brand_colors?: unknown } | null)?.brand_colors), ...(saved ?? {}) }
 }

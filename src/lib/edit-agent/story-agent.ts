@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import sharp from "sharp"
 import { readCaptionRecord } from "@/lib/caption-record"
 import { captionLookFor } from "@/lib/caption-look"
+import { ownCaptionOffer } from "@/lib/own-caption-look"
 import { cleanCaptionStyle, isCaptionedRenderUrl, isOwnMediaUrl, isVideoMediaUrl, type CaptionSpec, type CaptionStyle } from "@/lib/own-media"
 import { scriptTextUnits, type ScriptText } from "@/lib/script-text"
 import { storyFrames } from "@/lib/story-text-split"
@@ -197,7 +198,7 @@ ${BARS[format]}${WHICH[format]}- Tools change a DRAFT. Nothing is saved until yo
 - When her request has more than one reasonable reading, ask_user with 2–4 short Hebrew options. Don't ask when the answer is clear.
 - Her saved preferences (Settings → מדיה → העדפות ויזואליות) shape every future piece of this format. When she asks to save / remember / keep something ("תשמור", "ככה ארצה שיהיו", "מעכשיו"), call remember with a precise description of exactly that, read off the frames. One call per distinct thing. In your reply name as saved ONLY what a remember result said SAVED.
 - Tool results tell you when a step failed and why. Never claim something happened that didn't; say only what you SAW on the draft.
-- "זכור לעתיד": when your change is a look choice that could hold for her future pieces — on DESIGNED frames only (her saved preferences shape what we draw, not the caption on her own media) — set finish.remember_offer (she gets a button; pressing it asks you to save exactly that with remember). Don't mention the button in your reply, and don't offer what was already saved.
+- "זכור לעתיד": when your change is a look choice that could hold for her future pieces — on DESIGNED frames only (the caption look on her own media gets its own button automatically — don't set remember_offer for it) — set finish.remember_offer (she gets a button; pressing it asks you to save exactly that with remember). Don't mention the button in your reply, and don't offer what was already saved.
 
 finish.reply: Hebrew, plural forms (אתם / נסו), 1–3 short sentences, natural spoken Hebrew. Say what you actually did and on which frames; if something didn't work, say plainly what and why, and what she can do. She reads it after the change is saved and already on her card — never say it will appear later. No emojis, no markdown.`
 
@@ -389,6 +390,8 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
   /** A preference saved this turn — then no "זכור לעתיד" offer. */
   let remembered = false
   let offer: string | undefined
+  /** The own frame whose caption look set_caption changed last this turn. */
+  let captionRestyled: number | null = null
   let checks = 0
   /** A designed carousel whose slide count changed under an edit: the set as it is now. */
   let movedOn: string[] | null = null
@@ -911,6 +914,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
             Object.assign(f, before)
             notes.push(err)
           } else if (err) notes.push(`Frame ${i + 1}: ${err}.`)
+          if (!err?.startsWith("FAILED") && (a.text || a.pill || a.scale)) captionRestyled = i
           if (design && f.media === "image") notes.push(`Frame ${i + 1} is a PHOTO: \`design\` doesn't apply to it (position, move, colours, box and size do).`)
         }
         const shown = go.filter((i) => frames[i].dirty)
@@ -1017,8 +1021,13 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
       }
     }
     await input.setProgress(`שומר את ${F.noun}...`)
-    // Offered only for a change on a designed frame: her preferences shape what we draw.
-    const offerNow = offer && !remembered && frames.some((f) => f.dirty && f.kind === "designed") ? offer : undefined
+    // Offered for a change on a designed frame (her preferences shape what we
+    // draw), or, on her own media, for the caption look she just set — that
+    // one saves as her caption look (lib/own-caption-look).
+    const ownLook = captionRestyled !== null ? ownCaptionOffer(frames[captionRestyled]?.spec?.style) : undefined
+    const offerNow =
+      (offer && !remembered && frames.some((f) => f.dirty && f.kind === "designed") ? offer : undefined) ??
+      (frames.some((f) => f.dirty && f.kind === "own") ? ownLook : undefined)
     const next: string[] = []
     for (let i = 0; i < frames.length; i++) {
       const f = frames[i]

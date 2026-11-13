@@ -1,5 +1,6 @@
 import { extractDriveFileId } from "@/lib/drive-media"
 import { brandTerms } from "@/lib/brand-terms"
+import { parseOwnCaptionOffer, saveOwnCaptionLook } from "@/lib/own-caption-look"
 import { after, NextRequest, NextResponse } from "next/server"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/server"
@@ -221,6 +222,21 @@ export async function POST(req: NextRequest) {
   const userMsg: AgentMessage = { role: "user", text, ...(herImages.length ? { images: herImages } : {}), at: now() }
   const earlier = (await loadThread(db, user.id, chatKey))?.messages ?? []
   await appendMessages(admin, user.id, chatKey, [userMsg])
+
+  // "זכור לעתיד" under a caption change on her own media: saved here as her
+  // caption look (lib/own-caption-look) — no agent run, no credits.
+  const ownLook = rememberAsk ? parseOwnCaptionOffer(rememberAsk) : null
+  if (ownLook) {
+    let reply = "שמרתי. מעכשיו הכיתוב על המדיה שלכם ייראה ככה בכל הפורמטים."
+    try {
+      await saveOwnCaptionLook(admin, user.id, ownLook)
+    } catch (err) {
+      console.error("[edit-agent] own caption look save failed", err)
+      reply = "לא הצלחתי לשמור את מראה הכיתוב. נסו שוב."
+    }
+    await appendMessages(admin, user.id, chatKey, [{ role: "assistant", text: reply, at: now() }])
+    return NextResponse.json({ ok: true })
+  }
 
   const refuse = async (said: string) => {
     const reply = brandTerms(said, qaFixes1112(user.email))

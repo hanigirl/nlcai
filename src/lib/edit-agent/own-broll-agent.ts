@@ -7,6 +7,7 @@ import { AGENT_MODEL, type BRollAgentOutcome, type ChatTurn } from "@/lib/edit-a
 import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
 import { fetchDriveFile } from "@/lib/drive-fetch"
 import { checkFailedNote, checkTask } from "@/lib/edit-agent/self-check"
+import { ownCaptionOffer } from "@/lib/own-caption-look"
 
 /**
  * What the b-roll looks like — one still (a video at 2.8s, when the caption
@@ -395,6 +396,8 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
       urls: [draft],
     })
     if (!saved.ok) return { kind: "failed", reply: saved.data.message ?? "השינוי לא נשמר. נסו שוב." }
-    return { kind: "done", reply: reply || "עדכנתי את הכיתוב.", url: draft, changed: true }
+    // "זכור לעתיד" for a look change (colours, box, size): the button saves it as her caption look.
+    const offer = change?.style ? ownCaptionOffer(currentSpec().style) : undefined
+    return { kind: "done", reply: reply || "עדכנתי את הכיתוב.", url: draft, changed: true, ...(offer ? { rememberOffer: offer } : {}) }
   }
 }
