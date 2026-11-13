@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import sharp from "sharp"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
-import { canOwnMediaText } from "@/lib/feature-access"
+import { canOwnMediaText, qaFixes1112 } from "@/lib/feature-access"
 import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
 import { fetchDriveFile } from "@/lib/drive-fetch"
 import { guardedFetch } from "@/lib/server-fetch"
@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
     // Her words over the frame while she cuts (Hani, 2026-11-11) — the same
     // layer the save draws, on a transparent 4:5 canvas.
     const c = found.caption?.caption
-    const layer = c ? await renderCaptionOverlayPng(c.headline ?? "", c.body ?? "", c.position ?? "bottom", c.style, CANVAS_4_5).catch(() => null) : null
+    const layer = c ? await renderCaptionOverlayPng(c.headline ?? "", c.body ?? "", c.position ?? "bottom", c.style, CANVAS_4_5, qaFixes1112(user.email)).catch(() => null) : null
     return json({
       original: `data:image/jpeg;base64,${preview.toString("base64")}`,
       width,
@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
 
     // Her words go back on, exactly as they were, over the new cut.
     const c = found.caption.caption
-    const png = await renderCaptionOverImagePng(cut.toString("base64"), c.headline ?? "", c.body ?? "", CANVAS_4_5, c.position ?? "bottom", c.style)
+    const png = await renderCaptionOverImagePng(cut.toString("base64"), c.headline ?? "", c.body ?? "", CANVAS_4_5, c.position ?? "bottom", c.style, qaFixes1112(user.email))
     const capPath = `${user.id}/image/captioned-${crypto.randomUUID()}.png`
     const capUp = await supabase.storage.from(BUCKET).upload(capPath, png, { contentType: "image/png" })
     if (capUp.error) throw new Error(capUp.error.message)

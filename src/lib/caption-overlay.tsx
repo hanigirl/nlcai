@@ -189,6 +189,8 @@ export function wrapCaptionLines(
   maxWidth: number,
   /** The line's real width in px (measureLine). Without it, an estimate. */
   measure?: (line: string) => number,
+  /** Even lines, never one word alone on the last (Hani, 2026-11-13). */
+  balance = false,
 ): string[] {
   const perLine = Math.max(6, Math.floor(maxWidth / (fontSize * 0.68)))
   const tooLong = (line: string) => (measure ? measure(line) > maxWidth : line.length > perLine)
@@ -200,17 +202,68 @@ export function wrapCaptionLines(
       .split(/\s+/)
       .filter(Boolean)
       .reduce<string[]>((acc, w) => (/^[—–-]$/.test(w) && acc.length ? [...acc.slice(0, -1), `${acc[acc.length - 1]} ${w}`] : [...acc, w]), [])
+    const lines: string[] = []
     let line = ""
     for (const w of words) {
       const next = line ? `${line} ${w}` : w
       if (tooLong(next) && line) {
-        out.push(line)
+        lines.push(line)
         line = w
       } else line = next
     }
-    if (line) out.push(line)
+    if (line) lines.push(line)
+    const even = balance && lines.length > 1 ? balanceLines(words, lines.length, (l) => (measure ? measure(l) : l.length), tooLong) : []
+    out.push(...(even.length ? even : lines))
   }
   return out
+}
+
+/**
+ * The same words in the same number of lines, split so the widest line is as
+ * narrow as it can be — lines come out about even, so the last is never one
+ * word alone when the others carry several (Hani, 2026-11-13: "לא לשבור שורה
+ * עם מילה אחת"). Falls back to the greedy split if nothing fits.
+ */
+function balanceLines(
+  words: string[],
+  n: number,
+  width: (line: string) => number,
+  tooLong: (line: string) => boolean,
+): string[] {
+  if (words.length <= n) return words
+  const W = words.length
+  const seg = (a: number, b: number) => words.slice(a, b).join(" ")
+  // solve(i, k): the narrowest widest-line for words[i..] in k lines
+  const memo = new Map<string, { worst: number; cut: number }>()
+  const solve = (i: number, k: number): { worst: number; cut: number } => {
+    const key = `${i}:${k}`
+    const hit = memo.get(key)
+    if (hit) return hit
+    let best = { worst: Infinity, cut: -1 }
+    if (k === 1) {
+      const l = seg(i, W)
+      best = { worst: tooLong(l) ? Infinity : width(l), cut: W }
+    } else {
+      for (let j = i + 1; j <= W - (k - 1); j++) {
+        const l = seg(i, j)
+        if (tooLong(l)) break
+        const rest = solve(j, k - 1)
+        const worst = Math.max(width(l), rest.worst)
+        if (worst < best.worst) best = { worst, cut: j }
+      }
+    }
+    memo.set(key, best)
+    return best
+  }
+  if (!Number.isFinite(solve(0, n).worst)) return []
+  const lines: string[] = []
+  let i = 0
+  for (let k = n; k >= 1; k--) {
+    const { cut } = solve(i, k)
+    lines.push(seg(i, cut))
+    i = cut
+  }
+  return lines
 }
 
 /**
@@ -247,6 +300,8 @@ async function renderCaption(
   canvas: CaptionCanvas = CANVAS_9_16,
   position: CaptionPosition = "bottom",
   style?: CaptionStyle,
+  /** Balanced lines, no word alone on one (Hani, 2026-11-13; gated by the caller). */
+  balance = false,
 ): Promise<Buffer> {
   const { extraBold, bold } = await loadRubik()
   const W = canvas.width
@@ -267,6 +322,12 @@ async function renderCaption(
       ? fontSizeForBody(hookSize, bodyText)
       : Math.round(fontSizeForBodyOnly(bodyText) * scale)
 
+  // The one-box look wraps inside satori; with balance its lines are cut here
+  // first (measured, even), each one its own row.
+  const evenLines = (text: string, size: number, weight: 700 | 800, padX: number) =>
+    balance
+      ? wrapCaptionLines(text, size, W - canvas.padX * 2 - padX * 2, (l) => measurerFor(weight === 800 ? extraBold : bold)(l, size), true).join("\n")
+      : text
   const pill = {
     display: "flex" as const,
     backgroundColor: noBox ? "transparent" : (style?.pill ?? "#000000"),
@@ -340,7 +401,7 @@ async function renderCaption(
               const room = W - side * 2 - boxPadX * 2
               const block = (text: string, size: number, weight: 700 | 800, key: string) => {
                 const measure = measurerFor(weight === 800 ? extraBold : bold)
-                return wrapCaptionLines(text, size, room, (l) => measure(l, size)).map((line, i) => (
+                return wrapCaptionLines(text, size, room, (l) => measure(l, size), balance).map((line, i) => (
                   <div
                     key={`${key}-${i}`}
                     style={{
@@ -394,7 +455,7 @@ async function renderCaption(
             {/* RtlText, NOT a raw string: satori has no BiDi, so bare Hebrew
                 renders mirrored. Same shared helper the carousel uses. */}
             <RtlText
-              text={hook}
+              text={evenLines(hook, hookSize, 800, 48)}
               align="center"
               style={{
                 color: textColor,
@@ -412,7 +473,7 @@ async function renderCaption(
         {!(style?.perLine && !noBox) && bodyText && (
           <div style={{ ...pill, padding: "24px 40px" }}>
             <RtlText
-              text={bodyText}
+              text={evenLines(bodyText, bodySize, hook ? 700 : 800, 40)}
               align="center"
               style={{
                 color: textColor,
@@ -455,8 +516,9 @@ export function renderCaptionOverlayPng(
   position: CaptionPosition = "bottom",
   style?: CaptionStyle,
   canvas: CaptionCanvas = CANVAS_9_16,
+  balance = false,
 ): Promise<Buffer> {
-  return renderCaption(hook, body, undefined, canvas, position, style)
+  return renderCaption(hook, body, undefined, canvas, position, style, balance)
 }
 
 /**
@@ -473,8 +535,9 @@ export function renderCaptionOverImagePng(
   canvas: CaptionCanvas = CANVAS_9_16,
   position: CaptionPosition = "bottom",
   style?: CaptionStyle,
+  balance = false,
 ): Promise<Buffer> {
-  return renderCaption(hook, body, backgroundBase64, canvas, position, style)
+  return renderCaption(hook, body, backgroundBase64, canvas, position, style, balance)
 }
 
 /**

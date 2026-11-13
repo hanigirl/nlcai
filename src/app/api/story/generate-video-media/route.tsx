@@ -20,7 +20,7 @@ import { getAuthUser } from "@/lib/auth-user"
 import { cleanCaptionSpec, type CaptionSpec } from "@/lib/own-media"
 import { writeCaptionRecord } from "@/lib/caption-record"
 import { guardedFetch } from "@/lib/server-fetch"
-import { canOwnMediaText, staticBRollText, textAtOnceBRoll } from "@/lib/feature-access"
+import { canOwnMediaText, qaFixes1112, staticBRollText, textAtOnceBRoll } from "@/lib/feature-access"
 import { NO_SCRIPT_TEXT, scriptTextFor, type TextSource } from "@/lib/script-text"
 import { captionLookFor } from "@/lib/caption-look"
 
@@ -525,6 +525,8 @@ export async function POST(req: NextRequest) {
         overlayBody,
         position,
         canOwnMediaText(user.email) ? { ...(await captionLookFor(supabase, user.id)), ...override?.style } : override?.style,
+        undefined,
+        qaFixes1112(user.email),
       ),
     ])
     const srcContentType = (videoRes.headers.get("content-type") || "")

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { canOwnMediaText } from "@/lib/feature-access"
+import { canOwnMediaText, qaFixes1112 } from "@/lib/feature-access"
 import { captionLookFor } from "@/lib/caption-look"
 import { NO_SCRIPT_TEXT, scriptTextFor, type TextSource } from "@/lib/script-text"
 import { createClient } from "@/lib/supabase/server"
@@ -395,6 +395,7 @@ export async function POST(req: NextRequest) {
       canvas,
       position,
       style,
+      qaFixes1112(user.email),
     )
 
     // A carousel slide goes back as bytes: the panel holds the whole set and
