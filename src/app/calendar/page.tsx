@@ -37,7 +37,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { checkSlot, ScheduleDateTimePicker } from "@/components/schedule-date-time-picker"
+import {
+  checkSlot,
+  isIsraelSlotPast,
+  israelTodayKey,
+  nextOpenTimeOn,
+  ScheduleDateTimePicker,
+} from "@/components/schedule-date-time-picker"
+import { actionFor, type PublishState } from "@/lib/social/publish-state"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -63,8 +70,8 @@ import {
   type PlanInputCard,
   type PlannedSlot,
 } from "@/lib/schedule-all"
-import { NoSettingsDialog, PreviewBar, ScheduleAllButton } from "@/components/schedule-all"
-import { CorePostSheet, type CorePostSheetData } from "@/components/core-post-sheet"
+import { NoSettingsDialog, PreviewBar, ScheduleAllButton, UnmatchedNote } from "@/components/schedule-all"
+import { CorePostSheet, HEADER_CHIP_FORMATS, type CorePostSheetData } from "@/components/core-post-sheet"
 import { FormatThumbnail } from "@/components/format-thumbnail"
 import { InstagramConnectDialogHost, InstagramConnectionControl } from "@/components/instagram-connect"
 import {
@@ -320,6 +327,8 @@ function FormatCard({
   isPublished,
   selected,
   past = false,
+  locked = false,
+  chipState = "scheduled",
   onCardClick,
   onUnschedule,
   onReschedule,
@@ -336,8 +345,16 @@ function FormatCard({
   isPublished: boolean
   /** Format preview (`?preview=b`) — this card's preview is the one open. */
   selected?: boolean
-  /** The slot's time has passed — disabled: faded, no drag, no menu. */
+  /** The slot's time has passed — faded. */
   past?: boolean
+  /**
+   * Past AND it went out (published / handed to the network): no drag, no
+   * menu. A past slot that never went out keeps both, so it can be moved or
+   * taken off the board.
+   */
+  locked?: boolean
+  /** Where this slot really stands, in the chip's existing states. */
+  chipState?: "scheduled" | "published" | "ready"
   /** Click on the card body — open the preview Sheet for the core post. */
   onCardClick: () => void
   /** Kebab → "הסרת הפורמט". Unschedules THIS format at THIS slot. */
@@ -376,9 +393,9 @@ function FormatCard({
     <div
       // Whole card is the drag handle — stamps the (post, format) tuple so a
       // drop re-schedules exactly this format's row (upsert-keyed in storage).
-      draggable={!past}
+      draggable={!locked}
       onDragStart={(e) => {
-        if (past) return
+        if (locked) return
         e.dataTransfer.setData(
           "application/x-scheduled-chip",
           JSON.stringify({ corePostId: post.corePostId, format: post.format }),
@@ -396,11 +413,13 @@ function FormatCard({
       }}
       title={publishedTitle}
       aria-label={`${formatLabel} מתוזמן: ${hook}`}
-      aria-disabled={past || undefined}
+      aria-disabled={locked || undefined}
       className={`group/chip relative w-full min-w-0 flex flex-col gap-1.5 rounded-lg border border-border-neutral-default bg-white dark:bg-gray-10 p-1.5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 ${
-        past
+        locked
           ? "opacity-50 grayscale cursor-pointer"
-          : "cursor-grab active:cursor-grabbing hover:bg-bg-surface-hover hover:border-gray-80 hover:ring-2 hover:ring-gray-80/30"
+          : past
+            ? "opacity-50 grayscale cursor-grab active:cursor-grabbing hover:opacity-80 hover:border-gray-80"
+            : "cursor-grab active:cursor-grabbing hover:bg-bg-surface-hover hover:border-gray-80 hover:ring-2 hover:ring-gray-80/30"
       } ${isPublished && !past ? "opacity-60" : ""}${selected ? " ring-2 ring-yellow-50 border-yellow-50" : ""}`}
       aria-current={selected || undefined}
     >
@@ -428,7 +447,7 @@ function FormatCard({
         {/* Kebab — hover/focus revealed, top-end over the media. Swallows
             click + pointer + keydown so the outer card's onClick / dragstart
             never fire while the menu is in use. */}
-        {!past && (
+        {!locked && (
         <DropdownMenu dir="rtl">
           <DropdownMenuTrigger asChild>
             <button
@@ -473,7 +492,7 @@ function FormatCard({
           {hook}
         </p>
         <div className="flex">
-          <FormatStatusChip format={post.format} state="scheduled" size="xs" />
+          <FormatStatusChip format={post.format} state={chipState} size="xs" />
         </div>
         {/* Where this slot stands with Instagram — "תוזמן" only when the
             provider holds it, otherwise what's wrong and one way to fix it. */}
@@ -543,21 +562,56 @@ function FormatCard({
  * the board goes disabled — faded, not draggable, no actions menu. Click still
  * opens the preview, read-only.
  */
-function isSlotPast(post: ScheduledPost, now: Date): boolean {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(post.scheduledDate)
-  if (!m) return false
-  const [h, min] = (post.scheduledTime ?? DEFAULT_SCHEDULED_TIME).split(":").map(Number)
-  const at = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), h || 0, min || 0)
-  return at.getTime() <= now.getTime()
+function isSlotPast(post: ScheduledPost, now: number): boolean {
+  // Israel time, whatever the browser's zone — the board means Israel time.
+  return isIsraelSlotPast(post.scheduledDate, post.scheduledTime ?? DEFAULT_SCHEDULED_TIME, now)
+}
+
+/** Past, and it went out (or is out at the network): nothing left to move. */
+function wentOut(post: ScheduledPost): boolean {
+  const s = post.publish?.status
+  return !!post.publishedAt || s === "published" || s === "sent"
+}
+
+/** Board "today" — Israel's date, as a local midnight Date for the grid. */
+function israelToday(): Date {
+  const [y, m, d] = israelTodayKey().split("-").map(Number)
+  return new Date(y, m - 1, d)
+}
+
+/** The failure's one action in the preview's terms (lib/social/publish-state → actionFor). */
+function failedActionFor(state: Pick<PublishState, "status" | "code">): "reconnect" | "retry" | "fix_media" | "pick_time" {
+  switch (actionFor(state as PublishState)) {
+    case "connect":
+    case "reconnect":
+      return "reconnect"
+    case "fix_media":
+      return "fix_media"
+    case "pick_time":
+      return "pick_time"
+    default:
+      return "retry"
+  }
 }
 
 // --- page ----------------------------------------------------------------
 
 export default function CalendarPage() {
-  // We hold "today" and "now" in state so they stay stable across re-renders
-  // within a session. (Re-computing on every render would make `isToday`
-  // flicker if a render straddled midnight — rare, but cheap to avoid.)
-  const [today] = useState<Date>(() => startOfDay(new Date()))
+  // "today" and "now" live in state so renders stay stable, and a one-minute
+  // tick moves them on: past slots fade on time and "today" rolls over at
+  // midnight (Israel time) without a reload.
+  const [today, setToday] = useState<Date>(israelToday)
+  const [now, setNow] = useState<number>(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setNow(Date.now())
+      setToday((prev) => {
+        const next = israelToday()
+        return isSameDay(prev, next) ? prev : next
+      })
+    }, 60_000)
+    return () => window.clearInterval(id)
+  }, [])
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(today))
 
   // Queue rail collapse. Owned here (not in QueuePanel) because the rail's
@@ -619,8 +673,23 @@ export default function CalendarPage() {
 
   // What happened in the queue since the last visit — outcomes of slots
   // whose time passed, edits after queuing, a lapsed connection.
+  // Kept fresh while the page is open: every 90 seconds while the tab is
+  // visible, and whenever she comes back to it — a post that went out shows
+  // as such without a reload.
   useEffect(() => {
-    if (schedulingOn) void refreshPublishStatus()
+    if (!schedulingOn) return
+    void refreshPublishStatus()
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") void refreshPublishStatus()
+    }
+    const id = window.setInterval(refreshIfVisible, 90_000)
+    window.addEventListener("focus", refreshIfVisible)
+    document.addEventListener("visibilitychange", refreshIfVisible)
+    return () => {
+      window.clearInterval(id)
+      window.removeEventListener("focus", refreshIfVisible)
+      document.removeEventListener("visibilitychange", refreshIfVisible)
+    }
   }, [schedulingOn])
 
   /**
@@ -789,16 +858,22 @@ export default function CalendarPage() {
   const [scheduleSettingsOpen, setScheduleSettingsOpen] = useState(false)
   // When the drafts were laid out — a confirm right after is a double click.
   const arrangedAtRef = useRef(0)
+  // Her saved routine whenever she saved one — even "no publishing days",
+  // which places nothing (the notice above the rail says why). The default
+  // only when she never saved anything.
+  const arrangeRoutine = routine.hasCustom ? routine.saved : defaultPostingSchedule()
   const onArrange = () => {
     if (scheduleAllA) {
       // No settings on the board: her saved routine, or the default one.
-      const plan = planScheduleAll(
-        railCards,
-        withFormatGap(hasAnySlot(routine.saved) ? routine.saved : defaultPostingSchedule()),
-        scheduled,
-      )
+      const plan = planScheduleAll(railCards, withFormatGap(arrangeRoutine), scheduled)
       if (plan.placed.length === 0) {
-        toast("לפורמטים שנשארו אין משבצת פנויה בלו״ז")
+        if (!hasAnySlot(arrangeRoutine)) {
+          toast("אין ימי פרסום בהגדרות התזמון, ולכן לא סידרנו כלום", {
+            action: { label: "הגדרות תזמון", onClick: () => setScheduleSettingsOpen(true) },
+          })
+        } else {
+          toast("לפורמטים שנשארו אין משבצת פנויה בלו״ז")
+        }
         return
       }
       arrangedAtRef.current = Date.now()
@@ -835,15 +910,28 @@ export default function CalendarPage() {
   const onConfirmPlanned = () => {
     if (!planned) return
     let count = 0
+    // Drafts whose time got too close while she looked stay on the board as
+    // drafts, to move — one summary toast for all of them, not one per post.
+    const tooSoon: PlannedSlot[] = []
     for (const p of planned) {
-      if (blockedAsTooSoon(p.scheduledDate, p.scheduledTime)) continue
+      if (schedulingOn && anyConnected && isSlotTooSoon(p.scheduledDate, p.scheduledTime)) {
+        tooSoon.push(p)
+        continue
+      }
       schedulePost(p.corePostId, p.format, p.scheduledDate, p.scheduledTime, { hook: p.hook })
       count++
     }
     reloadBoard()
-    setPlanned(null)
-    setPlannedUnmatched([])
+    setPlanned(tooSoon.length > 0 ? tooSoon : null)
+    if (tooSoon.length === 0) setPlannedUnmatched([])
     if (count > 0) toast.success(count === 1 ? "פוסט אחד תוזמן" : `${count} פוסטים תוזמנו`)
+    if (tooSoon.length > 0) {
+      toast.error(
+        tooSoon.length === 1
+          ? "פוסט אחד לא תוזמן כי המועד שלו כבר קרוב מדי. גררו אותו ליום אחר."
+          : `${tooSoon.length} פוסטים לא תוזמנו כי המועד שלהם כבר קרוב מדי. גררו אותם ליום אחר.`,
+      )
+    }
   }
   const plannedByDay = useMemo(() => {
     const map = new Map<string, PlannedSlot[]>()
@@ -858,7 +946,6 @@ export default function CalendarPage() {
   // The warning at the top of "פוסטים לתזמון" (Hani, 2026-11-11): after an
   // arrange, where it went (weeks) and what didn't fit; always, the ready
   // formats her schedule settings give no day — they never get arranged.
-  const arrangeRoutine = hasAnySlot(routine.saved) ? routine.saved : defaultPostingSchedule()
   const formatsWithoutDay = useMemo(() => {
     if (!scheduleAllA) return []
     const withDay = new Set(
@@ -903,6 +990,36 @@ export default function CalendarPage() {
         formatsWithoutDay={formatsWithoutDay.map((f) => FORMAT_LABELS[f] ?? f)}
         onOpenSettings={() => setScheduleSettingsOpen(true)}
       />
+    ) : null
+
+  // What "תזמון כל הפוסטים" is about to do, above the rail right under the
+  // button: how many go on the board, how many land after this week, and
+  // which formats found no slot.
+  const plannedLater = planned
+    ? planned.filter((p) => p.scheduledDate < toDateKey(weekStart) || p.scheduledDate > toDateKey(weekEnd)).length
+    : 0
+  const planSummary =
+    scheduleAllA && planned ? (
+      <div role="status" className="flex flex-col gap-1 rounded-lg border border-border-neutral-default bg-bg-surface px-3 py-2">
+        <p className="text-small-bold text-text-primary-default">
+          {planned.length === 1 ? "פוסט אחד יתוזמן" : `${planned.length} פוסטים יתוזמנו`} בלחיצה על ״תזמון כל הפוסטים״
+        </p>
+        {plannedLater > 0 && (
+          <p className="text-xs-body text-text-neutral-default">
+            {plannedLater === planned.length
+              ? "כולם בשבועות אחרים, לא בשבוע שעל המסך."
+              : `${plannedLater} מהם בשבועות אחרים, לא בשבוע שעל המסך.`}
+          </p>
+        )}
+        <UnmatchedNote cards={plannedUnmatched} />
+      </div>
+    ) : null
+  const railNotice =
+    planSummary || arrangeNotice ? (
+      <div className="flex flex-col gap-2">
+        {planSummary}
+        {arrangeNotice}
+      </div>
     ) : null
 
   const plannedIds = useMemo(
@@ -952,6 +1069,20 @@ export default function CalendarPage() {
     if (dragOverDay === dayKey) setDragOverDay(null)
   }
 
+  /**
+   * The time a drop on `dayKey` lands on: the card's own time, unless that is
+   * already gone today — then the next half hour at least 10 minutes ahead,
+   * so a card dropped on today never lands in the past and gets stuck.
+   * null (with a toast) when today has no time left.
+   */
+  const landingTime = (dayKey: string, time: string): string | null => {
+    if (dayKey !== israelTodayKey()) return time
+    if (!isIsraelSlotPast(dayKey, time, Date.now() + 10 * 60_000)) return time
+    const next = nextOpenTimeOn(dayKey)
+    if (!next) toast.error("להיום כבר לא נשאר זמן לתזמון. בחרו יום אחר.")
+    return next
+  }
+
   const handleDrop = (
     e: React.DragEvent<HTMLDivElement>,
     day: Date,
@@ -969,11 +1100,14 @@ export default function CalendarPage() {
           corePostId: string
           format: FormatId
         }
+        const draft = planned?.find((x) => x.corePostId === corePostId && x.format === format)
+        const time = landingTime(dayKey, draft?.scheduledTime ?? DEFAULT_SCHEDULED_TIME)
+        if (!time) return
         setPlanned((list) =>
           list
             ? list.map((x) =>
                 x.corePostId === corePostId && x.format === format
-                  ? { ...x, scheduledDate: dayKey }
+                  ? { ...x, scheduledDate: dayKey, scheduledTime: time }
                   : x,
               )
             : list,
@@ -1001,8 +1135,9 @@ export default function CalendarPage() {
         const existing = scheduled.find(
           (p) => p.corePostId === corePostId && p.format === format,
         )
-        const time = existing?.scheduledTime ?? DEFAULT_SCHEDULED_TIME
         if (existing?.scheduledDate === dayKey) return
+        const time = landingTime(dayKey, existing?.scheduledTime ?? DEFAULT_SCHEDULED_TIME)
+        if (!time) return
         if (blockedAsTooSoon(dayKey, time)) return
         schedulePost(corePostId, format, dayKey, time)
         reloadBoard()
@@ -1025,12 +1160,14 @@ export default function CalendarPage() {
           hook?: string | null
         }
         const trimmed = hook?.trim()
-        if (blockedAsTooSoon(dayKey, DEFAULT_SCHEDULED_TIME)) return
+        const time = landingTime(dayKey, DEFAULT_SCHEDULED_TIME)
+        if (!time) return
+        if (blockedAsTooSoon(dayKey, time)) return
         schedulePost(
           corePostId,
           format,
           dayKey,
-          DEFAULT_SCHEDULED_TIME,
+          time,
           trimmed ? { hook: trimmed } : undefined,
         )
         reloadBoard()
@@ -1119,16 +1256,66 @@ export default function CalendarPage() {
   // schedule, not on a blank calendar. Read once on mount via the URL (no
   // useSearchParams → no Suspense boundary needed), then strip the param so
   // a later refresh doesn't force the panel back open.
+  //
+  // With the scheduling release on, the edit Sheet is the wrong landing — its
+  // "תזמון פוסט" just sends her back to the project (the loop). She lands on
+  // the format preview instead: the post's first upcoming slot on the board
+  // (the board jumps to its week), else its first format with media, where
+  // "תזמון פוסט" really schedules. Waits for the access answer (null =
+  // unknown), with a 3-second fallback to the Sheet.
+  const deepLinkRef = useRef<string | null>(null)
+  const schedulingAccess = useSchedulingAccess()
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const pid = params.get("post_id")
     if (!pid) return
-    openSheetForCorePost(pid)
+    deepLinkRef.current = pid
     const url = new URL(window.location.href)
     url.searchParams.delete("post_id")
     window.history.replaceState({}, "", url.toString())
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  useEffect(() => {
+    const pid = deepLinkRef.current
+    if (!pid) return
+    if (schedulingAccess === null) {
+      const t = window.setTimeout(() => {
+        if (deepLinkRef.current !== pid) return
+        deepLinkRef.current = null
+        void openSheetForCorePost(pid)
+      }, 3000)
+      return () => window.clearTimeout(t)
+    }
+    deepLinkRef.current = null
+    if (!schedulingAccess) {
+      void openSheetForCorePost(pid)
+      return
+    }
+    const onBoard = getScheduledPosts()
+      .filter((r) => r.corePostId === pid && !wentOut(r) && !isSlotPast(r, Date.now()))
+      .sort((a, b) =>
+        `${a.scheduledDate} ${a.scheduledTime ?? ""}`.localeCompare(`${b.scheduledDate} ${b.scheduledTime ?? ""}`),
+      )[0]
+    if (onBoard) {
+      const [y, m, d] = onBoard.scheduledDate.split("-").map(Number)
+      setWeekStart(startOfWeek(new Date(y, m - 1, d)))
+      openPreview(pid, onBoard.format)
+      return
+    }
+    fetch(`/api/core-posts/${pid}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const p = data?.post as { formatPosts?: Record<string, string>; formatsWithMedia?: string[] } | undefined
+        const withMedia = new Set(p?.formatsWithMedia ?? [])
+        const scripted = new Set(Object.keys(p?.formatPosts ?? {}))
+        const format =
+          HEADER_CHIP_FORMATS.find((f) => withMedia.has(f) && scripted.has(f)) ??
+          HEADER_CHIP_FORMATS.find((f) => withMedia.has(f))
+        if (format) openPreview(pid, format)
+        else void openSheetForCorePost(pid)
+      })
+      .catch(() => void openSheetForCorePost(pid))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schedulingAccess])
 
   // --- Format preview (scheduling release) --------------------------------
   // A board card or a rail card opens the post as it will go out: media,
@@ -1229,7 +1416,12 @@ export default function CalendarPage() {
         }
       })()
     : null
-  const previewPast = previewRow?.scheduledDate ? isSlotPast(previewRow, new Date()) : false
+  const previewPast = previewRow?.scheduledDate ? isSlotPast(previewRow, now) : false
+  // Read-only only when it went out; a past slot that never did can still be
+  // moved or removed.
+  const previewLocked = previewPast && !!previewRow && wentOut(previewRow)
+  // No connection answer yet: say nothing rather than "not connected".
+  const connectionsLoading = livePlatforms.some((p) => connections[p].status === "loading") && !anyConnected
   const previewPublish = (row: ScheduledPost): PreviewPublishStatus => {
     if (previewDraft && !scheduled.some((p) => p.corePostId === row.corePostId && p.format === row.format)) {
       return { kind: "draft" }
@@ -1239,21 +1431,17 @@ export default function CalendarPage() {
     if (row.publishedAt || st?.status === "published") {
       return { kind: "published", permalink: st?.permalink ?? undefined }
     }
-    if (st?.status === "sent" || (previewPast && (!st || st.status === "idle"))) {
-      return { kind: "sent" }
-    }
+    if (st?.status === "sent") return { kind: "sent" }
+    // Its time passed and it was never handed to a network: nothing went out.
+    if (previewPast && (!st || st.status === "idle")) return { kind: "missed" }
+    if (connectionsLoading) return { kind: "loading" }
     if (!fitsConnected(row.format)) return { kind: "not_connected" }
     if (st?.status === "queued" && st.code !== "content_changed") return { kind: "scheduled" }
     if (st?.status === "failed") {
       return {
         kind: "failed",
         reason: st.message || "הפוסט לא תוזמן.",
-        action:
-          st.code === "needs_reconnect" || st.code === "not_connected"
-            ? "reconnect"
-            : st.code === "media_rejected"
-              ? "fix_media"
-              : "retry",
+        action: failedActionFor(st),
       }
     }
     return { kind: "pending" }
@@ -1274,7 +1462,7 @@ export default function CalendarPage() {
         override ??
         (t ? !t.optedOut : connection === "connected" && !pendingExclusions.includes(platform))
       let publish: PreviewPublishStatus = base
-      if (t && !t.optedOut && base.kind !== "draft" && base.kind !== "unscheduled") {
+      if (t && !t.optedOut && base.kind !== "draft" && base.kind !== "unscheduled" && base.kind !== "loading") {
         publish =
           t.status === "published"
             ? { kind: "published", permalink: t.permalink ?? undefined }
@@ -1286,14 +1474,11 @@ export default function CalendarPage() {
                   ? {
                       kind: "failed",
                       reason: t.message || "הפוסט לא תוזמן.",
-                      action:
-                        t.code === "needs_reconnect" || t.code === "not_connected"
-                          ? "reconnect"
-                          : t.code === "media_rejected"
-                            ? "fix_media"
-                            : "retry",
+                      action: failedActionFor(t),
                     }
-                  : { kind: "pending" }
+                  : t.status === "idle" && previewPast
+                    ? { kind: "missed" }
+                    : { kind: "pending" }
       }
       return {
         platform,
@@ -1324,7 +1509,7 @@ export default function CalendarPage() {
         scheduledTime: previewRow.scheduledDate
           ? (previewRow.scheduledTime ?? DEFAULT_SCHEDULED_TIME)
           : "",
-        isPast: previewPast,
+        isPast: previewLocked,
         publish: previewPublish(previewRow),
         networks: multinetwork ? previewNetworks(previewRow) : undefined,
       }
@@ -1502,11 +1687,24 @@ export default function CalendarPage() {
         ""
       ).trim() || "פוסט מתוזמן"
     const mediaUrl = formatMediaByPost.get(post.corePostId)?.[post.format]
+    const past = isSlotPast(post, now)
+    // The chip tells where it really stands, in the chip's own states:
+    // published → "published"; failed, or past and never sent → not
+    // scheduled ("ready"); otherwise "scheduled".
+    const status = post.publish?.status
+    const chipState: "scheduled" | "published" | "ready" =
+      isPublished || status === "published"
+        ? "published"
+        : status === "failed" || (past && (!status || status === "idle"))
+          ? "ready"
+          : "scheduled"
     return (
       <FormatCard
         key={`${post.corePostId}:${post.format}`}
         post={post}
-        past={isSlotPast(post, new Date())}
+        past={past}
+        locked={past && (isPublished || wentOut(post))}
+        chipState={chipState}
         hook={hook}
         mediaUrl={mediaUrl}
         isPublished={isPublished}
@@ -1833,7 +2031,7 @@ export default function CalendarPage() {
           approval={gearSettings ? approvalMode : undefined}
           onReadyCardsChange={schedulingOn ? setRailCards : undefined}
           previewPlacedIds={plannedIds}
-          notice={arrangeNotice}
+          notice={railNotice}
           headerAction={
             scheduleAllA ? (
               planned ? (

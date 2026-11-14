@@ -1,13 +1,10 @@
-// Hard owner gate. The /calendar (timing) surface is intentionally limited
-// to the owner cohort — the rest of the app is open to all users. Used by
-// the sidebar (hide the tab), the /calendar route (redirect non-owners),
-// and the ScheduleInCalendarBar CTA on /project (hide non-owner entry
-// points).
+// Owner cohort. /calendar is open to every user now — it is NOT gated here
+// (its scheduling features are gated per feature in lib/scheduling-access).
+// Today `isOwner` only keeps the visual playgrounds under /test (queue-empty,
+// schedule-picker, long-wait-note) out of public view in production.
 //
-// Why a short list, not open access: this is a private surface during
-// active iteration. Currently includes Hani (product), Nataliya (mentor
-// reviewing the feature), and Yahav. If it should later open up, delete
-// this module and remove the isOwner checks at its call sites.
+// Currently includes Hani (product), Nataliya (mentor), Yahav and a few
+// reviewers. If the /test playgrounds go, this list can go with them.
 const OWNER_EMAILS = new Set([
   "hanigirl@gmail.com",
   "nataliya@nataliyarey.com",

@@ -85,7 +85,7 @@ export function ApprovalCardFooter({
           </div>
           {status !== "edited" && (
             <p className="-mt-1 text-center text-xs leading-relaxed text-text-neutral-default">
-              רק פורמטים מאושרים יופיעו ביומן לתזמון.
+              אחרי האישור, הפורמט מחכה לכם ביומן ומוכן לתזמון.
             </p>
           )}
         </>

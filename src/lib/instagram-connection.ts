@@ -74,26 +74,50 @@ function derive(accounts: InstagramAccount[], ready: boolean): InstagramConnecti
 export function refreshInstagramConnection(): Promise<void> {
   if (inflight) return inflight
   inflight = (async () => {
+    let ok = false
     try {
       const res = await fetch("/api/social/accounts", { cache: "no-store" })
-      if (!res.ok) return
-      const json = (await res.json()) as { accounts?: InstagramAccount[]; ready?: boolean }
-      const all = json.accounts ?? []
-      const ready = json.ready !== false
-      const of = (p: SocialPlatform) => all.filter((a) => (a.platform ?? "instagram") === p)
-      emit({
-        instagram: derive(of("instagram"), ready),
-        youtube: derive(of("youtube"), ready),
-        linkedin: derive(of("linkedin"), ready),
-      })
+      if (res.ok) {
+        const json = (await res.json()) as { accounts?: InstagramAccount[]; ready?: boolean }
+        const all = json.accounts ?? []
+        const ready = json.ready !== false
+        const of = (p: SocialPlatform) => all.filter((a) => (a.platform ?? "instagram") === p)
+        emit({
+          instagram: derive(of("instagram"), ready),
+          youtube: derive(of("youtube"), ready),
+          linkedin: derive(of("linkedin"), ready),
+        })
+        ok = true
+      }
     } catch {
-      // Leave the last known answer in place; the next action retries.
+      // Leave the last known answer in place; retried below.
     } finally {
-      loadedOnce = true
       inflight = null
+    }
+    if (ok) {
+      // Only a real answer counts as loaded — a failed first read used to
+      // leave every status line on "loading" (hidden) for good.
+      loadedOnce = true
+      failedTries = 0
+    } else if (!loadedOnce) {
+      scheduleRetry()
     }
   })()
   return inflight
+}
+
+// A failed first read retries on its own a few times (5s, 15s, 45s), then on
+// the next mount or when she comes back to the tab.
+let failedTries = 0
+let retryTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleRetry() {
+  if (retryTimer || failedTries >= 3 || typeof window === "undefined") return
+  const delay = 5_000 * 3 ** failedTries
+  failedTries++
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    if (!loadedOnce) void refreshInstagramConnection()
+  }, delay)
 }
 
 function subscribe(listener: () => void) {
@@ -110,6 +134,14 @@ export function useSocialConnections(): SocialConnections {
   )
   useEffect(() => {
     if (!loadedOnce) void refreshInstagramConnection()
+    // Not loaded yet (the read failed): try again when she returns to the tab.
+    const onFocus = () => {
+      if (loadedOnce) return
+      failedTries = 0
+      void refreshInstagramConnection()
+    }
+    window.addEventListener("focus", onFocus)
+    return () => window.removeEventListener("focus", onFocus)
   }, [])
   return snapshot
 }

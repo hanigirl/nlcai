@@ -39,6 +39,7 @@ import {
   StoryCaptionNote,
   type FormatPreviewData,
   type PreviewContentState,
+  type StatusAction,
 } from "./shared"
 
 export type FormatPreviewHandlers = {
@@ -46,7 +47,8 @@ export type FormatPreviewHandlers = {
   onCaptionSave: (caption: string) => void
   onUnschedule: () => void
   onOpenCanvas: () => void
-  onStatusAction: (action: "connect" | "reconnect" | "retry" | "fix_media" | "open_post") => void
+  /** "pick_time" never reaches here — the preview opens its own date field. */
+  onStatusAction: (action: Exclude<StatusAction, "pick_time">) => void
   /** Take a network off this post, or put it back. */
   onNetworkToggle?: (platform: SocialPlatform, include: boolean) => void
   /** Open a network's connect modal. */
@@ -158,9 +160,23 @@ function DialogBody({
 
   const kind = destinationForFormat(data.format)
   const isStory = kind === "story"
-  // Published, or its time has passed: read-only (nothing left to schedule).
+  // Published (or handed out at its time — the caller's `isPast`): read-only.
+  // A past slot that never went out stays editable: remove it or pick a new time.
   const isPublished = data.publish.kind === "published" || !!data.isPast
   const loading = content === "loading"
+  const whenFieldId = `pv-a-${data.corePostId}-${data.format}`
+  // "בחירת מועד" on a status opens the date field right here.
+  const handleStatusAction = (a: StatusAction, platform?: SocialPlatform) => {
+    if (a === "pick_time") {
+      document.getElementById(`when-${whenFieldId}`)?.click()
+      return
+    }
+    if ((a === "connect" || a === "reconnect") && platform) {
+      onConnectNetwork?.(platform)
+      return
+    }
+    onStatusAction(a)
+  }
 
   return (
     <div className="grid max-h-[calc(100vh-3rem)] grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
@@ -216,13 +232,15 @@ function DialogBody({
             <div className="flex flex-col gap-2.5">
               {current.included || current.connection !== "connected" ? (
                 <PublishStatusSlot
-                  status={current.connection === "connected" ? current.publish : { kind: "not_connected" }}
+                  status={
+                    current.connection === "connected" || current.publish.kind === "loading"
+                      ? current.publish
+                      : { kind: "not_connected" }
+                  }
                   date={data.scheduledDate}
                   time={data.scheduledTime}
                   platform={current.platform}
-                  onAction={(a) =>
-                    a === "connect" || a === "reconnect" ? onConnectNetwork?.(current.platform) : onStatusAction(a)
-                  }
+                  onAction={(a) => handleStatusAction(a, current.platform)}
                 />
               ) : (
                 <p role="status" className="rounded-xl border border-border-neutral-default bg-bg-surface px-3 py-2.5 text-small text-text-neutral-default">
@@ -255,7 +273,7 @@ function DialogBody({
               status={data.publish}
               date={data.scheduledDate}
               time={data.scheduledTime}
-              onAction={onStatusAction}
+              onAction={(a) => handleStatusAction(a)}
             />
           )}
 
@@ -270,7 +288,7 @@ function DialogBody({
               <Skeleton className="h-10 w-full rounded-xl" />
             ) : (
               <ScheduleDateTimeField
-                idBase={`pv-a-${data.corePostId}-${data.format}`}
+                idBase={whenFieldId}
                 date={draftDate}
                 time={draftTime}
                 onChange={(d, t) => {
