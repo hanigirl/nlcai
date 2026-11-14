@@ -703,30 +703,15 @@ export function FormatPanelMedia({
     </Dialog>
   ) : null
   const originLine = origin ? <p className="text-xs-body text-text-neutral-default">{origin}</p> : null
-  if (!onSwapPhoto) {
-    if (!originLine && !large) return zone
-    return (
-      <div className="flex flex-col items-center gap-2">
-        {zone}
-        {originLine}
-        {large}
-      </div>
-    )
-  }
-  // The way to bring her own picture / video in, said in words (Hani, 2026-11-10).
+  // "רוצים לשלב תמונה או סרטון משלכם בעיצוב הזה?" is gone (Hani, 2026-11-14):
+  // her own media comes in through the chat ("להחליף מדיה") after a generation.
+  void onSwapPhoto
+  if (!originLine && !large) return zone
   return (
     <div className="flex flex-col items-center gap-2">
       {zone}
       {originLine}
       {large}
-      <button
-        type="button"
-        onClick={onSwapPhoto}
-        onMouseDown={(e) => e.stopPropagation()}
-        className="cursor-pointer rounded-sm text-small text-text-primary-default underline underline-offset-4 hover:text-text-neutral-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50"
-      >
-        רוצים לשלב תמונה או סרטון משלכם בעיצוב הזה?
-      </button>
     </div>
   )
 }
