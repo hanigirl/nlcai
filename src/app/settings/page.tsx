@@ -204,7 +204,8 @@ function SettingsPageInner() {
   type Product = ProductEntry
 
   const searchParams = useSearchParams()
-  const scheduleAllA = useScheduleAllA() === true
+  const scheduleAllGate = useScheduleAllA() // null while the gate is still loading
+  const scheduleAllA = scheduleAllGate === true
   const multinetworkOn = useMultinetwork() === true
   const initialTab = (searchParams.get("tab") as SettingsTab) || "connections"
   // Settings → מדיה → "מדיה מ-Google Drive": one shared folder per kind of
@@ -235,6 +236,11 @@ function SettingsPageInner() {
     SUB_SECTIONS[initialTab]?.[0]?.id ??
     ""
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
+  // "תזמון" exists only inside the scheduling gate: a ?tab=schedule link
+  // outside it lands on the first tab instead of an empty panel.
+  useEffect(() => {
+    if (scheduleAllGate === false && activeTab === "schedule") setActiveTab("connections")
+  }, [scheduleAllGate, activeTab])
   const [activeSubSection, setActiveSubSection] = useState<string>(resolvedSub)
   const [activeMediaSection, setActiveMediaSection] = useState<MediaSection>(
     initialTab === "media" ? (resolvedSub as MediaSection) : "visual",

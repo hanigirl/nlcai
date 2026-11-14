@@ -23,9 +23,9 @@ import {
   SlotLabel,
 } from "@/components/posting-schedule-parts"
 import {
-  activeDayCount,
   clashingSlotIds,
-  countSlots,
+  slotTime,
+  weekLoad,
   withSlotAdded,
   withSlotRemoved,
   withSlotUpdated,
@@ -34,11 +34,16 @@ import {
 } from "@/lib/posting-schedule"
 import type { FormatId } from "@/lib/timing-storage"
 
+function countLabel(min: number, max: number, one: string, many: string): string {
+  if (min === max) return min === 1 ? one : `${min} ${many}`
+  return `${min}–${max} ${many}`
+}
+
+/** What a week really carries, after the day gap. */
 function weeklySummary(s: PostingSchedule): string {
-  const n = countSlots(s)
-  const d = activeDayCount(s)
-  if (n === 0) return "אין פרסומים קבועים"
-  return `${n} פרסומים בשבוע · ${d} ימים`
+  const load = weekLoad(s)
+  if (load.maxPosts === 0) return "אין פרסומים קבועים"
+  return `${countLabel(load.minPosts, load.maxPosts, "פרסום אחד", "פרסומים")} בשבוע · ${countLabel(load.minDays, load.maxDays, "יום אחד", "ימים")}`
 }
 
 /** Button in the week-nav row (browse mode). */
@@ -126,11 +131,12 @@ export function RoutineDayEditor({
       {slots.length === 0 && (
         <p className="text-xs-body text-text-neutral-default text-center py-2">יום ללא פרסום</p>
       )}
-      {slots.map((slot) => (
+      {slots.map((slot, i) => (
         <SlotEditor
           key={slot.id}
           stacked
-          slot={slot}
+          // Show the hour it really goes out at (a slot may follow the board-wide hour).
+          slot={{ ...slot, time: slotTime(draft, i, slot) }}
           dayIndex={dayIndex}
           clash={clashes.has(slot.id)}
           onChange={(next) => onChange(withSlotUpdated(draft, dayIndex, next))}

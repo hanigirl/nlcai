@@ -13,7 +13,6 @@ import { getFormatChipIcon, getFormatChipLabel } from "@/components/format-statu
 import {
   SCHEDULE_FORMATS,
   SCHEDULE_HOURS,
-  STORY_GAP_OPTIONS,
   WEEKDAY_NAMES,
   cloneSchedule,
   defaultPostingSchedule,
@@ -113,43 +112,6 @@ export function SlotLabel({ slot, className = "" }: { slot: PostingSlot; classNa
   )
 }
 
-export function StoryGapField({
-  value,
-  enabled,
-  onChange,
-  id = "story-gap",
-}: {
-  value: number
-  /** False when no story slot exists — the setting has nothing to act on. */
-  enabled: boolean
-  onChange: (minutes: number) => void
-  id?: string
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <label htmlFor={id} className="text-xs-body text-text-neutral-default whitespace-nowrap">
-        מרווח בין פריימים בסטורי
-      </label>
-      <div className="w-32">
-        <Select
-          id={id}
-          selectSize="small"
-          variant="homepage"
-          value={value}
-          disabled={!enabled}
-          onChange={(e) => onChange(Number(e.target.value))}
-        >
-          {STORY_GAP_OPTIONS.map((o) => (
-            <option key={o.minutes} value={o.minutes}>
-              {o.label}
-            </option>
-          ))}
-        </Select>
-      </div>
-    </div>
-  )
-}
-
 export function SaveErrorAlert({ onRetry }: { onRetry: () => void }) {
   return (
     <div
@@ -181,7 +143,7 @@ export function SaveButton({ saving, disabled, onClick }: { saving: boolean; dis
 /* ------------------------------------------------------------------ */
 
 /**
- * The weekly routine as saved on this device (lib/posting-schedule). Until
+ * The weekly routine as saved on the account (lib/posting-schedule). Until
  * she saves one, the suggested default shows and `hasCustom` is false.
  */
 export function usePostingSchedule() {

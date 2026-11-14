@@ -8,7 +8,7 @@
  *   1. which weekdays we publish at all        (global: activeDays)
  *   2. how many posts a day may carry          (global: postsPerDay)
  *   3. default publishing hours                (global: defaultTimes)
- *   4. gap between publishing days             (global: gapDays)
+ *   4. days between publishing days            (global: gapDays)
  *   5. which format on which weekday           (per day, the list underneath)
  *
  * Hours: every post follows the global hour for its place in the day (1st
@@ -17,7 +17,7 @@
  */
 
 import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
-import { createElement, useState, type ReactNode } from "react"
+import { createElement, useState, type KeyboardEvent, type ReactNode } from "react"
 import { Check, Plus, Trash2 } from "lucide-react"
 import { Chip } from "@/components/ui/chip"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -31,8 +31,9 @@ import {
   SCHEDULE_FORMATS,
   SCHEDULE_HOURS,
   WEEKDAY_NAMES,
-  activeDayCount,
-  countSlots,
+  clashingSlotIds,
+  weekLoad,
+  weekLoadText,
   withDayActive,
   withDayPost,
   withGlobal,
@@ -51,7 +52,10 @@ const SHORT_DAYS = ["א׳", "ב׳", "ג׳", "ד׳", "ה׳", "ו׳", "ש׳"]
 /*  Shared controls                                                    */
 /* ------------------------------------------------------------------ */
 
-/** One choice out of a few — the existing chip, `selected` on the current one. */
+/**
+ * One choice out of a few — the existing chip, `selected` on the current one.
+ * A proper radio group: one tab stop (the checked chip), arrows move and pick.
+ */
 function ChoiceChips<T extends number>({
   label,
   value,
@@ -63,15 +67,36 @@ function ChoiceChips<T extends number>({
   options: { value: T; label: string }[]
   onChange: (v: T) => void
 }) {
+  const current = Math.max(0, options.findIndex((o) => o.value === value))
+  const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    const rtl = getComputedStyle(e.currentTarget).direction === "rtl"
+    const step: Record<string, number> = {
+      ArrowDown: 1,
+      ArrowUp: -1,
+      ArrowRight: rtl ? -1 : 1,
+      ArrowLeft: rtl ? 1 : -1,
+    }
+    let next: number
+    if (e.key in step) next = (i + step[e.key] + options.length) % options.length
+    else if (e.key === "Home") next = 0
+    else if (e.key === "End") next = options.length - 1
+    else return
+    e.preventDefault()
+    onChange(options[next].value)
+    const radios = e.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="radio"]')
+    radios?.[next]?.focus()
+  }
   return (
     <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-1.5">
-      {options.map((o) => (
+      {options.map((o, i) => (
         <Chip
           key={o.value}
           role="radio"
           aria-checked={o.value === value}
+          tabIndex={i === current ? 0 : -1}
           selected={o.value === value}
           onClick={() => onChange(o.value)}
+          onKeyDown={(e) => onKeyDown(e, i)}
           className="tabular-nums"
         >
           {o.label}
@@ -92,11 +117,13 @@ function HourSelect({
   value,
   onChange,
   label,
+  invalid = false,
   className = "",
 }: {
   value: string
   onChange: (v: string) => void
   label: string
+  invalid?: boolean
   className?: string
 }) {
   return (
@@ -107,6 +134,7 @@ function HourSelect({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         aria-label={label}
+        aria-invalid={invalid || undefined}
         className="tabular-nums"
       >
         {SCHEDULE_HOURS.map((h) => (
@@ -130,10 +158,13 @@ function PostPicker({
   day,
   index,
   slot,
+  clash = false,
 }: Edit & {
   day: number
   index: number
   slot?: PostingSlot
+  /** Another post on this day goes out at the same hour. */
+  clash?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const dayName = WEEKDAY_NAMES[day]
@@ -143,8 +174,8 @@ function PostPicker({
   const trigger = slot ? (
     <button
       type="button"
-      aria-label={`פורמט, יום ${dayName}, פוסט ${ORDINALS[index]}: ${getFormatChipLabel(slot.format)}`}
-      className={`w-full min-w-0 rounded-lg border border-border-neutral-default bg-white dark:bg-gray-10 text-text-primary-default transition-colors ${GRAY_HOVER} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 flex h-9 items-center gap-1.5 px-2.5`}
+      aria-label={`פורמט, יום ${dayName}, פוסט ${ORDINALS[index]}: ${getFormatChipLabel(slot.format)}${clash ? ". באותה שעה כמו פוסט אחר" : ""}`}
+      className={`w-full min-w-0 rounded-lg border ${clash ? "border-button-danger-default" : "border-border-neutral-default"} bg-white dark:bg-gray-10 text-text-primary-default transition-colors ${GRAY_HOVER} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 flex h-9 items-center gap-1.5 px-2.5`}
     >
       {createElement(getFormatChipIcon(slot.format), {
         className: "size-4 shrink-0 text-text-neutral-default",
@@ -209,6 +240,7 @@ function PostPicker({
                 selectSize="small"
                 variant="homepage"
                 value={ownHour ?? ""}
+                aria-invalid={clash || undefined}
                 onChange={(e) => onChange(withPostTime(draft, day, index, e.target.value || null))}
                 className="tabular-nums"
               >
@@ -244,11 +276,13 @@ function visiblePosts(draft: PostingSchedule, day: number): PostingSlot[] {
   return draft.days[day].slice(0, draft.postsPerDay)
 }
 
-/** "5 פוסטים בשבוע · 4 ימי פרסום" — or why nothing will be placed. */
-export function WeekSummary({ draft }: { draft: PostingSchedule }) {
-  const n = countSlots(draft)
-  const d = activeDayCount(draft)
-  if (n === 0) {
+/**
+ * "5 פוסטים בשבוע · 4 ימי פרסום" — what will really go out, after the day
+ * gap — or why nothing will be placed.
+ */
+export function WeekSummary({ draft, formatGapOn = false }: { draft: PostingSchedule; formatGapOn?: boolean }) {
+  const load = weekLoad(draft)
+  if (load.maxPosts === 0) {
     return (
       <p role="status" className="text-xs-body text-text-neutral-default">
         אין אף פוסט בשבוע, ולכן הסידור האוטומטי לא ישבץ כלום. בחרו לפחות יום פרסום אחד עם פורמט.
@@ -256,10 +290,22 @@ export function WeekSummary({ draft }: { draft: PostingSchedule }) {
     )
   }
   return (
-    <p role="status" className="text-xs-body text-text-neutral-default tabular-nums">
-      {n} פוסטים בשבוע · {d} ימי פרסום
-      {draft.gapDays > 0 && ` · לפחות ${draft.gapDays === 1 ? "יום" : "יומיים"} בין ימי פרסום`}
-    </p>
+    <div role="status" className="flex flex-col gap-1 text-xs-body text-text-neutral-default tabular-nums">
+      <p>
+        {weekLoadText(load)}
+        {draft.gapDays > 0 && ` · לפחות ${draft.gapDays === 1 ? "יום" : "יומיים"} בין ימי פרסום`}
+      </p>
+      {load.skippedDays > 0 && (
+        <p>
+          בגלל הרווח בין ימי פרסום, חלק מהימים שבחרתם יידלגו בכל שבוע.
+        </p>
+      )}
+      {formatGapOn && draft.formatGapDays > 0 && (
+        <p>
+          פורמטים של אותו פוסט ליבה יעלו לפחות {draft.formatGapDays} ימים זה מזה, ולכן חלקם יידחו לשבועות הבאים.
+        </p>
+      )}
+    </div>
   )
 }
 
@@ -286,6 +332,14 @@ export function ScheduleSettingsForm({ draft, onChange }: Edit) {
   const days = [0, 1, 2, 3, 4, 5, 6]
   const active = days.filter((d) => draft.activeDays[d])
   const rows = Array.from({ length: draft.postsPerDay }, (_, i) => i)
+  const clashes = clashingSlotIds(draft)
+  // Two of the board-wide hours are the same → every day with that many posts clashes.
+  const hourClash = (i: number) =>
+    rows.some((j) => j !== i && draft.defaultTimes[j] === draft.defaultTimes[i]) &&
+    days.some((d) => {
+      const posts = visiblePosts(draft, d)
+      return posts[i] && clashes.has(posts[i].id)
+    })
 
   return (
     <div className="flex flex-col divide-y divide-border-neutral-default">
@@ -314,9 +368,9 @@ export function ScheduleSettingsForm({ draft, onChange }: Edit) {
         />
       </RuleRow>
 
-      <RuleRow label="כמה ימי רווח בין פוסט לפוסט?">
+      <RuleRow label="כמה ימי רווח בין ימי פרסום?">
         <ChoiceChips
-          label="ימי רווח בין פוסט לפוסט"
+          label="ימי רווח בין ימי פרסום"
           value={draft.gapDays}
           options={GAP_CHOICES}
           onChange={(v) => onChange(withGlobal(draft, { gapDays: v }))}
@@ -345,6 +399,7 @@ export function ScheduleSettingsForm({ draft, onChange }: Edit) {
               <HourSelect
                 className="w-24"
                 value={draft.defaultTimes[i]}
+                invalid={hourClash(i)}
                 label={`שעת הפוסט ה${ORDINALS[i]} בכל יום`}
                 onChange={(t) => onChange(withGlobal(draft, { timeIndex: i, time: t }))}
               />
@@ -371,7 +426,15 @@ export function ScheduleSettingsForm({ draft, onChange }: Edit) {
                   <span className="text-small text-text-primary-default">{WEEKDAY_NAMES[d]}</span>
                   {rows.map((i) =>
                     i <= posts.length ? (
-                      <PostPicker key={i} draft={draft} onChange={onChange} day={d} index={i} slot={posts[i]} />
+                      <PostPicker
+                        key={i}
+                        draft={draft}
+                        onChange={onChange}
+                        day={d}
+                        index={i}
+                        slot={posts[i]}
+                        clash={!!posts[i] && clashes.has(posts[i].id)}
+                      />
                     ) : (
                       <span key={i} />
                     ),
@@ -381,10 +444,15 @@ export function ScheduleSettingsForm({ draft, onChange }: Edit) {
             })}
           </ul>
         )}
+        {clashes.size > 0 && (
+          <p role="status" className="mt-2 text-xs-body text-button-danger-default">
+            יש יום עם שני פוסטים באותה שעה. שנו את אחת השעות כדי לשמור.
+          </p>
+        )}
       </RuleRow>
 
       <div className="pt-4">
-        <WeekSummary draft={draft} />
+        <WeekSummary draft={draft} formatGapOn={formatGapOn} />
       </div>
     </div>
   )

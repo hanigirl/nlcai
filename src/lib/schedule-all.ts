@@ -10,7 +10,13 @@
  */
 
 import type { FormatId } from "@/lib/timing-storage"
-import { effectiveDaySlots, slotsForDate, type PostingSchedule } from "@/lib/posting-schedule"
+import { effectiveDaySlots, slotsForWeekday, type PostingSchedule } from "@/lib/posting-schedule"
+import {
+  addDaysToKey,
+  dateKeyWeekday,
+  israelDateKey,
+  israelWallTimeToDate,
+} from "@/lib/israel-time"
 
 export type PlanInputCard = {
   corePostId: string
@@ -28,7 +34,12 @@ export type SchedulePlan = {
   placed: PlannedSlot[]
   /** Cards whose format has no slot in the routine. */
   unmatched: PlanInputCard[]
-  /** Cards whose format has slots, but none free within HORIZON_DAYS. */
+  /**
+   * Cards whose format HAS slots in the routine, but no free one was found
+   * within HORIZON_DAYS (every matching slot taken, the day already at its
+   * posts-per-day cap, or blocked by the day gap / format gap). The calendar
+   * should tell her these were left out — they are not silently dropped.
+   */
   noRoom: PlanInputCard[]
 }
 
@@ -38,13 +49,6 @@ export type SchedulePlan = {
  * הקרובים") — this is only a guard against a loop, three years out.
  */
 export const HORIZON_DAYS = 3 * 365
-
-function dateKey(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
-  return `${y}-${m}-${day}`
-}
 
 export function hasAnySlot(schedule: PostingSchedule | null | undefined): boolean {
   return !!schedule && [0, 1, 2, 3, 4, 5, 6].some((i) => effectiveDaySlots(schedule, i).length > 0)
@@ -59,9 +63,13 @@ function daysApart(a: string, b: string): number {
 
 /**
  * Greedy, order-preserving fill. Cards keep the order they were given, and
- * each takes the earliest open slot for its format. A slot is open when its
- * time is still ahead and the board doesn't already hold that format at that
- * date + time — so running it twice never stacks two reels on one slot.
+ * each takes the earliest open slot for its format. A slot is open when:
+ *   - its time is still ahead (Israel time — the board's clock), by minLeadMs;
+ *   - the board + this plan don't already fill it (each routine slot holds
+ *     one post, so two slots of one format at one hour are two places);
+ *   - the day hasn't reached postsPerDay yet, counting posts already on it;
+ *   - the day gap and the format gap allow that day.
+ * Running it twice never stacks two posts on one slot.
  */
 export function planScheduleAll(
   cards: PlanInputCard[],
@@ -71,9 +79,17 @@ export function planScheduleAll(
   /** Minimum lead before a slot (Instagram refuses anything sooner). */
   minLeadMs = 10 * 60 * 1000,
 ): SchedulePlan {
-  const taken = new Set(
-    occupied.map((o) => `${o.scheduledDate}:${o.scheduledTime ?? "09:00"}:${o.format}`),
-  )
+  const slotKey = (date: string, time: string, format: FormatId) => `${date}:${time}:${format}`
+  // How many posts already fill each date + hour + format.
+  const used = new Map<string, number>()
+  const bump = (k: string) => used.set(k, (used.get(k) ?? 0) + 1)
+  for (const o of occupied) bump(slotKey(o.scheduledDate, o.scheduledTime ?? "09:00", o.format))
+
+  // Posts on each date, any format — the "at most N a day" rule.
+  const perDay = Math.max(1, schedule.postsPerDay ?? 1)
+  const dayCount = new Map<string, number>()
+  for (const o of occupied) dayCount.set(o.scheduledDate, (dayCount.get(o.scheduledDate) ?? 0) + 1)
+
   const placed: PlannedSlot[] = []
   const unmatched: PlanInputCard[] = []
   const noRoom: PlanInputCard[] = []
@@ -81,7 +97,7 @@ export function planScheduleAll(
     [0, 1, 2, 3, 4, 5, 6].flatMap((i) => effectiveDaySlots(schedule, i)).map((s) => s.format),
   )
   // Publishing days already on the board or in this plan — the global gap
-  // ("רווח בין פרסומים") keeps a new day clear of them. Same day is fine:
+  // ("רווח בין ימי פרסום") keeps a new day clear of them. Same day is fine:
   // how many posts a day may carry is postsPerDay's job.
   const gap = schedule.gapDays ?? 0
   const publishDays = new Set(occupied.map((o) => o.scheduledDate))
@@ -105,8 +121,8 @@ export function planScheduleAll(
   const clearOfSiblings = (id: string, key: string) =>
     formatGap <= 0 || (datesByPost.get(id) ?? []).every((other) => Math.abs(daysApart(key, other)) >= formatGap)
 
-  const start = new Date(now)
-  start.setHours(0, 0, 0, 0)
+  // "Today" is Israel's today, whatever zone this browser is in.
+  const today = israelDateKey(now)
 
   for (const card of cards) {
     if (!formatsWithASlot.has(card.format)) {
@@ -115,22 +131,27 @@ export function planScheduleAll(
     }
     let done = false
     for (let i = 0; i < HORIZON_DAYS && !done; i++) {
-      const d = new Date(start)
-      d.setDate(start.getDate() + i)
-      if (!clearOfGap(dateKey(d))) continue
-      if (!clearOfSiblings(card.corePostId, dateKey(d))) continue
-      const slots = slotsForDate(schedule, d).filter((s) => s.format === card.format)
+      const key = addDaysToKey(today, i)
+      if ((dayCount.get(key) ?? 0) >= perDay) continue
+      if (!clearOfGap(key)) continue
+      if (!clearOfSiblings(card.corePostId, key)) continue
+      const slots = slotsForWeekday(schedule, dateKeyWeekday(key)).filter((s) => s.format === card.format)
+      // Each routine slot is one place: two slots of this format at one hour hold two posts.
+      const capacity = new Map<string, number>()
       for (const slot of slots) {
-        const [h, m] = slot.time.split(":").map((n) => parseInt(n, 10))
-        const at = new Date(d)
-        at.setHours(h, m || 0, 0, 0)
+        const k = slotKey(key, slot.time, card.format)
+        capacity.set(k, (capacity.get(k) ?? 0) + 1)
+      }
+      for (const slot of slots) {
+        const at = israelWallTimeToDate(key, slot.time)
         if (at.getTime() - now.getTime() < minLeadMs) continue
-        const key = `${dateKey(d)}:${slot.time}:${card.format}`
-        if (taken.has(key)) continue
-        taken.add(key)
-        placed.push({ ...card, scheduledDate: dateKey(d), scheduledTime: slot.time })
-        publishDays.add(dateKey(d))
-        notePostDate(card.corePostId, dateKey(d))
+        const k = slotKey(key, slot.time, card.format)
+        if ((used.get(k) ?? 0) >= (capacity.get(k) ?? 0)) continue
+        bump(k)
+        dayCount.set(key, (dayCount.get(key) ?? 0) + 1)
+        placed.push({ ...card, scheduledDate: key, scheduledTime: slot.time })
+        publishDays.add(key)
+        notePostDate(card.corePostId, key)
         done = true
         break
       }

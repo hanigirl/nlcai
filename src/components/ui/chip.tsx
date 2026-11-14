@@ -7,7 +7,8 @@ import { cn } from "@/lib/utils"
  * The one chip (Hani, 2026-10-29: "צ׳יפים תמיד ייראו ככה"): the outline
  * Button, fully round, small regular-weight text, our grey hover — never
  * yellow. `selected` fills it grey with a darker border (and aria-pressed),
- * for chips that toggle.
+ * for chips that toggle. A chip inside a radio group (`role="radio"`) states
+ * its choice with aria-checked instead, so it never carries aria-pressed.
  */
 function Chip({
   className,
@@ -23,7 +24,7 @@ function Chip({
       type={type}
       size="sm"
       variant="outline"
-      aria-pressed={selected === undefined ? undefined : selected}
+      aria-pressed={selected === undefined || props.role === "radio" ? undefined : selected}
       className={cn(
         "h-7 rounded-full px-3 text-xs-body font-normal hover:bg-gray-95 dark:hover:bg-gray-20 focus-visible:ring-2 focus-visible:ring-gray-70",
         selected && "bg-gray-95 dark:bg-gray-20 border-text-primary-default dark:border-gray-70",
