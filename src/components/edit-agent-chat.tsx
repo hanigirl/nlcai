@@ -323,7 +323,8 @@ export function EditAgentChat({
   // "מגוגל דרייב" / "מהמחשב שלי" (Hani, 2026-11-12). Where she can just as
   // well say it in her own words (the agent's question, "רוצים לשנות משהו
   // במדיה?"), she can type (Hani, 2026-11-15).
-  const choosing = addAsk && !busy
+  // Hani only for now (her live test); everyone else keeps "buttons → send waits".
+  const choosing = quickAsks ? addAsk && !busy : askNow || ((addAsk || genAsk) && !busy)
 
   return (
     <div
