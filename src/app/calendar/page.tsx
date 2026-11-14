@@ -1827,6 +1827,10 @@ export default function CalendarPage() {
             The panel itself uses `h-full` so its inner list scrolls
             independently of the calendar grid. */}
         <QueuePanel
+          // Only what she approved for scheduling is in the list — the rest
+          // waits under "ממתינים לאישור" (Hani, 2026-11-15; it showed every
+          // ready post since 2026-10-22). Hani only for her live test.
+          approval={gearSettings ? approvalMode : undefined}
           onReadyCardsChange={schedulingOn ? setRailCards : undefined}
           previewPlacedIds={plannedIds}
           notice={arrangeNotice}
