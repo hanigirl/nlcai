@@ -367,7 +367,7 @@ export function composeCarousel(
    * The pictures are a pool from her Drive folder ("שפת המותג", Nataliya
    * 2026-11-14): placed where her usage examples put a picture, the cover always.
    */
-  library = false,
+  library: false | "examples" | "one" = false,
 ) {
   if (structure) {
     const p = structurePrompt(brief, structure)
@@ -379,7 +379,9 @@ export function composeCarousel(
     "",
     `HER OWN PICTURE${k > 1 ? "S" : ""}: attached image${k > 1 ? `s 1–${k} are` : " 1 is"} her own picture${k > 1 ? "s" : ""} (photo, character, illustration, logo or product) to PUT INTO this carousel as ${k > 1 ? "they are" : "it is"}.${refs.length ? ` Attached image${refs.length > 1 ? `s ${k + 1}–${k + refs.length} are` : ` ${k + 1} is`} only a reference for the look — apply the look, never place ${refs.length > 1 ? "them" : "it"}.` : ""}`,
     library
-      ? `These are pictures from HER OWN media library, chosen for her — not attached by her for a particular slide. Put one on the COVER always; on the other slides, use them exactly where her usage examples show a photo (if the examples show photos on content slides, place one per such slide; if they are type-led, the cover only). Each picture on at most one slide; you may leave some unused. ${DRIVE_PICTURE_RULE} In HTML that means: where her examples frame photos, give the slot their shape, size and position; otherwise the slide's <img class="art"> is position:absolute; inset:0; width:100%; height:100%; object-fit:cover behind everything, with a brand-colour gradient layer over it under the text, and her elements over the picture. It is re-framed to fit that slot afterwards.`
+      ? library === "one"
+        ? `This is ONE picture from HER OWN media library, chosen for her. Put it on EVERY slide (attached: 1 on every slide), the same picture each time, as each slide's FULL-BLEED BACKGROUND: <img class="art"> position:absolute; inset:0; width:100%; height:100%; object-fit:cover behind everything, her face / subject visible, a brand-colour gradient layer over it under the text, the text and her elements over the picture. Never a floating cut-out box.`
+        : `These are pictures from HER OWN media library, chosen for her — not attached by her for a particular slide. Put one on the COVER always; on the other slides, use them exactly where her usage examples show a photo (if the examples show photos on content slides, place one per such slide; if they are type-led, the cover only). Each picture on at most one slide; you may leave some unused. ${DRIVE_PICTURE_RULE} In HTML that means: where her examples frame photos, give the slot their shape, size and position; otherwise the slide's <img class="art"> is position:absolute; inset:0; width:100%; height:100%; object-fit:cover behind everything, with a brand-colour gradient layer over it under the text, and her elements over the picture. It is re-framed to fit that slot afterwards.`
       : placeSlidesNote(placeAt, k) ??
       `Place EVERY one of her pictures on exactly one slide — the cover unless the brief says otherwise; one picture per slide.`,
     library

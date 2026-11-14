@@ -192,6 +192,9 @@ export async function POST(req: NextRequest) {
       ? withMediaReferences(fromDrive.length ? { ...withPicture, lines: [...withPicture.lines, DRIVE_PICTURE_RULE] } : withPicture, looks)
       : direction
     const composition = pickComposition(variationIndex)
+    // No story examples: her ONE Drive picture is the background of every
+    // frame, and she changes any frame she wants (Hani, 2026-11-14).
+    const pictureOnAll = fromDrive.length > 0 && !(await hasStoryExamples(supabase, user.id))
 
     // Theme context: title + hook carry the essence; the body is truncated
     // so a long post doesn't drown the composition instructions.
@@ -213,7 +216,7 @@ export async function POST(req: NextRequest) {
     async function worker() {
       while (next < drawn) {
         const i = next++
-        const frameDirection = i === 0 ? firstDirection : direction
+        const frameDirection = i === 0 || pictureOnAll ? firstDirection : direction
         const prompt = buildStoryPrompt(
           frames[i],
           i,
@@ -228,7 +231,7 @@ export async function POST(req: NextRequest) {
           // pay for "high" (same reasoning as image-post/generate-media).
           quality: "high",
           references: frameDirection.references,
-          strict: i === 0 && placed.length > 0,
+          strict: (i === 0 || pictureOnAll) && placed.length > 0,
         })
         if (i === 0 && placed.length) firstRaw = raw
         // Fixed brand elements go in by code — same pixels on every frame.

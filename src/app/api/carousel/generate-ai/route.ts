@@ -1,4 +1,5 @@
 import { canEditPictures } from "@/lib/feature-access"
+import { carouselExamples } from "@/lib/carousel-brief"
 import { brandTerms } from "@/lib/brand-terms"
 import { withNoOrphans } from "@/lib/no-orphans"
 import { brandDriveMedia, qaFixes1112 } from "@/lib/feature-access"
@@ -347,7 +348,7 @@ export async function POST(req: NextRequest) {
     // "שפת המותג" with her Drive folder (Nataliya, 2026-11-14, Notion #1):
     // her pictures from it go in, no question asked — where her carousel
     // examples put a picture, the cover always. No folder → graphics only.
-    const fromDrive =
+    const driveOn =
       isBrandTemplate &&
       direction.source === "brand" &&
       brandDriveMedia(user.email) &&
@@ -355,11 +356,17 @@ export async function POST(req: NextRequest) {
       !(Array.isArray(place) && place.length) &&
       // Placing needs the layout engine (a Claude key); without one, graphics only as before.
       !!(await getUserApiKey(supabase, "anthropic_api_key").catch(() => null))
-        ? await pickBrandDrivePictures(user.id, "carousel", Math.min(total, 4)).catch((e) => {
-            console.error("[carousel brand drive]", e)
-            return [] as string[]
-          })
-        : []
+    // Her examples decide where pictures go; with none, ONE picture of hers is
+    // the background of every slide, and she changes any slide she wants
+    // (Hani, 2026-11-14).
+    const driveExamples = driveOn ? (await carouselExamples(supabase, user.id, null).catch(() => [] as string[])).length > 0 : false
+    const fromDrive = driveOn
+      ? await pickBrandDrivePictures(user.id, "carousel", driveExamples ? Math.min(total, 4) : 1).catch((e) => {
+          console.error("[carousel brand drive]", e)
+          return [] as string[]
+        })
+      : []
+    const driveMode = fromDrive.length ? (driveExamples ? "examples" : "one") : false
     if (!fromDrive.length) direction = withGraphicOnly(direction, user.email)
     // Her own direction for this carousel wins over the language where they
     // conflict — and is kept in the saved brief, so later AI edits honour it.
@@ -435,7 +442,7 @@ export async function POST(req: NextRequest) {
           rawPlaceAt.every((n) => Number.isInteger(n) && n >= 0 && n < total)
             ? (rawPlaceAt as number[])
             : undefined
-        const layout = await composeCarousel(anthropicKey, brief, refs, placeRefs, pictureEditsOn, placeAt, structure, fromDrive.length > 0)
+        const layout = await composeCarousel(anthropicKey, brief, refs, placeRefs, pictureEditsOn, placeAt, structure, driveMode)
         // Her profile picture where the card shows the author's.
         layout.html = avatarSrc ? layout.html.split("__AVATAR__").join(avatarSrc) : layout.html.split("__AVATAR__").join("")
         if (placeAt) {
@@ -459,7 +466,8 @@ export async function POST(req: NextRequest) {
           // Nataliya — lib/feature-access): re-framed to the slot, graded into
           // her language, calm under the title. Her exact file only when her
           // brief says "כמו שהיא".
-          const adapt = pictureEditsOn && !wantsPictureAsIs(normalizeMediaBrief(mediaBrief))
+          // One picture as every slide's background: the same file on each, no per-slide redraw.
+          const adapt = pictureEditsOn && !wantsPictureAsIs(normalizeMediaBrief(mediaBrief)) && driveMode !== "one"
           const slots = adapt
             ? await measureArtSlots(
                 qaFixes1112(user.email) ? withNoOrphans(layout.html) : layout.html,
