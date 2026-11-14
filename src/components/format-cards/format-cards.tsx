@@ -324,16 +324,21 @@ function cardButtonProps(label: string, onSelect: () => void) {
 
 /**
  * The story on a card, playing as a story. The card itself is one big click
- * target, so the player's own taps and keys stay with the player.
+ * target, so the player's own controls (its ‹ › tap zones and play button)
+ * keep their clicks and keys — everything else opens the card.
+ *
+ * It used to swallow every click on the story, control or not. The media is
+ * most of the card, so a click on the story card mostly did nothing, and
+ * moving to it from another card "didn't work" (Nataliya, 2026-11-13). Only
+ * the story has this player, so only the story card was stuck.
  */
 function CardStoryPlayer({ media, className }: { media: FormatCardMedia; className: string }) {
+  const keepForPlayer = (e: React.SyntheticEvent) => {
+    const control = (e.target as HTMLElement).closest("button")
+    if (control && e.currentTarget.contains(control)) e.stopPropagation()
+  }
   return (
-    <div
-      className="flex size-full justify-center"
-      data-media-control=""
-      onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => e.stopPropagation()}
-    >
+    <div className="flex size-full justify-center" onClick={keepForPlayer} onKeyDown={keepForPlayer}>
       <StoryPlayer frames={media.kind === "slides" ? media.items : [media.url]} className={className} />
     </div>
   )
