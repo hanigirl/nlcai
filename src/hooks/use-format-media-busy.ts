@@ -38,6 +38,8 @@ export function useFormatMediaBusy(
     onStoryVideoUrl: (url: string) => void
     onImagePostUrl: (url: string) => void
     onBRollUrl: (url: string) => void
+    /** The story's frames as the page shows them — what a reload compares against. */
+    storyFrames?: string[] | null
   },
 ) {
   const key = postId ?? ""
@@ -57,6 +59,8 @@ export function useFormatMediaBusy(
     useCallback(() => getBRollGenerationSnapshot(postId), [postId]),
     useCallback(() => getBRollGenerationSnapshot(postId), [postId]),
   )
+
+  const storyResumed = useStoryGenerationAcrossReload(postId, story.inFlight, setters.storyFrames ?? null, setters.onStoryImages)
 
   const [panelBusy, setPanelBusy] = useState<Record<string, boolean>>({})
   const onPanelBusyChange = useCallback((format: string, busy: boolean) => {
@@ -89,6 +93,7 @@ export function useFormatMediaBusy(
     carousel: !!panelBusy.carousel,
     story:
       story.inFlight > 0 ||
+      storyResumed ||
       bRoll.storyImporting ||
       bRoll.burningFormats.includes("story") ||
       !!panelBusy.story,
@@ -119,4 +124,129 @@ function useOnChange<T>(value: T, fn: (value: T) => void) {
     fn(value)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value])
+}
+
+/* ------------------------------------------------------------------ */
+/*  An AI story generation outlives a reload                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The story route makes the frames AND saves them to the post on the server
+ * (api/story/generate-media), so a reload mid-generation doesn't stop the
+ * work — but it wiped the only thing that knew it was running: the in-memory
+ * store. The card dropped its skeleton, nothing ever landed, and it looked as
+ * if the refresh had stopped the generation (Nataliya, 2026-11-13).
+ *
+ * So a running generation leaves a note in localStorage (when it started, and
+ * the frames the story had then). After a reload the note keeps the story
+ * card busy and the post is polled until its story frames change — then the
+ * new set lands on the canvas — or until the route's time limit has passed.
+ */
+const STORY_PENDING_PREFIX = "nlcai:story-gen-pending:"
+/** The route's maxDuration (300s) plus the save and some slack. */
+const STORY_PENDING_MAX_MS = 6 * 60_000
+const STORY_POLL_MS = 5_000
+
+type StoryPending = { startedAt: number; before: string }
+
+const framesSig = (frames: string[] | null | undefined) => (frames ?? []).join("|")
+
+function readStoryPending(postId: string): StoryPending | null {
+  try {
+    const raw = localStorage.getItem(STORY_PENDING_PREFIX + postId)
+    if (!raw) return null
+    const p = JSON.parse(raw) as Partial<StoryPending>
+    return typeof p.startedAt === "number" && typeof p.before === "string" ? { startedAt: p.startedAt, before: p.before } : null
+  } catch {
+    return null
+  }
+}
+
+function writeStoryPending(postId: string, p: StoryPending | null) {
+  try {
+    if (p) localStorage.setItem(STORY_PENDING_PREFIX + postId, JSON.stringify(p))
+    else localStorage.removeItem(STORY_PENDING_PREFIX + postId)
+  } catch {
+    // Private mode / blocked storage: the generation itself is unaffected.
+  }
+}
+
+function useStoryGenerationAcrossReload(
+  postId: string | null,
+  inFlight: number,
+  storyFrames: string[] | null,
+  onStoryImages: (frames: string[]) => void,
+): boolean {
+  const framesRef = useRef(storyFrames)
+  const landRef = useRef(onStoryImages)
+  useEffect(() => {
+    framesRef.current = storyFrames
+    landRef.current = onStoryImages
+  })
+
+  // This page's own generations: note on start, clear when they all end here.
+  const prevInFlight = useRef(0)
+  useEffect(() => {
+    const prev = prevInFlight.current
+    prevInFlight.current = inFlight
+    if (!postId) return
+    if (inFlight > 0 && prev === 0) writeStoryPending(postId, { startedAt: Date.now(), before: framesSig(framesRef.current) })
+    else if (inFlight === 0 && prev > 0) writeStoryPending(postId, null)
+  }, [postId, inFlight])
+
+  // After a reload: a note left by a generation this page didn't see end.
+  const [resumed, setResumed] = useState(false)
+  useEffect(() => {
+    if (!postId) return
+    const pending = readStoryPending(postId)
+    if (!pending) return
+    // A generation running in THIS page already shows busy and clears its own note.
+    if (prevInFlight.current > 0) return
+    if (Date.now() - pending.startedAt > STORY_PENDING_MAX_MS) {
+      writeStoryPending(postId, null)
+      return
+    }
+    let stopped = false
+    // Two polls in a row with the same new set — never a set caught mid-save.
+    let candidate: string | null = null
+    const stop = () => {
+      stopped = true
+      clearInterval(timer)
+      writeStoryPending(postId, null)
+      setResumed(false)
+    }
+    const poll = async () => {
+      if (stopped) return
+      if (Date.now() - pending.startedAt > STORY_PENDING_MAX_MS) {
+        stop()
+        return
+      }
+      setResumed(true)
+      const res = await fetch(`/api/core-posts/${postId}`).catch(() => null)
+      if (stopped || !res?.ok) return
+      const data = (await res.json().catch(() => null)) as { post?: { storyImageUrls?: unknown } } | null
+      const raw = data?.post?.storyImageUrls
+      const urls = Array.isArray(raw) ? raw.filter((u): u is string => typeof u === "string") : []
+      const sig = framesSig(urls)
+      if (!urls.length || sig === pending.before) {
+        candidate = null
+        return
+      }
+      if (candidate !== sig) {
+        candidate = sig
+        return
+      }
+      landRef.current(urls)
+      stop()
+    }
+    const timer = setInterval(() => void poll(), STORY_POLL_MS)
+    void poll()
+    return () => {
+      stopped = true
+      clearInterval(timer)
+      setResumed(false)
+    }
+  }, [postId])
+
+  return resumed
 }

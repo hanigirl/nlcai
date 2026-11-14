@@ -535,6 +535,7 @@ function ProjectPageInner() {
     onStoryVideoUrl: setStoryVideoUrl,
     onImagePostUrl: setImagePostUrl,
     onBRollUrl: setBRollUrl,
+    storyFrames: storyImages,
   })
   // Media approval — one signature per format's media. The approval is pinned
   // to that signature, so changing the media withdraws it (see the hook).
