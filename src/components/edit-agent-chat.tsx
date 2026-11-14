@@ -136,13 +136,10 @@ export function useFollowEditAgentRun(
 
 /** Ready capsules above the input — the label is what she sees, `ask` what the agent reads. */
 const QUICK_ASKS = [
+  // One capsule (Hani, 2026-11-15): the highlight ones weren't needed.
   {
-    label: "להדגיש את מילות הטריגר",
-    ask: "להדגיש את מילות הטריגר בטקסט בצבע המותג הראשון שלי (צבע 1 — מילות טריגר והדגשות). בלי לשנות את המילים עצמן.",
-  },
-  {
-    label: "להדגיש את הטקסט",
-    ask: "להדגיש את הטקסט כך שיבלוט יותר על הרקע וייקרא בקלות — משקל, גודל או ניגודיות. בלי לשנות את המילים עצמן.",
+    label: "להוריד תמונות, רק טקסט",
+    ask: "להסיר את כל התמונות והצילומים, ולהשאיר רק טקסט, צבעים ואלמנטים של שפת המותג",
   },
 ]
 
@@ -457,7 +454,7 @@ export function EditAgentChat({
       </div>
 
       <div className="flex flex-col gap-2 border-t border-border-neutral-default p-3">
-        {quickAsks && loaded && !busy && !askNow && !addAsk && (
+        {quickAsks && loaded && !busy && !askNow && !addAsk && !genAsk && (
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="פעולות מוכנות">
             {QUICK_ASKS.map((q) => (
               <Chip
