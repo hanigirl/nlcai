@@ -14,6 +14,7 @@ import type { SocialPlatform, YouTubePrivacy } from "@/lib/supabase/types"
 import type { PublishState } from "@/lib/social/publish-state"
 import { canUseMultinetwork, canUseScheduling } from "@/lib/scheduling-access"
 import type { SchedulePublishStatus } from "@/lib/supabase/types"
+import { slotToInstant } from "@/lib/social/slot-time"
 
 // A board write now waits on the provider (create, read back). A batch from
 // "schedule all" can be several of those in a row.
@@ -198,14 +199,34 @@ export async function PUT(req: NextRequest) {
   // same slot (a published tick, a hook refresh) doesn't touch the provider.
   const { data: beforeRows } = await supabase
     .from("scheduled_posts")
-    .select("core_post_id, format, scheduled_date, scheduled_time, publish_status")
+    .select("core_post_id, format, scheduled_date, scheduled_time, publish_status, published_at")
     .eq("user_id", user.id)
     .in("core_post_id", [...new Set(parsed.map((r) => r.corePostId))])
   const before = new Map(
-    ((beforeRows ?? []) as Pick<Row, "core_post_id" | "format" | "scheduled_date" | "scheduled_time" | "publish_status">[]).map(
+    ((beforeRows ?? []) as Pick<Row, "core_post_id" | "format" | "scheduled_date" | "scheduled_time" | "publish_status" | "published_at">[]).map(
       (r) => [slotKey(r.core_post_id, r.format), r],
     ),
   )
+
+  // "סומן כפורסם" on a slot whose time hasn't come: she posted it herself.
+  // Its queued post must leave the provider's queue first — otherwise the
+  // board says "פורסם" and the same post still goes out at its time (QA
+  // 2026-11-15). A queued post that can't be cancelled keeps the slot as it
+  // was, and she is told.
+  if (!isBackfill) {
+    for (const r of parsed) {
+      const prev = before.get(slotKey(r.corePostId, r.format))
+      if (!r.publishedAt || !prev || prev.published_at) continue
+      if (slotToInstant(prev.scheduled_date, prev.scheduled_time ?? "09:00").getTime() <= Date.now()) continue
+      const { stuck } = await cancelSlots(supabase, user.id, { corePostId: r.corePostId, format: r.format })
+      if (stuck.length > 0) {
+        return NextResponse.json(
+          { error: "לא הצלחנו להוציא את הפוסט מהתור, ולכן לא סימנו אותו כפורסם. אפשר לנסות שוב." },
+          { status: 409 },
+        )
+      }
+    }
+  }
 
   // `as never` per the repo convention (see core-identity, sync-allowlist) —
   // this supabase-js version widens write payloads to `never` under the

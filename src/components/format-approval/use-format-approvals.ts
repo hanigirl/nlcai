@@ -56,6 +56,14 @@ export type FormatApprovals = {
   approvedCount: number
   /** Formats that have media and could be approved (pending/edited/approved). */
   approvableCount: number
+  /**
+   * The same media got a new signature without changing — a fresh set held
+   * as bytes was just saved and now has stored links. Moves an approval that
+   * was given to `fromSig` onto `toSig`, so the next open (which signs the
+   * links) doesn't read as an edit. Does nothing when the approval is for
+   * other media.
+   */
+  repin: (format: FormatId, fromSig: string, toSig: string) => void
   /** Review harness only — jump straight to a scenario. */
   seed: (seed: ApprovalSeed) => void
 }
@@ -156,6 +164,25 @@ export function useFormatApprovals({
     [sigKey, persist, postId],
   )
 
+  const repin = useCallback(
+    (format: FormatId, fromSig: string, toSig: string) => {
+      if (!fromSig || !toSig || fromSig === toSig) return
+      setEntries((prev) => {
+        const e = prev[format]
+        if (!e || e.sig !== fromSig) return prev
+        return { ...prev, [format]: { ...e, sig: toSig } }
+      })
+      // Storage is checked on its own: the state update above runs later.
+      if (persist && postId) {
+        const meta = getFormatMeta(postId, format)
+        if (meta.approvedAt && meta.approvedMediaSig === fromSig) {
+          approveFormat(postId, format, toSig, meta.approvedAt)
+        }
+      }
+    },
+    [persist, postId],
+  )
+
   const revoke = useCallback(
     (format: FormatId) => {
       setEntries((prev) => {
@@ -219,5 +246,5 @@ export function useFormatApprovals({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formatsKey, statusOf])
 
-  return { statusOf, approve, revoke, approvedCount, approvableCount, seed }
+  return { statusOf, approve, revoke, repin, approvedCount, approvableCount, seed }
 }

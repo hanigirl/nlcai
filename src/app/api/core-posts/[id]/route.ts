@@ -2,7 +2,7 @@ import { canUseDescription } from "@/lib/scheduling-access"
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
-import { replaceImageAssetSet } from "@/lib/media-asset-set"
+import { replaceImageAssetSet, storedImageUrls } from "@/lib/media-asset-set"
 import { cancelSlots } from "@/lib/social/bridge"
 import { canUseMultinetwork } from "@/lib/scheduling-access"
 
@@ -760,6 +760,7 @@ export async function PATCH(
               : {}),
           }
         : undefined
+    let savedCarouselUrls: string[] | undefined
     if (carouselImages !== undefined) {
       const r = await replaceImageAssetSet(
         supabase,
@@ -773,6 +774,12 @@ export async function PATCH(
         return NextResponse.json({ error: r.error }, { status: 500 })
       }
       if (r.changed) didIndirectEdit = true
+      // The stored links of the set just saved — the page re-pins an approval
+      // given over the unsaved bytes to these, so reopening the post doesn't
+      // read as an edit that takes it off the calendar.
+      if (Array.isArray(carouselImages) && carouselImages.length > 0) {
+        savedCarouselUrls = await storedImageUrls(supabase, id, "carousel")
+      }
     } else if (carouselStamp) {
       // The stamp alone (e.g. the cover was just checked) — onto the slides
       // already stored. No slides yet: the next set save carries it.
@@ -843,7 +850,7 @@ export async function PATCH(
         .eq("user_id", user.id)
     }
 
-    return NextResponse.json({ ok: true })
+    return NextResponse.json({ ok: true, ...(savedCarouselUrls ? { carouselUrls: savedCarouselUrls } : {}) })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     return NextResponse.json({ error: msg }, { status: 500 })

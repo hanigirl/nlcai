@@ -4,7 +4,7 @@ import { getAuthUser } from "@/lib/auth-user"
 import { getSocialPublisher, SocialPublishError } from "@/lib/social"
 import { isProviderInstalled } from "@/lib/social/highlevel-auth"
 import { isSocialPlatform } from "@/lib/social/networks"
-import { canUseMultinetwork } from "@/lib/scheduling-access"
+import { canUseMultinetwork, canUseScheduling } from "@/lib/scheduling-access"
 
 /**
  * Begin connecting an account — Instagram, YouTube or LinkedIn.
@@ -47,6 +47,16 @@ export async function POST(req: Request) {
   const user = await getAuthUser(supabase)
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  // Connecting is part of the scheduling release: only the listed accounts
+  // ever have posts sent, and connecting creates a real sub-account at the
+  // provider — so nobody else starts it (QA 2026-11-15). Opens at launch.
+  if (!canUseScheduling(user.email)) {
+    return NextResponse.json(
+      { error: "not_available", message: "החיבור לרשתות עדיין לא זמין. נעדכן ברגע שיהיה." },
+      { status: 403 },
+    )
   }
 
   // YouTube / LinkedIn are Hani-only for now (lib/scheduling-access).

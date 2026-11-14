@@ -5,7 +5,7 @@ import { AccountChoiceRequired, getSocialPublisher, SocialPublishError } from "@
 import { isProviderInstalled } from "@/lib/social/highlevel-auth"
 import { cancelSlots, countQueuedForAccount, resumeAfterConnect } from "@/lib/social/bridge"
 import { isSocialPlatform } from "@/lib/social/networks"
-import { canUseMultinetwork } from "@/lib/scheduling-access"
+import { canUseMultinetwork, canUseScheduling } from "@/lib/scheduling-access"
 
 // Disconnect cancels every queued post at the provider; reconnect re-queues
 // the ones that failed for want of a connection. Both can be several calls.
@@ -88,6 +88,11 @@ export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const user = await getAuthUser(supabase)
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  // Same gate as /api/social/connect — the scheduling release only.
+  if (!canUseScheduling(user.email)) {
+    return NextResponse.json({ error: "not_available" }, { status: 403 })
+  }
 
   let body: { accountId?: unknown; originId?: unknown; platform?: unknown }
   try {

@@ -36,7 +36,7 @@ import { cn } from "@/lib/utils"
 import { isLegacyGeminiKey } from "@/lib/api-keys"
 import { useSocialConnections, type InstagramConnection } from "@/lib/instagram-connection"
 import { NETWORK_CONNECT_NOTE, InstagramConnectDialogHost } from "@/components/instagram-connect"
-import { useMultinetwork } from "@/lib/use-scheduling-access"
+import { useMultinetwork, useSchedulingAccess } from "@/lib/use-scheduling-access"
 
 // ---------------------------------------------------------------------------
 // keys
@@ -498,13 +498,21 @@ export function SocialNetworksPanel({
   // YouTube / LinkedIn connect only for the multinetwork gate; everyone else
   // keeps them "בקרוב", as before. The /test preview shows what it's given.
   const multinetwork = useMultinetwork() === true
+  // Connecting is part of the scheduling release (the server refuses anyone
+  // else, QA 2026-11-15). Outside it Instagram reads "בקרוב" too — unless an
+  // account is already connected, which stays visible so it can be removed.
+  const scheduling = useSchedulingAccess() === true
+  const instagramStatus = useSocialConnections().instagram.status
+  const instagramShown = scheduling || instagramStatus === "connected"
   const live: readonly LiveNetworkId[] = previews
     ? (Object.keys(previews) as LiveNetworkId[]).length > 1
       ? LIVE_NETWORKS
       : ["instagram"]
     : multinetwork
       ? LIVE_NETWORKS
-      : ["instagram"]
+      : instagramShown
+        ? ["instagram"]
+        : []
   const soon = SOCIAL_NETWORKS.filter((n) => n.id === "tiktok" || !live.includes(n.id as LiveNetworkId))
   return (
     <div className="flex flex-col gap-4">

@@ -381,6 +381,13 @@ function mirrorUpsert(
     .then(async (res) => {
       if (!res.ok) {
         mirrorFailed("upsert", res.status)
+        // A refused write (e.g. "סומן כפורסם" while its queued post couldn't
+        // be cancelled) — say why and put the board back to what is saved.
+        if (res.status === 409) {
+          const err = (await res.json().catch(() => null)) as { error?: string } | null
+          if (err?.error) toast.error(err.error)
+          await syncScheduledFromServer()
+        }
         return
       }
       const json = (await res.json().catch(() => null)) as {
@@ -894,9 +901,11 @@ export function approveFormat(
   corePostId: string,
   format: FormatId,
   mediaSig: string,
+  /** Keep the original approval time (re-pinning the same media). */
+  approvedAt?: string,
 ): void {
   setFormatMeta(corePostId, format, {
-    approvedAt: new Date().toISOString(),
+    approvedAt: approvedAt ?? new Date().toISOString(),
     approvedMediaSig: mediaSig,
   })
 }

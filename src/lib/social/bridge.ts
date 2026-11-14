@@ -422,14 +422,43 @@ async function markAccountLost(db: Db, userId: string, account: Pick<SocialAccou
     .update({ status: "needs_reconnect" } as never)
     .eq("id", account.id)
     .eq("user_id", userId)
-  const { data } = await db
+  // Only posts still waiting for their time. A "sent" one, or a queued one
+  // whose time has passed, may already be out — marking it failed led to it
+  // being re-created after a reconnect, and published twice (QA 2026-11-15).
+  const { data: queued } = await db
+    .from("scheduled_post_targets")
+    .select("id, scheduled_post_id")
+    .eq("user_id", userId)
+    .eq("social_account_id", account.id)
+    .eq("publish_status", "queued")
+  const rows = (queued ?? []) as { id: string; scheduled_post_id: string }[]
+  if (rows.length === 0) return
+  const { data: slotRows } = await db
+    .from("scheduled_posts")
+    .select("id, scheduled_date, scheduled_time")
+    .eq("user_id", userId)
+    .in("id", [...new Set(rows.map((r) => r.scheduled_post_id))])
+  const now = Date.now()
+  const future = new Set(
+    ((slotRows ?? []) as { id: string; scheduled_date: string; scheduled_time: string }[])
+      .filter((s) => {
+        try {
+          return slotToInstant(s.scheduled_date, s.scheduled_time).getTime() > now
+        } catch {
+          return false
+        }
+      })
+      .map((s) => s.id),
+  )
+  const lost = rows.filter((r) => future.has(r.scheduled_post_id))
+  if (lost.length === 0) return
+  await db
     .from("scheduled_post_targets")
     .update(failurePatch("needs_reconnect", lapsedMessage(account.platform)) as never)
     .eq("user_id", userId)
-    .eq("social_account_id", account.id)
-    .in("publish_status", ["queued", "sent"])
-    .select("scheduled_post_id")
-  for (const id of new Set(((data ?? []) as { scheduled_post_id: string }[]).map((r) => r.scheduled_post_id))) {
+    .in("id", lost.map((r) => r.id))
+    .eq("publish_status", "queued")
+  for (const id of new Set(lost.map((r) => r.scheduled_post_id))) {
     await rollupSlot(db, userId, id)
   }
 }
@@ -630,6 +659,22 @@ async function syncTarget(
       const publishAt = slotToInstant(slot.scheduled_date, slot.scheduled_time)
 
       if (publishAt.getTime() - Date.now() < PUBLISH_FLOOR_MS) {
+        // Its time has passed and the provider holds a post: it may well
+        // have gone out (e.g. while the connection was marked lapsed). Ask
+        // first — cancelling it and re-creating at a new time published the
+        // same post twice (QA 2026-11-15).
+        if (providerPostId && publishAt.getTime() <= Date.now()) {
+          const held = await publisher.getPost(userId, providerPostId)
+          if (held.outcome === "published") {
+            await patchTarget(db, target, {
+              publish_status: "published",
+              publish_error: null,
+              published_at: (held.publishedAt ?? new Date()).toISOString(),
+              publish_synced_at: new Date().toISOString(),
+            })
+            return
+          }
+        }
         // A queued post must not keep its old time when the board says
         // something it can't honour.
         if (providerPostId) {
@@ -1188,7 +1233,10 @@ export async function refreshPublishStates(
 
       // queued / sent
       const account = t.social_account_id ? byId.get(t.social_account_id) : undefined
-      if (account && account.status !== "connected" && t.publish_status === "queued") {
+      // Only a post still waiting for its time is lost with the connection.
+      // One whose time has passed is read below for what really happened —
+      // it may have gone out before the connection lapsed (QA 2026-11-15).
+      if (account && account.status !== "connected" && t.publish_status === "queued" && instant > now) {
         await patchTarget(db, t, failurePatch("needs_reconnect", lapsedMessage(t.platform)))
         continue
       }

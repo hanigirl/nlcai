@@ -247,6 +247,24 @@ async function savePatch(
 }
 
 
+/** Save the carousel and return its stored links (null when the save failed). */
+async function saveCarouselPatch(postId: string, body: Record<string, unknown>): Promise<string[] | null> {
+  try {
+    const res = await fetch(`/api/core-posts/${postId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    const data = (await res.json().catch(() => ({}))) as { error?: string; carouselUrls?: string[] }
+    if (!res.ok) throw new Error(data.error || `status ${res.status}`)
+    return Array.isArray(data.carouselUrls) ? data.carouselUrls : []
+  } catch (err) {
+    console.error("[project][save:הקרוסלה]", err)
+    toast.error("שמירת הקרוסלה נכשלה", { id: "save-fail-הקרוסלה" })
+    return null
+  }
+}
+
 function shortenTitle(text: string, maxWords = 7): string {
   if (!text) return text
   let working = text.trim()
@@ -539,6 +557,8 @@ function ProjectPageInner() {
   const hydratedCarouselRef = useRef<string[] | null>(null)
   /** The stored URLs that set was decoded from — the approval signs these. */
   const hydratedCarouselUrlsRef = useRef<string[] | null>(null)
+  /** Re-render once a fresh set's stored links are known (the approval signs them). */
+  const [, setCarouselSigTick] = useState(0)
   const applyAgentCarousel = useCallback((url: string, urls?: string[]) => {
     const set = urls?.length ? urls : [url]
     // The run already saved this set on the server: it is shown as is,
@@ -628,6 +648,8 @@ function ProjectPageInner() {
     mediaSigs: approvalMediaSigs,
     persist: true,
   })
+  const approvalsRef = useRef(approvals)
+  approvalsRef.current = approvals
   const [savedPostLoading, setSavedPostLoading] = useState(!!postId)
   const [savedHookText, setSavedHookText] = useState("")
   // Save lifecycle for the auto-POST that persists a freshly-generated core
@@ -1773,10 +1795,22 @@ function ProjectPageInner() {
     markCarouselSaved(savedPostId, carouselImages)
     // What the carousel is (AI-made / brought, words designed in) rides
     // with the slides, so another browser reads it the same way.
-    void savePatch(
-      savedPostId,
-      { carouselImages, carouselMeta: carouselMetaForServer(savedPostId) },
-      "הקרוסלה",
+    const images = carouselImages
+    const postAtSave = savedPostId
+    void saveCarouselPatch(postAtSave, { carouselImages: images, carouselMeta: carouselMetaForServer(postAtSave) }).then(
+      (urls) => {
+        // A fresh set is held as bytes, and an approval given now is signed
+        // over those bytes. Reopening the post signs the stored links, which
+        // never matched — so the carousel read as "edited after approval"
+        // and came off the calendar (QA 2026-11-15). Once the set is saved,
+        // sign it by its links and move a matching approval onto them.
+        if (!urls || urls.length !== images.length) return
+        if (images.every((u) => /^https?:\/\//.test(u))) return
+        approvalsRef.current?.repin("carousel", mediaSignature(images), mediaSignature(urls))
+        hydratedCarouselRef.current = images
+        hydratedCarouselUrlsRef.current = urls
+        setCarouselSigTick((n) => n + 1)
+      },
     )
   }, [savedPostId, carouselImages, ownTextGate])
 
