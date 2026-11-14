@@ -1,5 +1,6 @@
 "use client"
 
+import { STORY_VIDEO_FRAME } from "@/lib/story-generation-store"
 import { useFormatTextTerms } from "@/lib/use-format-text-terms"
 import { VideoWithPlay } from "@/components/video-with-play"
 import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
@@ -572,6 +573,15 @@ function ProjectPageInner() {
     onBRollUrl: setBRollUrl,
     storyFrames: storyImages,
   })
+  // A brand story's clip frame from her Drive (or none) — the card follows it.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ postId: string; url: string | null }>).detail
+      if (d?.postId === savedPostId) setStoryVideoUrl(d.url)
+    }
+    window.addEventListener(STORY_VIDEO_FRAME, on)
+    return () => window.removeEventListener(STORY_VIDEO_FRAME, on)
+  }, [savedPostId])
   const wasBusy = useRef<Record<string, boolean>>({})
   useEffect(() => {
     const prev = wasBusy.current

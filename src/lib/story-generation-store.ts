@@ -151,6 +151,8 @@ export function startStoryGeneration(
         frameCount?: number
         /** The route saved the set to the post itself — `images` are its stored URLs. */
         saved?: boolean
+        /** Brand story from her Drive (Hani only): its clip frame, or null when it has none. */
+        videoFrame?: string | null
         error?: string
         message?: string
       }
@@ -174,6 +176,9 @@ export function startStoryGeneration(
         }
       }
       update(postId, (s) => ({ ...s, saved: set }))
+      if (typeof window !== "undefined" && data.videoFrame !== undefined) {
+        window.dispatchEvent(new CustomEvent(STORY_VIDEO_FRAME, { detail: { postId, url: data.videoFrame } }))
+      }
       const count = set.length
       if (!quiet) longWaitDone(toastId, count > 1 ? `הסטורי מוכן ונשמר — ${count} פריימים` : "הסטורי מוכן ונשמר", { postId })
       return { ok: true }
@@ -192,3 +197,6 @@ export function removeStoryGenerationSet(postId: string, set: string[]): void {
     sets: s.sets.filter((x) => x !== set),
   }))
 }
+
+/** A brand story's set landed: its clip frame (or none) — the page's story video follows it. */
+export const STORY_VIDEO_FRAME = "story-generation:video-frame"

@@ -1,6 +1,6 @@
 import { canOwnMediaText } from "@/lib/feature-access"
+import { pickBrandDriveStoryMedia } from "@/lib/brand-drive-media"
 import { brandDriveMedia } from "@/lib/feature-access"
-import { pickBrandDrivePictures } from "@/lib/brand-drive-media"
 import { resetAgentChat } from "@/lib/edit-agent/reset-chat"
 import { withGraphicOnly } from "@/lib/visual-language/graphic-only"
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences, withPlacedImages } from "@/lib/media-brief"
@@ -21,7 +21,7 @@ import { pickComposition, resolveDesignDirection } from "@/lib/visual-language/d
 
 // gpt-image-2 takes 30-120s per image; a long story fans out to up to 3
 // frames run with limited concurrency, so leave generous headroom.
-export const maxDuration = 300
+export const maxDuration = 800
 
 // Parallel OpenAI image calls per story (rate-limit friendly).
 const CONCURRENCY = 3
@@ -107,11 +107,11 @@ export async function POST(req: NextRequest) {
     // server-authoritative, not echoed from the client.
     const { data: variantRow, error: variantErr } = await supabase
       .from("format_variants")
-      .select("body")
+      .select("id, body")
       .eq("core_post_id", postId)
       .eq("format", "story")
       .single()
-    const variant = variantRow as { body: string | null } | null
+    const variant = variantRow as { id: string; body: string | null } | null
     if (variantErr || !variant?.body?.trim()) {
       return NextResponse.json(
         {
@@ -161,10 +161,14 @@ export async function POST(req: NextRequest) {
     })
     // "שפת המותג" with her Drive folder (Nataliya, 2026-11-14, Notion #1): one
     // of her pictures goes in, no question asked. No folder → graphics only.
-    const fromDrive =
+    // A picture OR a video of hers, at random (Hani, 2026-11-14).
+    const drivePick =
       resolved.source === "brand" && brandDriveMedia(user.email) && !parseReferences(place).length
-        ? await pickBrandDrivePictures(user.id, "story", 1).catch(() => [] as string[])
-        : []
+        ? await pickBrandDriveStoryMedia(user.id, frames.length).catch(() => null)
+        : null
+    const fromDrive = drivePick?.kind === "image" ? [drivePick.dataUrl] : []
+    // Her video is the story's last frame (a story's set is its pictures, then its clip).
+    const videoFrom = drivePick?.kind === "video" ? drivePick.url : null
     const placeIn = fromDrive.length ? fromDrive : parseReferences(place)
     // Her language makes graphics only, never a photo (gated): every frame
     // but the one that carries her Drive picture (no invented faces elsewhere).
@@ -192,14 +196,16 @@ export async function POST(req: NextRequest) {
       : [post.title, post.hook_text, post.body?.slice(0, 500)].filter(Boolean).join("\n")
 
     const total = frames.length
-    const images: string[] = new Array(total)
+    // The frames drawn here; with her video, the last frame is the video.
+    const drawn = videoFrom ? total - 1 : total
+    const images: string[] = new Array(drawn)
     let firstRaw: string | null = null
 
     // Simple concurrency pool — kinder to OpenAI rate limits than firing
     // all frames at once, much faster than fully sequential.
     let next = 0
     async function worker() {
-      while (next < total) {
+      while (next < drawn) {
         const i = next++
         const frameDirection = i === 0 ? firstDirection : direction
         const prompt = buildStoryPrompt(
@@ -224,7 +230,7 @@ export async function POST(req: NextRequest) {
       }
     }
     await Promise.all(
-      Array.from({ length: Math.min(CONCURRENCY, total) }, () => worker()),
+      Array.from({ length: Math.min(CONCURRENCY, drawn) }, () => worker()),
     )
     // Her picture must really be on the first frame — a look-alike or a miss is not kept.
     if (placed.length && firstRaw) {
@@ -253,9 +259,28 @@ export async function POST(req: NextRequest) {
     }
     // A new story starts a new AI conversation (lib/edit-agent).
     await resetAgentChat(supabase as never, user.id, postId, "story").catch(() => undefined)
+    // Her video as the last frame: the frame's text over it, burned and saved
+    // in the story's video slot (api/story/generate-video-media).
+    let videoUrl: string | null = null
+    // A new brand story replaces the whole set — an earlier clip doesn't stay on as a frame.
+    if (drivePick && !videoFrom && variant?.id) {
+      await supabase.from("media_assets").delete().eq("format_variant_id", variant.id).eq("asset_type", "video")
+    }
+    if (videoFrom) {
+      const res = await fetch(new URL("/api/story/generate-video-media", req.url), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", cookie: req.headers.get("cookie") ?? "" },
+        body: JSON.stringify({ postId, format: "story", sourceUrl: videoFrom, persist: true, frameIndex: total - 1, frameCount: total }),
+      }).catch(() => null)
+      const out = (await res?.json().catch(() => ({}))) as { url?: string; videoUrl?: string } | undefined
+      videoUrl = (res?.ok && (out?.url ?? out?.videoUrl)) || null
+      if (!videoUrl) console.error("[story/generate-media] her video frame failed", res?.status)
+    }
     const urls = await storedImageUrls(supabase, postId, "story")
     return NextResponse.json(
-      urls.length === total ? { images: urls, frameCount: total, saved: true } : { images, frameCount: total },
+      urls.length === drawn
+        ? { images: urls, frameCount: total, saved: true, ...(drivePick ? { videoFrame: videoUrl } : {}) }
+        : { images, frameCount: total },
     )
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)

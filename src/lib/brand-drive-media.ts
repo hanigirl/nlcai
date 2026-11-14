@@ -77,3 +77,45 @@ export async function pickBrandDrivePictures(userId: string, format: BrandDriveF
   }
   return out
 }
+
+/** A video of hers for a story frame: from the videos folder (or the old story folder). */
+async function pickStoryVideo(userId: string): Promise<string | null> {
+  const admin = createAdminClient()
+  const { data } = await admin.auth.admin.getUserById(userId)
+  const folders = (data.user?.user_metadata as Record<string, unknown> | undefined)?.drive_folders as
+    | Record<string, { id?: string } | undefined>
+    | undefined
+  for (const key of ["videos", "story"]) {
+    const id = folders?.[key]?.id
+    if (!id) continue
+    const listing = await listPublicFolder(id, true).catch(() => null)
+    if (!listing || "error" in listing) continue
+    const videos = listing.items.filter((i: DriveFolderItem) => i.kind === "video")
+    if (videos.length) return `https://drive.google.com/file/d/${videos[Math.floor(Math.random() * videos.length)].id}/view`
+  }
+  return null
+}
+
+/**
+ * A brand-language story takes, at random, a picture OR a video of hers
+ * (Hani, 2026-11-14: "צריך לקחת רנדומלית מאחד מהם"). A picture goes into the
+ * design of the first frame; a video becomes a frame of its own (her video
+ * with that frame's text). Pictures only when the story has a single frame.
+ */
+export async function pickBrandDriveStoryMedia(
+  userId: string,
+  frames: number,
+): Promise<{ kind: "image"; dataUrl: string } | { kind: "video"; url: string } | null> {
+  const tryVideo = frames > 1 && Math.random() < 0.5
+  if (tryVideo) {
+    const url = await pickStoryVideo(userId).catch(() => null)
+    if (url) return { kind: "video", url }
+  }
+  const [pic] = await pickBrandDrivePictures(userId, "story", 1).catch(() => [] as string[])
+  if (pic) return { kind: "image", dataUrl: pic }
+  if (!tryVideo && frames > 1) {
+    const url = await pickStoryVideo(userId).catch(() => null)
+    if (url) return { kind: "video", url }
+  }
+  return null
+}
