@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { TemplateConfig } from "@/lib/carousel-templates"
 import { useQaFixes1112 } from "@/lib/use-scheduling-access"
+import { formatTextTerms } from "@/lib/format-text-terms"
 
 /**
  * "הוספת מדיה לסקריפט" (Hani, 2026-11-10 — Figma 711:2289): the media tab's
@@ -94,7 +95,7 @@ export function MediaSourceChooser({
   return (
     <div className="flex flex-col gap-5 rounded-[18px] border border-border-neutral-default bg-white px-6 py-4 dark:bg-gray-10">
       <div className="flex flex-col text-text-primary-default">
-        <p className="text-small-bold">הוספת מדיה לסקריפט</p>
+        <p className="text-small-bold">{formatTextTerms("הוספת מדיה לסקריפט", qa)}</p>
         <p className="text-xs-body">איך ניצור את המדיה לטקסט?</p>
       </div>
 

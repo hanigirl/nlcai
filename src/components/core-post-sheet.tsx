@@ -32,6 +32,7 @@
  * that ate my nav".
  */
 
+import { useFormatTextTerms } from "@/lib/use-format-text-terms"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
@@ -422,6 +423,7 @@ export function CorePostSheet({
   hideScheduleButton = false,
 }: CorePostSheetProps) {
   const router = useRouter()
+  const ft = useFormatTextTerms()
 
   // Local meta — the post-level slice. The per-format slices live inside
   // `meta.byFormat` and are read via `getFormatMeta(postId, format)` so
@@ -1073,7 +1075,7 @@ export function CorePostSheet({
                         className="text-base font-bold text-text-primary-default mb-3"
                       >
                         {hasFormatScript
-                          ? `הסקריפט — ${getFormatChipLabel(scriptFormat)}`
+                          ? ft(`הסקריפט — ${getFormatChipLabel(scriptFormat)}`)
                           : "הסקריפט"}
                       </h3>
                       <div className="relative bg-bg-surface border border-border-neutral-default rounded-md px-4 py-3 text-right">
@@ -1081,7 +1083,7 @@ export function CorePostSheet({
                           text={scriptText}
                           ariaLabel={
                             hasFormatScript
-                              ? `העתיקו את הסקריפט ל${getFormatChipLabel(scriptFormat)}`
+                              ? ft(`העתיקו את הסקריפט ל${getFormatChipLabel(scriptFormat)}`)
                               : "העתיקו את הסקריפט המרכזי"
                           }
                         />
@@ -1487,6 +1489,7 @@ function ScriptBlock({
 }) {
   const [expanded, setExpanded] = useState(false)
   const label = getFormatChipLabel(format)
+  const ft = useFormatTextTerms()
   const trimmedBody = body?.trim() ?? ""
   const hasBody = trimmedBody.length > 0
   const isLong = trimmedBody.length > SCRIPT_PREVIEW_THRESHOLD
@@ -1498,10 +1501,10 @@ function ScriptBlock({
   if (state === "empty") {
     return (
       <div className="flex flex-col gap-1.5">
-        <span className="text-xs-body text-text-neutral-default">סקריפט</span>
+        <span className="text-xs-body text-text-neutral-default">{ft("סקריפט")}</span>
         <div className="rounded-xl bg-bg-surface px-4 py-3 flex items-center justify-between gap-3">
           <p className="text-small text-text-neutral-default">
-            טרם נוצר סקריפט ל{label}
+            {ft(`טרם נוצר סקריפט ל${label}`)}
           </p>
           <Button
             variant="outline"
@@ -1519,13 +1522,13 @@ function ScriptBlock({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs-body text-text-neutral-default">סקריפט</span>
+        <span className="text-xs-body text-text-neutral-default">{ft("סקריפט")}</span>
         {hasBody && (
           <button
             type="button"
             onClick={onEditScript}
             className="inline-flex items-center gap-1 text-xs-body text-text-primary-default hover:bg-bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-50 rounded-md px-1.5 py-0.5 transition-colors"
-            aria-label={`ערכו את הסקריפט ל${label}`}
+            aria-label={ft(`ערכו את הסקריפט ל${label}`)}
           >
             <Pencil className="size-3" aria-hidden />
             עריכה
@@ -1536,7 +1539,7 @@ function ScriptBlock({
         <div className="relative rounded-xl bg-bg-surface px-4 py-3 text-text-primary-default text-small leading-relaxed whitespace-pre-wrap text-right">
           <CopyIconButton
             text={trimmedBody}
-            ariaLabel={`העתיקו את הסקריפט ל${label}`}
+            ariaLabel={ft(`העתיקו את הסקריפט ל${label}`)}
           />
           <div className="pl-9">
             {visibleBody}
@@ -1553,7 +1556,7 @@ function ScriptBlock({
         </div>
       ) : (
         <p className="text-xs-body text-text-neutral-default">
-          עדיין אין סקריפט ל{label}
+          {ft(`עדיין אין סקריפט ל${label}`)}
         </p>
       )}
     </div>

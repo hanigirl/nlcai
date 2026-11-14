@@ -54,6 +54,7 @@ import type { ApprovalStatus } from "@/components/format-approval/use-format-app
 import { storyFrameSrc } from "@/components/story-player"
 import { stripFrameMarkers } from "@/lib/story-text-split"
 import { cn } from "@/lib/utils"
+import { useFormatTextTerms } from "@/lib/use-format-text-terms"
 
 /** c = Hani's pick (2026-11-07): B's uniform cards + A's two-screen panel. */
 export type FormatCardsVariant = "a" | "b" | "c"
@@ -356,6 +357,7 @@ function WindowCard({
 }) {
   const Icon = item.icon
   const aspect = MEDIA_ASPECT[item.fid] ?? "aspect-[4/5]"
+  const ft = useFormatTextTerms()
   return (
     <div className="flex w-[220px] flex-col gap-2" dir="rtl">
       <div className="flex h-6 items-center gap-1.5 px-1">
@@ -375,7 +377,7 @@ function WindowCard({
             : "border-border-neutral-default hover:border-gray-80",
         )}
       >
-        {item.state === "generating" && <CardLoader label="מייצר סקריפט" />}
+        {item.state === "generating" && <CardLoader label={ft("מייצר סקריפט")} />}
         {item.state === "script" && (
           <div className="size-full p-4">
             <Clamp lines={WINDOW_LINES[item.fid] ?? 11}>{scriptExcerpt(item.fid, item.script)}</Clamp>
@@ -426,11 +428,12 @@ function UniformCard({
 }) {
   const Icon = item.icon
   const hasMedia = item.state === "media" && !!item.media
+  const ft = useFormatTextTerms()
   const status =
     item.state === "generating"
-      ? "הסקריפט נכתב…"
+      ? ft("הסקריפט נכתב…")
       : item.state === "script"
-        ? "סקריפט מוכן · עוד אין מדיה"
+        ? ft("סקריפט מוכן · עוד אין מדיה")
         : item.state === "media-busy"
           ? "המדיה בהכנה…"
           : item.approval === "approved" || item.approval === "scheduled"
@@ -460,7 +463,7 @@ function UniformCard({
         {hasMedia && <ApprovalHeaderTag status={item.approval} />}
       </div>
       <div className="h-[300px] overflow-hidden px-5 pt-4">
-        {item.state === "generating" && <CardLoader label="מייצר סקריפט" />}
+        {item.state === "generating" && <CardLoader label={ft("מייצר סקריפט")} />}
         {item.state === "script" && (
           // 9 lines leave room above the status line at any text size (Hani, 2026-11-07).
           <Clamp lines={9}>{scriptExcerpt(item.fid, item.script)}</Clamp>
@@ -527,6 +530,7 @@ export function FormatPanelTabs({
   /** False for accounts without scheduling — then there is no תזמון tab. */
   showSchedule?: boolean
 }) {
+  const ft = useFormatTextTerms()
   return (
     <Tabs value={value} onValueChange={(v) => onChange(v as FormatPanelTab)} dir="rtl">
       <TabsList className="h-9 w-full rounded-[10px] bg-gray-95 p-1 dark:bg-gray-20">
@@ -536,7 +540,7 @@ export function FormatPanelTabs({
             value={t.id}
             className="group/tab h-7 gap-1.5 rounded-[10px] px-2 py-1 text-sm font-medium leading-5 text-gray-40 hover:text-text-primary-default data-[state=active]:bg-white data-[state=active]:text-text-primary-default data-[state=active]:shadow-sm dark:data-[state=active]:bg-gray-10 cursor-pointer"
           >
-            {t.label}
+            {ft(t.label)}
             {/* Done step (Figma 701:1673): green on the active tab, gray on the others. */}
             {done[t.id] && (
               <>
@@ -568,6 +572,7 @@ export function FormatPanelNextStep({
   /** Present = "מחיקת הסקריפט" beside it (plain script, no media). */
   onDelete?: () => void
 }) {
+  const ft = useFormatTextTerms()
   return (
     <div className="flex items-center gap-3">
       <Button onClick={onNext} className="flex-1 gap-2">
@@ -575,7 +580,7 @@ export function FormatPanelNextStep({
         <ChevronLeft className="size-4" aria-hidden />
       </Button>
       {onDelete && (
-        <IconActionButton label="מחיקת הסקריפט" icon={Trash2} destructive onClick={onDelete} />
+        <IconActionButton label={ft("מחיקת הסקריפט")} icon={Trash2} destructive onClick={onDelete} />
       )}
     </div>
   )
@@ -829,11 +834,12 @@ export function FormatPanelScript({
   onAiEditMedia?: () => void
   onDeleteMedia: () => void
 }) {
+  const ft = useFormatTextTerms()
   return (
     <div className="flex flex-col gap-6">
-      <section className="flex flex-col gap-2" aria-label="סקריפט">
+      <section className="flex flex-col gap-2" aria-label={ft("סקריפט")}>
         <div className="flex items-center justify-between gap-2">
-          <h3 className="text-small-bold text-text-neutral-default">סקריפט</h3>
+          <h3 className="text-small-bold text-text-neutral-default">{ft("סקריפט")}</h3>
           {saveStatus && (
             <span className="flex items-center gap-1 text-xs text-text-neutral-default" role="status">
               {saveStatus === "saving" ? (
@@ -895,9 +901,10 @@ export function FormatPanelScriptFolded({
   script: string
   onUnfold: () => void
 }) {
+  const ft = useFormatTextTerms()
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="text-small-bold text-text-neutral-default">סקריפט</h3>
+      <h3 className="text-small-bold text-text-neutral-default">{ft("סקריפט")}</h3>
       <button
         type="button"
         onClick={onUnfold}
@@ -906,7 +913,7 @@ export function FormatPanelScriptFolded({
         <Clamp lines={3}>{scriptExcerpt(fid, script)}</Clamp>
         <span className="flex items-center gap-1 text-xs text-text-neutral-default">
           <ChevronRight className="size-3.5" aria-hidden />
-          חזרה לסקריפט
+          {ft("חזרה לסקריפט")}
         </span>
       </button>
       <div className="mt-4 flex items-center gap-3" role="separator">
@@ -945,8 +952,9 @@ export function FormatPanelFooter({
   onDelete: () => void
   createDisabled?: boolean
 }) {
+  const ft = useFormatTextTerms()
   const del = (
-    <IconActionButton label="מחיקת הסקריפט" icon={Trash2} destructive onClick={onDelete} />
+    <IconActionButton label={ft("מחיקת הסקריפט")} icon={Trash2} destructive onClick={onDelete} />
   )
   if (hasMedia && approval) {
     return (

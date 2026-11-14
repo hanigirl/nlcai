@@ -1,5 +1,6 @@
 "use client"
 
+import { useFormatTextTerms } from "@/lib/use-format-text-terms"
 import { VideoWithPlay } from "@/components/video-with-play"
 import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { FormatLane, LaneColumn, LaneStem, TreeConnector, newestLaneCard } from "@/components/format-lanes"
@@ -274,6 +275,7 @@ export default function ProjectPage() {
 }
 
 function ProjectPageInner() {
+  const ft = useFormatTextTerms()
   const searchParams = useSearchParams()
   const router = useRouter()
   const initialIdea = searchParams.get("idea") ?? ""
@@ -2703,7 +2705,7 @@ function ProjectPageInner() {
           item.state === "generating" ? (
             <div className="flex flex-col items-center gap-2 py-16" role="status">
               <Loader2 className="size-5 animate-spin text-text-neutral-default" aria-hidden />
-              <span className="text-small text-text-neutral-default">מייצר סקריפט</span>
+              <span className="text-small text-text-neutral-default">{ft("מייצר סקריפט")}</span>
             </div>
           ) : (
             <FormatPanelScript
@@ -2731,7 +2733,7 @@ function ProjectPageInner() {
         item.state === "generating" ? (
           <div className="flex flex-col items-center gap-2 py-16" role="status">
             <Loader2 className="size-5 animate-spin text-text-neutral-default" aria-hidden />
-            <span className="text-small text-text-neutral-default">מייצר סקריפט</span>
+            <span className="text-small text-text-neutral-default">{ft("מייצר סקריפט")}</span>
           </div>
         ) : (
           <FormatPanelScript
@@ -2868,7 +2870,7 @@ function ProjectPageInner() {
         <ConfirmModal
           open={!!pendingCardDelete}
           onOpenChange={(open) => { if (!open) setPendingCardDelete(null) }}
-          title={pendingCardDelete ? `למחוק את הסקריפט של ה${FORMAT_NOUN[pendingCardDelete] ?? "פורמט"}?` : ""}
+          title={pendingCardDelete ? ft(`למחוק את הסקריפט של ה${FORMAT_NOUN[pendingCardDelete] ?? "פורמט"}?`) : ""}
           description="הפורמט יוסר מהפוסט. אפשר לשכפל אותו שוב מהפורמטים."
           confirmLabel="כן, למחוק"
           cancelLabel="ביטול"
@@ -2906,11 +2908,11 @@ function ProjectPageInner() {
                 const data = await res.json().catch(() => ({}))
                 toast.error(
                   data.error === "format_has_media"
-                    ? "יש לפורמט מדיה. קודם מוחקים את המדיה, ואז אפשר למחוק את הסקריפט."
-                    : "מחיקת הסקריפט נכשלה, נסו שוב",
+                    ? ft("יש לפורמט מדיה. קודם מוחקים את המדיה, ואז אפשר למחוק את הסקריפט.")
+                    : ft("מחיקת הסקריפט נכשלה, נסו שוב"),
                 )
               })
-              .catch(() => toast.error("מחיקת הסקריפט נכשלה, נסו שוב"))
+              .catch(() => toast.error(ft("מחיקת הסקריפט נכשלה, נסו שוב")))
           }}
         />
       )}
