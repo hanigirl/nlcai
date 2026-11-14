@@ -56,7 +56,7 @@ import {
   type PreviewSlide,
   type PublishStatus as PreviewPublishStatus,
 } from "@/components/format-preview/shared"
-import { useFormatGap, useMultinetwork, useScheduleAllA, useSchedulingAccess, useSchedulingPreview, useDescriptionAccess } from "@/lib/use-scheduling-access"
+import { useFormatGap, useMultinetwork, useScheduleAllA, useSchedulingAccess, useSchedulingPreview, useDescriptionAccess, useAfterGenChoices } from "@/lib/use-scheduling-access"
 import {
   hasAnySlot,
   planScheduleAll,
@@ -579,6 +579,7 @@ export default function CalendarPage() {
   // header, drafts drawn like scheduled cards, no schedule settings on the
   // board. Hani only for now (lib/scheduling-access).
   const scheduleAllA = useScheduleAllA() === true && schedulingOn
+  const gearSettings = useAfterGenChoices() === true
   const rulesVariant: "a" | null = schedulingOn ? "a" : null
   const routine = usePostingSchedule()
   const [routineEditing, setRoutineEditing] = useState(false)
@@ -865,6 +866,37 @@ export default function CalendarPage() {
     )
     return [...new Set(railCards.map((c) => c.format))].filter((f) => !withDay.has(f))
   }, [scheduleAllA, arrangeRoutine, railCards])
+  // "הגדרות תזמון" (Hani, 2026-11-15): a gear with a tooltip, straight to the
+  // settings pop-up — no ⋮ menu with one item. Hani only for her live test.
+  const scheduleSettingsButton = gearSettings ? (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button variant="ghost" size="icon-sm" aria-label="הגדרות תזמון" onClick={() => setScheduleSettingsOpen(true)}>
+          <Settings className="size-4" aria-hidden />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>הגדרות תזמון</TooltipContent>
+    </Tooltip>
+  ) : (
+                  <DropdownMenu>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon-sm" aria-label="אפשרויות תזמון">
+                            <MoreVertical className="size-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>אפשרויות</TooltipContent>
+                    </Tooltip>
+                    <DropdownMenuContent align="end" sideOffset={6} className="min-w-[160px]">
+                      <DropdownMenuItem onSelect={() => setScheduleSettingsOpen(true)}>
+                        <Settings className="size-4" aria-hidden />
+                        הגדרות תזמון
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+  )
   const arrangeNotice =
     scheduleAllA && formatsWithoutDay.length > 0 ? (
       <ArrangeNotice
@@ -1806,25 +1838,7 @@ export default function CalendarPage() {
                 // everything for real (Hani, 2026-10-29 — that is how 18
                 // posts went into the Instagram queue).
                 <div className="flex items-center gap-1.5">
-                  {/* ⋮ — "הגדרות תזמון" opens the same settings as Settings → תזמון (Hani, 2026-11-11). */}
-                  <DropdownMenu>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon-sm" aria-label="אפשרויות תזמון">
-                            <MoreVertical className="size-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                      </TooltipTrigger>
-                      <TooltipContent>אפשרויות</TooltipContent>
-                    </Tooltip>
-                    <DropdownMenuContent align="end" sideOffset={6} className="min-w-[160px]">
-                      <DropdownMenuItem onSelect={() => setScheduleSettingsOpen(true)}>
-                        <Settings className="size-4" aria-hidden />
-                        הגדרות תזמון
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  {scheduleSettingsButton}
                   <Button
                     size="sm"
                     onClick={() => {
@@ -1849,25 +1863,7 @@ export default function CalendarPage() {
                 </div>
               ) : (
                 <div className="flex items-center gap-1.5">
-                  {/* ⋮ — "הגדרות תזמון" opens the same settings as Settings → תזמון (Hani, 2026-11-11). */}
-                  <DropdownMenu>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon-sm" aria-label="אפשרויות תזמון">
-                            <MoreVertical className="size-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                      </TooltipTrigger>
-                      <TooltipContent>אפשרויות</TooltipContent>
-                    </Tooltip>
-                    <DropdownMenuContent align="end" sideOffset={6} className="min-w-[160px]">
-                      <DropdownMenuItem onSelect={() => setScheduleSettingsOpen(true)}>
-                        <Settings className="size-4" aria-hidden />
-                        הגדרות תזמון
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  {scheduleSettingsButton}
                   <Button size="sm" variant="outline" data-demo="calendar-arrange" onClick={onArrange} disabled={railCards.length === 0}>
                     <CalendarClock className="size-4" aria-hidden />
                     סידור אוטומטי בלוח
