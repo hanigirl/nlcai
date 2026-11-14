@@ -85,10 +85,10 @@ export const SCHEDULE_FORMATS: FormatId[] = [
   "b_roll",
 ]
 
-/** Whole hours 07:00–23:00 — matches the scheduler's existing hour range. */
+/** Every half hour, 07:00–23:30 (Hani, 2026-11-15: whole hours only was too coarse). */
 export const SCHEDULE_HOURS: string[] = Array.from(
-  { length: 17 },
-  (_, i) => `${String(i + 7).padStart(2, "0")}:00`,
+  { length: 34 },
+  (_, i) => `${String(7 + Math.floor(i / 2)).padStart(2, "0")}:${i % 2 ? "30" : "00"}`,
 )
 
 export const STORY_GAP_OPTIONS: { minutes: number; label: string }[] = [

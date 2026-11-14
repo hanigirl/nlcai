@@ -26,10 +26,10 @@ import { toDateKey } from "@/lib/timing-storage"
 
 const WEEKDAY_LABELS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"] as const
 
-/** Hourly, 07:00–23:00 — the same options the weekly posting schedule offers. */
+/** Every half hour, 07:00–23:30 — the same options the weekly posting schedule offers. */
 export const SCHEDULE_HOURS: string[] = Array.from(
-  { length: 17 },
-  (_, i) => `${String(i + 7).padStart(2, "0")}:00`,
+  { length: 34 },
+  (_, i) => `${String(7 + Math.floor(i / 2)).padStart(2, "0")}:${i % 2 ? "30" : "00"}`,
 )
 
 function startOfDay(date: Date): Date {
