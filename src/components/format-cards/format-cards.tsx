@@ -570,11 +570,14 @@ export function FormatPanelTabs({
  */
 export function FormatPanelNextStep({
   label,
+  text,
   onNext,
   onDelete,
 }: {
   /** The next tab's name — "מדיה", "תזמון". */
   label: string
+  /** The whole button text instead of "השלב הבא: <label>" — e.g. "אישור לתזמון". */
+  text?: string
   onNext: () => void
   /** Present = "מחיקת הסקריפט" beside it (plain script, no media). */
   onDelete?: () => void
@@ -583,7 +586,7 @@ export function FormatPanelNextStep({
   return (
     <div className="flex items-center gap-3">
       <Button onClick={onNext} className="flex-1 gap-2">
-        השלב הבא: {label}
+        {text ?? `השלב הבא: ${label}`}
         <ChevronLeft className="size-4" aria-hidden />
       </Button>
       {onDelete && (
@@ -794,28 +797,45 @@ export function FormatPanelSchedule({
   }
   return (
     <div className="flex flex-col gap-3">
-      {onDescriptionChange && fid !== "story" && (
-        <label className="flex flex-col gap-1.5">
-          <span className="text-small-bold text-text-primary-default">תיאור הפוסט</span>
-          <Textarea
-            value={description ?? ""}
-            onChange={(e) => onDescriptionChange(e.target.value)}
-            rows={6}
-            dir="rtl"
-            placeholder={
-              fid === "carousel" || fid === "talking_head"
-                ? "הטקסט שעולה עם הפוסט. בלי תיאור, תעלה הקריאה לפעולה מפוסט הליבה."
-                : "הטקסט שעולה עם הפוסט. בלי תיאור, יעלה פוסט הליבה."
-            }
-            className="min-h-32 text-small leading-relaxed"
-          />
-        </label>
-      )}
+      {onDescriptionChange && <FormatPanelDescription fid={fid} description={description} onDescriptionChange={onDescriptionChange} />}
       <ScheduleIllustration />
       <p className="text-small text-text-neutral-default">
         אחרי האישור, הפוסט מחכה בפאנל הצד של לוח התזמון עד שמתזמנים אותו.
       </p>
     </div>
+  )
+}
+
+/**
+ * "תיאור הפוסט" — what goes out with it. In the תזמון tab, or under the media
+ * (launch call with Nataliya, 2026-11-13; gated by the page). Never on a story.
+ */
+export function FormatPanelDescription({
+  fid,
+  description,
+  onDescriptionChange,
+}: {
+  fid: string
+  description?: string
+  onDescriptionChange: (text: string) => void
+}) {
+  if (fid === "story") return null
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-small-bold text-text-primary-default">תיאור הפוסט</span>
+      <Textarea
+        value={description ?? ""}
+        onChange={(e) => onDescriptionChange(e.target.value)}
+        rows={6}
+        dir="rtl"
+        placeholder={
+          fid === "carousel" || fid === "talking_head"
+            ? "הטקסט שעולה עם הפוסט. בלי תיאור, תעלה הקריאה לפעולה מפוסט הליבה."
+            : "הטקסט שעולה עם הפוסט. בלי תיאור, יעלה פוסט הליבה."
+        }
+        className="min-h-32 text-small leading-relaxed"
+      />
+    </label>
   )
 }
 

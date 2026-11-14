@@ -6,7 +6,7 @@ import { NewFeatureNote } from "@/components/launch-intro/new-feature-note"
 import { FormatLane, LaneColumn, LaneStem, TreeConnector, newestLaneCard } from "@/components/format-lanes"
 import { useAiEditRequests, type AiEditOpening } from "@/lib/ai-edit-intent"
 import { onAsIsNeedsPanel } from "@/lib/as-is-upload"
-import { useState, useEffect, useRef, useCallback, Suspense } from "react"
+import { useState, useEffect, useRef, useCallback, Suspense, type ReactNode } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { Loader2, Smartphone, Video, Layers, Image, Film, Download, ChevronLeft, ChevronRight, Trash2, Play, Pause, Plus, Sparkles, Copy, Check, RotateCw, Info, type LucideIcon } from "lucide-react"
@@ -57,6 +57,7 @@ import {
   FormatPanelFooter,
   FormatPanelMedia,
   FormatPanelNextStep,
+  FormatPanelDescription,
   FormatPanelSchedule,
   FormatPanelScheduleFooter,
   FormatPanelScript,
@@ -2701,13 +2702,47 @@ function ProjectPageInner() {
         // loading media, once — not the flows with their old preview below.
         const showMedia = hasMedia || (ownTextGate && fid !== "talking_head" && item.state === "media-busy")
         if (!showMedia || mediaReplacing) return { tabs }
+        // Launch call with Nataliya (2026-11-13), Hani only for now: the button
+        // under the media approves — "אישור לתזמון" — instead of only moving
+        // to the תזמון tab (nothing reaches the calendar without her click),
+        // and the post's description sits under the media.
+        const approveHere = afterGenOn && hasMedia && !!approvalProps && approvalProps.status !== "approved" && approvalProps.status !== "scheduled"
+        // A reel with no cover: its reminder lives on the תזמון tab — go there first.
+        const coverFirst = fid === "talking_head" && thAiOn && !thCoverImage && !thCoverSkipped
+        const descriptionHere = afterGenOn && descriptionOn && hasMedia && fid !== "story" ? (
+          <FormatPanelDescription
+            fid={fid}
+            description={formatDescriptions[fid] ?? defaultDescription(fid, corePost)}
+            onDescriptionChange={(t) => changeDescription(fid, t)}
+          />
+        ) : null
+        const withDescription = (media: ReactNode) =>
+          descriptionHere ? (
+            <div className="flex flex-col gap-6">
+              {media}
+              {descriptionHere}
+            </div>
+          ) : (
+            media
+          )
         return {
           tabs,
           hideFlows: true,
           footer: approveVariant ? (
-            <FormatPanelNextStep label="תזמון" onNext={() => setPanelStep("schedule")} />
+            approveHere ? (
+              <FormatPanelNextStep
+                label="תזמון"
+                text="אישור לתזמון"
+                onNext={() => {
+                  if (!coverFirst) approvalProps!.onApprove()
+                  setPanelStep("schedule")
+                }}
+              />
+            ) : (
+              <FormatPanelNextStep label="תזמון" onNext={() => setPanelStep("schedule")} />
+            )
           ) : undefined,
-          scriptView:
+          scriptView: withDescription(
             fid === "talking_head" ? (
               // One row from the start (Hani, 2026-11-08): the video and,
               // beside it, the cover — an empty state until there is one.
@@ -2759,7 +2794,7 @@ function ProjectPageInner() {
                 storyPlayer={ownTextGate}
                 expandable={qaCopy}
               />
-            ),
+            )),
         }
       }
       if (panelStep === "schedule") {
@@ -2774,7 +2809,8 @@ function ProjectPageInner() {
               // No description of its own yet: the format's default, editable
               // (Hani, 2026-11-11, lib/default-description).
               description={formatDescriptions[fid] ?? defaultDescription(fid, corePost)}
-              onDescriptionChange={descriptionOn ? (t) => changeDescription(fid, t) : undefined}
+              // Under the media instead, for Hani (launch call 2026-11-13).
+              onDescriptionChange={descriptionOn && !afterGenOn ? (t) => changeDescription(fid, t) : undefined}
             />
           ),
           footer:
