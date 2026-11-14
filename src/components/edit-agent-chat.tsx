@@ -245,6 +245,8 @@ export function EditAgentChat({
   }, [messages.length, job?.progress])
 
   const send = async (text: string, remember?: string) => {
+    // She answered in her own words: the after-generation buttons step aside.
+    setGenAsk(false)
     const words = text.trim()
     const images = refs.refs
     // Checked before anything is sent: a video from her computer over the limit.
@@ -320,8 +322,11 @@ export function EditAgentChat({
 
   const last = messages[messages.length - 1]
   const askNow = !busy && last?.role === "assistant" && !!last.options?.length
-  // Buttons on screen → they are the answer; the send button waits (Hani, 2026-11-12).
-  const choosing = askNow || ((addAsk || genAsk) && !busy)
+  // The send button waits only when one of the buttons MUST be the answer —
+  // "מגוגל דרייב" / "מהמחשב שלי" (Hani, 2026-11-12). Where she can just as
+  // well say it in her own words (the agent's question, "רוצים לשנות משהו
+  // במדיה?"), she can type (Hani, 2026-11-15).
+  const choosing = addAsk && !busy
 
   return (
     <div
