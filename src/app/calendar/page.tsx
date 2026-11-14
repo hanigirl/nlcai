@@ -1838,7 +1838,6 @@ export default function CalendarPage() {
                 // everything for real (Hani, 2026-10-29 — that is how 18
                 // posts went into the Instagram queue).
                 <div className="flex items-center gap-1.5">
-                  {scheduleSettingsButton}
                   <Button
                     size="sm"
                     onClick={() => {
@@ -1860,14 +1859,16 @@ export default function CalendarPage() {
                   >
                     ביטול
                   </Button>
+                  {/* Left of the buttons (RTL: last) — Hani, 2026-11-15. */}
+                  {scheduleSettingsButton}
                 </div>
               ) : (
                 <div className="flex items-center gap-1.5">
-                  {scheduleSettingsButton}
                   <Button size="sm" variant="outline" data-demo="calendar-arrange" onClick={onArrange} disabled={railCards.length === 0}>
                     <CalendarClock className="size-4" aria-hidden />
                     סידור אוטומטי בלוח
                   </Button>
+                  {scheduleSettingsButton}
                 </div>
               )
             ) : schedulingOn ? (
