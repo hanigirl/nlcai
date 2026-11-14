@@ -78,6 +78,13 @@ const FORMAT_NAMES: Record<VisualFormat, string> = {
   b_roll: "b-roll reel frames",
 }
 
+/**
+ * Weight follows her examples (Hani, 2026-11-15): only what they set bold is
+ * bold; descriptive text stays regular.
+ */
+export const TYPE_WEIGHT_RULE =
+  "TYPE WEIGHT (hard rule): read the weights in her examples and copy them — only the kind of text her examples set bold (usually the headline, a key phrase or the trigger words) is bold; descriptive / body / explanatory lines stay in the REGULAR weight her examples use for them. Never set a description or body line in bold unless her examples do exactly that. With no examples to read: the headline bold, everything else regular."
+
 /** Each format's own example tab (Settings → דוגמאות לשימוש). */
 const OWN_EXAMPLE_KIND: Record<VisualFormat, ExampleKind> = {
   story: "story",
@@ -403,6 +410,10 @@ async function resolveBaseDirection(
     // it read off the examples) and over the examples themselves.
     const colourLines = brandWins ? brandColourLines(afterGenChoices(row?.email) ? slots : colors, afterGenChoices(row?.email)) : []
     if (colourLines.length) lines.push("", ...colourLines)
+    // Bold vs regular follows her examples (Hani, 2026-11-15: a description
+    // line came out bold).
+    // Near the top: the carousel brief keeps only its first 4000 characters.
+    if (afterGenChoices(row?.email)) lines.splice(2, 0, "", TYPE_WEIGHT_RULE)
     // Examples ride along as images: say outright the type isn't theirs.
     if (brandWins && examples.length) lines.push("", brandFontLine(await loadBrandFonts(supabase, userId)))
     return { source: "brand", lines, references, fixed }
