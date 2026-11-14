@@ -138,7 +138,18 @@ async function ghlFetch<T>(path: string, opts: GhlFetchOptions): Promise<T> {
         "needs_reconnect"
       )
     }
-    if (res.status === 429 || /limit/i.test(detail) && /24|day|daily/i.test(detail)) {
+    const dailyLimit = /limit/i.test(detail) && /24\s*h|24 hours|\bday\b|daily/i.test(detail)
+    if (res.status === 429 && !dailyLimit) {
+      // A burst limit ("schedule all" fires many calls at once), not the daily
+      // cap. Telling her to come back tomorrow for this sent her away for
+      // nothing (QA 2026-11-15). Retryable in a minute.
+      console.error(`[social] provider rate-limited ${path}: ${detail.slice(0, 300)}`)
+      throw new SocialPublishError(
+        "יותר מדי בקשות בבת אחת. נסו שוב בעוד דקה.",
+        "rate_limited"
+      )
+    }
+    if (dailyLimit) {
       // Nothing re-queues it for tomorrow on its own — saying so would be the
       // exact quiet lie this whole status model exists to prevent.
       throw new SocialPublishError(
@@ -922,5 +933,61 @@ export class HighLevelPublisher implements SocialPublisher {
     }
     // "in_progress" and anything new: still on its way.
     return { outcome: "scheduled", scheduledAt }
+  }
+
+  /**
+   * Look for a post the provider holds that we have no id for: one created by
+   * a request that died before it could save the id. Re-creating blindly
+   * would queue the same post twice (QA 2026-11-15).
+   *
+   * Matches a live parent post on the same planner account at the same
+   * instant, skipping every id we already know (`knownIds` — her other
+   * targets' posts). When the list carries the caption it must match too.
+   * Answers the id, or null when nothing there looks like ours. Throws when
+   * the provider can't be asked — the caller must then NOT re-create.
+   *
+   * Field names on list items (`accountIds`, `summary`) mirror the create
+   * body; not verified live on the list response. Where a field is absent
+   * the match falls back to account-less, time-only + known-id exclusion.
+   */
+  async findQueuedPost(input: SchedulePostInput, knownIds: Set<string>): Promise<string | null> {
+    const { locationId, token, plannerAccountId } = await this.plannerTarget(input)
+    type Listed = {
+      _id?: string
+      id?: string
+      deleted?: boolean
+      parentPostId?: string | null
+      scheduleDate?: string | null
+      accountIds?: string[]
+      summary?: string | null
+    }
+    const at = input.publishAt.getTime()
+    const listed = await ghlFetch<{ results?: { posts?: Listed[] } }>(
+      `/social-media-posting/${locationId}/posts/list`,
+      {
+        method: "POST",
+        token,
+        body: {
+          type: "all",
+          skip: "0",
+          limit: "50",
+          fromDate: new Date(at - 30 * 60_000).toISOString(),
+          toDate: new Date(at + 30 * 60_000).toISOString(),
+          includeUsers: "false",
+        },
+      },
+    )
+    const candidates = (listed.results?.posts ?? []).filter((p) => {
+      const id = p._id ?? p.id
+      if (!id || knownIds.has(id) || p.deleted || p.parentPostId) return false
+      if (!p.scheduleDate || Math.abs(new Date(p.scheduleDate).getTime() - at) > 60_000) return false
+      if (Array.isArray(p.accountIds) && !p.accountIds.includes(plannerAccountId)) return false
+      if (typeof p.summary === "string" && p.summary.trim() !== input.caption.trim()) return false
+      return true
+    })
+    // Prefer one that positively names this account.
+    const best =
+      candidates.find((p) => Array.isArray(p.accountIds) && p.accountIds.includes(plannerAccountId)) ?? candidates[0]
+    return best ? ((best._id ?? best.id) as string) : null
   }
 }

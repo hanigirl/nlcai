@@ -62,7 +62,7 @@ import {
 } from "./publish-state"
 import { slotToInstant } from "./slot-time"
 import { canUseMultinetwork } from "@/lib/scheduling-access"
-import { SocialPublishError, type SocialPublisher } from "./types"
+import { SocialPublishError, type SchedulePostInput, type SocialPublisher } from "./types"
 
 type Db = SupabaseClient<Database>
 
@@ -364,6 +364,59 @@ async function patchTarget(db: Db, row: Pick<TargetRow, "id" | "user_id">, patch
   return ((data ?? []) as unknown[]).length > 0
 }
 
+/**
+ * What she may have changed on a target while a sync was talking to the
+ * provider: the network taken off, or YouTube privacy picked. Null when the
+ * row is gone. Throws on a failed read — "can't tell" is never "unchanged".
+ */
+async function readTargetChoices(
+  db: Db,
+  row: Pick<TargetRow, "id" | "user_id">,
+): Promise<Pick<TargetRow, "opted_out" | "youtube_privacy"> | null> {
+  const { data, error } = await db
+    .from("scheduled_post_targets")
+    .select("opted_out, youtube_privacy")
+    .eq("id", row.id)
+    .eq("user_id", row.user_id)
+    .maybeSingle()
+  if (error) throw new BridgeReadError(error.message)
+  return (data as Pick<TargetRow, "opted_out" | "youtube_privacy"> | null) ?? null
+}
+
+/**
+ * A request died mid-create: the provider may hold a post we have no id for.
+ * These messages mark that state, so the next sync looks before creating.
+ */
+const UNCLEAR_QUEUE_MESSAGE = "לא ברור אם הפוסט נכנס לתור. אפשר לנסות שוב."
+const UNCLEAR_LOOKUP_FAILED = (p: SocialPlatform) =>
+  `לא הצלחנו לבדוק אם הפוסט כבר בתור ${inNetwork(p)}, ולכן לא שלחנו אותו שוב. אפשר לנסות שוב.`
+const UNCLEAR_NO_LOOKUP = (p: SocialPlatform) =>
+  `לא ברור אם הפוסט כבר בתור ${inNetwork(p)}, ולכן לא שלחנו אותו שוב כדי שלא יצא פעמיים. כדאי לבדוק ${inNetwork(p)} לפני שמנסים שוב.`
+
+function isUnclear(t: Pick<TargetRow, "publish_status" | "publish_error" | "platform">): boolean {
+  const msg = decodePublishError(t.publish_error)?.message
+  return msg === UNCLEAR_QUEUE_MESSAGE || msg === UNCLEAR_LOOKUP_FAILED(t.platform)
+}
+
+/** Publishers that can search their queue for a post we lost the id of. */
+type OrphanFinder = {
+  findQueuedPost(input: SchedulePostInput, knownIds: Set<string>): Promise<string | null>
+}
+function canFindOrphans(p: SocialPublisher): p is SocialPublisher & OrphanFinder {
+  return typeof (p as Partial<OrphanFinder>).findQueuedPost === "function"
+}
+
+/** Every provider id this user's targets already hold — never adopted as an orphan. */
+async function knownProviderIds(db: Db, userId: string): Promise<Set<string>> {
+  const { data, error } = await db
+    .from("scheduled_post_targets")
+    .select("provider_post_id")
+    .eq("user_id", userId)
+    .not("provider_post_id", "is", null)
+  if (error) throw new BridgeReadError(error.message)
+  return new Set(((data ?? []) as { provider_post_id: string }[]).map((r) => r.provider_post_id))
+}
+
 function failurePatch(code: PublishErrorCode, message: string): TargetPatch {
   return {
     publish_status: "failed",
@@ -637,21 +690,107 @@ async function syncTarget(
   }
   if (!(await claimTarget(db, target))) return
 
+  // A request died mid-create (we just took over its stale lock, or the
+  // refresh marked it unclear): the provider may already hold this post
+  // without us knowing its id. Look before creating (QA 2026-11-15).
+  let unclear = !target.provider_post_id && (target.publish_status === "pending" || isUnclear(target))
+
   let slot = initialSlot
   let providerPostId = target.provider_post_id
-  const assemble = () =>
-    assembleScheduledPost({
+  // Privacy is read fresh, and what was last sent is remembered: a change
+  // made while we are mid-call is re-sent before we let go.
+  let privacy = target.youtube_privacy
+  let sentPrivacy = privacy
+  const assemble = () => {
+    sentPrivacy = privacy
+    return assembleScheduledPost({
       db,
       userId,
       corePostId: slot.core_post_id,
       format: slot.format,
       socialAccountId: account.id,
       platform: p,
-      youtubePrivacy: target.youtube_privacy ?? undefined,
+      youtubePrivacy: privacy ?? undefined,
       scheduledDate: slot.scheduled_date,
       scheduledTime: slot.scheduled_time,
     })
+  }
 
+  /**
+   * Re-read her choices on this target. If she took the network off while we
+   * were talking to the provider, pull whatever we created and end idle —
+   * otherwise it goes out on a network the card shows as off. Answers true
+   * when the opt-out was honoured (the caller stops).
+   */
+  const settleOptOut = async (): Promise<boolean> => {
+    const now = await readTargetChoices(db, target)
+    if (!now) return false
+    privacy = now.youtube_privacy
+    if (!now.opted_out) return false
+    if (providerPostId) {
+      try {
+        await publisher.cancelPost(userId, providerPostId)
+      } catch (err) {
+        describe(err, "opt-out-cancel", p)
+        // Same as a failed opt-out: the network stays on, and says so.
+        await patchTarget(db, target, {
+          ...failurePatch(
+            "cancel_failed",
+            `לא הצלחנו להוציא את הפוסט מהתור ${inNetwork(p)}, והוא עדיין עלול להתפרסם שם. אפשר לנסות שוב.`,
+          ),
+          opted_out: false,
+          provider_post_id: providerPostId,
+        })
+        return true
+      }
+      providerPostId = null
+    }
+    await patchTarget(db, target, {
+      provider_post_id: null,
+      publish_status: "idle",
+      publish_error: null,
+      publish_synced_at: new Date().toISOString(),
+    })
+    return true
+  }
+
+  try {
+    // Taken off between the load and the claim: nothing to send.
+    if (await settleOptOut()) return
+    await runSync()
+  } finally {
+    // Every exit, including failures: an opted-out target must not keep a
+    // provider post nobody will ever look at again.
+    let privacyDrift = false
+    try {
+      const honoured = await settleOptOut()
+      privacyDrift =
+        !honoured && p === "youtube" && !!providerPostId && (privacy ?? "public") !== (sentPrivacy ?? "public")
+    } catch (err) {
+      describe(err, "opt-out-settle", p)
+    }
+    // Privacy changed after our last check but before we let go: the
+    // privacy route's own re-send found us still locked and stood down, so
+    // the re-send is ours. Once, from the row as it is now.
+    if (privacyDrift) try {
+      const { data: now } = await db
+        .from("scheduled_post_targets")
+        .select(TARGET_COLUMNS)
+        .eq("id", target.id)
+        .eq("user_id", userId)
+        .maybeSingle()
+      const row = now as TargetRow | null
+      if (row && row.publish_status === "queued" && row.provider_post_id && !row.opted_out) {
+        const fresh = await loadSlot(db, userId, slot.core_post_id, slot.format)
+        if (fresh) await syncTarget(db, userId, fresh, row, account, publisher)
+      }
+    } catch (err) {
+      describe(err, "privacy-resend", p)
+    }
+  }
+
+  async function runSync() {
+  if (!account) return // narrowed above; restated for the nested scope
   try {
     // Re-read-and-repeat: the board can change while we are mid-call. Converge
     // on whatever the slot says when we are done, at most a few rounds.
@@ -723,7 +862,37 @@ async function syncTarget(
           return
         }
       } else {
-        const created = await publisher.schedulePost(await assemble())
+        const input = await assemble()
+        if (unclear) {
+          unclear = false
+          if (!canFindOrphans(publisher)) {
+            // No way to ask the provider what it holds: never re-create on a
+            // guess. She checks, and the next retry sends it.
+            await patchTarget(db, target, failurePatch("provider_error", UNCLEAR_NO_LOOKUP(p)))
+            return
+          }
+          let found: string | null
+          try {
+            found = await publisher.findQueuedPost(input, await knownProviderIds(db, userId))
+          } catch (err) {
+            if (err instanceof SocialPublishError && err.accountLost) throw err
+            describe(err, "orphan-lookup", p)
+            await patchTarget(db, target, failurePatch("provider_error", UNCLEAR_LOOKUP_FAILED(p)))
+            return
+          }
+          if (found) {
+            // Adopt it. The next round moves it (a full replace), so it ends
+            // on the board's time and current content, then reads it back.
+            providerPostId = found
+            if (!(await patchTarget(db, target, { provider_post_id: found, social_account_id: account.id }))) {
+              await publisher.cancelPost(userId, found)
+              providerPostId = null
+              return
+            }
+            continue
+          }
+        }
+        const created = await publisher.schedulePost(input)
         providerPostId = created.providerPostId
 
         // Write the id the moment we have it: an id we lose is a post we can
@@ -781,7 +950,13 @@ async function syncTarget(
       }
       const moved = fresh.scheduled_date !== slot.scheduled_date || fresh.scheduled_time !== slot.scheduled_time
       slot = fresh
-      if (moved) continue
+      // Taken off mid-flight? Pull it now, before it is ever marked queued.
+      // (Also refreshes `privacy`.)
+      if (await settleOptOut()) return
+      // YouTube privacy changed while we were sending: re-send it, or a post
+      // she made private can go out public.
+      const privacyChanged = p === "youtube" && (privacy ?? "public") !== (sentPrivacy ?? "public")
+      if (moved || privacyChanged) continue
 
       await patchTarget(db, target, {
         provider_post_id: providerPostId,
@@ -804,6 +979,7 @@ async function syncTarget(
     }
     const { code, message } = describe(err, "sync", p)
     await patchTarget(db, target, { ...failurePatch(code, message), provider_post_id: providerPostId })
+  }
   }
 }
 
@@ -857,6 +1033,36 @@ export async function setTargetOptOut(
     }
 
     if (optOut) {
+      // A sync is talking to the provider about this target right now. Don't
+      // touch its lock or its id: just flag it. The sync re-reads the flag
+      // before it lets go, cancels what it created, and ends idle. Clearing
+      // the row under it is how a post went out on a network shown as off
+      // (QA 2026-11-15).
+      const lockedAt = target.publish_synced_at ? Date.parse(target.publish_synced_at) : 0
+      if (target.publish_status === "pending" && Date.now() - lockedAt <= LOCK_STALE_MS) {
+        // Only while it is still pending: if the sync let go in between, its
+        // last check may already have run, so fall through to the full
+        // cancel below on the row as it is now.
+        const { data: flagged } = await db
+          .from("scheduled_post_targets")
+          .update({ opted_out: true } as never)
+          .eq("id", target.id)
+          .eq("user_id", userId)
+          .eq("publish_status", "pending")
+          .select("id")
+        if (((flagged ?? []) as unknown[]).length > 0) {
+          return (await rollupSlot(db, userId, slot.id))?.state ?? toPublishState(slot)
+        }
+        const { data: now, error } = await db
+          .from("scheduled_post_targets")
+          .select(TARGET_COLUMNS)
+          .eq("id", target.id)
+          .eq("user_id", userId)
+          .maybeSingle()
+        if (error) throw new BridgeReadError(error.message)
+        if (!now) return (await rollupSlot(db, userId, slot.id))?.state ?? toPublishState(slot)
+        target = now as TargetRow
+      }
       if (target.provider_post_id && !target.published_at && target.publish_status !== "published") {
         try {
           await getSocialPublisher(db).cancelPost(userId, target.provider_post_id)
@@ -932,7 +1138,19 @@ export async function setYouTubePrivacy(
       return (await rollupSlot(db, userId, slot.id))?.state ?? toPublishState(slot)
     }
     await patchTarget(db, target, { youtube_privacy: privacy })
-    if (target.provider_post_id && !target.opted_out && target.publish_status !== "published") {
+    // Decide on the row as it is AFTER the write, not the snapshot from
+    // before it: a create that was in flight may have landed its id since.
+    // If a sync still holds the lock, the re-send below stands down and that
+    // sync re-sends on its way out (syncTarget compares sent vs stored).
+    const { data: nowRow, error: nowErr } = await db
+      .from("scheduled_post_targets")
+      .select(TARGET_COLUMNS)
+      .eq("id", target.id)
+      .eq("user_id", userId)
+      .maybeSingle()
+    if (nowErr) throw new BridgeReadError(nowErr.message)
+    const now = nowRow as TargetRow | null
+    if (now && now.provider_post_id && !now.opted_out && now.publish_status !== "published" && !now.published_at) {
       return syncSlot(db, userId, corePostId, format, { mode: "update" })
     }
     return (await rollupSlot(db, userId, slot.id))?.state ?? toPublishState(slot)
@@ -959,6 +1177,8 @@ function holdsProviderPost(row: Pick<TargetRow, "provider_post_id" | "published_
  * Cancel at the provider, for every target matching the filter, BEFORE the
  * caller deletes or detaches them.
  *
+ * Throws when the database can't be read — callers must then delete nothing.
+ *
  * Returns the slots that could not be fully cancelled. Those must not be
  * deleted: a slot that disappears from the board while one of its posts is
  * still queued is the worst outcome available — it goes out, and she has
@@ -974,24 +1194,30 @@ export async function cancelSlots(
 
   if (filter.socialAccountId) {
     // Pre-042 slots on this account get their target first, so they're seen.
-    const { data: legacy } = await db
+    // Every read here throws on error (like loadSlot): an unanswered read
+    // looks like "nothing queued", and the caller would then delete rows
+    // whose posts are still in the provider's queue (QA 2026-11-15).
+    const { data: legacy, error: legacyErr } = await db
       .from("scheduled_posts")
       .select(SLOT_COLUMNS)
       .eq("user_id", userId)
       .eq("social_account_id", filter.socialAccountId)
+    if (legacyErr) throw new BridgeReadError(legacyErr.message)
     for (const s of (legacy ?? []) as SlotRow[]) await loadTargets(db, s)
 
-    const { data } = await db
+    const { data, error } = await db
       .from("scheduled_post_targets")
       .select(TARGET_COLUMNS)
       .eq("user_id", userId)
       .eq("social_account_id", filter.socialAccountId)
+    if (error) throw new BridgeReadError(error.message)
     targets = (data ?? []) as TargetRow[]
   } else {
     let q = db.from("scheduled_posts").select(SLOT_COLUMNS).eq("user_id", userId)
     if (filter.corePostId) q = q.eq("core_post_id", filter.corePostId)
     if (filter.format) q = q.eq("format", filter.format)
-    const { data } = await q
+    const { data, error } = await q
+    if (error) throw new BridgeReadError(error.message)
     for (const s of (data ?? []) as SlotRow[]) {
       slotsById.set(s.id, s)
       targets.push(...(await loadTargets(db, s)))
@@ -1225,7 +1451,9 @@ export async function refreshPublishStates(
           if (t.provider_post_id) {
             await syncSlot(db, userId, slot.core_post_id, slot.format)
           } else {
-            await patchTarget(db, t, failurePatch("provider_error", "לא ברור אם הפוסט נכנס לתור. אפשר לנסות שוב."))
+            // The provider may hold a post we never got the id of. Marked so
+            // the retry searches the queue before creating (syncTarget).
+            await patchTarget(db, t, failurePatch("provider_error", UNCLEAR_QUEUE_MESSAGE))
           }
         }
         continue
