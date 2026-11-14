@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState, type CSSProperties, type JSX } from 're
 
 import type { Shader, HtmlInCanvasElement } from '../types'
 import { useProcessMaskUrl } from '../mask'
+import { ShaderBoundary } from './ShaderBoundary'
 import { useShaderRuntime } from '../useShaderRuntime'
 
 export type ShaderFillProps = {
@@ -14,7 +15,15 @@ export type ShaderFillProps = {
   mask?: string
 }
 
-export function ShaderFill({
+export function ShaderFill(props: ShaderFillProps): JSX.Element {
+  return (
+    <ShaderBoundary fallback={null}>
+      <ShaderFillCanvas {...props} />
+    </ShaderBoundary>
+  )
+}
+
+function ShaderFillCanvas({
   shader,
   width,
   height,

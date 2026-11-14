@@ -461,7 +461,16 @@ export function useShaderRuntime({
       }
       schedulePaintRef.current()
     })
-    resizeObserver.observe(canvas, { box: 'device-pixel-content-box' })
+    // Safari (WebKit) has no 'device-pixel-content-box' (webkit.org/b/219005) and throws a
+    // TypeError for it — inside this effect, which took the whole home page down to the
+    // error screen on iOS / iPadOS / macOS Safari 26, the first Safari with WebGPU. The
+    // sizes above are read from contentBoxSize (CSS px × dpr) either way, so the plain
+    // content box sizes the canvas the same; it only misses a DPR-only change (zoom).
+    try {
+      resizeObserver.observe(canvas, { box: 'device-pixel-content-box' })
+    } catch {
+      resizeObserver.observe(canvas)
+    }
 
     return () => resizeObserver.disconnect()
   }, [canvas, deviceReady, hasChildren, device])

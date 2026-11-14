@@ -2,6 +2,7 @@ import { useCallback, useRef, useState, type JSX, type ReactNode } from 'react'
 
 import type { Shader, HtmlInCanvasElement } from '../types'
 import { useProcessMaskUrl } from '../mask'
+import { ShaderBoundary } from './ShaderBoundary'
 import { useShaderRuntime } from '../useShaderRuntime'
 
 export type ShaderEffectProps = {
@@ -13,7 +14,16 @@ export type ShaderEffectProps = {
   mask?: string
 }
 
-export function ShaderEffect({
+// Without the effect, the content still shows — the same fallback as a runtime error.
+export function ShaderEffect(props: ShaderEffectProps): JSX.Element {
+  return (
+    <ShaderBoundary fallback={<>{props.children}</>}>
+      <ShaderEffectCanvas {...props} />
+    </ShaderBoundary>
+  )
+}
+
+function ShaderEffectCanvas({
   children,
   shaders,
   className,
