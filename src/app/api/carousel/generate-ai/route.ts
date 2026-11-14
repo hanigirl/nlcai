@@ -348,7 +348,13 @@ export async function POST(req: NextRequest) {
     // her pictures from it go in, no question asked — where her carousel
     // examples put a picture, the cover always. No folder → graphics only.
     const fromDrive =
-      isBrandTemplate && direction.source === "brand" && brandDriveMedia(user.email) && !structure && !(Array.isArray(place) && place.length)
+      isBrandTemplate &&
+      direction.source === "brand" &&
+      brandDriveMedia(user.email) &&
+      !structure &&
+      !(Array.isArray(place) && place.length) &&
+      // Placing needs the layout engine (a Claude key); without one, graphics only as before.
+      !!(await getUserApiKey(supabase, "anthropic_api_key").catch(() => null))
         ? await pickBrandDrivePictures(user.id, "carousel", Math.min(total, 4)).catch((e) => {
             console.error("[carousel brand drive]", e)
             return [] as string[]
@@ -513,7 +519,9 @@ export async function POST(req: NextRequest) {
         async function artWorker() {
           while (nextArt < wanted.length) {
             const { idea, i } = wanted[nextArt++]
-            const raw = await generateImage(openaiKey, illustrationPrompt(idea, slides![i], refDirection.lines), {
+            // Drawn art never invents a photo (no faces) — her Drive pictures are the photos.
+            const artLines = fromDrive.length ? withGraphicOnly(refDirection, user!.email).lines : refDirection.lines
+            const raw = await generateImage(openaiKey, illustrationPrompt(idea, slides![i], artLines), {
               shape: "1:1",
               quality: "medium",
               ...(refImages.length ? { references: refImages } : {}),

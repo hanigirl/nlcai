@@ -24,19 +24,20 @@ const FOLDERS: Record<BrandDriveFormat, string[]> = {
 
 const RASTER = /\.(jpe?g|png|webp)$/i
 
-/** Her folder id for this format, or null when she connected none. */
-export async function brandDriveFolder(userId: string, format: BrandDriveFormat): Promise<string | null> {
+/** Her folder ids for this format, in order of preference ([] when she connected none). */
+export async function brandDriveFolders(userId: string, format: BrandDriveFormat): Promise<string[]> {
   const admin = createAdminClient()
   const { data } = await admin.auth.admin.getUserById(userId)
   const folders = (data.user?.user_metadata as Record<string, unknown> | undefined)?.drive_folders as
     | Record<string, { id?: string } | undefined>
     | undefined
-  if (!folders) return null
-  for (const key of FOLDERS[format]) {
-    const id = folders[key]?.id
-    if (id) return id
-  }
-  return null
+  if (!folders) return []
+  return [...new Set(FOLDERS[format].map((k) => folders[k]?.id).filter((id): id is string => !!id))]
+}
+
+/** Her first folder for this format, or null. */
+export async function brandDriveFolder(userId: string, format: BrandDriveFormat): Promise<string | null> {
+  return (await brandDriveFolders(userId, format))[0] ?? null
 }
 
 /**
@@ -45,13 +46,17 @@ export async function brandDriveFolder(userId: string, format: BrandDriveFormat)
  * folder or nothing readable — then the piece is generated as before.
  */
 export async function pickBrandDrivePictures(userId: string, format: BrandDriveFormat, count: number): Promise<string[]> {
-  const folderId = await brandDriveFolder(userId, format)
-  if (!folderId || count < 1) return []
-  const listing = await listPublicFolder(folderId, true).catch(() => null)
-  if (!listing || "error" in listing) return []
-  const pictures = listing.items
-    .filter((i: DriveFolderItem) => i.kind === "image" && RASTER.test(i.name))
-    .sort(() => Math.random() - 0.5)
+  if (count < 1) return []
+  // The first of her folders that has pictures (a story folder of videos only falls back to "images").
+  let pictures: DriveFolderItem[] = []
+  for (const folderId of await brandDriveFolders(userId, format)) {
+    const listing = await listPublicFolder(folderId, true).catch(() => null)
+    if (!listing || "error" in listing) continue
+    pictures = listing.items.filter((i: DriveFolderItem) => i.kind === "image" && RASTER.test(i.name)).sort(() => Math.random() - 0.5)
+    if (pictures.length) break
+  }
+  // A few failed downloads at most, so a broken folder can't stall the generation.
+  pictures = pictures.slice(0, count + 3)
   const sharp = (await import("sharp")).default
   const out: string[] = []
   for (const item of pictures) {

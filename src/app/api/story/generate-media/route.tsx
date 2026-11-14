@@ -166,11 +166,10 @@ export async function POST(req: NextRequest) {
         ? await pickBrandDrivePictures(user.id, "story", 1).catch(() => [] as string[])
         : []
     const placeIn = fromDrive.length ? fromDrive : parseReferences(place)
-    const base = withMediaBrief(
-      // Her language makes graphics only, never a photo (gated) — unless her picture is in.
-      fromDrive.length ? resolved : withGraphicOnly(resolved, user.email),
-      normalizeMediaBrief(brief),
-    )
+    // Her language makes graphics only, never a photo (gated): every frame
+    // but the one that carries her Drive picture (no invented faces elsewhere).
+    const base = withMediaBrief(withGraphicOnly(resolved, user.email), normalizeMediaBrief(brief))
+    const ownBase = fromDrive.length ? withMediaBrief(resolved, normalizeMediaBrief(brief)) : base
     // Placing is Hani-only for now (lib/feature-access); off it, all are looks.
     if (!fromDrive.length && refusesPlacingIntoDesign(user.email, placeIn)) {
       return NextResponse.json(PICTURE_IS_BACKGROUND, { status: 409 })
@@ -181,7 +180,7 @@ export async function POST(req: NextRequest) {
     // Her own pictures go in as they are — on the first frame, the one that
     // opens the story; a link's picture is a look only.
     const placed = await placedImages(gated.place)
-    const firstDirection = placed.length ? withMediaReferences(withPlacedImages(base, placed), looks) : direction
+    const firstDirection = placed.length ? withMediaReferences(withPlacedImages(ownBase, placed), looks) : direction
     const composition = pickComposition(variationIndex)
 
     // Theme context: title + hook carry the essence; the body is truncated
