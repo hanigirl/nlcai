@@ -441,7 +441,8 @@ export async function POST(req: NextRequest) {
         override = { headline: unit.headline, body: unit.body, position: "bottom" }
       }
       // Reads on dark and light footage alike: her brand box, or white on black.
-      if (!override.style) override = { ...override, style: await captionLookFor(supabase, user.id) }
+      // An edit's style holds only what she changed: it goes over the look, never replaces it.
+      override = { ...override, style: { ...(await captionLookFor(supabase, user.id)), ...override.style } }
     }
 
     // B-roll, own media + script text (Hani, 2026-11-09, gated): the words

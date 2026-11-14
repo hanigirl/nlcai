@@ -234,7 +234,7 @@ export async function POST(req: NextRequest) {
     // script's words on a solid box in her brand colours, or white on black,
     // so they read on dark and light pictures alike.
     const ownStory = format === "story" && !!override && canOwnMediaText(user.email)
-    const storyLook = ownStory && !override?.style ? await captionLookFor(supabase, user.id) : undefined
+    const storyLook = ownStory ? await captionLookFor(supabase, user.id) : undefined
 
     /* ------------------------- what the caption says ------------------- */
     let overlayHook: string | undefined
@@ -373,14 +373,16 @@ export async function POST(req: NextRequest) {
     }
 
     // Her look on a solid box — readable on dark and light pictures, with or
-    // without a visual language. A look the edit asked for wins.
-    const style: CaptionStyle | undefined = ownText
-      ? (override?.style ?? (await captionLookFor(supabase, user.id)))
-      : brollScript
+    // without a visual language. What the edit asked for wins, field by field:
+    // an edit's style holds only what she changed, and letting it REPLACE the
+    // look dropped the rest — her saved size, the box per line — so a colour
+    // change also shrank the text (Nataliya, 2026-11-13).
+    const style: CaptionStyle | undefined =
+      ownText || brollScript || ownCarousel
         ? { ...(await captionLookFor(supabase, user.id)), ...override?.style }
-        : ownCarousel
-          ? (override?.style ?? (await captionLookFor(supabase, user.id)))
-          : (override?.style ?? storyLook)
+        : storyLook
+          ? { ...storyLook, ...override?.style }
+          : override?.style
     if (ownStory && !override && !textSource) textSource = "script"
     if (ownText && override) {
       const unit = scriptTextFor("image_post", variant.body)
