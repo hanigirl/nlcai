@@ -227,7 +227,8 @@ export type QueuePanelProps = {
  */
 export type QueueApprovalMode = {
   variant: "a" | "b"
-  isApproved: (corePostId: string, format: FormatId) => boolean
+  /** `mediaUrl`: the card's media now — an approval given to other media doesn't count. */
+  isApproved: (corePostId: string, format: FormatId, mediaUrl?: string) => boolean
   /** Variant B — approve a pending format from inside the rail. */
   onApprove?: (corePostId: string, format: FormatId) => void
   /** Variant A — where the "ממתינים לאישור" row sends the user. */
@@ -505,10 +506,10 @@ export function QueuePanel({
       : readyCards
     return {
       approvedCards: live.filter((c) =>
-        approval.isApproved(c.corePostId, c.format),
+        approval.isApproved(c.corePostId, c.format, c.mediaUrl),
       ),
       pendingCards: live.filter(
-        (c) => !approval.isApproved(c.corePostId, c.format),
+        (c) => !approval.isApproved(c.corePostId, c.format, c.mediaUrl),
       ),
     }
   }, [approval, readyCards])

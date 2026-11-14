@@ -527,6 +527,8 @@ function ProjectPageInner() {
   const prevCarouselSigRef = useRef<string>("")
   /** The slide set as decoded on open — already saved, never re-saved. */
   const hydratedCarouselRef = useRef<string[] | null>(null)
+  /** The stored URLs that set was decoded from — the approval signs these. */
+  const hydratedCarouselUrlsRef = useRef<string[] | null>(null)
   const applyAgentCarousel = useCallback((url: string, urls?: string[]) => setCarouselImages(urls?.length ? urls : [url]), [])
   useFollowEditAgentRun(savedPostId, "carousel", editAgentOn, applyAgentCarousel)
   // Per-format "media is being made" — drives the skeleton card on the canvas.
@@ -544,7 +546,13 @@ function ProjectPageInner() {
     ...(storyVideoUrl && !(storyImages ?? []).includes(storyVideoUrl) ? [storyVideoUrl] : []),
   ]
   const approvalMediaSigs: Record<string, string> = {
-    carousel: mediaSignature(carouselImages ?? []),
+    // The set decoded on open is the same media as its stored URLs: sign the
+    // URLs, so opening the post (URLs first, then the decoded bytes) doesn't
+    // read as an edit that withdraws the approval — and the calendar can
+    // check the approval against the slides it sees.
+    carousel: mediaSignature(
+      (carouselImages && carouselImages === hydratedCarouselRef.current ? hydratedCarouselUrlsRef.current : carouselImages) ?? [],
+    ),
     story: mediaSignature(storyFrames),
     image_post: mediaSignature([imagePostUrl]),
     talking_head: mediaSignature([thVideoUrl]),
@@ -1156,6 +1164,7 @@ function ProjectPageInner() {
                 // so the signature alone let this through — a 10MB+ re-save
                 // of the whole set on every open, which failed.)
                 hydratedCarouselRef.current = b64s
+                hydratedCarouselUrlsRef.current = urls
                 setCarouselImages(b64s)
               })
               .catch((err) => {

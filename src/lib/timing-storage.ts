@@ -909,6 +909,37 @@ export function revokeFormatApproval(corePostId: string, format: FormatId): void
   })
 }
 
+/**
+ * Formats the media edit chat / panel change in place. Their approval is
+ * checked against the media the calendar sees now (`isApprovalCurrent`).
+ * Talking head is left out: its playable URL can come from the post itself,
+ * not the media row the calendar reads.
+ */
+const SIG_CHECKED_FORMATS: FormatId[] = ["carousel", "story", "image_post", "b_roll"]
+
+/**
+ * Approved, AND for the exact media that is there now (P0, 2026-11-13: media
+ * reached the calendar without "אישור"). The canvas withdraws a stale
+ * approval only while it is open; a change made elsewhere — the edit chat
+ * finishing after she left, another page — kept the old approval, and the
+ * calendar offered the new media as approved. `currentUrl` is the format's
+ * canonical media URL as the calendar reads it: an approval whose signature
+ * doesn't contain it was given to other media.
+ */
+export function isApprovalCurrent(
+  corePostId: string,
+  format: FormatId,
+  currentUrl: string | null | undefined,
+): boolean {
+  const slice = getCorePostMeta(corePostId).byFormat?.[format]
+  if (!slice?.approvedAt) return false
+  const sig = slice.approvedMediaSig ?? ""
+  // Nothing to compare: an approval signed before signatures, or over media
+  // still held as bytes (a fresh, not yet reopened carousel).
+  if (!/https?:\/\//.test(sig) || !currentUrl || !SIG_CHECKED_FORMATS.includes(format)) return true
+  return sig.split("|").includes(currentUrl)
+}
+
 /** Is this (post, format) approved? Per-format only — no post-level fallback. */
 export function isFormatApproved(corePostId: string, format: FormatId): boolean {
   return !!getCorePostMeta(corePostId).byFormat?.[format]?.approvedAt

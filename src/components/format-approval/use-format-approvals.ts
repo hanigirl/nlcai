@@ -15,9 +15,10 @@
  *   approved  → approved, and the media is still the one that was approved
  *   edited    → was approved, then the media changed → approval withdrawn
  *
- * A format already on the calendar is the exception (Hani, 2026-10-29, her
- * account only for now): editing it keeps it approved for the new media and
- * takes it off the calendar, so it reads "מאושר" again and she schedules it anew.
+ * A format already on the calendar (gated accounts): editing it takes it off
+ * the calendar and withdraws the approval like any other edit — the new media
+ * needs its own "אישור" before it can be scheduled (P0, 2026-11-13; it used to
+ * stay approved for the new media, 2026-10-29).
  *
  * `persist` writes approvals to timing-storage (the same store the calendar
  * reads for scheduled / published). The design-review harness runs with
@@ -105,30 +106,24 @@ export function useFormatApprovals({
       return now !== "" && now !== e.sig
     })
     if (stale.length === 0) return
-    // Edited while on the calendar: stays approved for the new media and comes
-    // off the board, back to "מאושר" (her account only for now).
-    const rescheduled = previewOn ? stale.filter(([f]) => scheduled[f]).map(([f]) => f) : []
-    if (rescheduled.length > 0) {
-      const now = new Date().toISOString()
-      setEntries((prev) => {
-        const next = { ...prev }
-        for (const f of rescheduled) next[f] = { approvedAt: now, sig: mediaSigs[f] ?? "" }
-        return next
-      })
+    // Edited while on the calendar: comes off the board AND waits for a new
+    // "אישור" — media she never approved must not reach scheduling (P0,
+    // Nataliya 2026-11-13). Until then it was re-approved automatically for
+    // the new media (2026-10-29), which put unapproved media on the calendar
+    // through "תזמון הכל". Gated accounts only, as before.
+    const offBoard = previewOn ? stale.filter(([f]) => scheduled[f]).map(([f]) => f) : []
+    if (offBoard.length > 0) {
       setScheduled((prev) => {
         const next = { ...prev }
-        for (const f of rescheduled) next[f] = false
+        for (const f of offBoard) next[f] = false
         return next
       })
       if (persist && postId) {
-        for (const f of rescheduled) {
-          approveFormat(postId, f as FormatId, mediaSigs[f] ?? "")
-          unschedulePost(postId, f as FormatId)
-        }
-        toast.success("השינוי נשמר. הפוסט ירד מהלוח ומאושר לתזמון מחדש.")
+        for (const f of offBoard) unschedulePost(postId, f as FormatId)
+        toast.success("השינוי נשמר. הפוסט ירד מהלוח. אשרו אותו שוב כדי לתזמן.")
       }
     }
-    const withdrawn = stale.filter(([f]) => !rescheduled.includes(f))
+    const withdrawn = stale
     if (withdrawn.length === 0) return
     setEntries((prev) => {
       const next = { ...prev }

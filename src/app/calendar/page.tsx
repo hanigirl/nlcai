@@ -84,7 +84,7 @@ import {
 import {
   DEFAULT_SCHEDULED_TIME,
   TIMING_KEYS,
-  getFormatMeta,
+  isApprovalCurrent,
   getPublishedMap,
   getScheduledPosts,
   markPublished,
@@ -770,8 +770,10 @@ export default function CalendarPage() {
     if (!schedulingOn) return undefined
     return {
       variant: "a",
-      isApproved: (corePostId, format) =>
-        !!getFormatMeta(corePostId, format).approvedAt,
+      // Approved for the media that is there NOW — not an approval left
+      // over from media that has since changed.
+      isApproved: (corePostId, format, mediaUrl) =>
+        isApprovalCurrent(corePostId, format, mediaUrl),
       pendingHref: "/core_posts?status=pending",
     }
   }, [schedulingOn])
