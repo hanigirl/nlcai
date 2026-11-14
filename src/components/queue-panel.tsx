@@ -571,8 +571,30 @@ export function QueuePanel({
   // checked next; noneReady is the residual case (we have unscheduled posts,
   // but none of them pass the readiness bar).
   const noPostsAtAll = !loading && !error && allPosts.length === 0
+  // "All scheduled" only when something really is on the board (or out) and
+  // nothing ready is left — posts with no media at all are "none ready", not
+  // a confetti moment.
+  const anyOnBoard = useMemo(
+    () =>
+      allPosts.some((post) => {
+        const input: ReadinessPostInput = {
+          id: post.corePostId,
+          formats: post.formats,
+          formatsWithMedia: post.formatsWithMedia,
+          hasBody: post.hasBody,
+        }
+        return HEADER_CHIP_FORMATS.some((format) => {
+          const s = getFormatReadiness(input, format)
+          return s === "scheduled" || s === "published"
+        })
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allPosts, scheduledIds, metaTick],
+  )
   const allScheduled =
-    !loading && !error && allPosts.length > 0 && unscheduledAll.length === 0
+    !loading && !error && allPosts.length > 0 && unscheduledAll.length === 0 && anyOnBoard
+  const noneReadyAtAll =
+    !loading && !error && allPosts.length > 0 && unscheduledAll.length === 0 && !anyOnBoard
   const noneReady =
     !loading &&
     !error &&
@@ -788,6 +810,8 @@ export function QueuePanel({
           <EmptyNoPostsState />
         ) : allScheduled ? (
           <EmptyAllScheduledState />
+        ) : noneReadyAtAll ? (
+          <EmptyNoneReadyState count={0} />
         ) : noneReady ? (
           <EmptyNoneReadyState count={unscheduledAll.length} />
         ) : approvalEmpty ? (

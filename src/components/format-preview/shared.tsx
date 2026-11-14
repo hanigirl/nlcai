@@ -71,11 +71,21 @@ export type PublishStatus =
       kind: "failed"
       /** Hebrew, actionable — `publish_error` as written by the bridge. */
       reason: string
-      action: "reconnect" | "retry" | "fix_media"
+      action: FailedAction
     }
   | { kind: "published"; permalink?: string }
   /** The time passed but no "published" signal yet — Ben's "יצא לפרסום". */
   | { kind: "sent" }
+  /** The time passed and it was never handed to a network — nothing went out. */
+  | { kind: "missed" }
+  /** The connection answer isn't in yet — say nothing rather than guess. */
+  | { kind: "loading" }
+
+/** The one next step a failure offers (lib/social/publish-state → actionFor). */
+export type FailedAction = "reconnect" | "retry" | "fix_media" | "pick_time"
+
+/** Every action a status line can fire. */
+export type StatusAction = "connect" | "reconnect" | "retry" | "fix_media" | "pick_time" | "open_post"
 
 export type PreviewSlide = { url: string; type: "image" | "video" }
 
@@ -154,10 +164,11 @@ function formatSlotShort(date: string, time: string): string {
 
 // --- publish status ------------------------------------------------------------
 
-const FAILED_ACTION_LABEL: Record<"reconnect" | "retry" | "fix_media", string> = {
+const FAILED_ACTION_LABEL: Record<FailedAction, string> = {
   reconnect: "חיבור מחדש",
   retry: "ניסיון חוזר",
   fix_media: "עריכה בקנבס",
+  pick_time: "בחירת מועד",
 }
 
 /**
@@ -177,9 +188,10 @@ export function PublishStatusSlot({
   time: string
   /** Which network the status is about — only changes the words. */
   platform?: SocialPlatform
-  /** Fired by the status's own action (connect / retry / open canvas). */
-  onAction: (action: "connect" | "reconnect" | "retry" | "fix_media" | "open_post") => void
+  /** Fired by the status's own action (connect / retry / open canvas / pick a time). */
+  onAction: (action: StatusAction) => void
 }) {
+  if (status.kind === "loading") return null
   const tone =
     status.kind === "failed"
       ? "border-red-80 bg-red-95 dark:bg-red-95/10"
@@ -236,6 +248,12 @@ export function PublishStatusSlot({
         platform === "instagram"
           ? "עוד לא קיבלנו מאינסטגרם אישור שהפוסט עלה."
           : `עוד לא קיבלנו אישור שהפוסט עלה ${inNetwork(platform)}.`
+      break
+    case "missed":
+      icon = <AlertCircle className="size-4 text-text-neutral-default" aria-hidden />
+      title = `לא נשלח לפרסום · ${formatSlotShort(date, time)}`
+      body = "המועד עבר והפוסט לא יצא. בחרו מועד חדש ולחצו ״תזמון פוסט״, או הסירו אותו מהלוח."
+      action = { label: "בחירת מועד", id: "pick_time" }
       break
     case "published":
       icon = <CheckCircle2 className="size-4 text-green-50" aria-hidden />

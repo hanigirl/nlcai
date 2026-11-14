@@ -239,7 +239,7 @@ export function PreviewBar({
           ) : (
             <>
               <p className="text-small-bold text-text-primary-default">
-                סידרנו את הפוסטים שלך על גבי היומן
+                סידרנו את הפוסטים שלכם על גבי היומן
               </p>
               <p className="text-xs-body text-text-neutral-default">
                 הפוסטים סודרו לפי{" "}

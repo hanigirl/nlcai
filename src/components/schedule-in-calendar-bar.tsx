@@ -25,6 +25,7 @@ import { useEffect, useState } from "react"
 import { Calendar, CalendarCheck, CalendarPlus } from "lucide-react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
+import { israelSlotMs } from "@/components/schedule-date-time-picker"
 import {
   TIMING_KEYS,
   getScheduledByPostId,
@@ -178,7 +179,7 @@ export function ScheduleInCalendarBar({ corePostId, hasUploadedMedia = false }: 
                 on a generic calendar view. Per Hani. */}
             <Link href={`/calendar?post_id=${corePostId}`}>
               <CalendarPlus className="size-4" />
-              תיזמון פוסט
+              תזמון פוסט
             </Link>
           </Button>
         </div>
@@ -187,12 +188,10 @@ export function ScheduleInCalendarBar({ corePostId, hasUploadedMedia = false }: 
   )
 }
 
-/** True while the slot's date + time (09:00 when unset) is still in the future. */
+/** True while the slot's date + time (09:00 when unset, Israel time) is still in the future. */
 function isUpcoming(date: string, time: string | null | undefined): boolean {
-  const [y, m, d] = date.split("-").map((n) => parseInt(n, 10))
-  const [hh, mm] = (time ?? "09:00").split(":").map((n) => parseInt(n, 10))
-  if ([y, m, d].some(Number.isNaN)) return false
-  return new Date(y, m - 1, d, hh || 0, mm || 0).getTime() > Date.now()
+  const at = israelSlotMs(date, time ?? "09:00")
+  return Number.isFinite(at) && at > Date.now()
 }
 
 type ScheduledRow = { format: string; date: string; time: string | null }

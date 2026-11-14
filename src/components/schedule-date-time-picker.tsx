@@ -94,6 +94,69 @@ function clampPart(raw: string, max: number): string | null {
   return n > max ? null : String(n).padStart(2, "0")
 }
 
+// --- Israel time ---------------------------------------------------------
+// The board means Israel time, always (lib/social/slot-time): "18:00" is
+// 18:00 in Jerusalem whatever the laptop's zone. These client checks follow
+// the same rule, so a browser set to another zone sees the same "past" and
+// "too soon" the server enforces.
+
+const ISRAEL_TZ = "Asia/Jerusalem"
+
+function israelParts(at: Date): { y: number; m: number; d: number; h: number; min: number; s: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: ISRAEL_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(at)
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value)
+  return { y: get("year"), m: get("month"), d: get("day"), h: get("hour") % 24, min: get("minute"), s: get("second") }
+}
+
+function israelOffsetMs(at: Date): number {
+  const p = israelParts(at)
+  return Date.UTC(p.y, p.m - 1, p.d, p.h, p.min, p.s) - Math.floor(at.getTime() / 1000) * 1000
+}
+
+/** Today's date in Israel, YYYY-MM-DD. */
+export function israelTodayKey(at: Date = new Date()): string {
+  const p = israelParts(at)
+  return `${p.y}-${String(p.m).padStart(2, "0")}-${String(p.d).padStart(2, "0")}`
+}
+
+/** The instant (ms) a board slot — date + "HH:MM" on Israel's clock — stands for. NaN if unreadable. */
+export function israelSlotMs(date: string, time: string): number {
+  const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+  const tm = /^(\d{1,2}):(\d{2})$/.exec(time)
+  if (!dm || !tm) return NaN
+  const asUtc = Date.UTC(Number(dm[1]), Number(dm[2]) - 1, Number(dm[3]), Number(tm[1]), Number(tm[2]))
+  const first = asUtc - israelOffsetMs(new Date(asUtc))
+  return asUtc - israelOffsetMs(new Date(first))
+}
+
+/** The slot's moment (Israel time) has come. */
+export function isIsraelSlotPast(date: string, time: string, now: number = Date.now()): boolean {
+  const at = israelSlotMs(date, time)
+  return Number.isFinite(at) && at <= now
+}
+
+/**
+ * The first half hour on `date` at least 10 minutes ahead (Israel time) —
+ * where a drop onto today lands instead of a time already gone. null when
+ * nothing is left that day.
+ */
+export function nextOpenTimeOn(date: string, now: number = Date.now()): string | null {
+  for (let i = 0; i < 48; i++) {
+    const t = `${String(Math.floor(i / 2)).padStart(2, "0")}:${i % 2 ? "30" : "00"}`
+    if (israelSlotMs(date, t) >= now + 10 * 60_000) return t
+  }
+  return null
+}
+
 /** The provider refuses anything closer than a few minutes; 7 is the tested floor. */
 export const MIN_LEAD_MINUTES = 7
 
@@ -106,9 +169,8 @@ export function checkSlot(date: string, time: string): { ok: true } | { ok: fals
   if (!date || !m || parseInt(m[1], 10) > 23 || parseInt(m[2], 10) > 59) {
     return { ok: false, reason: "שעה לא תקינה" }
   }
-  const at = parseDateKey(date)
-  at.setHours(parseInt(m[1], 10), parseInt(m[2], 10), 0, 0)
-  if (at.getTime() < Date.now() + MIN_LEAD_MINUTES * 60_000) {
+  const at = israelSlotMs(date, time)
+  if (!Number.isFinite(at) || at < Date.now() + MIN_LEAD_MINUTES * 60_000) {
     return { ok: false, reason: `אפשר לתזמן רק לפחות ${MIN_LEAD_MINUTES} דקות קדימה` }
   }
   return { ok: true }
@@ -140,7 +202,7 @@ export function ScheduleDateTimeField({
   disabled?: boolean
 }) {
   // Nothing picked yet → the grid opens on tomorrow, the time on 09:00.
-  const startDate = date || toDateKey(addDays(new Date(), 1))
+  const startDate = date || toDateKey(addDays(parseDateKey(israelTodayKey()), 1))
   const startTime = time || "09:00"
   return (
     <div className="flex flex-col gap-1.5">
@@ -148,6 +210,8 @@ export function ScheduleDateTimeField({
         <PopoverTrigger asChild disabled={disabled}>
           <button
             type="button"
+            // A status's "בחירת מועד" opens this field by id.
+            id={`when-${idBase}`}
             data-invalid={error ? "" : undefined}
             className="flex h-10 w-full items-center gap-2 rounded-xl border border-border-neutral-default bg-bg-surface px-3 text-start text-p text-text-primary-default tabular-nums transition-colors hover:bg-bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60 data-[invalid]:border-red-50"
           >
@@ -234,7 +298,9 @@ function TimeField({
             setHh(v)
             emit(v, mm)
           }}
-          onBlur={() => setHh((v) => clampPart(v, 23) ?? v)}
+          // An invalid part snaps back to the last valid value, so what is
+          // shown is always what gets saved.
+          onBlur={() => setHh((v) => clampPart(v, 23) ?? synced.slice(0, 2))}
           onFocus={(e) => e.target.select()}
           className={box}
         />
@@ -249,7 +315,7 @@ function TimeField({
             setMm(v)
             emit(hh, v)
           }}
-          onBlur={() => setMm((v) => clampPart(v, 59) ?? v)}
+          onBlur={() => setMm((v) => clampPart(v, 59) ?? synced.slice(3, 5))}
           onFocus={(e) => e.target.select()}
           className={box}
         />
@@ -274,7 +340,8 @@ function MiniMonthCalendar({
     return d
   })
 
-  const today = startOfDay(new Date())
+  // Israel's today, not the browser's — the board means Israel time.
+  const today = parseDateKey(israelTodayKey())
 
   // Always 6 rows × 7 cols so the picker height is stable across months.
   const firstOfMonth = new Date(viewMonth)

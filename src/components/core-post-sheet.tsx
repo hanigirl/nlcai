@@ -74,6 +74,7 @@ import {
 import { toast } from "sonner"
 import { copyToClipboard } from "@/lib/copy-to-clipboard"
 import { createClient } from "@/lib/supabase/client"
+import { getCurrentUser } from "@/lib/supabase/current-user"
 import {
   TIMING_KEYS,
   getCorePostMeta,
@@ -535,8 +536,8 @@ export function CorePostSheet({
     setProductsLoading(true)
     setProductsError(null)
     const supabase = createClient()
-    supabase.auth
-      .getUser()
+    // Never getUser() on the client (Web Lock queue → stuck loading).
+    getCurrentUser(supabase)
       .then(async ({ data: { user } }) => {
         if (!user) {
           setProducts([])

@@ -100,6 +100,10 @@ export default function ScheduleFormatPickerTestPage() {
         setGranted(false)
         router.replace("/")
       }
+    }).catch(() => {
+      // No session read — bounce home rather than stay blank.
+      setGranted(false)
+      router.replace("/")
     })
   }, [router])
 
