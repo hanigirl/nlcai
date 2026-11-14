@@ -359,11 +359,63 @@ function forWire(row: ScheduledPost): Omit<ScheduledPost, "publish"> {
  * the Instagram queue and replies with where it landed, which is merged back
  * into the cache so the card can say "תוזמן" — or why not.
  */
+/**
+ * Server writes for one slot run in order, one after the other.
+ *
+ * Fire-and-forget writes could overtake each other: schedule then a quick
+ * "בטלו תזמון" sent a PUT and a DELETE together, the DELETE landed first,
+ * and the PUT re-created the row and queued the post (QA 2026-11-15). Each
+ * write now waits for the previous write on the same slot. A whole-post
+ * write (delete with no format) waits for every slot of that post, and later
+ * writes on any of its slots wait for it.
+ */
+const slotQueues = new Map<string, Promise<unknown>>()
+const wholePostKey = (corePostId: string) => `${corePostId}:*`
+
+function chainWrite<T>(keys: string[], run: () => Promise<T>): Promise<T> {
+  const before = keys.map((k) => slotQueues.get(k)).filter((p): p is Promise<unknown> => !!p)
+  const p = Promise.allSettled(before).then(run)
+  const tail = p.catch(() => undefined)
+  for (const k of keys) slotQueues.set(k, tail)
+  void tail.then(() => {
+    for (const k of keys) if (slotQueues.get(k) === tail) slotQueues.delete(k)
+  })
+  return p
+}
+
+/** The queue keys one slot's write must wait on. */
+const keysForSlot = (corePostId: string, format: string) => [
+  slotKeyOf(corePostId, format as FormatId),
+  wholePostKey(corePostId),
+]
+
+/** Slots whose last save never reached the server. "לנסות שוב" re-saves them. */
+const unsavedSlots = new Set<string>()
+
+const SAVE_FAILED_MESSAGE = "לא הצלחנו לשמור את התזמון. נסו שוב."
+
+/**
+ * Upsert one row or a batch on the server. Fire-and-forget for the caller,
+ * but the answer is not thrown away: the server pushes each written slot to
+ * the Instagram queue and replies with where it landed, which is merged back
+ * into the cache so the card can say "תוזמן" — or why not.
+ */
 function mirrorUpsert(
   rows: ScheduledPost[],
   opts?: { backfill?: boolean; excludeNetworks?: string[]; youtubePrivacy?: string },
 ): void {
-  if (typeof window === "undefined" || rows.length === 0) return
+  void putRows(rows, opts)
+}
+
+/**
+ * The write itself, in its slot's queue. Resolves to the publish states the
+ * server answered with, or null when the save failed (the card then says so).
+ */
+function putRows(
+  rows: ScheduledPost[],
+  opts?: { backfill?: boolean; excludeNetworks?: string[]; youtubePrivacy?: string },
+): Promise<Record<string, PublishState> | null> {
+  if (typeof window === "undefined" || rows.length === 0) return Promise.resolve(null)
   const wire = rows.map((r) => ({
     ...forWire(r),
     ...(opts?.excludeNetworks?.length ? { excludeNetworks: opts.excludeNetworks } : {}),
@@ -373,12 +425,38 @@ function mirrorUpsert(
     rows.length === 1 && !opts?.backfill
       ? wire[0]
       : { rows: wire, ...(opts?.backfill ? { backfill: true } : {}) }
-  void fetch(SCHEDULE_API, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  })
-    .then(async (res) => {
+  const slotKeys = rows.map((r) => slotKeyOf(r.corePostId, r.format))
+
+  // The save failed: never leave the card spinning on "בתהליך" for a row the
+  // server doesn't have (it would just vanish on reload). Mark it failed so
+  // the card says so and its "לנסות שוב" re-saves it.
+  const markUnsaved = () => {
+    if (opts?.backfill) return
+    const failed: PublishState = { status: "failed", code: "provider_error", message: SAVE_FAILED_MESSAGE }
+    const states: Record<string, PublishState> = {}
+    for (const k of slotKeys) {
+      unsavedSlots.add(k)
+      states[k] = failed
+    }
+    applyPublishStates(states)
+    toast.error(SAVE_FAILED_MESSAGE)
+  }
+
+  return chainWrite(
+    rows.flatMap((r) => keysForSlot(r.corePostId, r.format)),
+    async () => {
+      let res: Response
+      try {
+        res = await fetch(SCHEDULE_API, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        })
+      } catch (err) {
+        mirrorFailed("upsert", err)
+        markUnsaved()
+        return null
+      }
       if (!res.ok) {
         mirrorFailed("upsert", res.status)
         // A refused write (e.g. "סומן כפורסם" while its queued post couldn't
@@ -387,15 +465,27 @@ function mirrorUpsert(
           const err = (await res.json().catch(() => null)) as { error?: string } | null
           if (err?.error) toast.error(err.error)
           await syncScheduledFromServer()
+          return null
         }
-        return
+        markUnsaved()
+        return null
       }
+      for (const k of slotKeys) unsavedSlots.delete(k)
       const json = (await res.json().catch(() => null)) as {
         publish?: Record<string, PublishState>
       } | null
-      if (json?.publish) applyPublishStates(json.publish)
-    })
-    .catch((err) => mirrorFailed("upsert", err))
+      const publish = json?.publish ?? {}
+      // A slot we had marked unsaved that the server saved without pushing
+      // anywhere (no networks / not in the release) is plain "on the board".
+      const states: Record<string, PublishState> = { ...publish }
+      for (const k of slotKeys) {
+        const cached = readScheduledRaw().find((r) => slotKeyOf(r.corePostId, r.format) === k)
+        if (!states[k] && cached?.publish?.message === SAVE_FAILED_MESSAGE) states[k] = { status: "idle" }
+      }
+      if (Object.keys(states).length > 0) applyPublishStates(states)
+      return publish
+    },
+  )
 }
 
 /**
@@ -411,15 +501,28 @@ function mirrorDelete(corePostId: string, format?: FormatId): void {
   if (typeof window === "undefined") return
   const qs = new URLSearchParams({ corePostId })
   if (format) qs.set("format", format)
-  void fetch(`${SCHEDULE_API}?${qs.toString()}`, { method: "DELETE" })
-    .then(async (res) => {
+  // In the slot's queue: waits for a PUT still on its way (see chainWrite).
+  // A whole-post delete waits for every slot of the post.
+  const keys = format
+    ? keysForSlot(corePostId, format)
+    : [
+        wholePostKey(corePostId),
+        ...[...slotQueues.keys()].filter((k) => k.startsWith(`${corePostId}:`)),
+      ]
+  void chainWrite(keys, async () => {
+    if (format) unsavedSlots.delete(slotKeyOf(corePostId, format))
+    else for (const k of [...unsavedSlots]) if (k.startsWith(`${corePostId}:`)) unsavedSlots.delete(k)
+    try {
+      const res = await fetch(`${SCHEDULE_API}?${qs.toString()}`, { method: "DELETE" })
       if (res.ok) return
       mirrorFailed("delete", res.status)
       const json = (await res.json().catch(() => null)) as { message?: string } | null
       if (json?.message) toast.error(json.message)
       await syncScheduledFromServer()
-    })
-    .catch((err) => mirrorFailed("delete", err))
+    } catch (err) {
+      mirrorFailed("delete", err)
+    }
+  })
 }
 
 // --- Publish status (the Instagram queue) ---------------------------------
@@ -488,7 +591,17 @@ export async function retryPublish(
   mode: "retry" | "update" = "retry",
 ): Promise<PublishState | undefined> {
   if (typeof window === "undefined") return undefined
-  applyPublishStates({ [slotKeyOf(corePostId, format)]: { status: "pending" } })
+  const key = slotKeyOf(corePostId, format)
+  // The server never got this slot: retrying means saving it again, not
+  // re-pushing a row that isn't there.
+  if (unsavedSlots.has(key)) {
+    const row = getScheduledByPostAndFormat(corePostId, format)
+    if (!row) return undefined
+    applyPublishStates({ [key]: { status: "pending" } })
+    const publish = await putRows([{ ...row, publish: undefined }])
+    return publish ? (getPublishState(corePostId, format) ?? publish[key]) : getPublishState(corePostId, format)
+  }
+  applyPublishStates({ [key]: { status: "pending" } })
   try {
     const res = await fetch(`${SCHEDULE_API}/publish`, {
       method: "POST",

@@ -70,7 +70,9 @@ type WireRow = {
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
-const TIME_RE = /^\d{2}:\d{2}$/
+// A real clock time: hour 00–23, minute 00–59. "25:99" used to pass and
+// reach the provider as whatever slotToInstant made of it.
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function toWire(row: Row): WireRow {
@@ -96,8 +98,11 @@ function parseWire(input: unknown): WireRow | null {
   if (!format) return null
   if (!DATE_RE.test(scheduledDate)) return null
 
-  const rawTime = typeof r.scheduledTime === "string" ? r.scheduledTime : ""
-  const scheduledTime = TIME_RE.test(rawTime) ? rawTime : "09:00"
+  // No time at all falls back to the default hour; a time that is there but
+  // impossible is a bad row, rejected like any other.
+  const rawTime = typeof r.scheduledTime === "string" ? r.scheduledTime.trim() : ""
+  if (rawTime && !TIME_RE.test(rawTime)) return null
+  const scheduledTime = rawTime || "09:00"
   const publishedAt = typeof r.publishedAt === "string" ? r.publishedAt : null
   const hook = typeof r.hook === "string" ? r.hook : undefined
   const excludeNetworks = Array.isArray(r.excludeNetworks)
@@ -175,7 +180,24 @@ export async function PUT(req: NextRequest) {
   // are history, not new decisions — queuing them would publish things she
   // planned months ago and never touched again.
   const isBackfill = raw?.backfill === true
-  const parsed = inputs.map(parseWire).filter((r): r is WireRow => r !== null)
+  const wellFormed = inputs.map(parseWire).filter((r): r is WireRow => r !== null)
+
+  // Only her own posts. A slot is unique on (core_post_id, format) across
+  // all users, so a write for someone else's post id would claim — and block
+  // — that slot for its real owner.
+  const ownIds = new Set<string>()
+  if (wellFormed.length > 0) {
+    const { data: owned, error: ownErr } = await supabase
+      .from("core_posts")
+      .select("id")
+      .eq("user_id", user.id)
+      .in("id", [...new Set(wellFormed.map((r) => r.corePostId))])
+    if (ownErr) {
+      return NextResponse.json({ error: ownErr.message }, { status: 500 })
+    }
+    for (const r of (owned ?? []) as { id: string }[]) ownIds.add(r.id)
+  }
+  const parsed = wellFormed.filter((r) => ownIds.has(r.corePostId))
   const skipped = inputs.length - parsed.length
 
   if (parsed.length === 0) {
@@ -218,7 +240,17 @@ export async function PUT(req: NextRequest) {
       const prev = before.get(slotKey(r.corePostId, r.format))
       if (!r.publishedAt || !prev || prev.published_at) continue
       if (slotToInstant(prev.scheduled_date, prev.scheduled_time ?? "09:00").getTime() <= Date.now()) continue
-      const { stuck } = await cancelSlots(supabase, user.id, { corePostId: r.corePostId, format: r.format })
+      let stuck: unknown[]
+      try {
+        ;({ stuck } = await cancelSlots(supabase, user.id, { corePostId: r.corePostId, format: r.format }))
+      } catch (err) {
+        // Couldn't even read what's queued — refuse rather than guess.
+        console.error("[schedule][PUT] cancel read failed", err)
+        return NextResponse.json(
+          { error: "לא הצלחנו לבדוק את התור, ולכן לא סימנו את הפוסט כפורסם. נסו שוב." },
+          { status: 409 },
+        )
+      }
       if (stuck.length > 0) {
         return NextResponse.json(
           { error: "לא הצלחנו להוציא את הפוסט מהתור, ולכן לא סימנו אותו כפורסם. אפשר לנסות שוב." },
@@ -298,7 +330,21 @@ export async function DELETE(req: NextRequest) {
   // Out of the provider's queue first. A slot that leaves the board while its
   // post is still queued goes out anyway, and she has nowhere left to see it —
   // so anything that can't be cancelled stays on the board, marked.
-  const { stuck } = await cancelSlots(supabase, user.id, { corePostId, format })
+  let stuck: Awaited<ReturnType<typeof cancelSlots>>["stuck"]
+  try {
+    ;({ stuck } = await cancelSlots(supabase, user.id, { corePostId, format }))
+  } catch (err) {
+    // The queue couldn't be read. Deleting now could drop a slot whose post
+    // is still queued, so nothing is deleted and the card comes back.
+    console.error("[schedule][DELETE] cancel read failed", err)
+    return NextResponse.json(
+      {
+        error: "read_failed",
+        message: "לא הצלחנו לבדוק את התור, ולכן התזמון לא בוטל. נסו שוב.",
+      },
+      { status: 500 },
+    )
+  }
 
   let query = supabase
     .from("scheduled_posts")
