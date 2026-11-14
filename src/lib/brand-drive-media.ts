@@ -14,12 +14,16 @@ import { driveFileBytes } from "@/lib/broll-animation/library-media"
 
 export type BrandDriveFormat = "carousel" | "story" | "image_post" | "b_roll"
 
-/** Which of her folders each format reads, first match wins. */
+/**
+ * Which of her folders each format reads, first match wins. "photos" /
+ * "videos" are the one-folder-per-kind settings (Notion #20); the old per-
+ * format folders follow, so what she saved before keeps working.
+ */
 const FOLDERS: Record<BrandDriveFormat, string[]> = {
-  carousel: ["carousel", "images"],
-  story: ["story", "images"],
-  image_post: ["images", "carousel", "story"],
-  b_roll: ["broll"],
+  carousel: ["photos", "carousel", "images"],
+  story: ["photos", "story", "images"],
+  image_post: ["photos", "images", "carousel", "story"],
+  b_roll: ["videos", "broll"],
 }
 
 const RASTER = /\.(jpe?g|png|webp)$/i

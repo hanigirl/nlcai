@@ -19,7 +19,7 @@ import type { ReferenceImages } from "@/components/ai-edit-reference"
 import { onDrivePickerRequest, takeDrivePickerRequest, type AsIsItem } from "@/lib/as-is-upload"
 import {
   DriveThumb,
-  FORMAT_FOLDER,
+  useFormatFolderKey,
   loadDriveFolders,
   refreshDriveFolder,
   useDrivePickStore,
@@ -201,7 +201,8 @@ export function DriveReferenceDialog({
   r: ReferenceImages
   format: string
 }) {
-  const key = FORMAT_FOLDER[format]
+  // One folder for pictures / videos when it's on (Notion #20); else the format's own.
+  const key = useFormatFolderKey(format)
   const folder = useDrivePickStore().folders[key]
   const [picked, setPicked] = useState<DriveMediaItem[]>([])
   const [busy, setBusy] = useState(false)

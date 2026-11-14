@@ -34,7 +34,8 @@ async function brollFolderId(userId: string): Promise<string | null> {
   const folders = (data.user?.user_metadata as Record<string, unknown> | undefined)?.drive_folders as
     | Record<string, { id?: string }>
     | undefined
-  return folders?.broll?.id ?? null
+  // Her videos folder (Notion #20), else the b-roll folder she saved before.
+  return folders?.videos?.id ?? folders?.broll?.id ?? null
 }
 
 async function download(id: string): Promise<Buffer | null> {

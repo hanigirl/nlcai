@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { getAuthUser } from "@/lib/auth-user"
+import { afterGenChoices } from "@/lib/feature-access"
 import {
   listPublicFolder,
   parseFolderLink,
@@ -21,7 +22,10 @@ import {
  * POST { key, link: "" }    → { folder: null }                        (disconnect)
  */
 
-const KEYS = ["broll", "talking", "images", "story", "carousel"] as const
+// "photos" / "videos": one folder for pictures and one for videos (Notion #20,
+// Hani only for now — afterGenChoices). The five per-format keys stay readable.
+const KEYS = ["broll", "talking", "images", "story", "carousel", "photos", "videos"] as const
+const TWO_FOLDER_KEYS: readonly Key[] = ["photos", "videos"]
 type Key = (typeof KEYS)[number]
 type Saved = { link: string; id: string; name: string }
 type Folder = { link: string; name: string; items: DriveFolderListing["items"] } | { link: string; error: DriveFolderError }
@@ -82,6 +86,9 @@ export async function POST(req: NextRequest) {
 
   const { key, link } = (await req.json().catch(() => ({}))) as { key?: unknown; link?: unknown }
   if (!isKey(key)) return NextResponse.json({ error: "bad key" }, { status: 400 })
+  if (TWO_FOLDER_KEYS.includes(key) && !afterGenChoices(user.email)) {
+    return NextResponse.json({ error: "bad key" }, { status: 400 })
+  }
   const saved = await readSaved(user.id)
   const preview = true
 

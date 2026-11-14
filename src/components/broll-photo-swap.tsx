@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { cn } from "@/lib/utils"
 import {
   DriveThumb,
-  FORMAT_FOLDER,
+  useFormatFolderKey,
   loadDriveFolders,
   refreshDriveFolder,
   useDrivePickStore,
@@ -59,7 +59,9 @@ export function BRollPhotoSwapDialog({
   /** The new clip — the card and the panel show it. */
   onSwapped: (url: string) => void
 }) {
-  const folder = useDrivePickStore().folders[FORMAT_FOLDER.b_roll]
+  // The videos folder when the two folders are on (Notion #20); else the b-roll one.
+  const bKey = useFormatFolderKey("b_roll")
+  const folder = useDrivePickStore().folders[bKey]
   const [picked, setPicked] = useState<DriveMediaItem | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -67,8 +69,8 @@ export function BRollPhotoSwapDialog({
 
   useEffect(() => {
     if (!open) return
-    void loadDriveFolders().then(() => refreshDriveFolder(FORMAT_FOLDER.b_roll))
-  }, [open])
+    void loadDriveFolders().then(() => refreshDriveFolder(bKey))
+  }, [open, bKey])
 
   const swap = async (body: { driveId: string; kind: "image" | "video" } | { image: string } | { video: string }) => {
     if (!postId) return

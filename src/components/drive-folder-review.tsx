@@ -32,14 +32,20 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { cn } from "@/lib/utils"
-import { previewAccessNow, usePreviewAccess, usePreviewAccessShared } from "@/lib/use-scheduling-access"
+import { previewAccessNow, useAfterGenChoices, usePreviewAccess, usePreviewAccessShared } from "@/lib/use-scheduling-access"
 import { parseTextToSlides } from "@/lib/carousel-slides"
 
 /* ================================================================ types */
 
 export type DrivePickVariant = "a" | "b"
 
-export type FolderKey = "broll" | "talking" | "images" | "story" | "carousel"
+/**
+ * "photos" / "videos": one folder for pictures and one for videos instead of
+ * one per format (Notion #20, Hani only — useAfterGenChoices). The five per-
+ * format folders stay readable: a format without the new folder still uses
+ * its old one (formatFolderKey; server: lib/brand-drive-media FOLDERS).
+ */
+export type FolderKey = "broll" | "talking" | "images" | "story" | "carousel" | "photos" | "videos"
 
 export type DriveMediaItem = MediaItem
 type MediaItem = {
@@ -93,9 +99,15 @@ const FOLDER_META: Record<FolderKey, { label: string; driveName: string; kindLab
   images: { label: "תמונות", driveName: "תמונות לפוסטים", kindLabel: "תמונות לפוסט תמונה" },
   story: { label: "סטורי", driveName: "סטוריז", kindLabel: "תמונות וסרטונים אנכיים" },
   carousel: { label: "קרוסלות", driveName: "שקופיות לקרוסלה", kindLabel: "תמונות לשקופיות" },
+  photos: { label: "תמונות", driveName: "תמונות", kindLabel: "לקרוסלה, לסטורי ולפוסט תמונה" },
+  videos: { label: "סרטונים", driveName: "סרטונים", kindLabel: "לבי-רול ולדיבור למצלמה" },
 }
 
 const FOLDER_ORDER: FolderKey[] = ["broll", "talking", "images", "story", "carousel"]
+/** The two folders that replace the five (Notion #20). */
+const TWO_FOLDERS: FolderKey[] = ["photos", "videos"]
+/** Every key the store keeps — the old five are still read as a fallback. */
+const ALL_FOLDERS: FolderKey[] = [...FOLDER_ORDER, ...TWO_FOLDERS]
 
 export const FORMAT_FOLDER: Record<string, FolderKey> = {
   b_roll: "broll",
@@ -103,6 +115,25 @@ export const FORMAT_FOLDER: Record<string, FolderKey> = {
   image_post: "images",
   story: "story",
   carousel: "carousel",
+}
+
+/**
+ * Which of her folders a format's gallery shows. With the two folders on:
+ * pictures for carousel / story / image post, videos for b-roll and talking
+ * head — unless she hasn't connected that one yet and still has the format's
+ * old folder, which keeps working.
+ */
+export function formatFolderKey(format: string, folders: Record<FolderKey, { status: string }>, two: boolean): FolderKey {
+  const legacy = FORMAT_FOLDER[format] ?? "images"
+  if (!two) return legacy
+  const kind: FolderKey = format === "b_roll" || format === "talking_head" ? "videos" : "photos"
+  if (folders[kind].status === "unset" && folders[legacy].status !== "unset") return legacy
+  return kind
+}
+
+export function useFormatFolderKey(format: string): FolderKey {
+  const two = useAfterGenChoices() === true
+  return formatFolderKey(format, useDrivePickStore().folders, two)
 }
 
 const unset = (): Folder => ({ status: "unset", link: "", name: "", items: [], error: null, editorLink: false })
@@ -118,7 +149,7 @@ const countLabel = (format: string, n: number) =>
 /* ================================================================ store */
 
 let store: Store = {
-  folders: Object.fromEntries(FOLDER_ORDER.map((k) => [k, unset()])) as Record<FolderKey, Folder>,
+  folders: Object.fromEntries(ALL_FOLDERS.map((k) => [k, unset()])) as Record<FolderKey, Folder>,
   pickerFor: null,
   forceLoading: false,
   picked: {},
@@ -254,7 +285,7 @@ function previewFolder(k: FolderKey, state: DrivePreviewState): Folder {
   if (state === "nofolder") return unset()
   if (state === "noaccess") return { ...unset(), status: "error", link, error: "not_public" }
   // Story and carousel folders mix in one clip (what she has in real folders).
-  const isVideo = (i: number) => k === "broll" || k === "talking" || ((k === "story" || k === "carousel") && i === 0)
+  const isVideo = (i: number) => k === "broll" || k === "talking" || k === "videos" || ((k === "story" || k === "carousel") && i === 0)
   const items: MediaItem[] =
     state === "empty"
       ? []
@@ -271,25 +302,25 @@ function previewFolder(k: FolderKey, state: DrivePreviewState): Folder {
 export function setDrivePreviewState(state: DrivePreviewState) {
   previewOnly = true
   loadedOnce = Promise.resolve()
-  const folders = Object.fromEntries(FOLDER_ORDER.map((k) => [k, previewFolder(k, state)])) as Record<FolderKey, Folder>
+  const folders = Object.fromEntries(ALL_FOLDERS.map((k) => [k, previewFolder(k, state)])) as Record<FolderKey, Folder>
   set({ folders, picked: {}, importing: null, importProgress: "" })
 }
 
 /** Her saved folders, listed live. Once per page load; `force` re-reads. */
 export function loadDriveFolders(force = false): Promise<void> {
   if (loadedOnce && !force) return loadedOnce
-  FOLDER_ORDER.forEach((k) => {
+  ALL_FOLDERS.forEach((k) => {
     if (store.folders[k].status === "unset") setFolder(k, { status: "checking" })
   })
   loadedOnce = fetch("/api/drive-folders")
     .then((r) => r.json())
     .then((d: { folders?: Record<FolderKey, ApiFolder | null> }) => {
       const next = { ...store.folders }
-      for (const k of FOLDER_ORDER) next[k] = fromApi(d.folders?.[k] ?? null)
+      for (const k of ALL_FOLDERS) next[k] = fromApi(d.folders?.[k] ?? null)
       set({ folders: next })
     })
     .catch(() => {
-      FOLDER_ORDER.forEach((k) => {
+      ALL_FOLDERS.forEach((k) => {
         if (store.folders[k].status === "checking") setFolder(k, unset())
       })
       loadedOnce = null
@@ -475,8 +506,20 @@ export function DriveFoldersSettings() {
   useEffect(() => {
     void loadDriveFolders()
   }, [])
+  // One folder for pictures and one for videos (Notion #20, Hani only).
+  const two = useAfterGenChoices() === true
+  const order = two ? TWO_FOLDERS : FOLDER_ORDER
   const [open, setOpen] = useState<FolderKey | null>("images")
-  const connectedCount = FOLDER_ORDER.filter((k) => s.folders[k].status === "connected").length
+  const openKey = two && open === "images" ? "photos" : open
+  const connectedCount = order.filter((k) => s.folders[k].status === "connected").length
+  // Old per-format folders still in use where the new one isn't connected yet.
+  const legacyInUse = two
+    ? FOLDER_ORDER.filter((k) => {
+        if (s.folders[k].status === "unset") return false
+        const kind: FolderKey = k === "broll" || k === "talking" ? "videos" : "photos"
+        return s.folders[kind].status === "unset"
+      })
+    : []
 
   return (
     <div className="flex flex-col gap-5">
@@ -486,18 +529,26 @@ export function DriveFoldersSettings() {
           מדיה מ-Google Drive
         </h3>
         <p className="text-small text-text-neutral-default">
-          חברו תיקייה אחת לכל סוג מדיה. בקנבס תראו את מה שיש בה ותבחרו בלחיצה — בלי להדביק קישור לכל קובץ.
+          {two
+            ? "חברו תיקייה אחת לתמונות ותיקייה אחת לסרטונים. בקנבס תראו את מה שיש בהן ותבחרו בלחיצה — בלי להדביק קישור לכל קובץ."
+            : "חברו תיקייה אחת לכל סוג מדיה. בקנבס תראו את מה שיש בה ותבחרו בלחיצה — בלי להדביק קישור לכל קובץ."}
         </p>
         <p className="text-xs-body text-text-neutral-default">
-          {connectedCount} מתוך {FOLDER_ORDER.length} תיקיות מחוברות
+          {connectedCount} מתוך {order.length} תיקיות מחוברות
         </p>
       </div>
 
       <div className="flex flex-col gap-3">
-        {FOLDER_ORDER.map((k) => (
-          <FolderRow key={k} folderKey={k} open={open === k} onOpenChange={(o) => setOpen(o ? k : null)} />
+        {order.map((k) => (
+          <FolderRow key={k} folderKey={k} open={openKey === k} onOpenChange={(o) => setOpen(o ? k : null)} />
         ))}
       </div>
+
+      {legacyInUse.length > 0 && (
+        <p className="text-xs-body text-text-neutral-default">
+          עד שתחברו כאן תיקייה, ממשיכים להשתמש בתיקיות שחיברתם קודם ל{legacyInUse.map((k) => FOLDER_META[k].label).join(", ")}.
+        </p>
+      )}
 
       <details className="group rounded-xl bg-bg-surface px-4 py-3 text-xs-body text-text-neutral-default">
         <summary className="cursor-pointer list-none font-semibold text-text-primary-default [&::-webkit-details-marker]:hidden">
@@ -685,7 +736,7 @@ export function DriveFolderEntry({
   error?: string | null
 }) {
   const s = useDrivePickStore()
-  const k = FORMAT_FOLDER[format] ?? "images"
+  const k = useFormatFolderKey(format)
   // Hani's preview batch (2026-10-29): pull status/error here, re-read on focus.
   const preview = usePreviewAccess() === true
   useEffect(() => {
@@ -877,6 +928,8 @@ const FOLDER_FORMAT: Record<FolderKey, string> = {
   images: "image_post",
   story: "story",
   carousel: "carousel",
+  photos: "image_post",
+  videos: "b_roll",
 }
 const tileFor = (format: string) =>
   TALL_FORMATS.has(format) ? "aspect-[9/16]" : "aspect-[4/5]"
@@ -982,7 +1035,7 @@ export function DriveFolderPicker({
   maxPicks?: number
 }) {
   const s = useDrivePickStore()
-  const k = FORMAT_FOLDER[format] ?? "images"
+  const k = useFormatFolderKey(format)
   const f = s.folders[k]
   const meta = FOLDER_META[k]
   // Hani's preview batch (2026-10-29): re-read on focus, a real refresh.
