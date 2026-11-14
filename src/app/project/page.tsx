@@ -2639,6 +2639,7 @@ function ProjectPageInner() {
                     onAiEditMedia={onAiEditMedia}
                     onDeleteMedia={onDeleteMedia}
                     storyPlayer={ownTextGate}
+                    expandable={qaCopy}
                   />
                 }
                 cover={thCoverImage}
@@ -2675,6 +2676,7 @@ function ProjectPageInner() {
                     : undefined
                 }
                 storyPlayer={ownTextGate}
+                expandable={qaCopy}
               />
             ),
         }

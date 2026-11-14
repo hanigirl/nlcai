@@ -36,6 +36,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { IconActionButton } from "@/components/icon-action-button"
 import { HoverMediaIconButton, MediaPreviewZone } from "@/components/media-preview-zone"
@@ -600,7 +601,10 @@ export function FormatPanelMedia({
   crop,
   storyPlayer = false,
   origin,
+  expandable = false,
 }: {
+  /** "הגדלה" on the media opens it large in a dialog (launch call 2026-11-13, gated by the page). */
+  expandable?: boolean
   /**
    * How the media was made, in gray under it (launch call with Nataliya,
    * 2026-11-13): "נוצר לפי מדיה קיימת מהדרייב" / "נוצר לפי שפת המותג שלך".
@@ -630,6 +634,7 @@ export function FormatPanelMedia({
 }) {
   const [slide, setSlide] = useState(0)
   const [cropping, setCropping] = useState<number | null>(null)
+  const [expanded, setExpanded] = useState(false)
   if (mediaBusy || !media) {
     return (
       <div className="flex flex-col items-center gap-2">
@@ -660,6 +665,7 @@ export function FormatPanelMedia({
       aiClassName={media.kind === "slides" && media.items.length > 1 ? "bottom-11" : undefined}
       onDelete={onDeleteMedia}
       onSwapPhoto={onSwapPhoto}
+      onExpand={expandable ? () => setExpanded(true) : undefined}
       className="w-full"
     >
       {storyPlayer && fid === "story" ? (
@@ -672,13 +678,33 @@ export function FormatPanelMedia({
       )}
     </MediaPreviewZone>
   )
+  const tall = (MEDIA_ASPECT[fid] ?? "aspect-[4/5]") === "aspect-[9/16]"
+  const large = expandable ? (
+    <Dialog open={expanded} onOpenChange={setExpanded}>
+      <DialogContent dir="rtl" className="w-fit max-w-[95vw] p-4 sm:max-w-[95vw]">
+        <DialogTitle className="sr-only">המדיה בגדול</DialogTitle>
+        {/* Sized by the screen's height, in the format's own shape. */}
+        <div className={tall ? "w-[min(85vw,calc(80vh*9/16))]" : "w-[min(85vw,calc(80vh*4/5))]"}>
+          {storyPlayer && fid === "story" ? (
+            <StoryPlayer
+              frames={media.kind === "slides" ? media.items : [media.url]}
+              className="w-full aspect-[9/16] rounded-xl"
+            />
+          ) : (
+            <FormatMediaPreview media={media} fid={fid} />
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  ) : null
   const originLine = origin ? <p className="text-xs-body text-text-neutral-default">{origin}</p> : null
   if (!onSwapPhoto) {
-    if (!originLine) return zone
+    if (!originLine && !large) return zone
     return (
       <div className="flex flex-col items-center gap-2">
         {zone}
         {originLine}
+        {large}
       </div>
     )
   }
@@ -687,6 +713,7 @@ export function FormatPanelMedia({
     <div className="flex flex-col items-center gap-2">
       {zone}
       {originLine}
+      {large}
       <button
         type="button"
         onClick={onSwapPhoto}

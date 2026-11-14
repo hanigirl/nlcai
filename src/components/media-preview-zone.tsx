@@ -1,7 +1,7 @@
 "use client"
 
 import type { ReactNode } from "react"
-import { ImageIcon, Trash2, type LucideIcon, Crop } from "lucide-react"
+import { ImageIcon, Trash2, type LucideIcon, Crop, Maximize2 } from "lucide-react"
 import { TooltipLabel } from "@/components/ui/tooltip"
 import { AI_HOVER_ZONE, AiHoverEditButton } from "@/components/ai-hover-edit"
 import { cn } from "@/lib/utils"
@@ -34,9 +34,12 @@ export function MediaPreviewZone({
   deleteLabel = "מחיקת המדיה",
   onSwapPhoto,
   onCrop,
+  onExpand,
   className,
   children,
 }: {
+  /** Present = "הגדלה" — the media opened large in a dialog (launch call 2026-11-13). */
+  onExpand?: () => void
   /** Present = "חיתוך התמונה" at the top corner (her own picture, Hani 2026-11-11). */
   onCrop?: () => void
   /**
@@ -78,6 +81,16 @@ export function MediaPreviewZone({
       )}
       {onSwapPhoto && (
         <HoverMediaIconButton label="הוספת תמונה או סרטון משלכם" icon={ImageIcon} onClick={onSwapPhoto} visible className="top-2 end-2" />
+      )}
+      {onExpand && (
+        <HoverMediaIconButton
+          label="הגדלה"
+          icon={Maximize2}
+          onClick={onExpand}
+          visible
+          // The top corners are taken by החלפת תמונה / חיתוך when they're offered.
+          className={onSwapPhoto ? (onCrop ? "top-12 end-2" : "top-2 start-2") : "top-2 end-2"}
+        />
       )}
       {onCrop && (
         <HoverMediaIconButton label="חיתוך התמונה" icon={Crop} onClick={onCrop} visible className="top-2 start-2" />
