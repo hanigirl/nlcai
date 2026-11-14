@@ -24,7 +24,8 @@ import {
 
   unfilledSlots,
 } from "@/components/calendar-routine"
-import { defaultPostingSchedule, effectiveDaySlots, slotsForDate, type PostingSchedule } from "@/lib/posting-schedule"
+import { defaultPostingSchedule, effectiveDaySlots, slotsForWeekday, type PostingSchedule } from "@/lib/posting-schedule"
+import { dateKeyWeekday } from "@/lib/israel-time"
 import { AppShell } from "@/components/app-shell"
 import { FORMAT_LABELS } from "@/components/format-status-chip"
 import { defaultDescription } from "@/lib/default-description"
@@ -862,6 +863,17 @@ export default function CalendarPage() {
   // which places nothing (the notice above the rail says why). The default
   // only when she never saved anything.
   const arrangeRoutine = routine.hasCustom ? routine.saved : defaultPostingSchedule()
+  // Cards the planner found no free slot for (daily cap, day gap, format gap)
+  // — said out loud, never dropped silently (QA 2026-11-15).
+  const reportNoRoom = (n: number, openSettings: () => void) => {
+    if (n === 0) return
+    toast(
+      n === 1
+        ? "פוסט אחד לא נכנס ללוח: אין לו משבצת פנויה לפי הגדרות התזמון"
+        : `${n} פוסטים לא נכנסו ללוח: אין להם משבצת פנויה לפי הגדרות התזמון`,
+      { action: { label: "הגדרות תזמון", onClick: openSettings } },
+    )
+  }
   const onArrange = () => {
     if (scheduleAllA) {
       // No settings on the board: her saved routine, or the default one.
@@ -871,6 +883,8 @@ export default function CalendarPage() {
           toast("אין ימי פרסום בהגדרות התזמון, ולכן לא סידרנו כלום", {
             action: { label: "הגדרות תזמון", onClick: () => setScheduleSettingsOpen(true) },
           })
+        } else if (plan.noRoom.length > 0) {
+          reportNoRoom(plan.noRoom.length, () => setScheduleSettingsOpen(true))
         } else {
           toast("לפורמטים שנשארו אין משבצת פנויה בלו״ז")
         }
@@ -879,6 +893,7 @@ export default function CalendarPage() {
       arrangedAtRef.current = Date.now()
       setPlanned(plan.placed)
       setPlannedUnmatched(plan.unmatched)
+      reportNoRoom(plan.noRoom.length, () => setScheduleSettingsOpen(true))
       const sorted = [...plan.placed].sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate))
       const first = sorted[0]
       if (first) {
@@ -900,6 +915,7 @@ export default function CalendarPage() {
     }
     setPlanned(plan.placed)
     setPlannedUnmatched(plan.unmatched)
+    reportNoRoom(plan.noRoom.length, () => startRoutineEdit())
     // Land on the week the first post goes out.
     const first = [...plan.placed].sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate))[0]
     if (first) {
@@ -2001,7 +2017,7 @@ export default function CalendarPage() {
                         routine.hasCustom &&
                         !past &&
                         unfilledSlots(
-                          slotsForDate(routine.saved, day),
+                          slotsForWeekday(routine.saved, dateKeyWeekday(dayKey)),
                           [
                             ...dayPosts.map((p) => p.format),
                             ...(plannedByDay.get(dayKey) ?? []).map((p) => p.format),
