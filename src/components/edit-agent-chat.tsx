@@ -41,6 +41,8 @@ type Msg = {
   error?: boolean
   /** The change as a lasting preference — "זכור לעתיד" saves it to her visual preferences. */
   remember?: string
+  /** "חזרה לגרסה הקודמת" puts back the media from before this reply's change. */
+  undo?: string[]
 }
 type Job = { id: string; status: "running" | "asking" | "done" | "failed"; progress: string; outcome?: { url?: string; urls?: string[]; changed?: boolean } | null }
 
@@ -139,7 +141,13 @@ export function EditAgentChat({
   onMediaChanged,
   own = false,
   askAddMedia = false,
+  afterGenerate = false,
 }: {
+  /**
+   * Opened right after a generation (Hani, 2026-11-14): the chat stays open
+   * with "להחליף מדיה" and "להסיר תמונות, טקסט בלבד".
+   */
+  afterGenerate?: boolean
   /**
    * Opened from "רוצים לשלב תמונה או סרטון משלכם בעיצוב הזה?" (Hani,
    * 2026-11-12): the chat asks which one, with the two ways to bring it in.
@@ -167,11 +175,13 @@ export function EditAgentChat({
   const pickRef = useRef<{ computer: () => void; drive: () => void } | null>(null)
   // The question asked here, not by the server — gone once she attaches one.
   const [addAsk, setAddAsk] = useState(askAddMedia)
+  const [genAsk, setGenAsk] = useState(afterGenerate)
+  const [replacing, setReplacing] = useState(false)
   useEffect(() => {
     if (!addAsk || !refs.refs.length) return
     setAddAsk(false)
-    setInput((t) => t || "לשלב את זה בעיצוב")
-  }, [addAsk, refs.refs.length])
+    setInput((t) => t || (replacing ? "להחליף את התמונה בעיצוב בזו" : "לשלב את זה בעיצוב"))
+  }, [addAsk, refs.refs.length, replacing])
 
   const busy = sending || job?.status === "running"
 
@@ -266,6 +276,23 @@ export function EditAgentChat({
     }
   }
 
+  const undo = async () => {
+    setSending(true)
+    try {
+      const res = await fetch("/api/edit-agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId, format, action: "undo" }),
+      })
+      const data = (await res.json().catch(() => ({}))) as { jobId?: string; message?: string }
+      if (!res.ok && data.message) setMessages((m) => [...m, { role: "assistant", text: data.message!, error: true }])
+      if (data.jobId) window.dispatchEvent(new CustomEvent(EDIT_AGENT_STARTED, { detail: { postId, format } }))
+      await refresh()
+    } finally {
+      setSending(false)
+    }
+  }
+
   const startOver = async () => {
     await fetch("/api/edit-agent", {
       method: "POST",
@@ -279,7 +306,7 @@ export function EditAgentChat({
   const last = messages[messages.length - 1]
   const askNow = !busy && last?.role === "assistant" && !!last.options?.length
   // Buttons on screen → they are the answer; the send button waits (Hani, 2026-11-12).
-  const choosing = askNow || (addAsk && !busy)
+  const choosing = askNow || ((addAsk || genAsk) && !busy)
 
   return (
     <div
@@ -313,7 +340,7 @@ export function EditAgentChat({
           </div>
         ) : (
           <>
-            {messages.length === 0 && !addAsk && (
+            {messages.length === 0 && !addAsk && !genAsk && (
               <div className="flex flex-col items-end">
                 <div className="max-w-[85%] rounded-2xl rounded-se-sm bg-bg-surface px-3 py-2 text-small leading-relaxed text-text-primary-default">
                   {format === "story" ? STORY_GREETING : format === "image_post" ? IMAGE_POST_GREETING : format === "carousel" ? CAROUSEL_GREETING : own ? OWN_GREETING : GREETING}
@@ -336,10 +363,20 @@ export function EditAgentChat({
                 </div>
                 {/* Her change becomes a rule for next time (Hani, 2026-11-10): saved to
                     Settings → העדפות ויזואליות, read by every future generation. */}
-                {!busy && m.role === "assistant" && !!m.remember && i === messages.length - 1 && (
-                  <Button size="sm" className="h-7 rounded-full px-3 text-xs-body font-normal" onClick={() => void send("זכור לעתיד", m.remember)}>
-                    זכור לעתיד
-                  </Button>
+                {!busy && m.role === "assistant" && i === messages.length - 1 && (!!m.remember || !!m.undo?.length) && (
+                  <div className="flex flex-wrap justify-end gap-1.5">
+                    {!!m.remember && (
+                      <Button size="sm" className="h-7 rounded-full px-3 text-xs-body font-normal" onClick={() => void send("זכור לעתיד", m.remember)}>
+                        זכור לעתיד
+                      </Button>
+                    )}
+                    {/* Back to the version before this change (Hani, 2026-11-14). */}
+                    {!!m.undo?.length && (
+                      <Button size="sm" variant="outline" className="h-7 rounded-full px-3 text-xs-body font-normal" onClick={() => void undo()}>
+                        חזרה לגרסה הקודמת
+                      </Button>
+                    )}
+                  </div>
                 )}
                 {askNow && i === messages.length - 1 && (
                   <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5" role="group" aria-label="בחירה">
@@ -352,10 +389,36 @@ export function EditAgentChat({
                 )}
               </div>
             ))}
+            {genAsk && !busy && !addAsk && (
+              <div className="flex flex-col items-end gap-1.5">
+                <div className="max-w-[85%] rounded-2xl rounded-se-sm bg-bg-surface px-3 py-2 text-small leading-relaxed text-text-primary-default">
+                  רוצים לשנות משהו במדיה?
+                </div>
+                <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5" role="group" aria-label="בחירה">
+                  <Chip
+                    onClick={() => {
+                      setGenAsk(false)
+                      setReplacing(true)
+                      setAddAsk(true)
+                    }}
+                  >
+                    להחליף מדיה
+                  </Chip>
+                  <Chip
+                    onClick={() => {
+                      setGenAsk(false)
+                      void send("להסיר את כל התמונות והצילומים, ולהשאיר רק טקסט, צבעים ואלמנטים של שפת המותג")
+                    }}
+                  >
+                    להסיר תמונות, טקסט בלבד
+                  </Chip>
+                </div>
+              </div>
+            )}
             {addAsk && !busy && (
               <div className="flex flex-col items-end gap-1.5">
                 <div className="max-w-[85%] rounded-2xl rounded-se-sm bg-bg-surface px-3 py-2 text-small leading-relaxed text-text-primary-default">
-                  איזו תמונה או סרטון תרצו לשלב?
+                  {replacing ? "באיזו תמונה או סרטון להחליף?" : "איזו תמונה או סרטון תרצו לשלב?"}
                 </div>
                 <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5" role="group" aria-label="בחירה">
                   <Chip onClick={() => pickRef.current?.drive()}>מגוגל דרייב</Chip>

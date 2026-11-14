@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { getAuthUser } from "@/lib/auth-user"
 import { getUserApiKey } from "@/lib/api-keys"
-import { canBlendBRoll, canEditOwnBRollCaption, driveInBRoll, canUseEditAgent, qaFixes1112 } from "@/lib/feature-access"
+import { afterGenChoices, canBlendBRoll, canEditOwnBRollCaption, driveInBRoll, canUseEditAgent, qaFixes1112 } from "@/lib/feature-access"
 import { loadComposition } from "@/lib/broll-animation/store"
 import { isOwnMediaUrl } from "@/lib/own-media"
 import { scriptTextFor } from "@/lib/script-text"
@@ -44,6 +44,8 @@ export interface AgentMessage {
   error?: boolean
   /** The change as a lasting preference: the "זכור לעתיד" button under this reply saves it. */
   remember?: string
+  /** The media before this reply's change — "חזרה לגרסה הקודמת" puts it back (Hani, 2026-11-14). */
+  undo?: string[]
   at: string
 }
 
@@ -150,6 +152,42 @@ export async function POST(req: NextRequest) {
       .eq("chat_key", chatKey)
       .is("archived_at", null)
     return NextResponse.json({ ok: true })
+  }
+
+  // "חזרה לגרסה הקודמת" (Hani, 2026-11-14): the media from before the last
+  // change goes back on the card, through the same save as an edit.
+  if (body.action === "undo") {
+    const row = await loadThread(db, user.id, chatKey)
+    const msgs = row?.messages ?? []
+    const at = msgs.map((m) => !!m.undo?.length).lastIndexOf(true)
+    if (!row || at < 0) return NextResponse.json({ error: "nothing_to_undo", message: "אין גרסה קודמת לחזור אליה." }, { status: 400 })
+    const urls = msgs[at].undo!
+    const res = await fetch(new URL("/api/media/own-edit", req.url), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie: req.headers.get("cookie") ?? "" },
+      body: JSON.stringify({ action: "save", postId, format, urls }),
+    })
+    if (!res.ok) return NextResponse.json({ error: "undo_failed", message: "לא הצלחתי לחזור לגרסה הקודמת. נסו שוב." }, { status: 500 })
+    const stamp = new Date().toISOString()
+    const reply = "חזרתי לגרסה הקודמת, היא כבר בכרטיס."
+    await db
+      .from("ai_chat_threads")
+      .update({
+        messages: [
+          ...msgs.map((m, i) => (i === at ? { ...m, undo: undefined, remember: undefined } : m)),
+          { role: "user", text: "חזרה לגרסה הקודמת", at: stamp },
+          { role: "assistant", text: reply, at: stamp },
+        ],
+        updated_at: stamp,
+      })
+      .eq("id", row.id)
+    // A finished job: the page applies it to the card like any agent result.
+    const { data: jobRow } = await admin
+      .from("ai_edit_jobs")
+      .insert({ user_id: user.id, post_id: postId, format, chat_key: chatKey, progress: "", status: "done", outcome: { kind: "done", reply, url: urls[0], urls, changed: true } })
+      .select("id")
+      .single()
+    return NextResponse.json({ jobId: (jobRow as { id: string } | null)?.id ?? null })
   }
 
   const text = body.text?.trim() ?? ""
@@ -306,6 +344,8 @@ export async function POST(req: NextRequest) {
     })
     return { ok: res.ok, data: (await res.json().catch(() => ({}))) as T }
   }
+  // What the card shows now — the version "חזרה לגרסה הקודמת" restores.
+  const before = isStory ? storyUrls : mediaUrl ? [mediaUrl] : []
   after(async () => {
     try {
       const outcome: BRollAgentOutcome = isStory
@@ -370,7 +410,13 @@ export async function POST(req: NextRequest) {
         await setJob({ status: "asking", progress: "", outcome })
       } else if (outcome.kind === "done") {
         await appendMessages(admin, user.id, chatKey, [
-          { role: "assistant", text: brandTerms(outcome.reply, qaFixes1112(user.email)), ...(outcome.rememberOffer ? { remember: outcome.rememberOffer } : {}), at: now() },
+          {
+            role: "assistant",
+            text: brandTerms(outcome.reply, qaFixes1112(user.email)),
+            ...(outcome.rememberOffer ? { remember: outcome.rememberOffer } : {}),
+            ...(outcome.changed && before.length && afterGenChoices(user.email) ? { undo: before } : {}),
+            at: now(),
+          },
         ])
         await setJob({ status: "done", progress: "", outcome })
       } else {

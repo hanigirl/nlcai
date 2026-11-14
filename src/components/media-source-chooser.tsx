@@ -1,5 +1,6 @@
 "use client"
 
+import { useAfterGenChoices } from "@/lib/use-scheduling-access"
 import { useState } from "react"
 import Link from "next/link"
 import { Loader2 } from "lucide-react"
@@ -53,6 +54,7 @@ export function MediaSourceChooser({
   // holds the button until she picks the other tile (Hani, 2026-11-12: it
   // rendered something unknown without one).
   const qa = useQaFixes1112() === true
+  const haniTest = useAfterGenChoices() === true
   const noLanguage = qa && !brandLoading && !brandTemplate
   const blocked = source === "ai" && noLanguage
 
@@ -75,7 +77,7 @@ export function MediaSourceChooser({
       thumb:
         brandLoading && !brandTemplate ? (
           <Skeleton className="size-full rounded-md" />
-        ) : brandTemplate?.thumbnailUrl && (!qa || format === "carousel") ? (
+        ) : brandTemplate?.thumbnailUrl && (!haniTest || format === "carousel") ? (
           // Her carousel example shows only on a carousel (Notion #23); other
           // formats get the generic preview in her colours below.
           // eslint-disable-next-line @next/next/no-img-element

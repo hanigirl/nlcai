@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { afterGenChoices } from "@/lib/feature-access"
 import type { SlideData } from "@/lib/carousel-templates"
 import type { CarouselBrief } from "@/lib/carousel-composition"
 import { loadBrandFonts } from "@/lib/broll-animation/brief"
@@ -42,7 +43,10 @@ export async function carouselExamples(
   // Notion #23: another format's example never shapes a carousel — general
   // (unfiled) examples are the fallback, the ones read as carousel first.
   const { data: me } = await supabase.from("users").select("email").eq("id", userId).maybeSingle()
-  const strict = examplesInLanguage((me as { email?: string | null } | null)?.email)
+  const myEmail = (me as { email?: string | null } | null)?.email
+  const random = examplesInLanguage(myEmail)
+  // Notion #23 — Hani only until she tests it live (2026-11-14).
+  const strict = random && afterGenChoices(myEmail)
   const general = strict ? rows.filter((r) => !userExampleKind(r.metadata)) : rows
   const recognised = general.filter((r) => carouselIds.has(r.id))
   const picked = filed.length ? filed : recognised.length ? recognised : general
@@ -52,7 +56,7 @@ export async function carouselExamples(
   // A different structure every carousel (Hani, 2026-11-11, lib/feature-access
   // examplesInLanguage): a few of her examples at random, so uneven examples
   // give uneven carousels. An edit keeps the ones its carousel was made from.
-  if (strict) {
+  if (random) {
     if (keep?.length && keep.every((u) => urls.includes(u))) return keep
     return shuffled(urls).slice(0, RANDOM_CAROUSEL_EXAMPLES)
   }

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import { canUseDescription, canUseFormatCards, canUseFormatGap, canUseMultinetwork, canUsePreview, canUseScheduleAllA, canUseScheduling } from "@/lib/scheduling-access"
-import { canCopyStructure, canEditOwnBRollCaption, driveInBRoll, examplesInLanguage, qaFixes1112, canOwnMediaText, canTalkingHeadAi, canPlaceRefs, canUseAiChat, canUseEditAgent } from "@/lib/feature-access"
+import { afterGenChoices, canCopyStructure, canEditOwnBRollCaption, driveInBRoll, examplesInLanguage, qaFixes1112, canOwnMediaText, canTalkingHeadAi, canPlaceRefs, canUseAiChat, canUseEditAgent } from "@/lib/feature-access"
 
 /** null while the session is read, then true/false. */
 export function useSchedulingAccess(): boolean | null {
@@ -133,4 +133,9 @@ export function useExamplesInLanguage(): boolean | null {
 /** The 2026-11-12 QA fixes (lib/feature-access qaFixes1112). */
 export function useQaFixes1112(): boolean | null {
   return useEmailGate(qaFixes1112)
+}
+
+/** After-generation choices + undo in the agent (lib/feature-access afterGenChoices). */
+export function useAfterGenChoices(): boolean | null {
+  return useEmailGate(afterGenChoices)
 }

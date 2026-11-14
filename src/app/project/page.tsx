@@ -115,7 +115,7 @@ import {
   approvalHeaderFill,
 } from "@/components/format-approval/approval-visuals"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
-import { useDescriptionAccess, useFormatCards, useOwnMediaText, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi, useAiChatAccess, useEditAgent, useDriveInBRoll, useOwnBRollCaptionEdit, useQaFixes1112 } from "@/lib/use-scheduling-access"
+import { useDescriptionAccess, useFormatCards, useOwnMediaText, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi, useAiChatAccess, useEditAgent, useDriveInBRoll, useOwnBRollCaptionEdit, useQaFixes1112, useAfterGenChoices } from "@/lib/use-scheduling-access"
 import { EditAgentChat, useFollowEditAgentRun } from "@/components/edit-agent-chat"
 // "עריכה עם AI" on every format's copy (Hani, 2026-10-29).
 import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
@@ -276,7 +276,8 @@ export default function ProjectPage() {
 
 function ProjectPageInner() {
   const ft = useFormatTextTerms()
-  const qaCopy = useQaFixes1112() === true
+  // Hani only until she tests it live (2026-11-14).
+  const qaCopy = useAfterGenChoices() === true
   const searchParams = useSearchParams()
   const router = useRouter()
   const initialIdea = searchParams.get("idea") ?? ""
@@ -401,6 +402,13 @@ function ProjectPageInner() {
   const [photoSwapOpen, setPhotoSwapOpen] = useState(false)
   // The agent chat opened from "רוצים לשלב תמונה או סרטון משלכם בעיצוב הזה?".
   const [addMediaAsk, setAddMediaAsk] = useState(false)
+  // Right after a generation the agent chat opens with "להחליף מדיה" /
+  // "להסיר תמונות, טקסט בלבד" (Hani, 2026-11-14 — Hani only for now).
+  const afterGenOn = useAfterGenChoices() === true
+  const [afterGen, setAfterGen] = useState<string | null>(null)
+  useEffect(() => {
+    if (afterGen && aiChatFormat !== afterGen) setAfterGen(null)
+  }, [aiChatFormat, afterGen])
   useEffect(() => {
     if (aiChatFormat !== "b_roll") setAddMediaAsk(false)
   }, [aiChatFormat])
@@ -563,6 +571,27 @@ function ProjectPageInner() {
     onBRollUrl: setBRollUrl,
     storyFrames: storyImages,
   })
+  const wasBusy = useRef<Record<string, boolean>>({})
+  useEffect(() => {
+    const prev = wasBusy.current
+    wasBusy.current = { ...mediaBusy }
+    if (!afterGenOn || !editAgentOn) return
+    const hasMedia: Record<string, boolean> = {
+      image_post: !!imagePostUrl,
+      story: (storyImages?.length ?? 0) > 0 || !!storyVideoUrl,
+      b_roll: !!bRollUrl,
+      carousel: (carouselImages?.length ?? 0) > 0,
+    }
+    const done = (["b_roll", "story", "image_post", "carousel"] as const).find(
+      (f) => prev[f] && !mediaBusy[f] && hasMedia[f] && !ownMediaOn(f),
+    )
+    if (!done) return
+    setAiChatOpening(null)
+    setAiChatFormat(done as AiEditFormat)
+    setAfterGen(done)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mediaBusy, afterGenOn, editAgentOn, imagePostUrl, storyImages, storyVideoUrl, bRollUrl, carouselImages])
+
   // Media approval — one signature per format's media. The approval is pinned
   // to that signature, so changing the media withdraws it (see the hook).
   const storyFrames = [
@@ -3800,7 +3829,8 @@ function ProjectPageInner() {
           if (own && !captionChat) return null
           return (
             <EditAgentChat
-              key={`agent:${savedPostId}:b_roll${addMediaAsk ? ":add" : ""}`}
+              key={`agent:${savedPostId}:b_roll${addMediaAsk ? ":add" : ""}${afterGen === "b_roll" ? ":gen" : ""}`}
+              afterGenerate={afterGen === "b_roll"}
               own={captionChat}
               askAddMedia={addMediaAsk && !captionChat}
               postId={savedPostId}
@@ -3814,7 +3844,8 @@ function ProjectPageInner() {
         if (editAgentOn && aiChatFormat === "story") {
           return (
             <EditAgentChat
-              key={`agent:${savedPostId}:story`}
+              key={`agent:${savedPostId}:story${afterGen === "story" ? ":gen" : ""}`}
+              afterGenerate={afterGen === "story"}
               postId={savedPostId}
               format="story"
               onClose={() => { setAiChatFormat(null); setAiChatOpening(null) }}
@@ -3826,7 +3857,8 @@ function ProjectPageInner() {
         if (editAgentOn && aiChatFormat === "carousel" && aiChatOpening?.kind !== "generate") {
           return (
             <EditAgentChat
-              key={`agent:${savedPostId}:carousel`}
+              key={`agent:${savedPostId}:carousel${afterGen === "carousel" ? ":gen" : ""}`}
+              afterGenerate={afterGen === "carousel"}
               postId={savedPostId}
               format="carousel"
               onClose={() => { setAiChatFormat(null); setAiChatOpening(null) }}
@@ -3838,7 +3870,8 @@ function ProjectPageInner() {
         if (editAgentOn && aiChatFormat === "image_post") {
           return (
             <EditAgentChat
-              key={`agent:${savedPostId}:image_post`}
+              key={`agent:${savedPostId}:image_post${afterGen === "image_post" ? ":gen" : ""}`}
+              afterGenerate={afterGen === "image_post"}
               postId={savedPostId}
               format="image_post"
               onClose={() => { setAiChatFormat(null); setAiChatOpening(null) }}

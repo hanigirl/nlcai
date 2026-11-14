@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { afterGenChoices } from "@/lib/feature-access"
 import { getUserApiKey } from "@/lib/api-keys"
 import { deriveNicheVisualLanguage } from "@/lib/agents/visual-language-analyzer"
 import { loadExampleForModels, loadImageForModels, type ModelImage } from "@/lib/visual-language/image-input"
@@ -127,7 +128,7 @@ export async function loadBrandExamples(
   // the only ones it uses; her general (unfiled) examples are the default for
   // a format with none of its own — recognised ones first.
   const general = [...unfiled, ...rows.filter((r) => !userExampleKind(r.metadata) && !recognised.has(r.id))]
-  const pool = random ? (filed.length ? shuffled(filed) : [...shuffled(unfiled), ...shuffled(general.slice(unfiled.length))]) : [...filed, ...unfiled]
+  const pool = random && afterGenChoices(me?.email) ? (filed.length ? shuffled(filed) : [...shuffled(unfiled), ...shuffled(general.slice(unfiled.length))]) : [...filed, ...unfiled]
   const picked = pool.slice(0, max)
   const images = await Promise.all(
     picked.map((r) =>
