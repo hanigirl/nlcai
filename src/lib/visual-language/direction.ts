@@ -355,7 +355,10 @@ async function resolveBaseDirection(
     const basicsOnly = afterGenChoices(row?.email) && !(await hasOwnExamples(supabase, userId, opts.format, vl.example_kinds))
     const lines = basicsOnly
       ? [
-          `VISUAL LANGUAGE — the creator's brand basics (she has no examples of ${FORMAT_NAMES[opts.format]} yet): build the design from her brand colours, her brand fonts and her own uploaded graphic elements only — a clean, modern, confident layout made of them. Do NOT invent motifs, patterns, textures or decorative devices that aren't among her elements (no pixel grids, grain, glows or shapes of your own).`,
+          // Elements travel between formats (Hani, 2026-11-15); the layout
+          // of another format's examples doesn't.
+          `VISUAL LANGUAGE — the creator's own brand, written from her examples of OTHER formats (she has none of ${FORMAT_NAMES[opts.format]} yet). Use its colours, type character and graphic elements / devices freely here, but NOT those examples' layout or composition — lay this ${FORMAT_NAMES[opts.format]} out the way this format works best:`,
+          stripLookWords(vl.style_spec.trim(), look),
         ]
       : [
           "VISUAL LANGUAGE — this is the creator's own brand. Follow it faithfully; it overrides any generic style habit:",
