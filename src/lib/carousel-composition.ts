@@ -1,4 +1,5 @@
 import { createHash } from "crypto"
+import { DRIVE_PICTURE_RULE } from "@/lib/brand-drive-media"
 import Anthropic from "@anthropic-ai/sdk"
 import { structureNote, type CardIdentityForPrompt, type StructureMode } from "@/lib/carousel-structure"
 import { referenceBlocks } from "@/lib/ai-edit-references"
@@ -378,10 +379,12 @@ export function composeCarousel(
     "",
     `HER OWN PICTURE${k > 1 ? "S" : ""}: attached image${k > 1 ? `s 1–${k} are` : " 1 is"} her own picture${k > 1 ? "s" : ""} (photo, character, illustration, logo or product) to PUT INTO this carousel as ${k > 1 ? "they are" : "it is"}.${refs.length ? ` Attached image${refs.length > 1 ? `s ${k + 1}–${k + refs.length} are` : ` ${k + 1} is`} only a reference for the look — apply the look, never place ${refs.length > 1 ? "them" : "it"}.` : ""}`,
     library
-      ? `These are pictures from HER OWN media library, chosen for her — not attached by her for a particular slide. Put one on the COVER always; on the other slides, use them exactly where her usage examples show a photo (if the examples show photos on content slides, place one per such slide; if they are type-led, the cover only). Each picture on at most one slide; you may leave some unused. Give each picture the slot, size and position her examples give photos, inside her visual language (background, elements and type around it as in the examples) — it is re-framed to fit that slot afterwards.`
+      ? `These are pictures from HER OWN media library, chosen for her — not attached by her for a particular slide. Put one on the COVER always; on the other slides, use them exactly where her usage examples show a photo (if the examples show photos on content slides, place one per such slide; if they are type-led, the cover only). Each picture on at most one slide; you may leave some unused. ${DRIVE_PICTURE_RULE} In HTML that means: where her examples frame photos, give the slot their shape, size and position; otherwise the slide's <img class="art"> is position:absolute; inset:0; width:100%; height:100%; object-fit:cover behind everything, with a brand-colour gradient layer over it under the text, and her elements over the picture. It is re-framed to fit that slot afterwards.`
       : placeSlidesNote(placeAt, k) ??
       `Place EVERY one of her pictures on exactly one slide — the cover unless the brief says otherwise; one picture per slide.`,
-    `Put "attached": [one entry per slide: the attached image number placed on that slide, or 0] in the json block, leave that slide's "illustrations" entry empty, and show it with <img class="art" src="__SLIDE_IMAGE_N__"> (N = the slide number) styled object-fit: contain, so her picture is never cropped, stretched or distorted. We put her exact file there — never describe it as an illustration prompt. The layout makes room for it; it never covers the slide's text.`,
+    library
+      ? `Put "attached": [one entry per slide: the attached image number placed on that slide, or 0] in the json block, leave that slide's "illustrations" entry empty, and show it with <img class="art" src="__SLIDE_IMAGE_N__"> (N = the slide number), framed as above — never stretched or distorted. We put her picture there — never describe it as an illustration prompt. The text always stays readable over it.`
+      : `Put "attached": [one entry per slide: the attached image number placed on that slide, or 0] in the json block, leave that slide's "illustrations" entry empty, and show it with <img class="art" src="__SLIDE_IMAGE_N__"> (N = the slide number) styled object-fit: contain, so her picture is never cropped, stretched or distorted. We put her exact file there — never describe it as an illustration prompt. The layout makes room for it; it never covers the slide's text.`,
     ...(pictureEdits ? ["", PICTURE_EDIT_NOTE] : []),
   ].join("\n")
   return ask(apiKey, briefText(brief) + placeNote, brief.slides.length, brief, [...place, ...refs], true)

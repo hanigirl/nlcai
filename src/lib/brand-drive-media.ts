@@ -119,3 +119,11 @@ export async function pickBrandDriveStoryMedia(
   }
   return null
 }
+
+/**
+ * Her Drive picture is never a floating rectangle cut out and pasted on the
+ * slide (Hani, 2026-11-14). Her examples decide how photos are framed; with
+ * none, the picture is the background and everything sits on it.
+ */
+export const DRIVE_PICTURE_RULE =
+  "HER PICTURE IN THE COMPOSITION (hard rule): never place her picture as a floating, cut-out rectangle or box pasted onto the design, disconnected from the composition. If her usage examples show how photos are framed (shape, crop, frame, position, size), do exactly what they do. If they don't show photos, make her picture the FULL-BLEED BACKGROUND of the whole frame — edge to edge, her face / subject clearly visible and not covered — with a soft overlay or gradient in her brand colours where the text sits so it reads, the text and her brand colours on top, and her graphic elements placed ON the picture, overlapping it and integrated with it (never in a separate box beside it)."

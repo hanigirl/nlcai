@@ -1,4 +1,5 @@
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences, withPlacedImages } from "@/lib/media-brief"
+import { DRIVE_PICTURE_RULE } from "@/lib/brand-drive-media"
 import { brandDriveMedia } from "@/lib/feature-access"
 import { pickBrandDrivePictures } from "@/lib/brand-drive-media"
 import { withGraphicOnly } from "@/lib/visual-language/graphic-only"
@@ -179,7 +180,7 @@ export async function POST(req: NextRequest) {
       withPlacedImages(
         withMediaBrief(
           // Her language makes graphics only, never a photo (gated) — unless her picture is in.
-          fromDrive.length ? resolved : withGraphicOnly(resolved, user.email),
+          fromDrive.length ? { ...resolved, lines: [...resolved.lines, "", DRIVE_PICTURE_RULE] } : withGraphicOnly(resolved, user.email),
           normalizeMediaBrief(brief),
         ),
         placed,
