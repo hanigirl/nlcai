@@ -115,7 +115,7 @@ import {
   approvalHeaderFill,
 } from "@/components/format-approval/approval-visuals"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
-import { useDescriptionAccess, useFormatCards, useOwnMediaText, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi, useAiChatAccess, useEditAgent, useDriveInBRoll, useOwnBRollCaptionEdit } from "@/lib/use-scheduling-access"
+import { useDescriptionAccess, useFormatCards, useOwnMediaText, usePreviewAccess, useSchedulingAccess, useTalkingHeadAi, useAiChatAccess, useEditAgent, useDriveInBRoll, useOwnBRollCaptionEdit, useQaFixes1112 } from "@/lib/use-scheduling-access"
 import { EditAgentChat, useFollowEditAgentRun } from "@/components/edit-agent-chat"
 // "עריכה עם AI" on every format's copy (Hani, 2026-10-29).
 import { useFormatCopyAiOnPage } from "@/components/format-copy-ai/page-wiring"
@@ -276,6 +276,7 @@ export default function ProjectPage() {
 
 function ProjectPageInner() {
   const ft = useFormatTextTerms()
+  const qaCopy = useQaFixes1112() === true
   const searchParams = useSearchParams()
   const router = useRouter()
   const initialIdea = searchParams.get("idea") ?? ""
@@ -2278,7 +2279,15 @@ function ProjectPageInner() {
    */
   const ownMediaOn = (fid: string): boolean => {
     // Hani only for now (OWN_MEDIA_TEXT_EMAILS) — everyone else keeps the AI edit they had.
-    if (fid === "talking_head" || !ownTextGate) return false
+    if (!ownTextGate) return false
+    return isOwnMediaOnPost(fid, ownTextGate)
+  }
+  /**
+   * Whether the format's media is hers (Drive / computer), without the
+   * own-media gate — the media tab's "נוצר לפי…" line reads it too.
+   */
+  const isOwnMediaOnPost = (fid: string, ownText = true): boolean => {
+    if (fid === "talking_head") return false
     const frames = [
       ...(storyImages ?? []),
       ...(storyVideoUrl && !(storyImages ?? []).includes(storyVideoUrl) ? [storyVideoUrl] : []),
@@ -2289,7 +2298,7 @@ function ProjectPageInner() {
       image_post: imagePostUrl ? [imagePostUrl] : [],
       b_roll: bRollUrl ? [bRollUrl] : [],
     }
-    return isOwnMediaFormat(fid as AiEditFormat, urls[fid] ?? [], carouselDriveLinks, ownTextGate)
+    return isOwnMediaFormat(fid as AiEditFormat, urls[fid] ?? [], carouselDriveLinks, ownText)
   }
   /** Her own b-roll still gets the AI edit — the caption's look only (gated). */
   // A story of her own media: the story agent, caption look only on her frames (lib/edit-agent/story-agent).
@@ -2647,6 +2656,11 @@ function ProjectPageInner() {
                 onAiEditMedia={onAiEditMedia}
                 onDeleteMedia={onDeleteMedia}
                 crop={cropFor(fid)}
+                origin={
+                  qaCopy && item.media
+                    ? isOwnMediaOnPost(fid) ? "נוצר לפי מדיה קיימת מהדרייב" : "נוצר לפי שפת המותג שלך"
+                    : undefined
+                }
                 // Only after a first generation, on the AI's own clip — never her Drive media.
                 onSwapPhoto={
                   driveInBRollOn && fid === "b_roll" && item.media?.kind === "video" && !ownMediaOn("b_roll")

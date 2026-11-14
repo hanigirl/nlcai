@@ -599,7 +599,14 @@ export function FormatPanelMedia({
   onSwapPhoto,
   crop,
   storyPlayer = false,
+  origin,
 }: {
+  /**
+   * How the media was made, in gray under it (launch call with Nataliya,
+   * 2026-11-13): "נוצר לפי מדיה קיימת מהדרייב" / "נוצר לפי שפת המותג שלך".
+   * Absent = no line.
+   */
+  origin?: string
   /**
    * "חיתוך" on her own picture (Hani, 2026-11-11): `urlAt` = the picture at
    * that slide when it can be cut (null: not hers / a video / not stored),
@@ -665,11 +672,21 @@ export function FormatPanelMedia({
       )}
     </MediaPreviewZone>
   )
-  if (!onSwapPhoto) return zone
+  const originLine = origin ? <p className="text-xs-body text-text-neutral-default">{origin}</p> : null
+  if (!onSwapPhoto) {
+    if (!originLine) return zone
+    return (
+      <div className="flex flex-col items-center gap-2">
+        {zone}
+        {originLine}
+      </div>
+    )
+  }
   // The way to bring her own picture / video in, said in words (Hani, 2026-11-10).
   return (
     <div className="flex flex-col items-center gap-2">
       {zone}
+      {originLine}
       <button
         type="button"
         onClick={onSwapPhoto}
