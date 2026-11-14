@@ -774,10 +774,10 @@ export default function CalendarPage() {
       // Approved for the media that is there NOW — not an approval left
       // over from media that has since changed.
       isApproved: (corePostId, format, mediaUrl) =>
-        isApprovalCurrent(corePostId, format, mediaUrl),
+        isApprovalCurrent(corePostId, format, mediaUrl, gearSettings),
       pendingHref: "/core_posts?status=pending",
     }
-  }, [schedulingOn])
+  }, [schedulingOn, gearSettings])
 
   // --- "תזמון הכל" (scheduling release) ------------------------------------
   // "סידור אוטומטי בלוח" lays every ready post onto the board by the weekly

@@ -930,10 +930,17 @@ export function isApprovalCurrent(
   corePostId: string,
   format: FormatId,
   currentUrl: string | null | undefined,
+  /**
+   * An approval with no media links to compare (signed before links were
+   * kept, or over unsaved bytes) doesn't count once the media is a saved file
+   * (Hani, 2026-11-15: an unapproved carousel sat in the calendar).
+   */
+  strict = false,
 ): boolean {
   const slice = getCorePostMeta(corePostId).byFormat?.[format]
   if (!slice?.approvedAt) return false
   const sig = slice.approvedMediaSig ?? ""
+  if (strict && currentUrl && SIG_CHECKED_FORMATS.includes(format) && !/https?:\/\//.test(sig)) return false
   // Nothing to compare: an approval signed before signatures, or over media
   // still held as bytes (a fresh, not yet reopened carousel).
   if (!/https?:\/\//.test(sig) || !currentUrl || !SIG_CHECKED_FORMATS.includes(format)) return true
