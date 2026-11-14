@@ -707,7 +707,7 @@ export function VisualLanguagePanel({
         summary={
           colors.length > 0 ? (
             <span className="flex items-center gap-1">
-              {colors.map((c, i) => (
+              {colors.filter(Boolean).map((c, i) => (
                 <span key={`${i}-${c}`} className="size-4 rounded-full border border-border-neutral-default" style={{ backgroundColor: c }} />
               ))}
             </span>
@@ -732,16 +732,16 @@ export function VisualLanguagePanel({
                   <BrandColorField
                     index={i}
                     value={colors[i]}
-                    onCommit={(c) => saveColors(colors.map((x, j) => (j === i ? c : x)))}
-                    onRemove={i === colors.length - 1 ? () => saveColors(colors.slice(0, i)) : undefined}
+                    onCommit={(c) => saveColors(setSlot(colors, i, c))}
+                    // Empties this role only — the others keep theirs.
+                    onRemove={() => saveColors(setSlot(colors, i, ""))}
                   />
                 ) : (
                   <Button
                     size="sm"
                     variant="outline"
-                    className="gap-1.5"
-                    disabled={i > colors.length}
-                    onClick={() => saveColors([...colors, i === 0 ? "#1f2937" : "#888888"])}
+                    className="h-10 w-52 gap-1.5"
+                    onClick={() => saveColors(setSlot(colors, i, i === 0 ? "#1f2937" : "#888888"))}
                   >
                     <Plus className="size-4" />
                     בחירת צבע
@@ -974,6 +974,15 @@ function AltVersionSlot({
   )
 }
 
+/** One role's colour set (or "" = empty), the other roles keep their positions; trailing empties dropped. */
+function setSlot(colors: string[], i: number, value: string): string[] {
+  const next = [...colors]
+  while (next.length <= i) next.push("")
+  next[i] = value
+  while (next.length && !next[next.length - 1]) next.pop()
+  return next
+}
+
 /** Brand colour roles, by position: the first is the main one. */
 const COLOR_ROLE_LABELS = ["ראשי", "משני", "שלישי"]
 /** A job per colour (Nataliya, 2026-11-14, Notion #18) — Hani only until she tests it. */
@@ -1016,7 +1025,7 @@ function BrandColorField({
   }, [open, draft, commit])
 
   return (
-    <div ref={wrapperRef} className="relative flex items-center gap-1.5 rounded-lg border border-border-neutral-default ps-1.5 pe-1 h-10">
+    <div ref={wrapperRef} className="relative flex h-10 w-52 items-center gap-1.5 rounded-lg border border-border-neutral-default ps-1.5 pe-1">
       <button
         type="button"
         aria-label={`צבע ${index + 1}: ${draft}, פתיחת בוחר צבע`}

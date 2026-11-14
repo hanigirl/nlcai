@@ -62,7 +62,7 @@ export async function POST() {
     supabase.from("core_identities").select("niche").eq("user_id", user.id).maybeSingle(),
   ])
 
-  const colors = ((userRow as { brand_colors?: string[] } | null)?.brand_colors ?? []).slice(0, 3)
+  const colors = ((userRow as { brand_colors?: string[] } | null)?.brand_colors ?? []).filter(Boolean).slice(0, 3)
   const rows = (mediaRows ?? []) as {
     id: string
     category: string

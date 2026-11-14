@@ -149,7 +149,7 @@ async function loadSettingsSnapshot(supabase: SupabaseClient, userId: string) {
   const colors =
     vl?.status === "ok" && vl.palette?.length
       ? vl.palette.map((p) => `${p.hex} (${p.role})`)
-      : (r?.brand_colors ?? [])
+      : (r?.brand_colors ?? []).filter(Boolean)
   return {
     colors,
     fonts: fonts.map((f) => `${f.family} (${f.role ?? "primary"})`),

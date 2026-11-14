@@ -103,7 +103,7 @@ export async function buildCarouselBrief(
     examples: isBrand ? await carouselExamples(supabase, userId, row?.visual_language, input.keepExamples) : [],
     // Gated: her brand colours set the palette — the examples go out in
     // grayscale and the prompt says they set the composition only.
-    ...(brandWins ? { brandWins: true, examplesGray: (row?.brand_colors ?? []).length > 0 } : {}),
+    ...(brandWins ? { brandWins: true, examplesGray: (row?.brand_colors ?? []).filter(Boolean).length > 0 } : {}),
     pastedElements: input.direction.fixed.map((el) => el.name),
     style: input.style,
   }
