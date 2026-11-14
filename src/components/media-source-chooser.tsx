@@ -72,8 +72,8 @@ export function MediaSourceChooser({
     },
     {
       id: "ai",
-      title: qa ? "שפת המותג" : "השפה הויזואלית שלך",
-      sub: "נייצר מדיה חדשה עם AI",
+      title: haniTest ? "שפת המותג שלך" : qa ? "שפת המותג" : "השפה הויזואלית שלך",
+      sub: haniTest ? "נשלב תמונה לפי הדוגמאות שלך" : "נייצר מדיה חדשה עם AI",
       thumb:
         brandLoading && !brandTemplate ? (
           <Skeleton className="size-full rounded-md" />
