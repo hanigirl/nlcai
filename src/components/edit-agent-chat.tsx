@@ -84,6 +84,8 @@ export function useFollowEditAgentRun(
   onMediaChanged: (url: string, urls?: string[]) => void,
 ) {
   const [runningId, setRunningId] = useState<string | null>(null)
+  /** The run being watched, read synchronously (the state only drives the polling). */
+  const watchingRef = useRef<string | null>(null)
   const applyRef = useRef(onMediaChanged)
   applyRef.current = onMediaChanged
 
@@ -93,12 +95,18 @@ export function useFollowEditAgentRun(
     if (!res?.ok) return
     const { job } = (await res.json()) as { job: Job | null }
     if (!job) return
-    if (job.status === "running") return setRunningId(job.id)
-    setRunningId((prev) => {
-      // Only the run we watched finish — never an old result on page load.
-      if (prev === job.id && job.outcome?.changed && job.outcome.url) applyRef.current(job.outcome.url, job.outcome.urls)
-      return null
-    })
+    if (job.status === "running") {
+      watchingRef.current = job.id
+      setRunningId(job.id)
+      return
+    }
+    // Only the run we watched finish — never an old result on page load.
+    // Applied here, not inside a state updater (React may run an updater
+    // twice, or late, and it set the page's state from inside another's).
+    const watched = watchingRef.current === job.id
+    watchingRef.current = null
+    setRunningId(null)
+    if (watched && job.outcome?.changed && job.outcome.url) applyRef.current(job.outcome.url, job.outcome.urls)
   }, [enabled, postId, format])
 
   // On load (a run may already be going), on return to the tab, and when the chat starts one.

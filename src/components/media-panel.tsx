@@ -3488,6 +3488,13 @@ function MediaUploadFlow({
       setPreviewUrl(null)
       setPreviewKind(null)
     }
+    // Replaced from outside the panel (the AI edit chat saved a new version):
+    // show the new one now, not after a refresh (2026-11-13). A story's frames
+    // follow the page through their own set below.
+    if (initialMediaUrl && prev && initialMediaUrl !== prev && (format !== "story" || isVideoUrl(initialMediaUrl))) {
+      setPreviewUrl(initialMediaUrl)
+      setPreviewKind(isVideoUrl(initialMediaUrl) ? "video" : "image")
+    }
   }, [initialMediaUrl, format])
   // Story: the same, for its frame set. The card's trash clears the page's
   // frames while this flow stays mounted (only hidden); keeping the old set

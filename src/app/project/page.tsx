@@ -529,8 +529,32 @@ function ProjectPageInner() {
   const hydratedCarouselRef = useRef<string[] | null>(null)
   /** The stored URLs that set was decoded from — the approval signs these. */
   const hydratedCarouselUrlsRef = useRef<string[] | null>(null)
-  const applyAgentCarousel = useCallback((url: string, urls?: string[]) => setCarouselImages(urls?.length ? urls : [url]), [])
+  const applyAgentCarousel = useCallback((url: string, urls?: string[]) => {
+    const set = urls?.length ? urls : [url]
+    // The run already saved this set on the server: it is shown as is,
+    // never re-saved by the autosave (a second write made new files the
+    // carousel's layout no longer matched).
+    hydratedCarouselRef.current = set
+    hydratedCarouselUrlsRef.current = set
+    setCarouselImages(set)
+  }, [])
   useFollowEditAgentRun(savedPostId, "carousel", editAgentOn, applyAgentCarousel)
+  // The media panel previews a single-picture format from `formatMedia`,
+  // which was read once on open — an edit from the chat landed on the card
+  // and stayed old in the panel until a refresh (2026-11-13). Keep it on
+  // what the page holds now.
+  useEffect(() => {
+    setFormatMedia((prev) => {
+      let next = prev
+      const follow = (format: string, url: string | null) => {
+        if (!url || !/^https?:\/\//.test(url) || next[format] === url) return
+        next = { ...next, [format]: url }
+      }
+      follow("image_post", imagePostUrl)
+      follow("b_roll", bRollUrl)
+      return next
+    })
+  }, [imagePostUrl, bRollUrl])
   // Per-format "media is being made" — drives the skeleton card on the canvas.
   const { busy: mediaBusy, onPanelBusyChange } = useFormatMediaBusy(savedPostId, {
     onStoryImages: setStoryImages,
