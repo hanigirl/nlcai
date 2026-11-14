@@ -295,7 +295,9 @@ export async function POST(req: NextRequest) {
         console.error("[story/generate-media] designed video frame", e instanceof Error ? e.message : e)
         videoUrl = null
       }
-    } else if (videoFrom) {
+    }
+    // No story examples, or the designed frame failed: her video with the frame's text.
+    if (videoFrom && !videoUrl) {
       const res = await fetch(new URL("/api/story/generate-video-media", req.url), {
         method: "POST",
         headers: { "Content-Type": "application/json", cookie: req.headers.get("cookie") ?? "" },

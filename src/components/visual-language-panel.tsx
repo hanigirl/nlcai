@@ -718,9 +718,39 @@ export function VisualLanguagePanel({
       >
         <p className="text-small text-text-neutral-default">
           {colorRoles
-            ? `עד ${MAX_BRAND_COLORS} צבעים. לכל צבע תפקיד: מילות טריגר והדגשות, אלמנטים (צורות, אייקונים וקווים) או רקע. אפשר להחליף ביניהם.`
+            ? "בחרו צבע לכל תפקיד: מילות טריגר והדגשות, אלמנטים (צורות, אייקונים וקווים) ורקע."
             : `עד ${MAX_BRAND_COLORS} צבעים. לכל צבע בחרו אם הוא ראשי, משני או שלישי.`}
         </p>
+        {colorRoles ? (
+          // Three rows, open by default (Hani, 2026-11-14): each one a role,
+          // she picks its colour. In order — a role's colour is its position.
+          <div className="flex flex-col gap-3">
+            {COLOR_ROLE_LABELS_NEW.map((label, i) => (
+              <div key={label} className="flex flex-wrap items-center gap-3">
+                <span className="w-40 shrink-0 text-small-bold text-text-primary-default">{label}</span>
+                {colors[i] ? (
+                  <BrandColorField
+                    index={i}
+                    value={colors[i]}
+                    onCommit={(c) => saveColors(colors.map((x, j) => (j === i ? c : x)))}
+                    onRemove={i === colors.length - 1 ? () => saveColors(colors.slice(0, i)) : undefined}
+                  />
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    disabled={i > colors.length}
+                    onClick={() => saveColors([...colors, i === 0 ? "#1f2937" : "#888888"])}
+                  >
+                    <Plus className="size-4" />
+                    בחירת צבע
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
         <div className="flex flex-wrap items-center gap-3">
           {colors.map((color, i) => (
               <div key={`${i}-${color}`} className="flex items-center gap-2">
@@ -760,6 +790,7 @@ export function VisualLanguagePanel({
             </Button>
           )}
         </div>
+        )}
       </AccordionSection>
 
       {/* ── 2. Fonts (owned by the settings page) ── */}
@@ -957,7 +988,8 @@ function BrandColorField({
   index: number
   value: string
   onCommit: (color: string) => void
-  onRemove: () => void
+  /** Left out: no ✕ (a fixed role row whose colour can only be changed). */
+  onRemove?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState(value)
@@ -1006,7 +1038,7 @@ function BrandColorField({
         maxLength={7}
         className="w-[76px] bg-transparent text-sm text-text-primary-default outline-none font-mono"
       />
-      <RemoveButton label={`מחיקת צבע ${index + 1}`} onClick={onRemove} />
+      {onRemove && <RemoveButton label={`מחיקת צבע ${index + 1}`} onClick={onRemove} />}
       {open && (
         <div className="absolute top-full mt-2 start-0 z-50 rounded-xl border border-border-neutral-default bg-white dark:bg-gray-10 p-3 shadow-lg">
           <HexColorPicker color={isHexColor(draft) ? draft : value} onChange={setDraft} />
