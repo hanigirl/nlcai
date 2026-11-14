@@ -13,12 +13,17 @@ import {
   updateStyleRule,
 } from "@/lib/style-memory"
 import { isRuleScope } from "@/lib/visual-memory"
+import { createAdminClient } from "@/lib/supabase/admin"
+import { OWN_CAPTION_LOOK_ID, deleteOwnCaptionLook, loadOwnCaptionLook } from "@/lib/own-caption-look"
 import type { VisualFormat } from "@/lib/visual-language/types"
 
 /**
  * The visual memory of the AI-edit chat (rules: lib/visual-memory).
  *
- * GET                                               → { preferences }   Settings → העדפות ויזואליות
+ * GET                                               → { preferences, ownCaptionLook }   Settings → העדפות ויזואליות
+ *   ownCaptionLook = the caption look saved with "זכור לעתיד" on her own media
+ *   (lib/own-caption-look, a separate file) — listed so she can see and delete
+ *   it (Notion #7: Nataliya saved one and the tab stayed empty).
  * POST   { action: "triage", instruction, format, explicit?, previousInstruction?, references? }
  *                                                   → TriageResult      every chat message + the save chip
  * POST   { action: "replace", replaceIds, proposal } → { id, summary, scope }   "באופן רוחבי"
@@ -48,8 +53,12 @@ export async function GET() {
   const user = await getAuthUser(supabase)
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   try {
-    const rules = await listStyleRules(supabase, user.id)
-    return NextResponse.json({ preferences: rules.map(toPreference) })
+    const [rules, ownCaptionLook] = await Promise.all([
+      listStyleRules(supabase, user.id),
+      // Written by the edit agent with the service role — read it the same way.
+      loadOwnCaptionLook(createAdminClient(), user.id).catch(() => null),
+    ])
+    return NextResponse.json({ preferences: rules.map(toPreference), ownCaptionLook })
   } catch (e) {
     return errorResponse(e, "list")
   }
@@ -132,6 +141,14 @@ export async function DELETE(request: NextRequest) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const body = (await request.json().catch(() => ({}))) as { id?: string }
   if (!body.id) return NextResponse.json({ error: "missing_id" }, { status: 400 })
+  if (body.id === OWN_CAPTION_LOOK_ID) {
+    try {
+      const removed = await deleteOwnCaptionLook(createAdminClient(), user.id)
+      return NextResponse.json({ removed })
+    } catch (e) {
+      return errorResponse(e, "delete own caption look")
+    }
+  }
   try {
     const removed = await deleteStyleRule(supabase, user.id, body.id)
     return NextResponse.json({ removed })

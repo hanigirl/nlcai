@@ -19,6 +19,8 @@ import {
   type RuleScope,
   type VisualPreference,
 } from "@/lib/visual-memory"
+import { OWN_CAPTION_LOOK_ID } from "@/lib/own-caption-look"
+import type { CaptionStyle } from "@/lib/own-media"
 
 function formatDate(iso: string): string {
   const d = new Date(iso)
@@ -39,6 +41,9 @@ export function VisualPreferencesPanel() {
   const qaTerms = useQaFixes1112() === true
   const bt = (t: string) => brandTerms(t, qaTerms)
   const [prefs, setPrefs] = useState<VisualPreference[]>([])
+  // The caption look saved with "זכור לעתיד" on her own media — its own file,
+  // shown here under "כל הפורמטים" so it isn't invisible (Notion #7).
+  const [ownLook, setOwnLook] = useState<CaptionStyle | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [tab, setTab] = useState<RuleScope | "talking_head">("all")
@@ -51,15 +56,20 @@ export function VisualPreferencesPanel() {
     let cancelled = false
     fetch("/api/visual-language/style-memory")
       .then(async (r) => {
-        const data = (await r.json().catch(() => ({}))) as { preferences?: VisualPreference[]; message?: string }
+        const data = (await r.json().catch(() => ({}))) as {
+          preferences?: VisualPreference[]
+          ownCaptionLook?: CaptionStyle | null
+          message?: string
+        }
         if (!r.ok) throw new Error(data.message ?? `status ${r.status}`)
-        return data.preferences ?? []
+        return { list: data.preferences ?? [], look: data.ownCaptionLook ?? null }
       })
-      .then((list) => {
+      .then(({ list, look }) => {
         if (cancelled) return
         setPrefs(list)
+        setOwnLook(look)
         // Open on the first format that has something, so she sees her list.
-        const first = RULE_SCOPES.find((s) => list.some((p) => p.scope === s.id))
+        const first = look ? RULE_SCOPES[0] : RULE_SCOPES.find((s) => list.some((p) => p.scope === s.id))
         if (first) setTab(first.id)
       })
       .catch((err) => {
@@ -81,8 +91,9 @@ export function VisualPreferencesPanel() {
       if (document.visibilityState !== "visible") return
       fetch("/api/visual-language/style-memory", { cache: "no-store" })
         .then((r) => (r.ok ? r.json() : null))
-        .then((data: { preferences?: VisualPreference[] } | null) => {
+        .then((data: { preferences?: VisualPreference[]; ownCaptionLook?: CaptionStyle | null } | null) => {
           if (data?.preferences) setPrefs(data.preferences)
+          if (data) setOwnLook(data.ownCaptionLook ?? null)
         })
         .catch(() => undefined)
     }
@@ -116,7 +127,8 @@ export function VisualPreferencesPanel() {
     setBusy({ id, what: "delete" })
     try {
       await deletePreference(id)
-      setPrefs((prev) => prev.filter((p) => p.id !== id))
+      if (id === OWN_CAPTION_LOOK_ID) setOwnLook(null)
+      else setPrefs((prev) => prev.filter((p) => p.id !== id))
       if (editing?.id === id) setEditing(null)
       toast.success("ההעדפה נמחקה")
     } catch (err) {
@@ -177,9 +189,19 @@ export function VisualPreferencesPanel() {
 
           {RULE_SCOPES.map((s) => {
             const items = prefs.filter((p) => p.scope === s.id)
+            const look = s.id === "all" ? ownLook : null
             return (
               <TabsContent key={s.id} value={s.id} className="flex flex-col gap-2 pt-3">
+                {look && (
+                  <OwnCaptionLookItem
+                    look={look}
+                    disabled={!!busy}
+                    deleting={busy?.id === OWN_CAPTION_LOOK_ID && busy.what === "delete"}
+                    onDelete={() => void remove(OWN_CAPTION_LOOK_ID)}
+                  />
+                )}
                 {items.length === 0 ? (
+                  look ? null : (
                   <div className="rounded-2xl border border-dashed border-border-neutral-default p-6 text-center">
                     <p className="text-small text-text-neutral-default">
                       {s.id === "all"
@@ -187,6 +209,7 @@ export function VisualPreferencesPanel() {
                         : `עוד אין העדפות ל${s.label}. מה שתבקשו לשמור בצ׳אט של העריכה עם AI יופיע כאן.`}
                     </p>
                   </div>
+                  )
                 ) : (
                   <ul className="flex flex-col gap-2">
                     {items.map((p) => {
@@ -260,6 +283,63 @@ export function VisualPreferencesPanel() {
           })}
         </Tabs>
       )}
+    </div>
+  )
+}
+
+function Swatch({ color }: { color: string }) {
+  // Her own saved colour (data, not a design token).
+  return (
+    <span
+      aria-hidden
+      className="inline-block size-3.5 shrink-0 rounded-full border border-border-neutral-default align-middle"
+      style={{ backgroundColor: color }}
+    />
+  )
+}
+
+/** "זכור לעתיד" on her own media: how the words look on it, in every format. */
+function OwnCaptionLookItem({
+  look,
+  disabled,
+  deleting,
+  onDelete,
+}: {
+  look: CaptionStyle
+  disabled: boolean
+  deleting: boolean
+  onDelete: () => void
+}) {
+  const box = look.pill && look.pill !== "none" ? look.pill : null
+  return (
+    <div className="flex items-start gap-3 rounded-2xl border border-border-neutral-default bg-white dark:bg-gray-10 p-4">
+      <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+        <p className="text-p text-text-primary-default leading-relaxed">מראה הכיתוב על המדיה שלכם, בכל הפורמטים</p>
+        <ul className="flex flex-wrap gap-x-4 gap-y-1 text-small text-text-neutral-default">
+          {look.pill !== undefined && (
+            <li className="flex items-center gap-1.5">
+              רקע: {box ? <Swatch color={box} /> : "ללא רקע"}
+            </li>
+          )}
+          {look.text && (
+            <li className="flex items-center gap-1.5">
+              צבע הטקסט: <Swatch color={look.text} />
+            </li>
+          )}
+          {typeof look.scale === "number" && <li>גודל: {Math.round(look.scale * 100)}%</li>}
+          {typeof look.perLine === "boolean" && <li>{look.perLine ? "רקע נפרד לכל שורה" : "רקע אחד לכל הכיתוב"}</li>}
+        </ul>
+      </div>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label="מחיקה"
+        disabled={disabled}
+        onClick={onDelete}
+        className="shrink-0 text-text-neutral-default hover:text-button-destructive-default"
+      >
+        {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+      </Button>
     </div>
   )
 }

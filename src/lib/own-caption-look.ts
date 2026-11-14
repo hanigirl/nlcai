@@ -60,3 +60,13 @@ export async function saveOwnCaptionLook(supabase: SupabaseClient, userId: strin
   const retry = await supabase.storage.from(BUCKET).upload(path(userId), body, { contentType: "application/json" })
   if (retry.error) throw new Error(retry.error.message)
 }
+
+/** The id the settings list uses for this look (it is not a style-memory rule). */
+export const OWN_CAPTION_LOOK_ID = "own-caption-look"
+
+/** Settings → העדפות ויזואליות: she removes the saved look; her media goes back to the default caption. */
+export async function deleteOwnCaptionLook(supabase: SupabaseClient, userId: string): Promise<boolean> {
+  const { data, error } = await supabase.storage.from(BUCKET).remove([path(userId)])
+  if (error) throw new Error(error.message)
+  return (data?.length ?? 0) > 0
+}
