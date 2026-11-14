@@ -1,4 +1,6 @@
 import { canOwnMediaText } from "@/lib/feature-access"
+import { scriptTextFor } from "@/lib/script-text"
+import { designedStoryVideoFrame, hasStoryExamples } from "@/lib/story-video-frame"
 import { pickBrandDriveStoryMedia } from "@/lib/brand-drive-media"
 import { brandDriveMedia } from "@/lib/feature-access"
 import { resetAgentChat } from "@/lib/edit-agent/reset-chat"
@@ -266,7 +268,34 @@ export async function POST(req: NextRequest) {
     if (drivePick && !videoFrom && variant?.id) {
       await supabase.from("media_assets").delete().eq("format_variant_id", variant.id).eq("asset_type", "video")
     }
-    if (videoFrom) {
+    const claudeForFrame = videoFrom && (await hasStoryExamples(supabase, user.id))
+      ? await getUserApiKey(supabase, "anthropic_api_key").catch(() => null)
+      : null
+    if (videoFrom && claudeForFrame) {
+      // Her story examples exist: the frame looks like them — her video in her language.
+      try {
+        const unit = scriptTextFor("story", variant!.body, total - 1)
+        const clip = await designedStoryVideoFrame({
+          supabase,
+          userId: user.id,
+          email: user.email,
+          origin: new URL(req.url).origin,
+          anthropicKey: claudeForFrame,
+          openaiKey,
+          driveUrl: videoFrom,
+          text: { hook: unit?.headline || unit?.body || "", rest: unit?.headline ? unit?.body : undefined },
+        })
+        const path = `${user.id}/story/${crypto.randomUUID()}-frame.mp4`
+        const up = await supabase.storage.from("user-media").upload(path, clip, { contentType: "video/mp4" })
+        if (up.error) throw new Error(up.error.message)
+        videoUrl = supabase.storage.from("user-media").getPublicUrl(path).data.publicUrl
+        await supabase.from("media_assets").delete().eq("format_variant_id", variant!.id).eq("asset_type", "video")
+        await supabase.from("media_assets").insert({ format_variant_id: variant!.id, asset_type: "video", url: videoUrl, status: "completed" } as never)
+      } catch (e) {
+        console.error("[story/generate-media] designed video frame", e instanceof Error ? e.message : e)
+        videoUrl = null
+      }
+    } else if (videoFrom) {
       const res = await fetch(new URL("/api/story/generate-video-media", req.url), {
         method: "POST",
         headers: { "Content-Type": "application/json", cookie: req.headers.get("cookie") ?? "" },
