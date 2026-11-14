@@ -2055,12 +2055,14 @@ function CarouselFlow({
     // it should fire rarely — when it does, the text itself is over the
     // ceiling and worth re-generating rather than living with.
     const parsedSlides = condenseSlides(allSlides, MAX_CAROUSEL_SLIDES)
-    if (allSlides.length > parsedSlides.length && !fromPanel) {
-      toast.info(
-        `צימצמנו את הקרוסלה מ-${allSlides.length} ל-${parsedSlides.length} שקופיות`,
-        { duration: 5000 },
-      )
-    }
+    // Said only once the merged set has actually landed, and with the reason
+    // (Nataliya, 2026-11-13). It used to pop before the request even left —
+    // so a generation that failed, asked for details first, or was replaced
+    // still announced "9 → 6" over a carousel that kept its nine slides.
+    const condensedNote =
+      allSlides.length > parsedSlides.length
+        ? `בסקריפט יש ${allSlides.length} שקופיות, וקרוסלה מוגבלת ל-${MAX_CAROUSEL_SLIDES}, אז איחדנו שקופיות סמוכות ל-${parsedSlides.length}. כדי לבחור בעצמכם מה מתאחד, קצרו את הסקריפט ל-${MAX_CAROUSEL_SLIDES} שקופיות וצרו שוב.`
+        : null
 
     // Bottom-of-screen toast per generation — parallel generations across
     // formats (carousel + image post + ...) stack vertically via sonner.
@@ -2189,7 +2191,11 @@ function CarouselFlow({
         setSavedTemplateId(genId === DRIVE_IMPORT_KEY ? undefined : genId)
         // She left /project mid-generation: the page that saves is gone.
         if (previewOn) void saveCarouselIfLeft(postId, data.images)
-        result = videoMiss ? { ok: true, message: videoMiss } : { ok: true }
+        // Only when what landed IS the merged set (a structure copy re-splits the script).
+        const merged = condensedNote && data.images.length === parsedSlides.length ? condensedNote : null
+        const note = [videoMiss, merged].filter(Boolean).join(" ")
+        result = note ? { ok: true, message: note } : { ok: true }
+        if (merged && !fromPanel) toast.info(merged, { duration: 10000 })
         if (fromPanel) {
           // The panel says it's ready and the card shows it — don't pop the
           // slides dialog over it now, or when the media panel reopens.
