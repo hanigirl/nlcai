@@ -1,5 +1,6 @@
 "use client"
 
+import { useAfterGenChoices } from "@/lib/use-scheduling-access"
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useQaFixes1112 } from "@/lib/use-scheduling-access"
 import { brandTerms } from "@/lib/brand-terms"
@@ -113,6 +114,7 @@ export function VisualLanguagePanel({
   initialOpen = "colors",
 }: VisualLanguagePanelProps) {
   const qaTerms = useQaFixes1112() === true
+  const colorRoles = useAfterGenChoices() === true
   const bt = (t: string) => brandTerms(t, qaTerms)
   const supabase = useMemo(() => createClient(), [])
   const [userId, setUserId] = useState<string | null>(null)
@@ -715,7 +717,9 @@ export function VisualLanguagePanel({
         }
       >
         <p className="text-small text-text-neutral-default">
-          עד {MAX_BRAND_COLORS} צבעים. לכל צבע בחרו אם הוא ראשי, משני או שלישי.
+          {colorRoles
+            ? `עד ${MAX_BRAND_COLORS} צבעים. לכל צבע תפקיד: מילות טריגר והדגשות, אלמנטים (צורות, אייקונים וקווים) או רקע. אפשר להחליף ביניהם.`
+            : `עד ${MAX_BRAND_COLORS} צבעים. לכל צבע בחרו אם הוא ראשי, משני או שלישי.`}
         </p>
         <div className="flex flex-wrap items-center gap-3">
           {colors.map((color, i) => (
@@ -726,7 +730,7 @@ export function VisualLanguagePanel({
                   onCommit={(c) => saveColors(colors.map((x, j) => (j === i ? c : x)))}
                   onRemove={() => saveColors(colors.filter((_, j) => j !== i))}
                 />
-                <div className="w-24 shrink-0">
+                <div className={colorRoles ? "w-44 shrink-0" : "w-24 shrink-0"}>
                   <Select
                     selectSize="small"
                     variant="homepage"
@@ -737,7 +741,7 @@ export function VisualLanguagePanel({
                   >
                     {colors.map((_, j) => (
                       <option key={j} value={j}>
-                        {COLOR_ROLE_LABELS[j]}
+                        {(colorRoles ? COLOR_ROLE_LABELS_NEW : COLOR_ROLE_LABELS)[j]}
                       </option>
                     ))}
                   </Select>
@@ -941,6 +945,8 @@ function AltVersionSlot({
 
 /** Brand colour roles, by position: the first is the main one. */
 const COLOR_ROLE_LABELS = ["ראשי", "משני", "שלישי"]
+/** A job per colour (Nataliya, 2026-11-14, Notion #18) — Hani only until she tests it. */
+const COLOR_ROLE_LABELS_NEW = ["מילות טריגר והדגשות", "אלמנטים", "רקע"]
 
 function BrandColorField({
   index,

@@ -150,9 +150,22 @@ export async function loadBrandExamples(
  * into them (Nataliya, 2026-11-09). With no brand colours, the examples'
  * colours apply as before.
  */
-export function brandColourLines(colors: string[]): string[] {
+/**
+ * A job per brand colour (Nataliya, 2026-11-14, Notion #18), by position:
+ * trigger words and highlights, elements, background.
+ */
+export const COLOR_ROLES = [
+  "TRIGGER WORDS & HIGHLIGHTS colour — the trigger word(s), emphasised words and highlights (in a carousel, mark each slide's key words with it automatically)",
+  "ELEMENTS colour — shapes, icons, lines, decorative and secondary elements",
+  "BACKGROUND colour — the background",
+]
+
+export function brandColourLines(colors: string[], roles = false): string[] {
   if (!colors.length) return []
   return [
+    ...(roles
+      ? [`BRAND COLOUR ROLES — each colour has one job: ${colors.map((c, i) => `${c} = ${COLOR_ROLES[i]}`).join("; ")}. Text that isn't highlighted is white or black, whichever reads on the background.`]
+      : []),
     `BRAND COLOURS — authoritative: ${colors.join(", ")} (in priority order; the first is her main colour). Build every designed surface — background, text boxes and plates, highlights, accents, text colour — from these, plus white, black and lighter / darker tints of them. This overrides any other colour named in the description above or seen in the attached example images: the examples set the layout and style, never the palette. Where an example uses a colour that isn't one of these, give that role to the brand colour that fits it. Photographic imagery may keep its natural colours, graded to sit with this palette; her attached brand elements (logo, marks) keep their own colours.`,
   ]
 }
@@ -165,9 +178,12 @@ export function brandColourLines(colors: string[]): string[] {
 export function brandPalette(
   colors: string[] | null | undefined,
   analysed: { hex: string; role: string }[] | null | undefined,
+  /** A job per colour (Notion #18) — Hani only until she tests it. */
+  roles = false,
 ): { hex: string; role: string }[] {
   const brand = colors ?? []
   if (!brand.length) return analysed ?? []
+  if (roles) return brand.map((hex, i) => ({ hex, role: COLOR_ROLES[i] ?? "brand colour" }))
   const roleOf = new Map((analysed ?? []).map((p) => [p.hex.toLowerCase(), p.role]))
   return brand.map((hex, i) => {
     const rank = i === 0 ? "primary brand colour" : "brand colour"
@@ -345,7 +361,7 @@ async function resolveBaseDirection(
     }
     // Last, so it wins over her analysed language (which may name colours
     // it read off the examples) and over the examples themselves.
-    const colourLines = brandWins ? brandColourLines(colors) : []
+    const colourLines = brandWins ? brandColourLines(colors, afterGenChoices(row?.email)) : []
     if (colourLines.length) lines.push("", ...colourLines)
     // Examples ride along as images: say outright the type isn't theirs.
     if (brandWins && examples.length) lines.push("", brandFontLine(await loadBrandFonts(supabase, userId)))

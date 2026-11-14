@@ -90,7 +90,7 @@ export async function buildCarouselBrief(
   const palette = isBlank
     ? []
     : brandWins
-      ? brandPalette(row?.brand_colors, isBrand ? row?.visual_language?.palette : [])
+      ? brandPalette(row?.brand_colors, isBrand ? row?.visual_language?.palette : [], afterGenChoices(row?.email))
       : isBrand && row?.visual_language?.palette?.length
         ? row.visual_language.palette
         : (row?.brand_colors ?? []).map((hex, i) => ({ hex, role: i === 0 ? "primary brand colour" : "brand colour" }))

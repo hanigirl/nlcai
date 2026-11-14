@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { afterGenChoices } from "@/lib/feature-access"
 import { BROLL_VIDEO_CTA, hasDescriptionCta } from "@/lib/broll-copy"
 import { canOwnMediaText, staticBRollText, textAtOnceBRoll } from "@/lib/feature-access"
 import type { MediaStyle, VisualFormat, VisualLanguage } from "@/lib/visual-language/types"
@@ -82,7 +83,7 @@ export async function buildCompositionBrief(
   // Gated: her brand colours win; the analysed palette (which can carry
   // colours read off her examples) only fills in when she set none.
   const palette = brandWins
-    ? brandPalette(row?.brand_colors, useBrandPalette ? vl!.palette : [])
+    ? brandPalette(row?.brand_colors, useBrandPalette ? vl!.palette : [], afterGenChoices(row?.email))
     : useBrandPalette
       ? vl!.palette
       : (row?.brand_colors ?? []).map((hex, i) => ({ hex, role: i === 0 ? "primary brand colour" : "brand colour" }))
