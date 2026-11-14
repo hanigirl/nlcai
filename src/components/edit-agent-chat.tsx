@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { ArrowUp, Loader2, X } from "lucide-react"
 import { ReferenceAddMenu } from "@/components/ai-edit-drive-reference"
-import { useDriveInBRoll } from "@/lib/use-scheduling-access"
+import { useAfterGenChoices, useDriveInBRoll } from "@/lib/use-scheduling-access"
 import { createClient } from "@/lib/supabase/client"
 import { BROLL_VIDEO_TOO_BIG, MAX_BROLL_VIDEO_BYTES } from "@/lib/broll-video-limit"
 import { getCurrentUser } from "@/lib/supabase/current-user"
@@ -134,6 +134,18 @@ export function useFollowEditAgentRun(
   }, [runningId, check])
 }
 
+/** Ready capsules above the input — the label is what she sees, `ask` what the agent reads. */
+const QUICK_ASKS = [
+  {
+    label: "להדגיש את מילות הטריגר",
+    ask: "להדגיש את מילות הטריגר בטקסט בצבע המותג הראשון שלי (צבע 1 — מילות טריגר והדגשות). בלי לשנות את המילים עצמן.",
+  },
+  {
+    label: "להדגיש את הטקסט",
+    ask: "להדגיש את הטקסט כך שיבלוט יותר על הרקע וייקרא בקלות — משקל, גודל או ניגודיות. בלי לשנות את המילים עצמן.",
+  },
+]
+
 export function EditAgentChat({
   postId,
   format,
@@ -172,6 +184,9 @@ export function EditAgentChat({
   // One image button (Hani, 2026-11-10): "מהמחשב" / "מגוגל דרייב" — the
   // AI panel's menu. She picks; the agent never reads her Drive itself.
   const driveMenu = useDriveInBRoll() === true
+  // Ready capsules for the most common ask (Hani, 2026-11-13: "קריטי"):
+  // trigger words in brand colour 1, or the whole text stands out more.
+  const quickAsks = useAfterGenChoices() === true
   const pickRef = useRef<{ computer: () => void; drive: () => void } | null>(null)
   // The question asked here, not by the server — gone once she attaches one.
   const [addAsk, setAddAsk] = useState(askAddMedia)
@@ -437,6 +452,21 @@ export function EditAgentChat({
       </div>
 
       <div className="flex flex-col gap-2 border-t border-border-neutral-default p-3">
+        {quickAsks && loaded && !busy && !askNow && !addAsk && (
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="פעולות מוכנות">
+            {QUICK_ASKS.map((q) => (
+              <Chip
+                key={q.label}
+                onClick={() => {
+                  setGenAsk(false)
+                  void send(q.ask)
+                }}
+              >
+                {q.label}
+              </Chip>
+            ))}
+          </div>
+        )}
         <ReferenceTray r={refs} />
         <div className="flex items-end gap-2 rounded-[12px] border border-border-neutral-default bg-white p-2 transition-colors focus-within:border-yellow-50 dark:bg-gray-10">
           <Textarea
