@@ -72,8 +72,16 @@ function toCanvas(base64: string, w: number, h: number): string {
 }
 
 const THINK_BUDGET_MS = 420_000
-const MAX_STEPS = 12
-const MAX_DRAFTS = 12
+/**
+ * Steps and caption drafts per turn, at the least. Both used to be a flat 12
+ * whatever the set's size — so one request on a nine-slide carousel (draw all
+ * nine, the self-check asks for a fix, redraw) ran out of drafts mid-turn and
+ * the agent told her it had "run out of tries for this message" (Nataliya,
+ * 2026-11-13). They now grow with the frames: every frame can be drawn once
+ * and fixed after each self-check, with room to spare.
+ */
+const MIN_STEPS = 12
+const MIN_DRAFTS = 12
 /** Self-checks per turn: a miss is fixed and checked once more (lib/edit-agent/self-check). */
 const MAX_CHECKS = 2
 
@@ -387,6 +395,8 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
   const client = new Anthropic({ apiKey: anthropicKey })
   const total = input.urls.length
   let drafts = 0
+  const MAX_DRAFTS = Math.max(MIN_DRAFTS, total * (MAX_CHECKS + 1) + 3)
+  const MAX_STEPS = Math.max(MIN_STEPS, total + 6)
   /** A preference saved this turn — then no "זכור לעתיד" offer. */
   let remembered = false
   let offer: string | undefined
