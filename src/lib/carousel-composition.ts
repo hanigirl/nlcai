@@ -498,6 +498,9 @@ function fontEnforcement(fonts: BrandFont[]): string {
 </style>`
 }
 
+/** The carousel's slides: `.slide` elements that are not inside another one. */
+const TOP_SLIDES = ".slide:not(.slide .slide)"
+
 /** Load the HTML once, fit the type scale across ALL slides, screenshot each. */
 export async function renderCarousel(
   html: string,
@@ -555,14 +558,17 @@ export async function renderCarousel(
     })()`)
     // One slide on screen at a time, pinned to the top-left of the viewport:
     // element screenshots of a tall RTL page land off by the scrollbar.
-    const count = await tab.evaluate(`document.querySelectorAll(".slide").length`)
+    // Top-level slides only: a layout that reuses the class inside a slide
+    // (a "slide" wrapper in a slide) must not count as extra slides — that
+    // shifted every shot and crashed the edit (live, 2026-11-13).
+    const count = await tab.evaluate(`document.querySelectorAll(${JSON.stringify(TOP_SLIDES)}).length`)
     const shots: Buffer[] = []
     for (let i = 0; i < Number(count); i++) {
       await tab.evaluate(`(() => {
         document.documentElement.style.overflow = "hidden";
         document.body.style.margin = "0";
         document.body.style.overflow = "hidden";
-        document.querySelectorAll(".slide").forEach((el, j) => {
+        document.querySelectorAll(${JSON.stringify(TOP_SLIDES)}).forEach((el, j) => {
           el.style.display = j === ${i} ? "" : "none";
         });
         window.scrollTo(0, 0);

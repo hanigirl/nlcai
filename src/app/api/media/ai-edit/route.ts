@@ -431,12 +431,23 @@ export async function POST(req: NextRequest) {
       }
       const direction = current.direction
       const shots = await renderCarousel(qaFixes1112(user.email) ? withNoOrphans(revised.html) : revised.html, illustrations, stored.brief.fonts)
+      // One shot per slide of the brief. A layout that came back with another
+      // number of slides is broken — it once crashed here on a slide past the
+      // brief (live, Nataliya 2026-11-13: "edit failed" twice, nothing changed).
+      // Extra ones are dropped (as generate-ai does); a missing one saves nothing.
+      if (shots.length < stored.brief.slides.length) {
+        console.error(`[media/ai-edit] layout rendered ${shots.length} slides, the brief has ${stored.brief.slides.length}`)
+        return NextResponse.json(
+          { error: "render_missing_slide", message: "העיצוב החדש יצא עם פחות שקופיות מהקרוסלה, אז לא שיניתי כלום. נסו שוב." },
+          { status: 422 },
+        )
+      }
       const nextSet = await Promise.all(
-        shots.map((shot, i) =>
+        stored.brief.slides.map((slide, i) =>
           applyFixedElements(
-            shot.toString("base64"),
+            shots[i].toString("base64"),
             direction.fixed,
-            stored.brief.slides[i].type === "cover" ? "cover" : stored.brief.slides[i].type === "cta" ? "closing" : "content",
+            slide.type === "cover" ? "cover" : slide.type === "cta" ? "closing" : "content",
           ),
         ),
       )
