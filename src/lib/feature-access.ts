@@ -195,3 +195,13 @@ export const EXAMPLES_IN_LANGUAGE_EMAILS = ["hanigirl@gmail.com", "nataliya@nata
 export function examplesInLanguage(email: string | null | undefined): boolean {
   return !!email && EXAMPLES_IN_LANGUAGE_EMAILS.includes(email.toLowerCase())
 }
+
+/**
+ * "שפת המותג" takes her media from her Drive folder when she has one
+ * (Nataliya, PM, 2026-11-14, Notion #1 — lib/brand-drive-media). Without a
+ * folder the brand language stays graphics-only (lib/visual-language/graphic-only).
+ */
+export const BRAND_DRIVE_MEDIA_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export function brandDriveMedia(email: string | null | undefined): boolean {
+  return !!email && BRAND_DRIVE_MEDIA_EMAILS.includes(email.toLowerCase())
+}

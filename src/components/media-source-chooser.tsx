@@ -74,7 +74,9 @@ export function MediaSourceChooser({
       thumb:
         brandLoading && !brandTemplate ? (
           <Skeleton className="size-full rounded-md" />
-        ) : brandTemplate?.thumbnailUrl ? (
+        ) : brandTemplate?.thumbnailUrl && (!qa || format === "carousel") ? (
+          // Her carousel example shows only on a carousel (Notion #23); other
+          // formats get the generic preview in her colours below.
           // eslint-disable-next-line @next/next/no-img-element
           <img src={brandTemplate.thumbnailUrl} alt="" className="size-full object-cover" />
         ) : (

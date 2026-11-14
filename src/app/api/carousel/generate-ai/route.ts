@@ -1,7 +1,8 @@
 import { canEditPictures } from "@/lib/feature-access"
 import { brandTerms } from "@/lib/brand-terms"
 import { withNoOrphans } from "@/lib/no-orphans"
-import { qaFixes1112 } from "@/lib/feature-access"
+import { brandDriveMedia, qaFixes1112 } from "@/lib/feature-access"
+import { pickBrandDrivePictures } from "@/lib/brand-drive-media"
 import { withGraphicOnly } from "@/lib/visual-language/graphic-only"
 import { PICTURE_UNCHANGED, adaptPictureForSlide, editPicture, wantsPictureAsIs } from "@/lib/picture-edit"
 import { canCopyStructure, gatePlacement, PICTURE_IS_BACKGROUND, refusesPlacingIntoDesign } from "@/lib/feature-access"
@@ -343,7 +344,17 @@ export async function POST(req: NextRequest) {
 
     // Her language makes graphics only, never a photo (gated): the layout,
     // the illustrations and the whole-slide fallback all read these lines.
-    direction = withGraphicOnly(direction, user.email)
+    // "שפת המותג" with her Drive folder (Nataliya, 2026-11-14, Notion #1):
+    // her pictures from it go in, no question asked — where her carousel
+    // examples put a picture, the cover always. No folder → graphics only.
+    const fromDrive =
+      isBrandTemplate && direction.source === "brand" && brandDriveMedia(user.email) && !structure && !(Array.isArray(place) && place.length)
+        ? await pickBrandDrivePictures(user.id, "carousel", Math.min(total, 4)).catch((e) => {
+            console.error("[carousel brand drive]", e)
+            return [] as string[]
+          })
+        : []
+    if (!fromDrive.length) direction = withGraphicOnly(direction, user.email)
     // Her own direction for this carousel wins over the language where they
     // conflict — and is kept in the saved brief, so later AI edits honour it.
     direction = withMediaBrief(direction, normalizeMediaBrief(mediaBrief))
@@ -351,14 +362,14 @@ export async function POST(req: NextRequest) {
     // model as reference images. The saved brief keeps the plain lines, so
     // later edits aren't told about images they don't have.
     // Placing is Hani-only for now (lib/feature-access); off it, all are looks.
-    const placeIn = await resolveReferences(place, user.id)
-    if (Array.isArray(place) && placeIn.length !== place.length) {
+    const placeIn = fromDrive.length ? fromDrive : await resolveReferences(place, user.id)
+    if (!fromDrive.length && Array.isArray(place) && placeIn.length !== place.length) {
       return NextResponse.json(
         { error: "slot_picture_unreadable", message: "לא הצלחתי לקרוא את אחת התמונות שצירפתם, אז לא יצרתי כלום. נסו לצרף אותה שוב." },
         { status: 422 },
       )
     }
-    if (refusesPlacingIntoDesign(user.email, placeIn)) {
+    if (!fromDrive.length && refusesPlacingIntoDesign(user.email, placeIn)) {
       return NextResponse.json(PICTURE_IS_BACKGROUND, { status: 409 })
     }
     const gated = gatePlacement(
@@ -418,7 +429,7 @@ export async function POST(req: NextRequest) {
           rawPlaceAt.every((n) => Number.isInteger(n) && n >= 0 && n < total)
             ? (rawPlaceAt as number[])
             : undefined
-        const layout = await composeCarousel(anthropicKey, brief, refs, placeRefs, pictureEditsOn, placeAt, structure)
+        const layout = await composeCarousel(anthropicKey, brief, refs, placeRefs, pictureEditsOn, placeAt, structure, fromDrive.length > 0)
         // Her profile picture where the card shows the author's.
         layout.html = avatarSrc ? layout.html.split("__AVATAR__").join(avatarSrc) : layout.html.split("__AVATAR__").join("")
         if (placeAt) {
@@ -434,7 +445,8 @@ export async function POST(req: NextRequest) {
           : []
         if (placeRefs.length) {
           const covered = new Set(placedOn.map((x) => x.n))
-          if (placeRefs.some((_, j) => !covered.has(j + 1))) {
+          // Her Drive pictures are a pool: the layout uses what her examples call for (at least one).
+          if (fromDrive.length ? !placedOn.length : placeRefs.some((_, j) => !covered.has(j + 1))) {
             return NextResponse.json(PLACE_FAILED_GEN, { status: 422 })
           }
           // Adapted to its slide through the image model first (Hani,

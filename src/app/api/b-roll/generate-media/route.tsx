@@ -1,5 +1,6 @@
 import { resetAgentChat } from "@/lib/edit-agent/reset-chat"
 import { canOwnMediaText, driveInBRoll, holdsBRollText } from "@/lib/feature-access"
+import { brandDriveMedia } from "@/lib/feature-access"
 import { withGraphicOnly } from "@/lib/visual-language/graphic-only"
 import { gatePlacement } from "@/lib/feature-access"
 import { BLANK_NEEDS_BRIEF, normalizeMediaBrief, withMediaBrief, withMediaReferences } from "@/lib/media-brief"
@@ -156,8 +157,16 @@ export async function POST(req: NextRequest) {
     // generated from elements, fonts and colours only — no media picked for
     // her. Her own picture / video comes in afterwards, when SHE adds it
     // ("הוספת תמונה או סרטון" on the b-roll, or in the chat), blended by the same recipe.
-    const AUTO_PICK_LIBRARY_MEDIA = false
-    if (AUTO_PICK_LIBRARY_MEDIA && !placed.length && driveInBRoll(user.email)) {
+    const resolved = await resolveDesignDirection(supabase, user.id, {
+      format: "b_roll",
+      allowReferences: false,
+      style: isMediaStyle(style) ? style : undefined,
+    })
+    // "שפת המותג" with her Drive b-roll folder (Nataliya, 2026-11-14, Notion
+    // #1): one of her videos (pictures if no video) goes in, no question
+    // asked, blended by the approved recipe (compose.ts "HER OWN VIDEO/PICTURE").
+    // No folder → elements, fonts and colours only, as before.
+    if (!placed.length && resolved.source === "brand" && brandDriveMedia(user.email)) {
       const t = Date.now()
       library = await pickLibraryMedia(supabase, user.id, stamp).catch((e) => {
         console.error("[b-roll library]", e)
@@ -167,15 +176,9 @@ export async function POST(req: NextRequest) {
     }
     const ownBackground = placed.length ? await pictureAsBackground(referenceBuffer(placed[0])) : null
     const baseDirection = withMediaBrief(
-      // Her language makes graphics only, never a photo (gated).
-      withGraphicOnly(
-        await resolveDesignDirection(supabase, user.id, {
-          format: "b_roll",
-          allowReferences: false,
-          style: isMediaStyle(style) ? style : undefined,
-        }),
-        user.email,
-      ),
+      // Her language makes graphics only, never a photo (gated) — her own
+      // media, when picked, is layered in by the composition, not drawn.
+      withGraphicOnly(resolved, user.email),
       normalizeMediaBrief(mediaBrief),
     )
     const direction = ownBackground

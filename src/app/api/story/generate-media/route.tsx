@@ -1,4 +1,6 @@
 import { canOwnMediaText } from "@/lib/feature-access"
+import { brandDriveMedia } from "@/lib/feature-access"
+import { pickBrandDrivePictures } from "@/lib/brand-drive-media"
 import { resetAgentChat } from "@/lib/edit-agent/reset-chat"
 import { withGraphicOnly } from "@/lib/visual-language/graphic-only"
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences, withPlacedImages } from "@/lib/media-brief"
@@ -153,22 +155,27 @@ export async function POST(req: NextRequest) {
     // The look: her visual language, else one derived from her niche.
     // Resolved once so every frame shares it; regenerate rotates only the
     // composition.
+    const resolved = await resolveDesignDirection(supabase, user.id, {
+      format: "story",
+      style: isMediaStyle(style) ? style : undefined,
+    })
+    // "שפת המותג" with her Drive folder (Nataliya, 2026-11-14, Notion #1): one
+    // of her pictures goes in, no question asked. No folder → graphics only.
+    const fromDrive =
+      resolved.source === "brand" && brandDriveMedia(user.email) && !parseReferences(place).length
+        ? await pickBrandDrivePictures(user.id, "story", 1).catch(() => [] as string[])
+        : []
+    const placeIn = fromDrive.length ? fromDrive : parseReferences(place)
     const base = withMediaBrief(
-      // Her language makes graphics only, never a photo (gated).
-      withGraphicOnly(
-        await resolveDesignDirection(supabase, user.id, {
-          format: "story",
-          style: isMediaStyle(style) ? style : undefined,
-        }),
-        user.email,
-      ),
+      // Her language makes graphics only, never a photo (gated) — unless her picture is in.
+      fromDrive.length ? resolved : withGraphicOnly(resolved, user.email),
       normalizeMediaBrief(brief),
     )
     // Placing is Hani-only for now (lib/feature-access); off it, all are looks.
-    if (refusesPlacingIntoDesign(user.email, parseReferences(place))) {
+    if (!fromDrive.length && refusesPlacingIntoDesign(user.email, placeIn)) {
       return NextResponse.json(PICTURE_IS_BACKGROUND, { status: 409 })
     }
-    const gated = gatePlacement(user.email, parseReferences(place), parseReferences(references))
+    const gated = gatePlacement(user.email, placeIn, parseReferences(references))
     const looks = gated.looks
     const direction = withMediaReferences(base, looks)
     // Her own pictures go in as they are — on the first frame, the one that

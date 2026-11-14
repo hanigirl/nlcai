@@ -362,6 +362,11 @@ export function composeCarousel(
    * (lib/carousel-structure) — its slides as images, read into words.
    */
   structure?: CopiedStructure,
+  /**
+   * The pictures are a pool from her Drive folder ("שפת המותג", Nataliya
+   * 2026-11-14): placed where her usage examples put a picture, the cover always.
+   */
+  library = false,
 ) {
   if (structure) {
     const p = structurePrompt(brief, structure)
@@ -372,7 +377,9 @@ export function composeCarousel(
   const placeNote = [
     "",
     `HER OWN PICTURE${k > 1 ? "S" : ""}: attached image${k > 1 ? `s 1–${k} are` : " 1 is"} her own picture${k > 1 ? "s" : ""} (photo, character, illustration, logo or product) to PUT INTO this carousel as ${k > 1 ? "they are" : "it is"}.${refs.length ? ` Attached image${refs.length > 1 ? `s ${k + 1}–${k + refs.length} are` : ` ${k + 1} is`} only a reference for the look — apply the look, never place ${refs.length > 1 ? "them" : "it"}.` : ""}`,
-    placeSlidesNote(placeAt, k) ??
+    library
+      ? `These are pictures from HER OWN media library, chosen for her — not attached by her for a particular slide. Put one on the COVER always; on the other slides, use them exactly where her usage examples show a photo (if the examples show photos on content slides, place one per such slide; if they are type-led, the cover only). Each picture on at most one slide; you may leave some unused. Give each picture the slot, size and position her examples give photos, inside her visual language (background, elements and type around it as in the examples) — it is re-framed to fit that slot afterwards.`
+      : placeSlidesNote(placeAt, k) ??
       `Place EVERY one of her pictures on exactly one slide — the cover unless the brief says otherwise; one picture per slide.`,
     `Put "attached": [one entry per slide: the attached image number placed on that slide, or 0] in the json block, leave that slide's "illustrations" entry empty, and show it with <img class="art" src="__SLIDE_IMAGE_N__"> (N = the slide number) styled object-fit: contain, so her picture is never cropped, stretched or distorted. We put her exact file there — never describe it as an illustration prompt. The layout makes room for it; it never covers the slide's text.`,
     ...(pictureEdits ? ["", PICTURE_EDIT_NOTE] : []),

@@ -39,8 +39,11 @@ export async function carouselExamples(
   const rows = (data ?? []) as { id: string; storage_path: string; metadata: Record<string, unknown> | null }[]
   const filed = rows.filter((r) => userExampleKind(r.metadata) === "carousel")
   const carouselIds = new Set((vl?.example_kinds ?? []).filter((k) => k.kind === "carousel").map((k) => k.id))
-  const recognised = rows.filter((r) => carouselIds.has(r.id))
-  const picked = filed.length ? filed : recognised.length ? recognised : rows
+  // Notion #23: another format's example never shapes a carousel — general
+  // (unfiled) examples are the fallback, the ones read as carousel first.
+  const general = rows.filter((r) => !userExampleKind(r.metadata))
+  const recognised = general.filter((r) => carouselIds.has(r.id))
+  const picked = filed.length ? filed : recognised.length ? recognised : general
   const urls = picked
     .filter((r) => /\.(png|jpe?g|webp|gif)$/i.test(r.storage_path))
     .map((r) => supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl)

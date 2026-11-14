@@ -1,4 +1,6 @@
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences, withPlacedImages } from "@/lib/media-brief"
+import { brandDriveMedia } from "@/lib/feature-access"
+import { pickBrandDrivePictures } from "@/lib/brand-drive-media"
 import { withGraphicOnly } from "@/lib/visual-language/graphic-only"
 import { canOwnMediaText, gatePlacement, PICTURE_IS_BACKGROUND, refusesPlacingIntoDesign } from "@/lib/feature-access"
 import { picturesPlaced, placedImages } from "@/lib/placed-check"
@@ -157,22 +159,27 @@ export async function POST(req: NextRequest) {
       .join("\n")
     // Her own pictures go in as they are; a link's picture is a look only.
     // Placing is Hani-only for now (lib/feature-access); off it, all are looks.
-    if (refusesPlacingIntoDesign(user.email, parseReferences(place))) {
+    const resolved = await resolveDesignDirection(supabase, user.id, {
+      format: "image_post",
+      style: isMediaStyle(style) ? style : undefined,
+    })
+    // "שפת המותג" with her Drive folder (Nataliya, 2026-11-14, Notion #1): one
+    // of her pictures goes in, no question asked. No folder → graphics only.
+    const fromDrive =
+      resolved.source === "brand" && brandDriveMedia(user.email) && !parseReferences(place).length
+        ? await pickBrandDrivePictures(user.id, "image_post", 1).catch(() => [] as string[])
+        : []
+    const placeIn = fromDrive.length ? fromDrive : parseReferences(place)
+    if (!fromDrive.length && refusesPlacingIntoDesign(user.email, placeIn)) {
       return NextResponse.json(PICTURE_IS_BACKGROUND, { status: 409 })
     }
-    const gated = gatePlacement(user.email, parseReferences(place), parseReferences(references))
+    const gated = gatePlacement(user.email, placeIn, parseReferences(references))
     const placed = await placedImages(gated.place)
     const direction = withMediaReferences(
       withPlacedImages(
         withMediaBrief(
-          // Her language makes graphics only, never a photo (gated).
-          withGraphicOnly(
-            await resolveDesignDirection(supabase, user.id, {
-              format: "image_post",
-              style: isMediaStyle(style) ? style : undefined,
-            }),
-            user.email,
-          ),
+          // Her language makes graphics only, never a photo (gated) — unless her picture is in.
+          fromDrive.length ? resolved : withGraphicOnly(resolved, user.email),
           normalizeMediaBrief(brief),
         ),
         placed,

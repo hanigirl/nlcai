@@ -123,7 +123,12 @@ export async function loadBrandExamples(
   const recognised = new Set((exampleKinds ?? []).filter((k) => k.kind === kind).map((k) => k.id))
   const filed = rows.filter((r) => userExampleKind(r.metadata) === kind)
   const unfiled = rows.filter((r) => !userExampleKind(r.metadata) && recognised.has(r.id))
-  const picked = (random ? shuffled([...filed, ...unfiled]) : [...filed, ...unfiled]).slice(0, max)
+  // Notion #23 (Nataliya, 2026-11-14): examples filed under this format are
+  // the only ones it uses; her general (unfiled) examples are the default for
+  // a format with none of its own — recognised ones first.
+  const general = [...unfiled, ...rows.filter((r) => !userExampleKind(r.metadata) && !recognised.has(r.id))]
+  const pool = random ? (filed.length ? shuffled(filed) : [...shuffled(unfiled), ...shuffled(general.slice(unfiled.length))]) : [...filed, ...unfiled]
+  const picked = pool.slice(0, max)
   const images = await Promise.all(
     picked.map((r) =>
       loadExampleForModels(supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl, gray).catch(
