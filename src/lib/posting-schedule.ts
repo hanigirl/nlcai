@@ -251,26 +251,103 @@ export function schedulesEqual(a: PostingSchedule, b: PostingSchedule): boolean 
 
 // --- persistence (production path only — the review harness never calls it) ---
 
-const SCHEDULE_KEY = "nlcai.timing.posting_schedule"
+// The routine is stored on the account (users.posting_schedule, via
+// /api/schedule/settings) so it is the same on every device (QA 2026-11-15).
+// localStorage is only this browser's copy for the first paint, tagged with
+// the account it belongs to.
 
-/** Saved schedule, or null when the user has never set one (→ show the default). */
-export function getPostingSchedule(): PostingSchedule | null {
+export const SCHEDULE_KEY = "nlcai.timing.posting_schedule"
+const SETTINGS_API = "/api/schedule/settings"
+
+type CachedSchedule = PostingSchedule & { _owner?: string }
+
+function readCache(): CachedSchedule | null {
   if (typeof window === "undefined") return null
   try {
     const raw = window.localStorage.getItem(SCHEDULE_KEY)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as PostingSchedule
+    const parsed = JSON.parse(raw) as CachedSchedule
     if (!Array.isArray(parsed?.days) || parsed.days.length !== 7) return null
-    return normalizeSchedule(parsed)
+    return parsed
   } catch (err) {
     console.warn("[posting-schedule] unreadable schedule, using default", err)
     return null
   }
 }
 
-export function savePostingSchedule(s: PostingSchedule): void {
-  window.localStorage.setItem(SCHEDULE_KEY, JSON.stringify(s))
-  window.dispatchEvent(new StorageEvent("storage", { key: SCHEDULE_KEY }))
+function writeCache(s: PostingSchedule, owner: string | undefined): void {
+  try {
+    window.localStorage.setItem(SCHEDULE_KEY, JSON.stringify({ ...s, _owner: owner }))
+    window.dispatchEvent(new StorageEvent("storage", { key: SCHEDULE_KEY }))
+  } catch (err) {
+    console.warn("[posting-schedule] could not cache schedule", err)
+  }
+}
+
+function stripOwner(c: CachedSchedule): PostingSchedule {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { _owner, ...s } = c
+  return normalizeSchedule(s)
+}
+
+let knownOwner: string | undefined
+
+/** This browser's copy of the saved schedule (first paint only), or null. */
+export function getPostingSchedule(): PostingSchedule | null {
+  const c = readCache()
+  if (!c) return null
+  // Another account's copy in this browser is not hers.
+  if (knownOwner && c._owner && c._owner !== knownOwner) return null
+  return stripOwner(c)
+}
+
+/**
+ * The account's saved schedule. `null` = never saved (→ the default);
+ * `undefined` = couldn't be read (keep what is shown).
+ *
+ * A routine saved before it moved to the account lives only in this browser:
+ * the first read lifts it onto the account, so nothing she set is lost.
+ */
+export async function fetchPostingSchedule(): Promise<PostingSchedule | null | undefined> {
+  try {
+    const res = await fetch(SETTINGS_API, { cache: "no-store" })
+    if (!res.ok) return undefined
+    const json = (await res.json()) as { schedule?: PostingSchedule | null; userId?: string }
+    knownOwner = json.userId
+    const server = json.schedule
+    if (server && Array.isArray(server.days) && server.days.length === 7) {
+      const s = normalizeSchedule(server)
+      writeCache(s, knownOwner)
+      return s
+    }
+    const local = readCache()
+    if (local && (!local._owner || local._owner === knownOwner)) {
+      const s = stripOwner(local)
+      if (await savePostingSchedule(s)) return s
+      return s
+    }
+    return null
+  } catch (err) {
+    console.warn("[posting-schedule] could not read the saved schedule", err)
+    return undefined
+  }
+}
+
+/** Save to the account. Resolves false when it wasn't saved. */
+export async function savePostingSchedule(s: PostingSchedule): Promise<boolean> {
+  try {
+    const res = await fetch(SETTINGS_API, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ schedule: s }),
+    })
+    if (!res.ok) return false
+    writeCache(s, knownOwner)
+    return true
+  } catch (err) {
+    console.error("[posting-schedule] save failed", err)
+    return false
+  }
 }
 
 // --- pure edit helpers ------------------------------------------------------

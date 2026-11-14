@@ -17,7 +17,9 @@ import {
   WEEKDAY_NAMES,
   cloneSchedule,
   defaultPostingSchedule,
+  fetchPostingSchedule,
   getPostingSchedule,
+  SCHEDULE_KEY,
   newSlotId,
   savePostingSchedule,
   schedulesEqual,
@@ -198,24 +200,51 @@ export function usePostingSchedule() {
     setHasCustom(true)
   }, [])
   useEffect(() => {
+    // This browser's copy first, then the account's — the account wins.
     reload()
+    let alive = true
+    void fetchPostingSchedule().then((s) => {
+      if (!alive || s === undefined) return
+      if (s === null) {
+        const d = defaultPostingSchedule()
+        setSaved(d)
+        setDraft(cloneSchedule(d))
+        setHasCustom(false)
+        return
+      }
+      setSaved(s)
+      setDraft(cloneSchedule(s))
+      setHasCustom(true)
+    })
+    // Saved in another tab → this one follows.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === SCHEDULE_KEY) reload()
+    }
+    window.addEventListener("storage", onStorage)
+    return () => {
+      alive = false
+      window.removeEventListener("storage", onStorage)
+    }
   }, [reload])
 
-  const save = useCallback((onDone?: () => void) => {
-    setSaving(true)
-    setSaveError(false)
-    try {
-      savePostingSchedule(draft)
-      setSaved(cloneSchedule(draft))
-      setHasCustom(true)
-      onDone?.()
-    } catch (err) {
-      console.error("[posting-schedule] save failed", err)
-      setSaveError(true)
-    } finally {
-      setSaving(false)
-    }
-  }, [draft])
+  const save = useCallback(
+    (onDone?: () => void) => {
+      setSaving(true)
+      setSaveError(false)
+      const next = cloneSchedule(draft)
+      void savePostingSchedule(next).then((ok) => {
+        setSaving(false)
+        if (!ok) {
+          setSaveError(true)
+          return
+        }
+        setSaved(next)
+        setHasCustom(true)
+        onDone?.()
+      })
+    },
+    [draft],
+  )
 
   const discard = useCallback(() => {
     setDraft(cloneSchedule(saved))

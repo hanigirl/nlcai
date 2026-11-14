@@ -105,6 +105,7 @@ function DialogInner({ onDone, onCancel }: { onDone: () => void; onCancel: () =>
   return (
     <>
       <ScheduleSettingsBody routine={routine} />
+      {routine.saveError && <SaveErrorAlert onRetry={() => routine.save(() => onDone())} />}
       <div className="flex gap-2">
         <Button
           size="sm"
