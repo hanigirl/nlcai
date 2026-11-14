@@ -57,12 +57,15 @@ export type StoryPlayerProps = {
   autoPlay?: boolean
   /** Extra classes for the 9:16 stage (width is the caller's decision). */
   className?: string
+  /** The frame on screen — e.g. "חיתוך" acts on the frame she is looking at. */
+  onIndexChange?: (index: number) => void
 }
 
 export function StoryPlayer({
   frames,
   autoPlay = true,
   className = "",
+  onIndexChange,
 }: StoryPlayerProps) {
   const [index, setIndex] = useState(0)
   const [playing, setPlaying] = useState(autoPlay)
@@ -80,6 +83,10 @@ export function StoryPlayer({
   /** Wall-clock ms already elapsed on this frame, preserved across pauses. */
   const elapsedRef = useRef(0)
   const rafRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    onIndexChange?.(index)
+  }, [index, onIndexChange])
 
   const frame = frames[Math.min(index, frames.length - 1)]
   const isVideo = !!frame && isVideoFrame(frame)

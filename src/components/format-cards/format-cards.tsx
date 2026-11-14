@@ -41,6 +41,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { IconActionButton } from "@/components/icon-action-button"
 import { HoverMediaIconButton, MediaPreviewZone } from "@/components/media-preview-zone"
 import { PictureCropEditor } from "@/components/picture-crop-editor"
+import type { CropShape } from "@/lib/picture-crop"
 import { AiHoverEditButton } from "@/components/ai-hover-edit"
 import { LaneStem, TreeConnector } from "@/components/format-lanes"
 import { ApprovalCardFooter } from "@/components/format-approval/approval-card-footer"
@@ -621,7 +622,7 @@ export function FormatPanelMedia({
    * that slide when it can be cut (null: not hers / a video / not stored),
    * `apply` puts the new one in its place and saves.
    */
-  crop?: { urlAt: (index: number) => string | null; apply: (index: number, url: string) => Promise<void> }
+  crop?: { urlAt: (index: number) => string | null; apply: (index: number, url: string) => Promise<void>; shape?: CropShape }
   /** "החלפת תמונה" on a visual-language b-roll (gated by the page). */
   onSwapPhoto?: () => void
   fid: string
@@ -654,6 +655,7 @@ export function FormatPanelMedia({
       <PictureCropEditor
         key={cropUrl}
         url={cropUrl}
+        shape={crop.shape}
         onCancel={() => setCropping(null)}
         onDone={async (u) => {
           await crop.apply(cropping, u)
@@ -677,6 +679,7 @@ export function FormatPanelMedia({
         <StoryPlayer
           frames={media.kind === "slides" ? media.items : [media.url]}
           className="w-full aspect-[9/16] rounded-xl"
+          onIndexChange={setSlide}
         />
       ) : (
         <FormatMediaPreview media={media} fid={fid} onIndexChange={setSlide} />

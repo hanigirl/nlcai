@@ -2505,17 +2505,35 @@ function ProjectPageInner() {
   // 2026-11-11; own-media text gate). The new 4:5 picture replaces the old
   // one in the set, saved like the agent's edits (media/own-edit "save").
   const cropFor = (fid: string) => {
-    if (!ownTextGate || !savedPostId || (fid !== "image_post" && fid !== "carousel")) return undefined
+    // A story frame too, cut 9:16 (Hani, 2026-11-14) — Hani only for now.
+    const storyCrop = fid === "story" && afterGenOn
+    if (!ownTextGate || !savedPostId || (fid !== "image_post" && fid !== "carousel" && !storyCrop)) return undefined
     const stored = (u: string | null | undefined): u is string =>
       !!u && /^https?:\/\//i.test(u) && !/\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)
     const postId = savedPostId
-    const save = async (format: "image_post" | "carousel", urls: string[]) => {
+    const save = async (format: "image_post" | "carousel" | "story", urls: string[]) => {
       const r = await fetch("/api/media/own-edit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "save", postId, format, urls }),
       })
       if (!r.ok) throw new Error("החיתוך לא נשמר. נסו שוב.")
+    }
+    if (fid === "story") {
+      return {
+        shape: "9:16" as const,
+        // Her own picture in the set — never a clip, never an AI frame.
+        urlAt: (i: number) => {
+          if (storyVideoUrl) return null
+          const u = storyImages?.[i]
+          return stored(u) && isOwnCarouselSlideUrl(u) ? u : null
+        },
+        apply: async (i: number, url: string) => {
+          const urls = (storyImages ?? []).map((u, j) => (j === i ? url : u))
+          await save("story", urls)
+          setStoryImages(urls)
+        },
+      }
     }
     if (fid === "image_post") {
       return {

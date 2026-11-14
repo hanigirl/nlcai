@@ -5,7 +5,7 @@ import { Loader2, ZoomIn, ZoomOut } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
-import { CROP_ASPECT, MAX_ZOOM, cropRect, type PictureCrop } from "@/lib/picture-crop"
+import { CROP_SHAPES, MAX_ZOOM, cropRect, type CropShape, type PictureCrop } from "@/lib/picture-crop"
 
 /**
  * "חיתוך" (Hani, 2026-11-11): her whole picture in the 4:5 frame — drag it to
@@ -14,9 +14,12 @@ import { CROP_ASPECT, MAX_ZOOM, cropRect, type PictureCrop } from "@/lib/picture
  */
 export function PictureCropEditor({
   url,
+  shape = "4:5",
   onDone,
   onCancel,
 }: {
+  /** The frame's shape: 4:5 (image post / carousel) or 9:16 (a story frame). */
+  shape?: CropShape
   /** The picture as shown now (a captioned render, a cut, or her file). */
   url: string
   /** The new picture, made — the page puts it in place and saves. */
@@ -26,13 +29,14 @@ export function PictureCropEditor({
   const [src, setSrc] = useState<{ original: string; width: number; height: number; caption?: string } | null>(null)
   const [crop, setCrop] = useState<PictureCrop>({ cx: 0.5, cy: 0.5, zoom: 1 })
   const [saving, setSaving] = useState(false)
+  const aspect = CROP_SHAPES[shape].aspect
   const frameRef = useRef<HTMLDivElement>(null)
   const drag = useRef<{ x: number; y: number; crop: PictureCrop } | null>(null)
   const [frameW, setFrameW] = useState(0)
 
   useEffect(() => {
     let live = true
-    fetch(`/api/media/crop?url=${encodeURIComponent(url)}`)
+    fetch(`/api/media/crop?url=${encodeURIComponent(url)}${shape === "4:5" ? "" : `&shape=${shape}`}`)
       .then(async (r) => {
         const data = await r.json().catch(() => ({}))
         if (!r.ok) throw new Error(data.message || "load_failed")
@@ -51,7 +55,7 @@ export function PictureCropEditor({
     return () => {
       live = false
     }
-  }, [url, onCancel])
+  }, [url, shape, onCancel])
 
   useEffect(() => {
     const el = frameRef.current
@@ -63,12 +67,12 @@ export function PictureCropEditor({
   }, [src])
 
   // The frame shows `rect` of the original; the picture is laid out so.
-  const rect = src ? cropRect(src.width, src.height, crop) : null
+  const rect = src ? cropRect(src.width, src.height, crop, aspect) : null
   const scale = rect && frameW ? frameW / rect.width : 0
 
   const clampCentre = (c: PictureCrop): PictureCrop => {
     if (!src) return c
-    const r = cropRect(src.width, src.height, c)
+    const r = cropRect(src.width, src.height, c, aspect)
     return { ...c, cx: (r.left + r.width / 2) / src.width, cy: (r.top + r.height / 2) / src.height }
   }
 
@@ -98,7 +102,7 @@ export function PictureCropEditor({
       const r = await fetch("/api/media/crop", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, crop }),
+        body: JSON.stringify({ url, crop, ...(shape === "4:5" ? {} : { shape }) }),
       })
       const data = await r.json().catch(() => ({}))
       if (!r.ok || !data.url) throw new Error(data.message || "החיתוך לא נשמר. נסו שוב.")
@@ -115,7 +119,7 @@ export function PictureCropEditor({
       <div
         ref={frameRef}
         className="relative w-full touch-none select-none overflow-hidden rounded-xl bg-gray-95 dark:bg-gray-20"
-        style={{ aspectRatio: `${CROP_ASPECT}` }}
+        style={{ aspectRatio: `${aspect}` }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

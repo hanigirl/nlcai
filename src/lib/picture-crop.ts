@@ -31,11 +31,29 @@ export const CROP_ASPECT = 4 / 5
 export const MAX_ZOOM = 4
 export const CROP_OUT = { width: 1080, height: 1350 }
 
+/**
+ * A story frame is cut 9:16 (Hani, 2026-11-14, Notion "סטורי: Crop") — the
+ * same editor and record, only the frame's shape and the output size change.
+ */
+export type CropShape = "4:5" | "9:16"
+export const CROP_SHAPES: Record<CropShape, { aspect: number; out: { width: number; height: number } }> = {
+  "4:5": { aspect: CROP_ASPECT, out: CROP_OUT },
+  "9:16": { aspect: 9 / 16, out: { width: 1080, height: 1920 } },
+}
+export function cleanShape(v: unknown): CropShape {
+  return v === "9:16" ? "9:16" : "4:5"
+}
+
 /** The frame in the original's pixels, kept inside it. */
-export function cropRect(width: number, height: number, crop: PictureCrop): { left: number; top: number; width: number; height: number } {
+export function cropRect(
+  width: number,
+  height: number,
+  crop: PictureCrop,
+  aspect: number = CROP_ASPECT,
+): { left: number; top: number; width: number; height: number } {
   const zoom = Math.min(MAX_ZOOM, Math.max(1, crop.zoom || 1))
-  let w = width / height > CROP_ASPECT ? height * CROP_ASPECT : width
-  let h = w / CROP_ASPECT
+  let w = width / height > aspect ? height * aspect : width
+  let h = w / aspect
   w /= zoom
   h /= zoom
   const cx = Math.min(width - w / 2, Math.max(w / 2, (crop.cx ?? 0.5) * width))

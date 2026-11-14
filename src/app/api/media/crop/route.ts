@@ -2,14 +2,14 @@ import { NextRequest, NextResponse } from "next/server"
 import sharp from "sharp"
 import { createClient } from "@/lib/supabase/server"
 import { getAuthUser } from "@/lib/auth-user"
-import { canOwnMediaText, qaFixes1112 } from "@/lib/feature-access"
+import { afterGenChoices, canOwnMediaText, qaFixes1112 } from "@/lib/feature-access"
 import { extractDriveFileId, isDriveUrl } from "@/lib/drive-media"
 import { fetchDriveFile } from "@/lib/drive-fetch"
 import { guardedFetch } from "@/lib/server-fetch"
 import { readCaptionRecord, writeCaptionRecord } from "@/lib/caption-record"
-import { CANVAS_4_5, renderCaptionOverImagePng, renderCaptionOverlayPng } from "@/lib/caption-overlay"
+import { CANVAS_4_5, CANVAS_9_16, renderCaptionOverImagePng, renderCaptionOverlayPng } from "@/lib/caption-overlay"
 import { isCaptionedRenderUrl } from "@/lib/own-media"
-import { CENTRED, CROP_OUT, cleanCrop, cropRect, type CropRecord, type PictureCrop } from "@/lib/picture-crop"
+import { CENTRED, CROP_SHAPES, cleanCrop, cleanShape, cropRect, type CropRecord, type CropShape, type PictureCrop } from "@/lib/picture-crop"
 
 /**
  * "חיתוך" on her own picture in an image post / carousel slide
@@ -21,6 +21,12 @@ import { CENTRED, CROP_OUT, cleanCrop, cropRect, type CropRecord, type PictureCr
  *        its caption redrawn when it had one). Nothing is saved to the post:
  *        the panel saves the set (media/own-edit "save").
  */
+
+/** A story frame (9:16) — Hani only for now (afterGenChoices); everything else 4:5. */
+function shapeFor(v: unknown, email: string | null | undefined): CropShape {
+  const s = cleanShape(v)
+  return s === "9:16" && !afterGenChoices(email) ? "4:5" : s
+}
 
 const BUCKET = "user-media"
 const PREVIEW_MAX = 1600
@@ -73,6 +79,7 @@ export async function GET(req: NextRequest) {
   if (!user) return json({ error: "Unauthorized" }, 401)
   if (!canOwnMediaText(user.email)) return json({ error: "Forbidden" }, 403)
   const url = req.nextUrl.searchParams.get("url") ?? ""
+  const shape = shapeFor(req.nextUrl.searchParams.get("shape"), user.email)
   if (!isHers(url, user.id)) return json({ error: "not_hers" }, 400)
   try {
     const found = await resolve(supabase, url)
@@ -86,9 +93,9 @@ export async function GET(req: NextRequest) {
     const height = (turned ? meta.width : meta.height) ?? 0
     const preview = await img.resize(PREVIEW_MAX, PREVIEW_MAX, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer()
     // Her words over the frame while she cuts (Hani, 2026-11-11) — the same
-    // layer the save draws, on a transparent 4:5 canvas.
+    // layer the save draws, on a transparent canvas of the frame's shape.
     const c = found.caption?.caption
-    const layer = c ? await renderCaptionOverlayPng(c.headline ?? "", c.body ?? "", c.position ?? "bottom", c.style, CANVAS_4_5, qaFixes1112(user.email)).catch(() => null) : null
+    const layer = c ? await renderCaptionOverlayPng(c.headline ?? "", c.body ?? "", c.position ?? "bottom", c.style, shape === "9:16" ? CANVAS_9_16 : CANVAS_4_5, qaFixes1112(user.email)).catch(() => null) : null
     return json({
       original: `data:image/jpeg;base64,${preview.toString("base64")}`,
       width,
@@ -107,8 +114,10 @@ export async function POST(req: NextRequest) {
   const user = await getAuthUser(supabase)
   if (!user) return json({ error: "Unauthorized" }, 401)
   if (!canOwnMediaText(user.email)) return json({ error: "Forbidden" }, 403)
-  const body = (await req.json().catch(() => ({}))) as { url?: string; crop?: unknown }
+  const body = (await req.json().catch(() => ({}))) as { url?: string; crop?: unknown; shape?: unknown }
   const url = typeof body.url === "string" ? body.url : ""
+  const shape = shapeFor(body.shape, user.email)
+  const { aspect, out } = CROP_SHAPES[shape]
   const crop: PictureCrop | null = cleanCrop(body.crop)
   if (!crop || !isHers(url, user.id)) return json({ error: "bad_request" }, 400)
   try {
@@ -116,8 +125,8 @@ export async function POST(req: NextRequest) {
     if (!found) return json({ error: "no_original", message: "לא מצאנו את התמונה המקורית של השקופית הזו." }, 404)
     const upright = await sharp(await fetchBytes(found.original)).rotate().toBuffer()
     const meta = await sharp(upright).metadata()
-    const rect = cropRect(meta.width ?? 0, meta.height ?? 0, crop)
-    const cut = await sharp(upright).extract(rect).resize(CROP_OUT.width, CROP_OUT.height, { fit: "fill" }).png().toBuffer()
+    const rect = cropRect(meta.width ?? 0, meta.height ?? 0, crop, aspect)
+    const cut = await sharp(upright).extract(rect).resize(out.width, out.height, { fit: "fill" }).png().toBuffer()
 
     const id = crypto.randomUUID()
     const cutPath = `${user.id}/image/crop-${id}.png`
@@ -130,7 +139,7 @@ export async function POST(req: NextRequest) {
 
     // Her words go back on, exactly as they were, over the new cut.
     const c = found.caption.caption
-    const png = await renderCaptionOverImagePng(cut.toString("base64"), c.headline ?? "", c.body ?? "", CANVAS_4_5, c.position ?? "bottom", c.style, qaFixes1112(user.email))
+    const png = await renderCaptionOverImagePng(cut.toString("base64"), c.headline ?? "", c.body ?? "", shape === "9:16" ? CANVAS_9_16 : CANVAS_4_5, c.position ?? "bottom", c.style, qaFixes1112(user.email))
     const capPath = `${user.id}/image/captioned-${crypto.randomUUID()}.png`
     const capUp = await supabase.storage.from(BUCKET).upload(capPath, png, { contentType: "image/png" })
     if (capUp.error) throw new Error(capUp.error.message)
