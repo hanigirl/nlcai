@@ -78,6 +78,32 @@ const FORMAT_NAMES: Record<VisualFormat, string> = {
   b_roll: "b-roll reel frames",
 }
 
+/** Each format's own example tab (Settings → דוגמאות לשימוש). */
+const OWN_EXAMPLE_KIND: Record<VisualFormat, ExampleKind> = {
+  story: "story",
+  image_post: "feed_post",
+  carousel: "carousel",
+  b_roll: "b_roll",
+}
+
+/** She has examples of this format: filed under its tab, or unfiled ones the analysis read as it. */
+async function hasOwnExamples(
+  supabase: SupabaseClient,
+  userId: string,
+  format: VisualFormat,
+  exampleKinds: VisualLanguage["example_kinds"],
+): Promise<boolean> {
+  const kind = OWN_EXAMPLE_KIND[format]
+  const { data } = await supabase
+    .from("user_media")
+    .select("id, metadata")
+    .eq("user_id", userId)
+    .eq("category", "brand_example")
+  const rows = (data ?? []) as { id: string; metadata: Record<string, unknown> | null }[]
+  const recognised = new Set((exampleKinds ?? []).filter((k) => k.kind === kind).map((k) => k.id))
+  return rows.some((r) => userExampleKind(r.metadata) === kind || (!userExampleKind(r.metadata) && recognised.has(r.id)))
+}
+
 /** A random order (Fisher–Yates). */
 export function shuffled<T>(items: T[]): T[] {
   const out = [...items]
@@ -323,11 +349,19 @@ async function resolveBaseDirection(
     // so the description's colour and font words are left out (Hani,
     // 2026-11-09) — its composition stays.
     const look = { colours: brandWins && colors.length > 0, fonts: brandWins }
-    const lines = [
-      "VISUAL LANGUAGE — this is the creator's own brand. Follow it faithfully; it overrides any generic style habit:",
-      stripLookWords(vl.style_spec.trim(), look),
-    ]
-    const formatSpec = stripLookWords(vl.formats?.[opts.format]?.trim() ?? "", look)
+    // A format takes only its own examples (Hani, 2026-11-15): with none of
+    // this format, the analysed language (written from her OTHER formats'
+    // examples) doesn't carry its motifs over — her basics only.
+    const basicsOnly = afterGenChoices(row?.email) && !(await hasOwnExamples(supabase, userId, opts.format, vl.example_kinds))
+    const lines = basicsOnly
+      ? [
+          `VISUAL LANGUAGE — the creator's brand basics (she has no examples of ${FORMAT_NAMES[opts.format]} yet): build the design from her brand colours, her brand fonts and her own uploaded graphic elements only — a clean, modern, confident layout made of them. Do NOT invent motifs, patterns, textures or decorative devices that aren't among her elements (no pixel grids, grain, glows or shapes of your own).`,
+        ]
+      : [
+          "VISUAL LANGUAGE — this is the creator's own brand. Follow it faithfully; it overrides any generic style habit:",
+          stripLookWords(vl.style_spec.trim(), look),
+        ]
+    const formatSpec = basicsOnly ? "" : stripLookWords(vl.formats?.[opts.format]?.trim() ?? "", look)
     if (formatSpec) {
       lines.push("", `How this language works in this format: ${formatSpec}`)
     }

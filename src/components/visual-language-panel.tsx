@@ -446,6 +446,21 @@ export function VisualLanguagePanel({
     }
   }
 
+  // The analysis follows what's on the screen (Hani, 2026-11-15): a few
+  // seconds after an example, element or colour is added or removed, it runs
+  // again on its own — once per change, so a failed run doesn't loop.
+  const autoTried = useRef<string | null>(null)
+  useEffect(() => {
+    if (!colorRoles || loading || analyzing || busy || !hasInputs || !stale) return
+    if (autoTried.current === currentSignature) return
+    const t = setTimeout(() => {
+      autoTried.current = currentSignature
+      void analyze()
+    }, 3000)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colorRoles, loading, analyzing, busy, hasInputs, stale, currentSignature])
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-sm text-text-neutral-default">
