@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { createClient } from "@/lib/supabase/client"
 import { getCurrentUser } from "@/lib/supabase/current-user"
 import {
@@ -123,6 +124,8 @@ export function VisualLanguagePanel({
   const [openSection, setOpenSection] = useState<"colors" | "fonts" | "elements" | "examples" | null>(initialOpen)
   const [elements, setElements] = useState<ElementItem[]>([])
   const [examples, setExamples] = useState<ExampleItem[]>([])
+  // A usage example opened large (sheet #27, launch call 2026-11-13).
+  const [zoomedExample, setZoomedExample] = useState<ExampleItem | null>(null)
   const [visualLanguage, setVisualLanguage] = useState<VisualLanguage | null>(null)
 
   const [uploadingElements, setUploadingElements] = useState(0)
@@ -548,8 +551,20 @@ export function VisualLanguagePanel({
       </div>
     ) : (
       <div key={ex.id} className="relative size-24 rounded-lg overflow-hidden bg-bg-surface group">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={ex.url} alt={ex.name} className="size-full object-cover" />
+        {qaTerms ? (
+          <button
+            type="button"
+            aria-label={`הגדלת ${ex.name}`}
+            onClick={() => setZoomedExample(ex)}
+            className="size-full cursor-zoom-in rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-yellow-50"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={ex.url} alt={ex.name} className="size-full object-cover" />
+          </button>
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={ex.url} alt={ex.name} className="size-full object-cover" />
+        )}
         {/* In the image tab, say what the analysis saw (banner, poster…) when she didn't file it. */}
         {!ex.filedKind && tabOf(ex) === "image" && kindLabel(ex.id) && (
           <span className="absolute bottom-1 start-1 rounded-md bg-black/60 px-1.5 py-0.5 text-xs text-white">
@@ -583,6 +598,20 @@ export function VisualLanguagePanel({
     />
   )
   const examplesTabs = (
+    <>
+    <Dialog open={!!zoomedExample} onOpenChange={(o) => { if (!o) setZoomedExample(null) }}>
+      <DialogContent dir="rtl" className="max-w-[min(90vw,720px)] p-4">
+        <DialogTitle className="sr-only">{zoomedExample?.name ?? "דוגמה לשימוש"}</DialogTitle>
+        {zoomedExample && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={zoomedExample.url}
+            alt={zoomedExample.name}
+            className="mx-auto max-h-[80vh] w-auto max-w-full rounded-lg object-contain"
+          />
+        )}
+      </DialogContent>
+    </Dialog>
     <Tabs value={examplesTab} onValueChange={(v) => onExamplesTabChange?.(v as ExamplesTab)} dir="rtl">
       <TabsList className="w-full" aria-label="סוג הדוגמה">
         {EXAMPLE_TABS.map((t) => (
@@ -637,6 +666,7 @@ export function VisualLanguagePanel({
         )
       })}
     </Tabs>
+    </>
   )
 
   if (view === "examples") {
