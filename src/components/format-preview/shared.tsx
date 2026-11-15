@@ -74,6 +74,12 @@ export type PublishStatus =
       action: FailedAction
     }
   | { kind: "published"; permalink?: string }
+  /**
+   * Queued, but the caption or media changed since it was sent — the network
+   * still holds the old version. Offers "לעדכן" (QA 2026-11-15: the preview
+   * fell through to an endless "בתהליך" here).
+   */
+  | { kind: "changed"; reason: string }
   /** The time passed but no "published" signal yet — Ben's "יצא לפרסום". */
   | { kind: "sent" }
   /** The time passed and it was never handed to a network — nothing went out. */
@@ -85,7 +91,7 @@ export type PublishStatus =
 export type FailedAction = "reconnect" | "retry" | "fix_media" | "pick_time"
 
 /** Every action a status line can fire. */
-export type StatusAction = "connect" | "reconnect" | "retry" | "fix_media" | "pick_time" | "open_post"
+export type StatusAction = "connect" | "reconnect" | "retry" | "fix_media" | "pick_time" | "open_post" | "update"
 
 export type PreviewSlide = { url: string; type: "image" | "video" }
 
@@ -193,7 +199,7 @@ export function PublishStatusSlot({
 }) {
   if (status.kind === "loading") return null
   const tone =
-    status.kind === "failed"
+    status.kind === "failed" || status.kind === "changed"
       ? "border-red-80 bg-red-95 dark:bg-red-95/10"
       : status.kind === "scheduled" || status.kind === "published"
         ? "border-green-90 bg-green-95 dark:bg-green-95/10"
@@ -240,6 +246,12 @@ export function PublishStatusSlot({
       title = "לא תוזמן"
       body = status.reason
       action = { label: FAILED_ACTION_LABEL[status.action], id: status.action }
+      break
+    case "changed":
+      icon = <AlertCircle className="size-4 text-red-50" aria-hidden />
+      title = "השתנה מאז התזמון — לעדכן?"
+      body = status.reason
+      action = { label: "לעדכן", id: "update" }
       break
     case "sent":
       icon = <CalendarCheck className="size-4 text-text-neutral-default" aria-hidden />

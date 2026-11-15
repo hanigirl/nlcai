@@ -1346,6 +1346,9 @@ export default function CalendarPage() {
   // missed click. Keyed post:format:platform; the latest click wins.
   const [networkOverrides, setNetworkOverrides] = useState<Record<string, boolean>>({})
   const networkSeq = useRef<Record<string, number>>({})
+  // The last YouTube privacy seen per slot: while a save re-reads the board
+  // the targets are briefly missing, and the picker flashed "ציבורי" (QA round 3).
+  const lastYouTubePrivacy = useRef<Record<string, "public" | "unlisted" | "private">>({})
   // Same, for the YouTube privacy picked before the post is on the board.
   const [pendingYouTubePrivacy, setPendingYouTubePrivacy] = useState<"public" | "unlisted" | "private" | null>(null)
   const [previewDetail, setPreviewDetail] = useState<{
@@ -1453,6 +1456,9 @@ export default function CalendarPage() {
     if (connectionsLoading) return { kind: "loading" }
     if (!fitsConnected(row.format)) return { kind: "not_connected" }
     if (st?.status === "queued" && st.code !== "content_changed") return { kind: "scheduled" }
+    if (st?.status === "queued") {
+      return { kind: "changed", reason: st.message || "הכיתוב או המדיה השתנו מאז התזמון." }
+    }
     if (st?.status === "failed") {
       return {
         kind: "failed",
@@ -1484,6 +1490,8 @@ export default function CalendarPage() {
             ? { kind: "published", permalink: t.permalink ?? undefined }
             : t.status === "queued" && t.code !== "content_changed"
               ? { kind: "scheduled" }
+              : t.status === "queued"
+                ? { kind: "changed", reason: t.message || "הכיתוב או המדיה השתנו מאז התזמון." }
               : t.status === "sent"
                 ? { kind: "sent" }
                 : t.status === "failed"
@@ -1503,7 +1511,13 @@ export default function CalendarPage() {
         handle: t?.handle ?? conn.primary?.handle ?? null,
         publish,
         ...(platform === "youtube"
-          ? { youtubePrivacy: t?.youtubePrivacy ?? pendingYouTubePrivacy ?? "public" }
+          ? {
+              youtubePrivacy: (() => {
+                const k = `${row.corePostId}:${row.format}`
+                if (t?.youtubePrivacy) lastYouTubePrivacy.current[k] = t.youtubePrivacy
+                return t?.youtubePrivacy ?? pendingYouTubePrivacy ?? lastYouTubePrivacy.current[k] ?? "public"
+              })(),
+            }
           : {}),
       }
     })
@@ -1613,7 +1627,7 @@ export default function CalendarPage() {
         },
         onOpenCanvas: () => router.push(canvasHref(previewRow)),
         onStatusAction: (
-          action: "connect" | "reconnect" | "retry" | "fix_media" | "open_post",
+          action: "connect" | "reconnect" | "retry" | "fix_media" | "open_post" | "update",
         ) => {
           if (action === "connect" || action === "reconnect") setIgDialogOpen(true)
           else if (action === "fix_media") router.push(canvasHref(previewRow))
@@ -1622,7 +1636,7 @@ export default function CalendarPage() {
             if (link) window.open(link, "_blank", "noopener")
             else markPublished(previewRow.corePostId, previewRow.format)
           } else {
-            void retryPublish(previewRow.corePostId, previewRow.format, "retry").then((next) => {
+            void retryPublish(previewRow.corePostId, previewRow.format, action === "update" ? "update" : "retry").then((next) => {
               reloadBoard()
               if (next?.status === "queued") toast.success(multinetwork ? "הפוסט תוזמן" : "הפוסט תוזמן לאינסטגרם")
               else if (next?.status === "failed" && next.message) toast.error(next.message)

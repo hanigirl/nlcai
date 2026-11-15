@@ -139,7 +139,7 @@ export function rollupTargets(
       ? changedAll.length === active.length
         ? "הכיתוב או המדיה השתנו מאז התזמון, והרשתות עדיין מחכות לגרסה הקודמת."
         : `הכיתוב או המדיה השתנו מאז התזמון, ו${changedAll.map((t) => inLabel(label(t.platform))).join(" ו")} עדיין מחכה הגרסה הקודמת.`
-      : lead?.message && partial && active.length > 1
+      : lead?.message && partial && active.length > 1 && !lead.message.includes(label(lead.platform))
         ? `${label(lead.platform)}: ${lead.message}`
         : (lead?.message ?? null)
 

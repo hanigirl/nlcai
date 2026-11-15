@@ -166,7 +166,11 @@ export function PublishStatusLine({
   const connections = useSocialConnections()
   const fitConnected = networksForFormat(post.format).some((p) => connections[p].status === "connected")
   const view = viewFor(post, connection, fitConnected)
-  const linkPlatform = (post.publish?.targets ?? []).find((t) => t.permalink)?.platform
+  const linkTarget = (post.publish?.targets ?? []).find((t) => t.permalink)
+  const linkPlatform = linkTarget?.platform
+  // A post live on one network keeps its link even when another failed —
+  // the partial card ("פורסם באינסטגרם · LinkedIn נכשל") had none (QA round 3).
+  const link = post.publish?.permalink ?? linkTarget?.permalink ?? null
   if (!view) return null
 
   // The idle "send it" action reads as retry in code, but on a board-only
@@ -249,9 +253,9 @@ export function PublishStatusLine({
           className={cn("mt-px size-3 shrink-0", view.tone === "pending" && "animate-spin")}
         />
         <span className="min-w-0">{view.label}</span>
-        {view.tone === "success" && post.publish?.permalink && (
+        {link && (view.tone === "success" || view.tone === "danger") && (
           <a
-            href={post.publish.permalink}
+            href={link}
             target="_blank"
             rel="noreferrer"
             onClick={(e) => e.stopPropagation()}

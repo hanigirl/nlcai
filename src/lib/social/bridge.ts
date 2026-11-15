@@ -664,12 +664,18 @@ async function syncSlotInner(
   if (!slot.published_at) {
     const byId = new Map([...accounts.values()].map((a) => [a.id, a]))
     const publisher = getSocialPublisher(db)
-    for (const target of targets) {
-      if (target.opted_out || target.published_at || target.publish_status === "published") continue
-      if (opts.only && !opts.only.includes(target.platform)) continue
-      const account = (target.social_account_id && byId.get(target.social_account_id)) || accounts.get(target.platform)
-      await syncTarget(db, userId, slot, target, account ?? null, publisher)
-    }
+    // The networks go out side by side, not one after another: each target
+    // is its own row with its own lock, and three in a row took 10–17 s
+    // (QA 2026-11-15, round 3).
+    await Promise.all(
+      targets
+        .filter((target) => !(target.opted_out || target.published_at || target.publish_status === "published"))
+        .filter((target) => !opts.only || opts.only.includes(target.platform))
+        .map((target) => {
+          const account = (target.social_account_id && byId.get(target.social_account_id)) || accounts.get(target.platform)
+          return syncTarget(db, userId, slot, target, account ?? null, publisher)
+        }),
+    )
   }
 
   return (await rollupSlot(db, userId, slot.id))?.state ?? toPublishState(slot)
@@ -689,6 +695,12 @@ async function syncTarget(
   // No account (disconnected, or outside her gate): a planning board, exactly
   // as before 042 — idle, no error. The card says "not connected" on its own.
   if (!account) {
+    // Taken off the queue by a disconnect: keep the mark, it's what lets the
+    // reconnect put it back (resumeAfterConnect). Wiped to idle by a drag
+    // while disconnected, the post stayed unscheduled after reconnecting
+    // (QA 2026-11-15, round 3).
+    const code = decodePublishError(target.publish_error)?.code
+    if (target.publish_status === "failed" && (code === "not_connected" || code === "needs_reconnect")) return
     if (target.publish_status !== "idle" || target.publish_error) {
       await patchTarget(db, target, { publish_status: "idle", publish_error: null })
     }

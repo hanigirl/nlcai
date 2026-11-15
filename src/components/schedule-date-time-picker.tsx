@@ -25,6 +25,7 @@ import { toDateKey } from "@/lib/timing-storage"
  */
 
 const WEEKDAY_LABELS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"] as const
+const WEEKDAY_LETTERS = ["א׳", "ב׳", "ג׳", "ד׳", "ה׳", "ו׳", "ש׳"] as const
 
 /** Every half hour, 07:00–23:30 — the same options the weekly posting schedule offers. */
 export const SCHEDULE_HOURS: string[] = Array.from(
@@ -384,9 +385,10 @@ function MiniMonthCalendar({
       </div>
 
       <div className="grid grid-cols-7 gap-1">
-        {WEEKDAY_LABELS.map((label) => (
-          <div key={label} className="text-center text-xs-body text-text-neutral-default">
-            {label.slice(0, 1)}
+        {WEEKDAY_LABELS.map((label, i) => (
+          <div key={label} aria-label={label} className="text-center text-xs-body text-text-neutral-default">
+            {/* א׳–ש׳: first letters read "ר ש ש ר ח ש ש" (QA round 3). */}
+            {WEEKDAY_LETTERS[i]}
           </div>
         ))}
       </div>
