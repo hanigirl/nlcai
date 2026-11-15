@@ -211,7 +211,7 @@ export function PublishStatusLine({
           if (next?.status === "queued") {
             const going = (next.targets ?? []).filter((t) => !t.optedOut)
             toast.success(
-              going.length === 1 ? `הפוסט תוזמן ${toNetwork(going[0].platform)}` : going.length > 1 ? "הפוסט תוזמן לכל הרשתות" : "הפוסט תוזמן לאינסטגרם",
+              going.length > 0 ? `הפוסט תוזמן ${going.map((t) => toNetwork(t.platform)).join(" ו")}` : "הפוסט תוזמן לאינסטגרם",
             )
           }
           else if (next?.status === "failed" && next.message) toast.error(next.message)

@@ -683,16 +683,31 @@ async function syncSlotInner(
       if (r.status === "fulfilled") continue
       const target = going[i]
       console.error("[social/bridge][sync-target]", target.platform, r.reason)
-      // A target still holding its lock may be mid-create; the stale-lock
-      // recovery owns it. Anything else gets a readable failure to retry from.
+      // syncTarget handles its own errors, so a throw lands here only after
+      // it took the lock — the row is ours and was left "pending", spinning
+      // until the 2-minute stale-lock recovery (QA round 5). Release it as a
+      // failure now. Without a provider id the provider may still have the
+      // post, so it gets the "unclear" mark: a retry looks before creating.
+      const { data: now } = await db
+        .from("scheduled_post_targets")
+        .select("provider_post_id")
+        .eq("id", target.id)
+        .eq("user_id", userId)
+        .maybeSingle()
+      const known = !!(now as { provider_post_id: string | null } | null)?.provider_post_id
       await db
         .from("scheduled_post_targets")
         .update(
-          failurePatch("provider_error", `משהו השתבש מול ${NETWORK_LABEL[target.platform]}, והפוסט לא תוזמן שם. אפשר לנסות שוב.`) as never,
+          failurePatch(
+            "provider_error",
+            known
+              ? `משהו השתבש מול ${NETWORK_LABEL[target.platform]}. אפשר לנסות שוב.`
+              : UNCLEAR_QUEUE_MESSAGE,
+          ) as never,
         )
         .eq("id", target.id)
         .eq("user_id", userId)
-        .neq("publish_status", "pending")
+        .neq("publish_status", "published")
     }
   }
 
@@ -1576,7 +1591,7 @@ export async function refreshPublishStates(
           await patchTarget(db, t, {
             publish_error: encodePublishError(
               "content_changed",
-              `הכיתוב או המדיה השתנו מאז התזמון, ו${inNetwork(t.platform)} עדיין מחכה הגרסה הקודמת.`,
+              `הכיתוב או המדיה השתנו מאז התזמון, ו${inNetwork(t.platform)} עדיין מתוזמנת הגרסה הקודמת.`,
             ),
           })
         }

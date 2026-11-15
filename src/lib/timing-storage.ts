@@ -557,15 +557,24 @@ function applyPublishStates(states: Record<string, PublishState>): void {
 // request still holds the lock), and the 90 s poll left the card spinning
 // that long (QA round 4). Ask again shortly, a few times at most.
 let followUpTimer: number | null = null
-let followUpTries = 0
+// Counted per slot: one slot stuck "pending" used up the tries for every
+// later move in the session (QA round 5).
+const followUpTries = new Map<string, number>()
 function followUpWhilePending(states: Record<string, PublishState>): void {
   if (typeof window === "undefined") return
-  if (!Object.values(states).some((s) => s.status === "pending")) {
-    followUpTries = 0
-    return
+  let wanted = false
+  for (const [key, s] of Object.entries(states)) {
+    if (s.status !== "pending") {
+      followUpTries.delete(key)
+      continue
+    }
+    const tries = followUpTries.get(key) ?? 0
+    if (tries < 6) wanted = true
   }
-  if (followUpTimer !== null || followUpTries >= 6) return
-  followUpTries += 1
+  if (!wanted || followUpTimer !== null) return
+  for (const [key, s] of Object.entries(states)) {
+    if (s.status === "pending") followUpTries.set(key, (followUpTries.get(key) ?? 0) + 1)
+  }
   followUpTimer = window.setTimeout(() => {
     followUpTimer = null
     void refreshPublishStatus()

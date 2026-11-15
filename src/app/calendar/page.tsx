@@ -1603,6 +1603,10 @@ export default function CalendarPage() {
                   : d,
               )
               toast.success(descriptionOn ? "התיאור עודכן" : "הכיתוב עודכן")
+              // A queued post now differs from what the networks hold: ask
+              // right away, so "לעדכן" shows now, not at the next 90 s poll
+              // (QA round 5).
+              if (previewRow.publish && previewRow.publish.status !== "idle") void refreshPublishStatus()
             })
             .catch((err) => {
               console.error("[calendar] description save failed", err)
