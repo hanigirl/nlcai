@@ -150,7 +150,7 @@ const SYSTEM_BRAND_WINS = SYSTEM.replace(
   EXAMPLE_VARIETY.trimStart() + "\n\nReturn two fenced blocks:",
 ).replace(
   "backgrounds, number badge, callout style, colours and weights. Measure them; don't reinterpret them, don't \"improve\" them, don't add anything they don't have. Only the words change. The typefaces still come from rule 1.",
-  "backgrounds, number badge, callout style and weights. Measure them; don't reinterpret them, don't \"improve\" them, don't add anything they don't have. Only the words and the colours change. The typefaces still come from rule 1. The colours come from BRAND COLOURS (rule 5), never from the examples: keep each example's colour ROLES (which surface is dark, which is light, what is highlighted) and fill every role with the brand colour that fits it.",
+  "backgrounds, number badge, callout style and weights. Measure them; don't reinterpret them, don't \"improve\" them, don't add anything they don't have. Only the words and the colours change. The typefaces still come from rule 1. The colours come from BRAND COLOURS (rule 5), never from the examples: keep each example's colour ROLES (which surface is dark, which is light, what is highlighted) and fill every role with the brand colour that fits it. When the brief gives BRAND COLOUR ROLES, those decide: every slide's background is the BACKGROUND colour, the trigger colour only marks words and highlights.",
 )
 
 function briefText(b: CarouselBrief): string {
