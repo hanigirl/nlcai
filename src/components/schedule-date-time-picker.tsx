@@ -226,6 +226,10 @@ export function ScheduleDateTimeField({
           </button>
         </PopoverTrigger>
         <PopoverContent
+          // The popover portals to <body>, outside the page's RTL wrapper, so
+          // it rendered left-to-right: Sunday on the left, arrows backwards
+          // (QA round 4).
+          dir="rtl"
           // Same width as the field, so it opens like a select in either direction.
           className="flex w-(--radix-popover-trigger-width) min-w-72 flex-col gap-3"
         >

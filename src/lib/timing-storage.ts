@@ -550,6 +550,26 @@ function applyPublishStates(states: Record<string, PublishState>): void {
     }
   })
   if (changed) writeArray(SCHEDULED_KEY, next)
+  followUpWhilePending(states)
+}
+
+// Two quick moves: the second answer can come back "pending" (the first
+// request still holds the lock), and the 90 s poll left the card spinning
+// that long (QA round 4). Ask again shortly, a few times at most.
+let followUpTimer: number | null = null
+let followUpTries = 0
+function followUpWhilePending(states: Record<string, PublishState>): void {
+  if (typeof window === "undefined") return
+  if (!Object.values(states).some((s) => s.status === "pending")) {
+    followUpTries = 0
+    return
+  }
+  if (followUpTimer !== null || followUpTries >= 6) return
+  followUpTries += 1
+  followUpTimer = window.setTimeout(() => {
+    followUpTimer = null
+    void refreshPublishStatus()
+  }, 5_000)
 }
 
 /** The publish state of one slot, from the cache. Undefined when not on the board. */

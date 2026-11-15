@@ -667,15 +667,33 @@ async function syncSlotInner(
     // The networks go out side by side, not one after another: each target
     // is its own row with its own lock, and three in a row took 10–17 s
     // (QA 2026-11-15, round 3).
-    await Promise.all(
-      targets
-        .filter((target) => !(target.opted_out || target.published_at || target.publish_status === "published"))
-        .filter((target) => !opts.only || opts.only.includes(target.platform))
-        .map((target) => {
-          const account = (target.social_account_id && byId.get(target.social_account_id)) || accounts.get(target.platform)
-          return syncTarget(db, userId, slot, target, account ?? null, publisher)
-        }),
+    const going = targets
+      .filter((target) => !(target.opted_out || target.published_at || target.publish_status === "published"))
+      .filter((target) => !opts.only || opts.only.includes(target.platform))
+    // allSettled, not all: one network throwing used to abort the answer while
+    // the others were still mid-create, and the slot's roll-up never ran
+    // (QA round 4). Each failure lands on its own target; the rest finish.
+    const results = await Promise.allSettled(
+      going.map((target) => {
+        const account = (target.social_account_id && byId.get(target.social_account_id)) || accounts.get(target.platform)
+        return syncTarget(db, userId, slot, target, account ?? null, publisher)
+      }),
     )
+    for (const [i, r] of results.entries()) {
+      if (r.status === "fulfilled") continue
+      const target = going[i]
+      console.error("[social/bridge][sync-target]", target.platform, r.reason)
+      // A target still holding its lock may be mid-create; the stale-lock
+      // recovery owns it. Anything else gets a readable failure to retry from.
+      await db
+        .from("scheduled_post_targets")
+        .update(
+          failurePatch("provider_error", `משהו השתבש מול ${NETWORK_LABEL[target.platform]}, והפוסט לא תוזמן שם. אפשר לנסות שוב.`) as never,
+        )
+        .eq("id", target.id)
+        .eq("user_id", userId)
+        .neq("publish_status", "pending")
+    }
   }
 
   return (await rollupSlot(db, userId, slot.id))?.state ?? toPublishState(slot)

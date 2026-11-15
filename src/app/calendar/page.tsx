@@ -981,7 +981,7 @@ export default function CalendarPage() {
       <TooltipContent>הגדרות תזמון</TooltipContent>
     </Tooltip>
   ) : (
-                  <DropdownMenu>
+                  <DropdownMenu dir="rtl">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <DropdownMenuTrigger asChild>
@@ -1577,7 +1577,7 @@ export default function CalendarPage() {
           })
           reloadBoard()
           toast.success(
-            previewRow.scheduledDate ? "התזמון עודכן" : "הפוסט תוזמן ונוסף ללוח",
+            previewRow.scheduledDate ? "המועד נשמר על הלוח" : "הפוסט נוסף ללוח",
           )
         },
         onCaptionSave: (caption: string) => {
@@ -1767,7 +1767,7 @@ export default function CalendarPage() {
             { hook },
           )
           reloadBoard()
-          toast.success("התזמון עודכן")
+          toast.success("המועד נשמר על הלוח")
         }}
         showPublish={schedulingOn}
         connection={connection}
