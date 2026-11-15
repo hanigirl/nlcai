@@ -11,7 +11,8 @@ import { afterGenChoices, canBlendBRoll, canEditOwnBRollCaption, driveInBRoll, c
 import { loadComposition } from "@/lib/broll-animation/store"
 import { isOwnMediaUrl } from "@/lib/own-media"
 import { scriptTextFor } from "@/lib/script-text"
-import { parseReferences } from "@/lib/ai-edit-references"
+import { parseReferences, resolveReferences } from "@/lib/ai-edit-references"
+import { loadCarousel, saveCarousel, type StoredCarousel } from "@/lib/carousel-composition"
 import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
 import { runBRollAgent, type BRollAgentOutcome, type ChatTurn } from "@/lib/edit-agent/broll-agent"
 import { runOwnBRollAgent } from "@/lib/edit-agent/own-broll-agent"
@@ -46,8 +47,15 @@ export interface AgentMessage {
   remember?: string
   /** The media before this reply's change — "חזרה לגרסה הקודמת" puts it back (Hani, 2026-11-14). */
   undo?: string[]
+  /** The stored carousel layout from before this reply's change — undo puts it back too. */
+  undoComposition?: string
+  /** Per picture of hers (same order as images): the video it is the frame of. */
+  videos?: (string | null)[]
   at: string
 }
+
+/** A run that hasn't reported for this long died (the function was killed before its catch ran). */
+const STALE_MS = 15 * 60_000
 
 const isVideoLike = (url: string) => !/\.(png|jpe?g|webp|avif|gif)(\?|$)/i.test(url)
 const keyFor = (postId: string, format: string) => `agent:${postId}:${format}`
@@ -110,6 +118,23 @@ export async function GET(req: NextRequest) {
       .limit(1)
       .maybeSingle(),
   ])
+  // A run killed mid-way (timeout, a render crash) never reaches its catch and
+  // stays "running" — the chat would be locked forever. Close it here.
+  const j = job as { id: string; status: string; updated_at: string } | null
+  if (j?.status === "running" && Date.now() - new Date(j.updated_at).getTime() > STALE_MS) {
+    const admin = untyped(createAdminClient())
+    const reply = "הבקשה הקודמת נתקעה באמצע ולא הסתיימה, אז המדיה נשארה כמו שהייתה. אפשר לנסות שוב."
+    const stamp = new Date().toISOString()
+    const { data: closed } = await admin
+      .from("ai_edit_jobs")
+      .update({ status: "failed", progress: "", outcome: { kind: "failed", reply }, updated_at: stamp })
+      .eq("id", j.id)
+      .eq("status", "running")
+      .select("id")
+    if ((closed ?? []).length) await appendMessages(admin, user.id, chatKey, [{ role: "assistant", text: reply, error: true, at: stamp }])
+    const fresh = await loadThread(db, user.id, chatKey)
+    return NextResponse.json({ messages: fresh?.messages ?? [], job: { ...j, status: "failed", progress: "", outcome: { kind: "failed", reply } } })
+  }
   return NextResponse.json({ messages: thread?.messages ?? [], job: job ?? null })
 }
 
@@ -157,6 +182,16 @@ export async function POST(req: NextRequest) {
   // "חזרה לגרסה הקודמת" (Hani, 2026-11-14): the media from before the last
   // change goes back on the card, through the same save as an edit.
   if (body.action === "undo") {
+    const { data: busyRun } = await admin
+      .from("ai_edit_jobs")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("chat_key", chatKey)
+      .eq("status", "running")
+      .gte("updated_at", new Date(Date.now() - STALE_MS).toISOString())
+      .limit(1)
+      .maybeSingle()
+    if (busyRun) return NextResponse.json({ error: "busy", message: "אני עוד עובד על הבקשה הקודמת. רגע, ואז נמשיך." }, { status: 409 })
     const row = await loadThread(db, user.id, chatKey)
     const msgs = row?.messages ?? []
     const at = msgs.map((m) => !!m.undo?.length).lastIndexOf(true)
@@ -168,13 +203,21 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({ action: "save", postId, format, urls }),
     })
     if (!res.ok) return NextResponse.json({ error: "undo_failed", message: "לא הצלחתי לחזור לגרסה הקודמת. נסו שוב." }, { status: 500 })
+    // A carousel's layout goes back with its slides, or every later edit loses
+    // the precise layout path (the stored layout no longer matches the slides).
+    const compPath = msgs[at].undoComposition
+    if (compPath) {
+      const { data: blob } = await admin.storage.from("user-media").download(compPath)
+      const comp = blob ? (JSON.parse(await blob.text().catch(() => "null")) as StoredCarousel | null) : null
+      if (comp) await saveCarousel(admin, user.id, postId, comp).catch((e) => console.error("[edit-agent] undo composition", e))
+    }
     const stamp = new Date().toISOString()
     const reply = "חזרתי לגרסה הקודמת, היא כבר בכרטיס."
     await db
       .from("ai_chat_threads")
       .update({
         messages: [
-          ...msgs.map((m, i) => (i === at ? { ...m, undo: undefined, remember: undefined } : m)),
+          ...msgs.map((m, i) => (i === at ? { ...m, undo: undefined, undoComposition: undefined, remember: undefined } : m)),
           { role: "user", text: "חזרה לגרסה הקודמת", at: stamp },
           { role: "assistant", text: reply, at: stamp },
         ],
@@ -196,7 +239,7 @@ export async function POST(req: NextRequest) {
   const agentRequest = rememberAsk
     ? `${text || "זכור לעתיד"}\n(She pressed the "זכור לעתיד" button under your last reply. Save exactly this as a lasting preference with the remember tool, change nothing in the media, then finish saying whether it was saved: ${rememberAsk})`
     : text || "(she attached pictures without words)"
-  const attached = parseReferences(body.images)
+  const attached: string[] = parseReferences(body.images)
   if (!text && !attached.length) return NextResponse.json({ error: "text is required" }, { status: 400 })
 
   // One run at a time per conversation (a stale one older than 15 min is over).
@@ -206,7 +249,7 @@ export async function POST(req: NextRequest) {
     .eq("user_id", user.id)
     .eq("chat_key", chatKey)
     .eq("status", "running")
-    .gte("updated_at", new Date(Date.now() - 15 * 60_000).toISOString())
+    .gte("updated_at", new Date(Date.now() - STALE_MS).toISOString())
     .limit(1)
     .maybeSingle()
   if (running) return NextResponse.json({ error: "busy", message: "אני עוד עובד על הבקשה הקודמת. רגע, ואז נמשיך." }, { status: 409 })
@@ -220,9 +263,9 @@ export async function POST(req: NextRequest) {
   const v = variant as { id: string; body: string | null; drive_slide_links?: string[] | null } | null
   // A story is a SET: its frames in order (the image rows, then a clip left
   // in the video slot) — the order the card shows (api/media/own-edit).
-  let storyUrls: string[] = []
-  if (isStory && v) {
-    const { data: rows } = await supabase
+  const loadSet = async (dbc: SupabaseClient): Promise<string[]> => {
+    if (!isStory || !v) return []
+    const { data: rows } = await dbc
       .from("media_assets")
       .select("url, asset_type")
       .eq("format_variant_id", v.id)
@@ -230,14 +273,14 @@ export async function POST(req: NextRequest) {
       .order("created_at", { ascending: true })
     const all = ((rows ?? []) as { url: string | null; asset_type: string }[]).filter((r): r is { url: string; asset_type: string } => !!r.url && /^https?:\/\//.test(r.url))
     const images = all.filter((r) => r.asset_type === "image").map((r) => r.url)
-    storyUrls =
-      format === "image_post"
-        ? images.slice(-1)
-        : format === "carousel"
-          ? // Pictures and video slides, in her order.
-            all.map((r) => r.url)
-          : [...images, ...all.filter((r) => r.asset_type === "video" && !images.includes(r.url)).map((r) => r.url)]
+    return format === "image_post"
+      ? images.slice(-1)
+      : format === "carousel"
+        ? // Pictures and video slides, in her order.
+          all.map((r) => r.url)
+        : [...images, ...all.filter((r) => r.asset_type === "video" && !images.includes(r.url)).map((r) => r.url)]
   }
+  const storyUrls = await loadSet(supabase)
   const { data: asset } = v && !isStory
     ? await supabase
         .from("media_assets")
@@ -255,10 +298,47 @@ export async function POST(req: NextRequest) {
   // IRON RULE: her own media is not the composition agent's.
   const composition = clipUrl && !isOwnMediaUrl(clipUrl) ? await loadComposition(supabase, clipUrl) : null
 
+  let videoRefs: (string | null)[] = Array.isArray(body.videos)
+    ? (body.videos as unknown[]).map((v) => {
+        if (typeof v !== "string") return null
+        if (v.startsWith("drive:")) {
+          const id = extractDriveFileId(v.slice(6))
+          return id ? `drive:${id}` : null
+        }
+        // Only her own folder.
+        if (v.startsWith(`storage:${user.id}/`)) return v
+        return null
+      })
+    : []
   const herImages = await storeImages(admin, user.id, attached)
   const now = () => new Date().toISOString()
-  const userMsg: AgentMessage = { role: "user", text, ...(herImages.length ? { images: herImages } : {}), at: now() }
+  const userMsg: AgentMessage = {
+    role: "user",
+    text,
+    ...(herImages.length ? { images: herImages, ...(videoRefs.some(Boolean) ? { videos: videoRefs.slice(0, herImages.length) } : {}) } : {}),
+    at: now(),
+  }
   const earlier = (await loadThread(db, user.id, chatKey))?.messages ?? []
+  // Pictures from an earlier message stay in reach (QA 2026-11-15: "היא צורפה
+  // בהודעה הקודמת… צרפו אותה שוב"): with none on this message, the ones she
+  // sent last (within her last few messages) ride along as this message's.
+  let carried = false
+  let carriedUrls: string[] = []
+  if (!attached.length && !rememberAsk) {
+    const lastWithPics = earlier
+      .slice(-6)
+      .reverse()
+      .find((m) => m.role === "user" && m.images?.length)
+    if (lastWithPics?.images?.length) {
+      const resolved = await resolveReferences(lastWithPics.images, user.id, 3).catch(() => [] as string[])
+      if (resolved.length === lastWithPics.images.length) {
+        attached.push(...resolved)
+        videoRefs = lastWithPics.videos ?? []
+        carried = true
+        carriedUrls = lastWithPics.images
+      }
+    }
+  }
   await appendMessages(admin, user.id, chatKey, [userMsg])
 
   // "זכור לעתיד" under a caption change on her own media: saved here as her
@@ -314,6 +394,9 @@ export async function POST(req: NextRequest) {
   const jobId = (jobRow as { id: string } | null)?.id
   if (!jobId) return NextResponse.json({ error: "job_failed" }, { status: 500 })
 
+  const requestText = carried
+    ? `${agentRequest}\n(No new picture with this message: the attached pictures are the ones she sent in an earlier message of this conversation. Use them only if her words are about them.)`
+    : agentRequest
   const history: ChatTurn[] = earlier
     .filter((m) => !m.error)
     .map((m) => ({ role: m.role, text: m.text, images: m.images?.length }))
@@ -321,18 +404,6 @@ export async function POST(req: NextRequest) {
     await admin.from("ai_edit_jobs").update({ ...patch, updated_at: now() }).eq("id", jobId)
   }
 
-  const videoRefs: (string | null)[] = Array.isArray(body.videos)
-    ? (body.videos as unknown[]).map((v) => {
-        if (typeof v !== "string") return null
-        if (v.startsWith("drive:")) {
-          const id = extractDriveFileId(v.slice(6))
-          return id ? `drive:${id}` : null
-        }
-        // Only her own folder.
-        if (v.startsWith(`storage:${user.id}/`)) return v
-        return null
-      })
-    : []
   // The own-b-roll caption runs through our caption routes as her.
   const origin = new URL(req.url).origin
   const cookie = req.headers.get("cookie") ?? ""
@@ -346,6 +417,14 @@ export async function POST(req: NextRequest) {
   }
   // What the card shows now — the version "חזרה לגרסה הקודמת" restores.
   const before = isStory ? storyUrls : mediaUrl ? [mediaUrl] : []
+  // A carousel's layout as it is now, so undo can put it back with the slides.
+  const compBefore = format === "carousel" ? await loadCarousel(admin, user.id, postId).catch(() => null) : null
+  const snapshotLayout = async (): Promise<string | undefined> => {
+    if (!compBefore) return undefined
+    const path = `${user.id}/carousel-undo/${postId}-${crypto.randomUUID()}.json`
+    const { error } = await admin.storage.from("user-media").upload(path, JSON.stringify(compBefore), { contentType: "application/json" })
+    return error ? undefined : path
+  }
   after(async () => {
     try {
       const outcome: BRollAgentOutcome = isStory
@@ -362,7 +441,7 @@ export async function POST(req: NextRequest) {
             urls: storyUrls,
             scriptBody: v?.body ?? null,
             history,
-            request: agentRequest,
+            request: requestText,
             attached,
             attachedVideos: videoRefs,
             publicUrl: (p) => admin.storage.from("user-media").getPublicUrl(p).data.publicUrl,
@@ -377,9 +456,9 @@ export async function POST(req: NextRequest) {
             mediaUrl: mediaUrl!,
             script: scriptTextFor("b_roll", v?.body),
             history,
-            request: agentRequest,
+            request: requestText,
             attached,
-            attachedUrls: herImages,
+            attachedUrls: carried ? carriedUrls : herImages,
             attachedVideos: videoRefs,
             publicUrl: (p) => admin.storage.from("user-media").getPublicUrl(p).data.publicUrl,
             setProgress: (progress) => setJob({ progress: brandTerms(progress, qaFixes1112(user.email)) }),
@@ -398,7 +477,7 @@ export async function POST(req: NextRequest) {
         composition: composition!,
         script: scriptTextFor("b_roll", v?.body),
         history,
-        request: agentRequest,
+        request: requestText,
         attached,
         attachedVideos: videoRefs,
         setProgress: (progress) => setJob({ progress: brandTerms(progress, qaFixes1112(user.email)) }),
@@ -409,12 +488,14 @@ export async function POST(req: NextRequest) {
         ])
         await setJob({ status: "asking", progress: "", outcome })
       } else if (outcome.kind === "done") {
+        const undoOn = outcome.changed && before.length > 0 && afterGenChoices(user.email)
+        const undoComposition = undoOn ? await snapshotLayout() : undefined
         await appendMessages(admin, user.id, chatKey, [
           {
             role: "assistant",
             text: brandTerms(outcome.reply, qaFixes1112(user.email)),
             ...(outcome.rememberOffer ? { remember: outcome.rememberOffer } : {}),
-            ...(outcome.changed && before.length && afterGenChoices(user.email) ? { undo: before } : {}),
+            ...(undoOn ? { undo: before, ...(undoComposition ? { undoComposition } : {}) } : {}),
             at: now(),
           },
         ])
@@ -426,6 +507,19 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.error("[edit-agent]", msg)
+      // A tool may have SAVED a change before the run broke (a carousel edit
+      // saves at once): then report what is on the card, not a failure.
+      const nowSet = isStory ? await loadSet(admin).catch(() => [] as string[]) : []
+      if (nowSet.length && nowSet.join("|") !== before.join("|")) {
+        const reply = brandTerms("שמרתי את השינוי והוא כבר בכרטיס, אבל משהו נתקע אחרי זה, אז ייתכן שלא כל מה שביקשתם נעשה. תסתכלו ותגידו לי מה עוד לשנות.", qaFixes1112(user.email))
+        const undoOn = afterGenChoices(user.email)
+        const undoComposition = undoOn ? await snapshotLayout() : undefined
+        await appendMessages(admin, user.id, chatKey, [
+          { role: "assistant", text: reply, ...(undoOn ? { undo: before, ...(undoComposition ? { undoComposition } : {}) } : {}), at: now() },
+        ])
+        await setJob({ status: "done", progress: "", outcome: { kind: "done", reply, url: nowSet[0], urls: nowSet, changed: true } })
+        return
+      }
       const reply = isInvalidClaudeKey(msg)
         ? CLAUDE_KEY_INVALID_MESSAGE
         : msg === "composition_invalid" || msg === "composition_not_seekable"

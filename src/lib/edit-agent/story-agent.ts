@@ -453,7 +453,12 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
     }),
   )
 
-  const scriptOf = (i: number): ScriptText | null => units[i] ?? null
+  // The script's split lines up with the frames only when the counts match.
+  // Otherwise mapping by index puts another frame's words (or a stray letter)
+  // on a frame (2026-11-13, a lone "ב" on slide 9): each own frame then keeps
+  // the words it already carries.
+  const scriptAligned = units.length === total
+  const scriptOf = (i: number): ScriptText | null => (scriptAligned ? (units[i] ?? null) : null)
   const wordsOf = (i: number): string =>
     frames[i].kind === "designed"
       ? (designedTexts[i] ?? "")
@@ -704,6 +709,10 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
     const f = frames[i]
     const spec = captionSpec(i)
     const source = f.source!
+    if (!spec.headline && !spec.body && !scriptAligned && f.source !== f.url) {
+      // Captioned already, but its words aren't known and the script doesn't line up: leave it.
+      return "FAILED: this frame's words can't be matched to the script (the script splits into a different number of frames), so its caption was left as it is — tell her plainly"
+    }
     if (!spec.headline && !spec.body) {
       // No script text for this frame: her file as it is.
       f.draftUrl = f.media === "image" ? source : undefined

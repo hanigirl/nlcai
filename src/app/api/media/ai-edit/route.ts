@@ -53,7 +53,7 @@ const UNCHANGED_MESSAGE =
   "הבקשה לא שינתה כלום בשקופיות, אז השארתי אותן כמו שהיו. נסו לכתוב מה בדיוק לשנות, למשל צבע הרקע, מיקום הכותרת או גודל התמונה."
 
 // Planning + up to 10 parallel image edits (30–120s each).
-export const maxDuration = 300
+export const maxDuration = 800
 
 /**
  * "עריכה עם AI" for the image formats — carousel, story, image post (Hani,
