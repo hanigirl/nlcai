@@ -201,8 +201,8 @@ export function examplesInLanguage(email: string | null | undefined): boolean {
  * (Nataliya, PM, 2026-11-14, Notion #1 — lib/brand-drive-media). Without a
  * folder the brand language stays graphics-only (lib/visual-language/graphic-only).
  */
-// Hani only until she tests it live (2026-11-14: "push only to me").
-export const BRAND_DRIVE_MEDIA_EMAILS = ["hanigirl@gmail.com"]
+// Hani + Nataliya (2026-11-15: "תעלה הכל הכל לנטליה").
+export const BRAND_DRIVE_MEDIA_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 export function brandDriveMedia(email: string | null | undefined): boolean {
   return !!email && BRAND_DRIVE_MEDIA_EMAILS.includes(email.toLowerCase())
 }
@@ -210,9 +210,9 @@ export function brandDriveMedia(email: string | null | undefined): boolean {
 /**
  * After a generation the agent chat stays open with "להחליף מדיה" / "להסיר
  * תמונות, טקסט בלבד", and every agent change offers "חזרה לגרסה הקודמת"
- * (Hani, 2026-11-14). Hani only until she tests it live.
+ * (Hani, 2026-11-14). Hani + Nataliya since 2026-11-15.
  */
-export const AFTER_GEN_EMAILS = ["hanigirl@gmail.com"]
+export const AFTER_GEN_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
 export function afterGenChoices(email: string | null | undefined): boolean {
   return !!email && AFTER_GEN_EMAILS.includes(email.toLowerCase())
 }
