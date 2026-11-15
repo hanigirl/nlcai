@@ -280,11 +280,17 @@ export function EditAgentChat({
         body: JSON.stringify({ postId, format, text: words, images, videos: await Promise.all(images.map((r) => videoOf(r))), ...(remember ? { remember } : {}) }),
       })
       const data = (await res.json().catch(() => ({}))) as { jobId?: string; message?: string }
-      if (!res.ok && data.message) {
-        setMessages((m) => [...m, { role: "assistant", text: data.message!, error: true }])
+      if (!res.ok) {
+        // Never a silent drop (QA 2026-11-15): say it, and give her words back.
+        setMessages((m) => [...m, { role: "assistant", text: data.message ?? "ההודעה לא נשלחה בגלל תקלה. נסו שוב.", error: true }])
+        if (res.status !== 409) setInput((t) => t || words)
+        return
       }
       if (data.jobId) window.dispatchEvent(new CustomEvent(EDIT_AGENT_STARTED, { detail: { postId, format } }))
       await refresh()
+    } catch {
+      setMessages((m) => [...m, { role: "assistant", text: "ההודעה לא נשלחה, נראה שאין חיבור. נסו שוב.", error: true }])
+      setInput((t) => t || words)
     } finally {
       setSending(false)
     }
@@ -318,6 +324,9 @@ export function EditAgentChat({
   }
 
   const last = messages[messages.length - 1]
+  // Undo stays in reach after a follow-up message ("למה?"), not only under
+  // the reply that made the change (QA 2026-11-15).
+  const canUndo = messages.some((m) => !!m.undo?.length)
   const askNow = !busy && last?.role === "assistant" && !!last.options?.length
   // The send button waits only when one of the buttons MUST be the answer —
   // "מגוגל דרייב" / "מהמחשב שלי" (Hani, 2026-11-12). Where she can just as
@@ -381,7 +390,7 @@ export function EditAgentChat({
                 </div>
                 {/* Her change becomes a rule for next time (Hani, 2026-11-10): saved to
                     Settings → העדפות ויזואליות, read by every future generation. */}
-                {!busy && m.role === "assistant" && i === messages.length - 1 && (!!m.remember || !!m.undo?.length) && (
+                {!busy && m.role === "assistant" && i === messages.length - 1 && (!!m.remember || canUndo) && (
                   <div className="flex flex-wrap justify-end gap-1.5">
                     {!!m.remember && (
                       <Button size="sm" className="h-7 rounded-full px-3 text-xs-body font-normal" onClick={() => void send("זכור לעתיד", m.remember)}>
@@ -389,7 +398,7 @@ export function EditAgentChat({
                       </Button>
                     )}
                     {/* Back to the version before this change (Hani, 2026-11-14). */}
-                    {!!m.undo?.length && (
+                    {canUndo && (
                       <Button size="sm" variant="outline" className="h-7 rounded-full px-3 text-xs-body font-normal" onClick={() => void undo()}>
                         חזרה לגרסה הקודמת
                       </Button>

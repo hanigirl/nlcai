@@ -17,6 +17,7 @@ import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-cre
 import { runBRollAgent, type BRollAgentOutcome, type ChatTurn } from "@/lib/edit-agent/broll-agent"
 import { runOwnBRollAgent } from "@/lib/edit-agent/own-broll-agent"
 import { runStoryAgent } from "@/lib/edit-agent/story-agent"
+import { triageVisualMemory } from "@/lib/style-memory"
 
 /**
  * The AI edit chat as an agent, on the server (Hani, 2026-11-10; lib/edit-agent).
@@ -386,6 +387,22 @@ export async function POST(req: NextRequest) {
   }
   const openaiKey = await getUserApiKey(supabase, "openai_api_key").catch(() => null)
 
+  // "זכור לעתיד" on designed media: saved straight to her preferences — one
+  // short call, not a whole agent turn with stills of every frame (QA
+  // 2026-11-15). Only a conflict with a saved preference goes to the agent,
+  // which asks her which one wins.
+  if (rememberAsk) {
+    const r = await triageVisualMemory(admin, user.id, anthropicKey, { instruction: rememberAsk, format: format as "carousel" | "story" | "image_post" | "b_roll", explicit: true }).catch(() => null)
+    const m = r?.memory
+    const said =
+      m?.kind === "saved"
+        ? `שמרתי: ${m.summary}. זה מופיע בהגדרות ← מדיה ← העדפות ויזואליות.`
+        : m?.kind === "settings"
+          ? `את זה לא שומרים בהעדפות: ${m.summary}. זה נקבע בהגדרות ← מדיה ← שפת המותג.`
+          : null
+    if (said) return refuse(said)
+  }
+
   const { data: jobRow } = await admin
     .from("ai_edit_jobs")
     .insert({ user_id: user.id, post_id: postId, format, chat_key: chatKey, progress: "מתחיל..." })
@@ -397,9 +414,12 @@ export async function POST(req: NextRequest) {
   const requestText = carried
     ? `${agentRequest}\n(No new picture with this message: the attached pictures are the ones she sent in an earlier message of this conversation. Use them only if her words are about them.)`
     : agentRequest
-  const history: ChatTurn[] = earlier
-    .filter((m) => !m.error)
-    .map((m) => ({ role: m.role, text: m.text, images: m.images?.length }))
+  // Failures stay in the agent's memory, marked, so it knows what didn't work (QA 2026-11-15).
+  const history: ChatTurn[] = earlier.map((m) => ({
+    role: m.role,
+    text: m.error ? `[THIS FAILED — nothing was changed by it] ${m.text}` : m.text,
+    images: m.images?.length,
+  }))
   const setJob = async (patch: Record<string, unknown>): Promise<void> => {
     await admin.from("ai_edit_jobs").update({ ...patch, updated_at: now() }).eq("id", jobId)
   }
