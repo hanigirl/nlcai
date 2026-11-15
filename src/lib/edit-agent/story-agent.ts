@@ -196,7 +196,7 @@ HER OWN frames — her photo or video, with the script's words as a caption over
 - You never change, retouch, recolour, crop or redraw her photo / video pixels. If she asks for that, say so in one kind sentence and offer what you can do.
 
 Any frame:
-- use_as_is: put a photo or video she attached to THIS message in as that frame's media exactly as it is — full frame, with the script's words drawn over it (the frame becomes HER OWN). Use it when she wants her picture as the frame / as the background / "כמו שהיא", or to swap the file of one of her own frames.
+${format === "image_post" ? "" : "- arrange_frames: delete, reorder or duplicate frames (\"תמחק את פריים 3\", \"תעביר את האחרון להתחלה\", \"תשכפל את 2\"). It is the only way to change which frames there are.\n"}- use_as_is: put a photo or video she attached to THIS message in as that frame's media exactly as it is — full frame, with the script's words drawn over it (the frame becomes HER OWN). Use it when she wants her picture as the frame / as the background / "כמו שהיא", or to swap the file of one of her own frames.
 ${format === "carousel" ? "- On a designed carousel her picture goes onto a slide through edit_carousel (attach it there); use_as_is is for swapping the file of one of HER OWN slides." : "- Her picture can go in two ways: worked INTO a designed frame (blend_picture) or AS the frame (use_as_is). When her words don't say which, ask."}
 
 Rules that always hold:
@@ -303,6 +303,16 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "arrange_frames",
+    description:
+      "The SET itself: delete, reorder or duplicate frames. `order` is the new set as a list of CURRENT frame numbers (this turn's numbering, which never changes during the turn): leave a number out to delete that frame, repeat it to duplicate it, change the order to move frames. Each frame moves with its media and its words. Applied when you finish; other tools keep using the current numbers.",
+    input_schema: {
+      type: "object",
+      properties: { order: { type: "array", items: { type: "integer", minimum: 1 }, minItems: 1 } },
+      required: ["order"],
+    },
+  },
+  {
     name: "remember",
     description: "Save a lasting preference for her future stories (shown in her Settings → העדפות ויזואליות). Precise and concrete, from what is on the frames now. One call per distinct preference.",
     input_schema: {
@@ -367,7 +377,10 @@ const TOOLS: Anthropic.Tool[] = [
 const CAROUSEL_ONLY = ["edit_carousel", "revert_changes"]
 const NOT_ON_CAROUSEL = ["edit_design", "blend_picture", "redraw_frame"]
 function toolsFor(format: FrameAgentFormat): Anthropic.Tool[] {
-  const mine = TOOLS.filter((t) => (format === "carousel" ? !NOT_ON_CAROUSEL.includes(t.name) : !CAROUSEL_ONLY.includes(t.name)))
+  const mine = TOOLS.filter((t) => (format === "carousel" ? !NOT_ON_CAROUSEL.includes(t.name) : !CAROUSEL_ONLY.includes(t.name))).filter(
+    // One picture: nothing to arrange.
+    (t) => format !== "image_post" || t.name !== "arrange_frames",
+  )
   if (format === "story") return mine
   const noun = format === "carousel" ? "carousels" : "image posts"
   return JSON.parse(
@@ -405,6 +418,8 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
   let checks = 0
   /** A designed carousel whose slide count changed under an edit: the set as it is now. */
   let movedOn: string[] | null = null
+  /** arrange_frames: the new set as 0-based indexes of this turn's frames, applied at finish. */
+  let arrangement: number[] | null = null
 
   /* ------------------------------ the frames ------------------------------ */
   const units: (ScriptText | null)[] = scriptTextUnits(format, input.scriptBody)
@@ -671,7 +686,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
   }
 
   function anyDirty(): boolean {
-    return frames.some((f) => f.dirty)
+    return frames.some((f) => f.dirty) || !!arrangement
   }
 
   /** 1-based frame numbers → valid 0-based indexes (all frames when none given and `all`). */
@@ -993,6 +1008,19 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         ]
       }
 
+      case "arrange_frames": {
+        const order = (Array.isArray(a.order) ? (a.order as unknown[]) : []).map((n) => Number(n) - 1)
+        if (!order.length || order.some((n) => !Number.isInteger(n) || n < 0 || n >= total)) {
+          return `FAILED: order must list frame numbers 1–${total}.`
+        }
+        if (carousel && frames.some((f) => f.kind === "designed")) {
+          return "FAILED: slides of a carousel designed in her visual language can't be added, removed or reordered here yet — tell her plainly."
+        }
+        if (format === "carousel" && order.length > 10) return "FAILED: a carousel holds at most 10 slides."
+        arrangement = order
+        return `OK: when you finish, the set becomes ${order.length} frame${order.length > 1 ? "s" : ""}: ${order.map((n) => n + 1).join(", ")} (current numbers).`
+      }
+
       case "remember": {
         await input.setProgress("שומר את ההעדפה שלך...")
         const what = String(a.what ?? "").trim()
@@ -1081,13 +1109,16 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         next.push(f.source ?? f.url)
       }
     }
+    const finalSet = arrangement ? arrangement.map((i) => next[i]) : next
     const saved = await input.call<{ urls?: string[]; message?: string }>("/api/media/own-edit", {
       action: "save",
       postId,
       format,
-      urls: next,
+      urls: finalSet,
+      // Her own carousel's Drive links follow their slides.
+      ...(arrangement && carousel && links.length === total ? { driveLinks: arrangement.map((i) => links[i]) } : {}),
     })
     if (!saved.ok) return { kind: "failed", reply: saved.data.message ?? `השינוי לא נשמר, ו${F.stayed}. נסו שוב.` }
-    return { kind: "done", reply: reply || F.updated, url: next[0], urls: next, changed: true, ...(offerNow ? { rememberOffer: offerNow } : {}) }
+    return { kind: "done", reply: reply || F.updated, url: finalSet[0], urls: finalSet, changed: true, ...(offerNow ? { rememberOffer: offerNow } : {}) }
   }
 }
