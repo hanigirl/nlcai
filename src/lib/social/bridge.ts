@@ -79,7 +79,7 @@ const SLOT_COLUMNS =
   "id, user_id, core_post_id, format, scheduled_date, scheduled_time, published_at, social_account_id, provider_post_id, publish_status, publish_error, publish_synced_at"
 
 const TARGET_COLUMNS =
-  "id, user_id, scheduled_post_id, platform, social_account_id, opted_out, youtube_privacy, provider_post_id, publish_status, publish_error, publish_synced_at, published_at"
+  "id, user_id, scheduled_post_id, platform, social_account_id, opted_out, youtube_privacy, provider_post_id, publish_status, publish_error, publish_synced_at, published_at, permalink"
 
 type SlotRow = Pick<
   ScheduledPostRow,
@@ -111,6 +111,7 @@ type TargetRow = Pick<
   | "publish_error"
   | "publish_synced_at"
   | "published_at"
+  | "permalink"
 >
 
 type TargetPatch = Partial<
@@ -124,6 +125,7 @@ type TargetPatch = Partial<
     | "publish_error"
     | "publish_synced_at"
     | "published_at"
+    | "permalink"
   >
 >
 
@@ -182,6 +184,7 @@ function toTargetState(
     code: published ? null : (err?.code ?? null),
     message: published ? null : (err?.message ?? null),
     publishedAt: t.published_at,
+    permalink: t.permalink ?? null,
     optedOut: t.opted_out,
     handle: handle ?? null,
     ...(t.platform === "youtube" ? { youtubePrivacy: t.youtube_privacy ?? "public" } : {}),
@@ -593,6 +596,12 @@ export type SyncOptions = {
   exclude?: SocialPlatform[]
   /** Same, for the YouTube privacy picked before the post was first sent. */
   youtubePrivacy?: YouTubePrivacy
+  /**
+   * Touch only these networks. A YouTube privacy change re-sends YouTube
+   * alone — it used to re-send Instagram and LinkedIn too, extra calls that
+   * could fail a post nothing had changed on (QA 2026-11-15).
+   */
+  only?: SocialPlatform[]
 }
 
 /**
@@ -657,6 +666,7 @@ async function syncSlotInner(
     const publisher = getSocialPublisher(db)
     for (const target of targets) {
       if (target.opted_out || target.published_at || target.publish_status === "published") continue
+      if (opts.only && !opts.only.includes(target.platform)) continue
       const account = (target.social_account_id && byId.get(target.social_account_id)) || accounts.get(target.platform)
       await syncTarget(db, userId, slot, target, account ?? null, publisher)
     }
@@ -810,6 +820,7 @@ async function syncTarget(
               publish_error: null,
               published_at: (held.publishedAt ?? new Date()).toISOString(),
               publish_synced_at: new Date().toISOString(),
+              permalink: held.permalink ?? null,
             })
             return
           }
@@ -1151,7 +1162,7 @@ export async function setYouTubePrivacy(
     if (nowErr) throw new BridgeReadError(nowErr.message)
     const now = nowRow as TargetRow | null
     if (now && now.provider_post_id && !now.opted_out && now.publish_status !== "published" && !now.published_at) {
-      return syncSlot(db, userId, corePostId, format, { mode: "update" })
+      return syncSlot(db, userId, corePostId, format, { mode: "update", only: ["youtube"] })
     }
     return (await rollupSlot(db, userId, slot.id))?.state ?? toPublishState(slot)
   } catch (err) {
@@ -1235,12 +1246,28 @@ export async function cancelSlots(
     touched.add(t.scheduled_post_id)
     try {
       await publisher.cancelPost(userId, t.provider_post_id as string)
-      await patchTarget(db, t, {
-        provider_post_id: null,
-        publish_status: "idle",
-        publish_error: null,
-        publish_synced_at: new Date().toISOString(),
-      })
+      // Taken off because the network was disconnected: say so, and leave it
+      // where reconnecting finds it (resumeAfterConnect revives not_connected).
+      // As plain idle it sat unscheduled after a reconnect with no word about
+      // it (QA 2026-11-15).
+      await patchTarget(
+        db,
+        t,
+        filter.socialAccountId
+          ? {
+              ...failurePatch(
+                "not_connected",
+                `${NETWORK_LABEL[t.platform]} נותק, והפוסט ירד מהתור שם. אחרי חיבור מחדש הוא יחזור לתור לבד.`,
+              ),
+              provider_post_id: null,
+            }
+          : {
+              provider_post_id: null,
+              publish_status: "idle",
+              publish_error: null,
+              publish_synced_at: new Date().toISOString(),
+            },
+      )
       cancelled++
     } catch (err) {
       describe(err, "cancel", t.platform)
@@ -1420,8 +1447,9 @@ export async function refreshPublishStates(
 
   const editedAt = await lastContentEdits(db, [...slots.values()])
   const extras = new Map<string, Partial<TargetPublishState>>()
-  // Permalinks aren't stored, so a published target is re-read for its link —
-  // capped, to keep the page load cheap.
+  // A published target with no stored link yet (published before 048, or the
+  // provider had none at the time) is re-read for it — capped per refresh to
+  // keep the page load cheap. Once found it's stored, so the cap only delays.
   let permalinkReads = 0
 
   for (const t of targets) {
@@ -1436,10 +1464,17 @@ export async function refreshPublishStates(
 
     try {
       if (t.publish_status === "published") {
-        if (t.provider_post_id && permalinkReads < 10 && now - instant < 30 * 86400_000) {
+        if (!t.permalink && t.provider_post_id && permalinkReads < 10 && now - instant < 30 * 86400_000) {
           permalinkReads++
           const held = await getPublisher().getPost(userId, t.provider_post_id)
-          extras.set(t.id, { permalink: held.permalink ?? null })
+          if (held.permalink) {
+            await db
+              .from("scheduled_post_targets")
+              .update({ permalink: held.permalink } as never)
+              .eq("id", t.id)
+              .eq("user_id", userId)
+            extras.set(t.id, { permalink: held.permalink })
+          }
         }
         continue
       }
@@ -1477,6 +1512,7 @@ export async function refreshPublishStates(
             publish_error: null,
             published_at: (held.publishedAt ?? new Date()).toISOString(),
             publish_synced_at: new Date().toISOString(),
+            permalink: held.permalink ?? null,
           })
           extras.set(t.id, { permalink: held.permalink ?? null })
           continue

@@ -457,6 +457,8 @@ export interface ScheduledPostTargetRow {
   publish_error: string | null;
   publish_synced_at: string | null;
   published_at: string | null;
+  /** The live post's link, once the provider reported it (048). */
+  permalink: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -5,7 +5,7 @@ import { AlertCircle, CheckCircle2, ExternalLink, Loader2, Send, Clock } from "l
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { useSocialConnections, type InstagramConnection } from "@/lib/instagram-connection"
-import { NETWORK_LABEL, networksForFormat, toNetwork } from "@/lib/social/networks"
+import { NETWORK_LABEL, inNetwork, networksForFormat, toNetwork } from "@/lib/social/networks"
 import { actionFor, type PublishAction, type PublishState } from "@/lib/social/publish-state"
 import { formatSlotForHumans, slotToInstant } from "@/lib/social/slot-time"
 import { markPublished, retryPublish, type ScheduledPost } from "@/lib/timing-storage"
@@ -110,13 +110,27 @@ function viewFor(
       // A slot from before the bridge existed: on the board, never sent.
       return { tone: "neutral", label: "על הלוח בלבד — לא נשלח לאינסטגרם", action: "retry" }
     case "failed":
-    default:
+    default: {
+      // Some networks still went fine (QA 2026-11-15: a mixed carousel went
+      // out on Instagram while LinkedIn refused it, and the card read "לא
+      // תוזמן" as if nothing had). Say both halves; the action still fixes
+      // the failed one.
+      const ok = active.filter((t) => t.status === "queued" || t.status === "sent" || t.status === "published")
+      const bad = active.filter((t) => t.status === "failed")
+      if (ok.length > 0 && bad.length > 0) {
+        const okPart = ok.every((t) => t.status === "published")
+          ? `פורסם ${ok.map((t) => inNetwork(t.platform)).join(" ו")}`
+          : `תוזמן ${ok.map((t) => toNetwork(t.platform)).join(" ו")}`
+        const badPart = `${bad.map((t) => NETWORK_LABEL[t.platform]).join(" ו")} ${bad.length > 1 ? "נכשלו" : "נכשל"}`
+        return { tone: "danger", label: `${okPart} · ${badPart}`, detail: state.message, action: actionFor(state) }
+      }
       return {
         tone: "danger",
         label: "לא תוזמן",
         detail: state.message,
         action: actionFor(state),
       }
+    }
   }
 }
 

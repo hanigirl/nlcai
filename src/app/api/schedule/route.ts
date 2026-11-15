@@ -285,9 +285,20 @@ export async function PUT(req: NextRequest) {
         !prev ||
         prev.scheduled_date !== r.scheduledDate ||
         prev.scheduled_time !== (r.scheduledTime ?? "09:00")
+      // "פורסם" taken back on a slot whose time is still ahead: it goes back
+      // in the queue. Left idle it read as scheduled while nothing would go
+      // out (QA 2026-11-15). A past one stays history.
+      let unmarked = false
+      if (prev?.published_at && !r.publishedAt) {
+        try {
+          unmarked = slotToInstant(r.scheduledDate, r.scheduledTime ?? "09:00").getTime() > Date.now()
+        } catch {
+          unmarked = false
+        }
+      }
       // A failed slot re-saved in place is a retry; an untouched queued one
       // is not news.
-      if (!moved && prev.publish_status !== "failed") continue
+      if (!moved && !unmarked && prev.publish_status !== "failed") continue
       publish[key] = await syncSlot(supabase, user.id, r.corePostId, r.format, {
         exclude: r.excludeNetworks,
         youtubePrivacy: r.youtubePrivacy,

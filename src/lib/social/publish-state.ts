@@ -95,6 +95,9 @@ export interface PublishState {
   targets?: TargetPublishState[]
 }
 
+/** "באינסטגרם", "ב-YouTube": Hebrew prefix, with a hyphen before Latin letters. */
+const inLabel = (name: string) => (/^[A-Za-z]/.test(name) ? `ב-${name}` : `ב${name}`)
+
 /** Worst first: the roll-up shows the state that most needs her. */
 const ROLLUP_ORDER: PublishStatus[] = ["failed", "pending", "queued", "sent", "published", "idle"]
 
@@ -127,10 +130,18 @@ export function rollupTargets(
   const worst = active.filter((t) => t.status === status)
   const lead = status === "queued" && changed ? changed : worst[0]
   const partial = worst.length < active.length
+  // Content changed on several networks: one line that names them all (or
+  // none, when it's all of them), never the first network's own sentence —
+  // that read as if only Instagram was waiting (QA 2026-11-15).
+  const changedAll = active.filter((t) => t.status === "queued" && t.code === "content_changed")
   const message =
-    lead?.message && partial && active.length > 1
-      ? `${label(lead.platform)}: ${lead.message}`
-      : (lead?.message ?? null)
+    status === "queued" && changedAll.length > 1
+      ? changedAll.length === active.length
+        ? "הכיתוב או המדיה השתנו מאז התזמון, והרשתות עדיין מחכות לגרסה הקודמת."
+        : `הכיתוב או המדיה השתנו מאז התזמון, ו${changedAll.map((t) => inLabel(label(t.platform))).join(" ו")} עדיין מחכה הגרסה הקודמת.`
+      : lead?.message && partial && active.length > 1
+        ? `${label(lead.platform)}: ${lead.message}`
+        : (lead?.message ?? null)
 
   return {
     status,
