@@ -135,8 +135,20 @@ WHEN USAGE EXAMPLES ARE ATTACHED (images of her own finished carousel slides): t
 
 Return two fenced blocks: first \`\`\`json {"illustrations": ["<English prompt for slide 1's illustration, or empty>", ...]}\`\`\` (one entry per slide; a concrete visual idea with NO text, letters or numbers — or "" for no illustration), then \`\`\`html ...\`\`\`.`
 
+/**
+ * Her examples are several layouts, not one (Hani, 2026-11-15: the picture
+ * went above the text on every slide although her examples put it on top, in
+ * the middle and at the bottom). Content slides take turns between them.
+ */
+const EXAMPLE_VARIETY = `
+
+SEVERAL EXAMPLES = SEVERAL LAYOUTS: look at EVERY attached example, not only the first. When they place the picture / illustration or the text differently (picture on top, picture between the title and the body, picture at the bottom, two pictures side by side, text only…), each is a layout of its own. Give each content slide ONE of those layouts and rotate through them so every example's layout is used at least once when there are enough slides (e.g. 3 examples → slide 2 like example 1, slide 3 like example 2, slide 4 like example 3, slide 5 like example 1…). Never repeat one example's layout on every slide when the others differ. Within a slide, copy that example exactly. Rules 3 and 7 ("same slot on every content slide") apply only among slides that share a layout; the type scale, fonts, margins, colours and slide number stay the same on all slides.`
+
 /** Hani + Nataliya only (lib/feature-access canOwnMediaText, 2026-11-10): the examples set the layout, the brand sets the colours. */
 const SYSTEM_BRAND_WINS = SYSTEM.replace(
+  "Return two fenced blocks:",
+  EXAMPLE_VARIETY.trimStart() + "\n\nReturn two fenced blocks:",
+).replace(
   "backgrounds, number badge, callout style, colours and weights. Measure them; don't reinterpret them, don't \"improve\" them, don't add anything they don't have. Only the words change. The typefaces still come from rule 1.",
   "backgrounds, number badge, callout style and weights. Measure them; don't reinterpret them, don't \"improve\" them, don't add anything they don't have. Only the words and the colours change. The typefaces still come from rule 1. The colours come from BRAND COLOURS (rule 5), never from the examples: keep each example's colour ROLES (which surface is dark, which is light, what is highlighted) and fill every role with the brand colour that fits it.",
 )
@@ -381,7 +393,7 @@ export function composeCarousel(
     library
       ? library === "one"
         ? `This is ONE picture from HER OWN media library, chosen for her. Put it on EVERY slide (attached: 1 on every slide), the same picture each time, as each slide's FULL-BLEED BACKGROUND: <img class="art"> position:absolute; inset:0; width:100%; height:100%; object-fit:cover behind everything, her face / subject visible, a brand-colour gradient layer over it under the text, the text and her elements over the picture. Never a floating cut-out box.`
-        : `These are pictures from HER OWN media library, chosen for her — not attached by her for a particular slide. Put one on the COVER always; on the other slides, use them exactly where her usage examples show a photo (if the examples show photos on content slides, place one per such slide; if they are type-led, the cover only). Each picture on at most one slide; you may leave some unused. ${DRIVE_PICTURE_RULE} In HTML that means: where her examples frame photos, give the slot their shape, size and position; otherwise the slide's <img class="art"> is position:absolute; inset:0; width:100%; height:100%; object-fit:cover behind everything, with a brand-colour gradient layer over it under the text, and her elements over the picture. It is re-framed to fit that slot afterwards.`
+        : `These are pictures from HER OWN media library, chosen for her — not attached by her for a particular slide. Put one on the COVER always; on the other slides, use them exactly where her usage examples show a photo — each content slide following ONE of her examples, taking turns between them, so a picture sits on top, in the middle or at the bottom just as it does in the example that slide follows (if the examples show photos on content slides, place one per such slide; if they are type-led, the cover only). Each picture on at most one slide; you may leave some unused. ${DRIVE_PICTURE_RULE} In HTML that means: where her examples frame photos, give the slot their shape, size and position; otherwise the slide's <img class="art"> is position:absolute; inset:0; width:100%; height:100%; object-fit:cover behind everything, with a brand-colour gradient layer over it under the text, and her elements over the picture. It is re-framed to fit that slot afterwards.`
       : placeSlidesNote(placeAt, k) ??
       `Place EVERY one of her pictures on exactly one slide — the cover unless the brief says otherwise; one picture per slide.`,
     library
