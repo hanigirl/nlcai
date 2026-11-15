@@ -6,7 +6,7 @@
  * Everyone else sees the
  * app exactly as before.
  */
-export const SCHEDULING_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const SCHEDULING_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canUseScheduling(email: string | null | undefined): boolean {
   return !!email && SCHEDULING_EMAILS.includes(email.toLowerCase())
@@ -17,7 +17,7 @@ export function canUseScheduling(email: string | null | undefined): boolean {
  * schedule settings on the board (task 4084d905, direction A). Hani only,
  * while she tries it (2026-10-29).
  */
-export const SCHEDULE_ALL_A_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const SCHEDULE_ALL_A_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canUseScheduleAllA(email: string | null | undefined): boolean {
   return !!email && SCHEDULE_ALL_A_EMAILS.includes(email.toLowerCase())
@@ -29,7 +29,7 @@ export function canUseScheduleAllA(email: string | null | undefined): boolean {
  * format takes it off the calendar back to "מאושר". The rest of that day's
  * batch is open to everyone.
  */
-export const PREVIEW_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const PREVIEW_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canUsePreview(email: string | null | undefined): boolean {
   return !!email && PREVIEW_EMAILS.includes(email.toLowerCase())
@@ -43,13 +43,13 @@ export function canUsePreview(email: string | null | undefined): boolean {
  * as before; the server enforces it too (connect/accounts routes, the bridge).
  */
 /** Days between formats of one core post (2026-11-05) — Hani only, for now. */
-export const FORMAT_GAP_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const FORMAT_GAP_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canUseFormatGap(email: string | null | undefined): boolean {
   return !!email && FORMAT_GAP_EMAILS.includes(email.toLowerCase())
 }
 
-export const MULTINETWORK_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const MULTINETWORK_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canUseMultinetwork(email: string | null | undefined): boolean {
   return !!email && MULTINETWORK_EMAILS.includes(email.toLowerCase())
@@ -60,7 +60,7 @@ export function canUseMultinetwork(email: string | null | undefined): boolean {
  * Notion task 4114d905). Hani and Nataliya only while they try it
  * (2026-11-07). Everyone else keeps the canvas exactly as before.
  */
-export const FORMAT_CARDS_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const FORMAT_CARDS_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canUseFormatCards(email: string | null | undefined): boolean {
   return !!email && FORMAT_CARDS_EMAILS.includes(email.toLowerCase())
@@ -71,7 +71,7 @@ export function canUseFormatCards(email: string | null | undefined): boolean {
  * and the calendar, 045) — Hani only while she tries it (2026-11-09).
  * Everyone else keeps the calendar's caption = script exactly as before.
  */
-export const DESCRIPTION_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const DESCRIPTION_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function canUseDescription(email: string | null | undefined): boolean {
   return !!email && DESCRIPTION_EMAILS.includes(email.toLowerCase())
 }

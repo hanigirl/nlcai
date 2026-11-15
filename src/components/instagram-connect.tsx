@@ -79,8 +79,11 @@ export const NETWORK_CONNECT_NOTE: Record<SocialPlatform, string> = {
   youtube:
     "מתחברים עם חשבון הגוגל שהערוץ שלכם שייך אליו. ל-YouTube עולים רק סרטונים (טוקינג הד ו-B-roll), וההוק הוא כותרת הסרטון.",
   linkedin:
-    "אפשר לחבר את הפרופיל האישי או דף חברה שאתם מנהלים. ל-LinkedIn עולים סרטונים, תמונה בודדת וקרוסלות עד 9 תמונות.",
+    "בחלון החיבור תתבקשו להיכנס ל-LinkedIn עם החשבון שאתם רוצים לחבר. אפשר לחבר את הפרופיל האישי או דף חברה שאתם מנהלים. ל-LinkedIn עולים סרטונים, תמונה בודדת וקרוסלות עד 9 תמונות.",
 }
+
+/** LinkedIn's sign-out page — opened in the connect popup before LinkedIn's sign-in. */
+const LINKEDIN_SIGN_OUT = "https://www.linkedin.com/m/logout/"
 
 /** One account the login exposes, when there are several to pick from. */
 type AccountOption = { originId: string; name: string; avatar: string | null; kind?: "profile" | "page" }
@@ -228,6 +231,20 @@ function useConnectFlow(platform: SocialPlatform = "instagram") {
         setBusy(false)
         setError(json.message ?? `לא הצלחנו לפתוח את החיבור ${toNetwork(platform)}.`)
         return
+      }
+      if (platform === "linkedin") {
+        // LinkedIn connects whoever is signed in to linkedin.com in this
+        // browser, with no "another account" screen — so a second account
+        // could never be connected (Hani, 2026-11-15). Sign LinkedIn out in
+        // the popup first; the connect then asks her to sign in with the
+        // account she wants.
+        popup.location.href = LINKEDIN_SIGN_OUT
+        await new Promise((r) => setTimeout(r, 2500))
+        if (popup.closed) {
+          popupRef.current = null
+          setBusy(false)
+          return
+        }
       }
       popup.location.href = json.url
     } catch {

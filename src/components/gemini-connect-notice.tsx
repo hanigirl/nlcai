@@ -26,6 +26,8 @@ import { getCurrentUser } from "@/lib/supabase/current-user"
  * it in the same pass — on /project the notice is fixed, so without the page
  * knowing about it the flow cards end up underneath.
  */
+const NOTICE_OFF = true
+
 export function useGeminiNoticeVisible(): boolean {
   // Starts false so nothing renders until we know — the notice must never
   // flash at users who already have a key.
@@ -44,6 +46,8 @@ export function useGeminiNoticeVisible(): boolean {
         setVisible(true)
         return
       }
+      // Off for everyone (Hani, 2026-11-15: "אני רוצה שהיא תפסיק להופיע").
+      if (NOTICE_OFF) return
       const supabase = createClient()
       const { data: { user } } = await getCurrentUser(supabase)
       if (!user) return

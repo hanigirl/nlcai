@@ -6,7 +6,7 @@
  * every attached image is a look reference — no strict mode, no check.
  * Enforced on the server (the four generate routes), not only in the panel.
  */
-export const REF_PLACE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const REF_PLACE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canPlaceRefs(email: string | null | undefined): boolean {
   return !!email && REF_PLACE_EMAILS.includes(email.toLowerCase())
@@ -30,7 +30,7 @@ export function gatePlacement(
  * not pasted as is. Hani only while she tries it; everyone else keeps her
  * photo over a blurred fill. Enforced on the server.
  */
-export const BROLL_BLEND_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const BROLL_BLEND_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canBlendBRoll(email: string | null | undefined): boolean {
   return !!email && BROLL_BLEND_EMAILS.includes(email.toLowerCase())
@@ -45,7 +45,7 @@ export function canBlendBRoll(email: string | null | undefined): boolean {
  * Hani only while she tries it; enforced on the server (api/media/ai-edit,
  * api/carousel/generate-ai). Everyone else keeps main's behaviour.
  */
-export const PICTURE_EDIT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const PICTURE_EDIT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canEditPictures(email: string | null | undefined): boolean {
   return !!email && PICTURE_EDIT_EMAILS.includes(email.toLowerCase())
@@ -57,7 +57,7 @@ export function canEditPictures(email: string | null | undefined): boolean {
  * Nataliya while they try it; enforced on the server (api/carousel/generate-ai,
  * api/carousel/reference-slides) and in the panel.
  */
-export const COPY_STRUCTURE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const COPY_STRUCTURE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canCopyStructure(email: string | null | undefined): boolean {
   return !!email && COPY_STRUCTURE_EMAILS.includes(email.toLowerCase())
@@ -70,7 +70,7 @@ export function canCopyStructure(email: string | null | undefined): boolean {
  * made on request (not automatically) with a reminder before approval.
  * Everyone else keeps today's flow exactly — the automatic cover included.
  */
-export const TALKING_HEAD_AI_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const TALKING_HEAD_AI_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canTalkingHeadAi(email: string | null | undefined): boolean {
   return !!email && TALKING_HEAD_AI_EMAILS.includes(email.toLowerCase())
@@ -81,7 +81,7 @@ export function canTalkingHeadAi(email: string | null | undefined): boolean {
  * (Hani, 2026-11-09 — the launch was held back for this). The fixed paths run
  * for her only; everyone else keeps today's paths until she opens it.
  */
-export const OWN_MEDIA_TEXT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const OWN_MEDIA_TEXT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canOwnMediaText(email: string | null | undefined): boolean {
   return !!email && OWN_MEDIA_TEXT_EMAILS.includes(email.toLowerCase())
@@ -108,7 +108,7 @@ export function refusesPlacingIntoDesign(email: string | null | undefined, place
  * "עריכה עם AI" on media, no chat panel, and no "חדש לגמרי" tile (it only
  * works by talking first); every other style generates straight away.
  */
-export const NO_AI_CHAT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const NO_AI_CHAT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function canUseAiChat(email: string | null | undefined): boolean {
   return !(email && NO_AI_CHAT_EMAILS.includes(email.toLowerCase()))
 }
@@ -119,7 +119,7 @@ export function canUseAiChat(email: string | null | undefined): boolean {
  * asks when unsure and explains what happened; it runs on the server. B-roll
  * first. Never on her own media from Drive / her computer (iron rule).
  */
-export const EDIT_AGENT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const EDIT_AGENT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function canUseEditAgent(email: string | null | undefined): boolean {
   return !!email && EDIT_AGENT_EMAILS.includes(email.toLowerCase())
 }
@@ -137,7 +137,7 @@ export function staticBRollText(email: string | null | undefined): boolean {
  * EXPERIMENT (Hani, 2026-11-10): her visual-language b-roll builds one file
  * from her Drive b-roll folder into the composition (lib/broll-animation/library-media).
  */
-export const DRIVE_IN_BROLL_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const DRIVE_IN_BROLL_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function driveInBRoll(email: string | null | undefined): boolean {
   return !!email && DRIVE_IN_BROLL_EMAILS.includes(email.toLowerCase())
 }
@@ -147,7 +147,7 @@ export function driveInBRoll(email: string | null | undefined): boolean {
  * position, colours and size (Hani, 2026-11-10: "רק במה שאמרתי"). Never her
  * pixels, never the words (the script).
  */
-export const OWN_BROLL_CAPTION_EDIT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const OWN_BROLL_CAPTION_EDIT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function canEditOwnBRollCaption(email: string | null | undefined): boolean {
   return !!email && OWN_BROLL_CAPTION_EDIT_EMAILS.includes(email.toLowerCase())
 }
@@ -161,7 +161,7 @@ export function canEditOwnBRollCaption(email: string | null | undefined): boolea
  * Every format since 2026-11-12 (Hani: "All text, in all formats, should
  * always appear right away") — Hani + Nataliya until launch.
  */
-export const TEXT_AT_ONCE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const TEXT_AT_ONCE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function textAtOnceBRoll(email: string | null | undefined): boolean {
   return !!email && TEXT_AT_ONCE_EMAILS.includes(email.toLowerCase())
 }
@@ -172,7 +172,7 @@ export function textAtOnceBRoll(email: string | null | undefined): boolean {
  * "עריכת הטקסט של…"; her own media always gets the script's text; never one
  * word alone on a line.
  */
-export const QA_1112_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const QA_1112_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function qaFixes1112(email: string | null | undefined): boolean {
   return !!email && QA_1112_EMAILS.includes(email.toLowerCase())
 }
@@ -191,7 +191,7 @@ export function holdsBRollText(email: string | null | undefined): boolean {
  * examples' colours too). Uneven examples never make the language
  * "inconsistent". Hani + Nataliya while they try it.
  */
-export const EXAMPLES_IN_LANGUAGE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const EXAMPLES_IN_LANGUAGE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function examplesInLanguage(email: string | null | undefined): boolean {
   return !!email && EXAMPLES_IN_LANGUAGE_EMAILS.includes(email.toLowerCase())
 }
@@ -202,7 +202,7 @@ export function examplesInLanguage(email: string | null | undefined): boolean {
  * folder the brand language stays graphics-only (lib/visual-language/graphic-only).
  */
 // Hani + Nataliya (2026-11-15: "תעלה הכל הכל לנטליה").
-export const BRAND_DRIVE_MEDIA_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const BRAND_DRIVE_MEDIA_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function brandDriveMedia(email: string | null | undefined): boolean {
   return !!email && BRAND_DRIVE_MEDIA_EMAILS.includes(email.toLowerCase())
 }
@@ -212,7 +212,7 @@ export function brandDriveMedia(email: string | null | undefined): boolean {
  * תמונות, טקסט בלבד", and every agent change offers "חזרה לגרסה הקודמת"
  * (Hani, 2026-11-14). Hani + Nataliya since 2026-11-15.
  */
-export const AFTER_GEN_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com"]
+export const AFTER_GEN_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function afterGenChoices(email: string | null | undefined): boolean {
   return !!email && AFTER_GEN_EMAILS.includes(email.toLowerCase())
 }

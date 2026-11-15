@@ -188,9 +188,9 @@ export async function loadBrandExamples(
  * trigger words and highlights, elements, background.
  */
 export const COLOR_ROLES = [
-  "TRIGGER WORDS & HIGHLIGHTS colour — the trigger word(s), emphasised words and highlights (in a carousel, mark each slide's key words with it automatically)",
+  "TRIGGER WORDS & HIGHLIGHTS colour — the trigger word(s), emphasised words and highlights (in a carousel, mark each slide's key words with it automatically); small marks only — NEVER a background or any large surface",
   "ELEMENTS colour — shapes, icons, lines, decorative and secondary elements",
-  "BACKGROUND colour — the background",
+  "BACKGROUND colour — the background of every slide / frame (tints of it, or a gradient towards the ELEMENTS colour, are fine); never swapped for the trigger colour, whatever colour the examples' background is",
 ]
 
 export function brandColourLines(colors: string[], roles = false): string[] {
@@ -199,7 +199,7 @@ export function brandColourLines(colors: string[], roles = false): string[] {
     ...(roles
       ? [`BRAND COLOUR ROLES — each colour has one job: ${colors.flatMap((c, i) => (c ? [`${c} = ${COLOR_ROLES[i]}`] : [])).join("; ")}. Text that isn't highlighted is white or black, whichever reads on the background.`]
       : []),
-    `BRAND COLOURS — authoritative: ${colors.filter(Boolean).join(", ")} (in priority order; the first is her main colour). Build every designed surface — background, text boxes and plates, highlights, accents, text colour — from these, plus white, black and lighter / darker tints of them. This overrides any other colour named in the description above or seen in the attached example images: the examples set the layout and style, never the palette. Where an example uses a colour that isn't one of these, give that role to the brand colour that fits it. Photographic imagery may keep its natural colours, graded to sit with this palette; her attached brand elements (logo, marks) keep their own colours.`,
+    `BRAND COLOURS — authoritative: ${colors.filter(Boolean).join(", ")} (${roles ? "each one only in its role above" : "in priority order; the first is her main colour"}). Build every designed surface — background, text boxes and plates, highlights, accents, text colour — from these, plus white, black and lighter / darker tints of them. This overrides any other colour named in the description above or seen in the attached example images: the examples set the layout and style, never the palette. Where an example uses a colour that isn't one of these, give that role to the brand colour that fits it. Photographic imagery may keep its natural colours, graded to sit with this palette; her attached brand elements (logo, marks) keep their own colours.`,
   ]
 }
 
