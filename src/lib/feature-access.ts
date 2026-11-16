@@ -138,7 +138,11 @@ export function canUseEditAgent(email: string | null | undefined): boolean {
  */
 export const STATIC_BROLL_TEXT_EMAILS = ["nataliya@nataliyarey.com"]
 export function staticBRollText(email: string | null | undefined): boolean {
-  return !!email && STATIC_BROLL_TEXT_EMAILS.includes(email.toLowerCase())
+  // Retired at launch (Hani, 2026-11-16): one rule for everyone, Nataliya
+  // included — all the text visible from the first frame, a highlight or the
+  // elements may move (textAtOnceBRoll). STATIC_BROLL_TEXT_EMAILS kept for reference.
+  void email
+  return false
 }
 
 /**
