@@ -1,6 +1,6 @@
 "use client"
 
-import { RollbackNotice } from "@/components/launch-intro/rollback-notice"
+import { LaunchBanner } from "@/components/launch-intro/launch-banner"
 import { useEffect, useState, useRef, useCallback, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { toast } from "sonner"
@@ -713,9 +713,9 @@ function HomeContent() {
           </div>
         </div>
 
-        {/* The launch is closed (2026-11-09): the rollback notice, for
-            everyone, in the launch banner's place (Figma 707:2259). */}
-        <RollbackNotice className="mt-8 mb-[72px]" />
+        {/* Launch (Hani, 2026-11-16): the launch banner, for everyone, in
+            the rollback notice's place. */}
+        <LaunchBanner className="mt-8 mb-[72px]" />
 
         {/* Onboarding-progress banner — sits BELOW the greeting/title per the
             brief ("באנר מתחת לכותרת"). Only rendered under ?variant=a|b. */}

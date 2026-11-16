@@ -60,12 +60,12 @@ export function LaunchBanner({ className }: { className?: string }) {
           <ShaderFill className="absolute rounded-[12px]" shader={RAD_SOUP} />
         </div>
         <p className="relative w-full text-right text-[16px] font-semibold leading-6 text-text-primary-default">
-          מהיום האפליקציה עובדת מקצה לקצה!
+          מהיום כל המוצר עובד מקצה לקצה!
         </p>
         {/* Body + "להדגמה" on one row, the link at the left end (Hani, 2026-11-08). */}
         <div className="relative flex w-full items-end gap-4">
           <p className="flex-1 text-right text-[16px] leading-6 text-text-neutral-default">
-            עיקר החידושים עוסקים בהפעלת המערכת כמקום אחד בו הכל קורה: כתיבה, יצירת מדיה ותזמון לכל הרשתות
+            אפשר להמשיך מהכתיבה ליצירת מדיה ותזמון אמיתי ברשתות. בשבועות הקרובים נוסיף רשתות נוספות ויכולות חדשות. מוזמנים לדווח על באג / הצעה לשיפור בכפתור הייעודי.
           </p>
           <button
             type="button"

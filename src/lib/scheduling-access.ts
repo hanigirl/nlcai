@@ -9,7 +9,8 @@
 export const SCHEDULING_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canUseScheduling(email: string | null | undefined): boolean {
-  return !!email && SCHEDULING_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); SCHEDULING_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -20,7 +21,8 @@ export function canUseScheduling(email: string | null | undefined): boolean {
 export const SCHEDULE_ALL_A_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canUseScheduleAllA(email: string | null | undefined): boolean {
-  return !!email && SCHEDULE_ALL_A_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); SCHEDULE_ALL_A_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -32,7 +34,8 @@ export function canUseScheduleAllA(email: string | null | undefined): boolean {
 export const PREVIEW_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canUsePreview(email: string | null | undefined): boolean {
-  return !!email && PREVIEW_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); PREVIEW_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -46,13 +49,15 @@ export function canUsePreview(email: string | null | undefined): boolean {
 export const FORMAT_GAP_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canUseFormatGap(email: string | null | undefined): boolean {
-  return !!email && FORMAT_GAP_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); FORMAT_GAP_EMAILS kept for reference.
+  return !!email
 }
 
 export const MULTINETWORK_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canUseMultinetwork(email: string | null | undefined): boolean {
-  return !!email && MULTINETWORK_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); MULTINETWORK_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -63,7 +68,8 @@ export function canUseMultinetwork(email: string | null | undefined): boolean {
 export const FORMAT_CARDS_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canUseFormatCards(email: string | null | undefined): boolean {
-  return !!email && FORMAT_CARDS_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); FORMAT_CARDS_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -73,5 +79,6 @@ export function canUseFormatCards(email: string | null | undefined): boolean {
  */
 export const DESCRIPTION_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function canUseDescription(email: string | null | undefined): boolean {
-  return !!email && DESCRIPTION_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); DESCRIPTION_EMAILS kept for reference.
+  return !!email
 }

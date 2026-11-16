@@ -9,7 +9,8 @@
 export const REF_PLACE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canPlaceRefs(email: string | null | undefined): boolean {
-  return !!email && REF_PLACE_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); REF_PLACE_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -33,7 +34,8 @@ export function gatePlacement(
 export const BROLL_BLEND_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canBlendBRoll(email: string | null | undefined): boolean {
-  return !!email && BROLL_BLEND_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); BROLL_BLEND_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -48,7 +50,8 @@ export function canBlendBRoll(email: string | null | undefined): boolean {
 export const PICTURE_EDIT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canEditPictures(email: string | null | undefined): boolean {
-  return !!email && PICTURE_EDIT_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); PICTURE_EDIT_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -60,7 +63,8 @@ export function canEditPictures(email: string | null | undefined): boolean {
 export const COPY_STRUCTURE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canCopyStructure(email: string | null | undefined): boolean {
-  return !!email && COPY_STRUCTURE_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); COPY_STRUCTURE_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -73,7 +77,8 @@ export function canCopyStructure(email: string | null | undefined): boolean {
 export const TALKING_HEAD_AI_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canTalkingHeadAi(email: string | null | undefined): boolean {
-  return !!email && TALKING_HEAD_AI_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); TALKING_HEAD_AI_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -84,7 +89,8 @@ export function canTalkingHeadAi(email: string | null | undefined): boolean {
 export const OWN_MEDIA_TEXT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 
 export function canOwnMediaText(email: string | null | undefined): boolean {
-  return !!email && OWN_MEDIA_TEXT_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); OWN_MEDIA_TEXT_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -110,7 +116,8 @@ export function refusesPlacingIntoDesign(email: string | null | undefined, place
  */
 export const NO_AI_CHAT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function canUseAiChat(email: string | null | undefined): boolean {
-  return !(email && NO_AI_CHAT_EMAILS.includes(email.toLowerCase()))
+  // Launch (Hani, 2026-11-16): the edit agent replaces the old chat for everyone; NO_AI_CHAT_EMAILS kept for reference.
+  return false
 }
 
 /**
@@ -121,7 +128,8 @@ export function canUseAiChat(email: string | null | undefined): boolean {
  */
 export const EDIT_AGENT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function canUseEditAgent(email: string | null | undefined): boolean {
-  return !!email && EDIT_AGENT_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); EDIT_AGENT_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -139,7 +147,8 @@ export function staticBRollText(email: string | null | undefined): boolean {
  */
 export const DRIVE_IN_BROLL_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function driveInBRoll(email: string | null | undefined): boolean {
-  return !!email && DRIVE_IN_BROLL_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); DRIVE_IN_BROLL_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -149,7 +158,8 @@ export function driveInBRoll(email: string | null | undefined): boolean {
  */
 export const OWN_BROLL_CAPTION_EDIT_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function canEditOwnBRollCaption(email: string | null | undefined): boolean {
-  return !!email && OWN_BROLL_CAPTION_EDIT_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); OWN_BROLL_CAPTION_EDIT_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -163,7 +173,8 @@ export function canEditOwnBRollCaption(email: string | null | undefined): boolea
  */
 export const TEXT_AT_ONCE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function textAtOnceBRoll(email: string | null | undefined): boolean {
-  return !!email && TEXT_AT_ONCE_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); TEXT_AT_ONCE_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -174,7 +185,8 @@ export function textAtOnceBRoll(email: string | null | undefined): boolean {
  */
 export const QA_1112_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function qaFixes1112(email: string | null | undefined): boolean {
-  return !!email && QA_1112_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); QA_1112_EMAILS kept for reference.
+  return !!email
 }
 
 /** Her b-roll words on screen from frame 0, enforced in the page (lib/broll-animation/compose TEXT_HOLD). */
@@ -193,7 +205,8 @@ export function holdsBRollText(email: string | null | undefined): boolean {
  */
 export const EXAMPLES_IN_LANGUAGE_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function examplesInLanguage(email: string | null | undefined): boolean {
-  return !!email && EXAMPLES_IN_LANGUAGE_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); EXAMPLES_IN_LANGUAGE_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -204,7 +217,8 @@ export function examplesInLanguage(email: string | null | undefined): boolean {
 // Hani + Nataliya (2026-11-15: "תעלה הכל הכל לנטליה").
 export const BRAND_DRIVE_MEDIA_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function brandDriveMedia(email: string | null | undefined): boolean {
-  return !!email && BRAND_DRIVE_MEDIA_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); BRAND_DRIVE_MEDIA_EMAILS kept for reference.
+  return !!email
 }
 
 /**
@@ -214,5 +228,6 @@ export function brandDriveMedia(email: string | null | undefined): boolean {
  */
 export const AFTER_GEN_EMAILS = ["hanigirl@gmail.com", "nataliya@nataliyarey.com", "hanigirl+qa@gmail.com"]
 export function afterGenChoices(email: string | null | undefined): boolean {
-  return !!email && AFTER_GEN_EMAILS.includes(email.toLowerCase())
+  // Open to every signed-in user at launch (Hani, 2026-11-16); AFTER_GEN_EMAILS kept for reference.
+  return !!email
 }
