@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { knownProviderError } from "@/lib/claude-credits"
 import satori from "satori"
 import { Resvg } from "@resvg/resvg-js"
 import { getTemplate, SLIDE_SIZE } from "@/lib/carousel-templates"
@@ -163,7 +164,7 @@ export async function POST(req: NextRequest) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("Carousel generation error:", msg)
     return NextResponse.json(
-      { error: `Failed to generate carousel: ${msg}` },
+      { error: (knownProviderError(msg) ?? `Failed to generate carousel: ${msg}`) },
       { status: 500 },
     )
   }

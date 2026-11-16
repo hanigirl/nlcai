@@ -1888,7 +1888,10 @@ export default function CalendarPage() {
                 <Button variant="ghost" size="icon-sm" onClick={goPrev} aria-label="שבוע קודם">
                   <ChevronRight className="size-4" />
                 </Button>
-                <span className="text-[16px] leading-none font-medium text-text-primary-default text-center px-1 tabular-nums">
+                {/* Fixed width: the arrows stay put while the range text
+                    changes length (bug report, Nataliya 2026-11-15). Fits the
+                    longest range, across a year end. */}
+                <span className="w-[17rem] shrink-0 whitespace-nowrap text-[16px] leading-none font-medium text-text-primary-default text-center px-1 tabular-nums">
                   {formatWeekRange(weekStart, weekEnd)}
                 </span>
                 <Button variant="ghost" size="icon-sm" onClick={goNext} aria-label="שבוע הבא">

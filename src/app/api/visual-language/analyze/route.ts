@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { brandTerms } from "@/lib/brand-terms"
-import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
+import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey, knownProviderError } from "@/lib/claude-credits"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
@@ -158,7 +158,7 @@ export async function POST() {
     if (isInvalidClaudeKey(msg)) {
       return NextResponse.json({ error: "anthropic_key_invalid", message: CLAUDE_KEY_INVALID_MESSAGE }, { status: 400 })
     }
-    return NextResponse.json({ error: "analyze_failed", message: `הניתוח נכשל: ${msg}` }, { status: 500 })
+    return NextResponse.json({ error: "analyze_failed", message: (knownProviderError(msg) ?? `הניתוח נכשל: ${msg}`) }, { status: 500 })
   }
 
   // Tone + photo detection per element — Settings uses it to ask for the

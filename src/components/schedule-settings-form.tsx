@@ -36,6 +36,8 @@ import {
   weekLoadText,
   withDayActive,
   withDayPost,
+  withDayStory,
+  isStorySlot,
   withGlobal,
   withPostTime,
   type PostingSchedule,
@@ -157,11 +159,15 @@ function PostPicker({
   onChange,
   day,
   index,
+  at,
   slot,
   clash = false,
 }: Edit & {
   day: number
+  /** Its place among the day's posts (labels, the global hour). */
   index: number
+  /** Its place in the stored list, stories included (the edits). */
+  at: number
   slot?: PostingSlot
   /** Another post on this day goes out at the same hour. */
   clash?: boolean
@@ -206,7 +212,7 @@ function PostPicker({
           יום {dayName} · פוסט {ORDINALS[index]}
         </p>
         <ul role="listbox" aria-label="פורמט">
-          {SCHEDULE_FORMATS.map((f) => {
+          {SCHEDULE_FORMATS.filter((f) => f !== "story").map((f) => {
             const on = slot?.format === f
             return (
               <li key={f}>
@@ -215,7 +221,7 @@ function PostPicker({
                   role="option"
                   aria-selected={on}
                   onClick={() => {
-                    onChange(withDayPost(draft, day, index, f))
+                    onChange(withDayPost(draft, day, at, f))
                     setOpen(false)
                   }}
                   className={`flex h-9 w-full items-center gap-2 rounded-md px-2 text-small text-text-primary-default ${GRAY_HOVER} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70`}
@@ -241,7 +247,7 @@ function PostPicker({
                 variant="homepage"
                 value={ownHour ?? ""}
                 aria-invalid={clash || undefined}
-                onChange={(e) => onChange(withPostTime(draft, day, index, e.target.value || null))}
+                onChange={(e) => onChange(withPostTime(draft, day, at, e.target.value || null))}
                 className="tabular-nums"
               >
                 <option value="">כמו בכל יום · {globalHour}</option>
@@ -256,7 +262,7 @@ function PostPicker({
             <button
               type="button"
               onClick={() => {
-                onChange(withDayPost(draft, day, index, null))
+                onChange(withDayPost(draft, day, at, null))
                 setOpen(false)
               }}
               className={`flex h-9 w-full items-center gap-2 rounded-md px-2 text-small text-text-neutral-default hover:text-text-primary-default ${GRAY_HOVER} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70`}
@@ -271,9 +277,44 @@ function PostPicker({
   )
 }
 
-/** The posts a weekday shows in the editor (never more than the daily cap). */
-function visiblePosts(draft: PostingSchedule, day: number): PostingSlot[] {
-  return draft.days[day].slice(0, draft.postsPerDay)
+/**
+ * The day's story, on top of its posts: a chip that is on or off. A story
+ * never takes a post's place (Hani, 2026-11-16).
+ */
+function StoryToggle({ draft, onChange, day, on }: Edit & { day: number; on: boolean }) {
+  const dayName = WEEKDAY_NAMES[day]
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      aria-label={on ? `הסרת הסטורי, יום ${dayName}` : `הוספת סטורי, יום ${dayName}`}
+      onClick={() => onChange(withDayStory(draft, day, !on))}
+      className={`flex h-9 min-w-0 items-center justify-center gap-1 rounded-lg border px-2 text-xs-body transition-colors ${GRAY_HOVER} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-70 ${
+        on
+          ? "border-border-neutral-default bg-white text-text-primary-default dark:bg-gray-10"
+          : "border-dashed border-border-neutral-default text-text-neutral-default hover:text-text-primary-default"
+      }`}
+    >
+      {on ? (
+        createElement(getFormatChipIcon("story"), { className: "size-4 shrink-0 text-text-neutral-default", "aria-hidden": true })
+      ) : (
+        <Plus className="size-3.5 shrink-0" aria-hidden />
+      )}
+      <span className="truncate">סטורי</span>
+    </button>
+  )
+}
+
+/**
+ * The posts a weekday shows in the editor (never more than the daily cap),
+ * each with its place in the stored list. Stories aren't posts here — they
+ * have their own slot on the day (Hani, 2026-11-16: "סטורי לא נתפס").
+ */
+function visiblePosts(draft: PostingSchedule, day: number): { slot: PostingSlot; at: number }[] {
+  return draft.days[day]
+    .map((slot, at) => ({ slot, at }))
+    .filter(({ slot }) => !isStorySlot(slot))
+    .slice(0, draft.postsPerDay)
 }
 
 /**
@@ -338,7 +379,7 @@ export function ScheduleSettingsForm({ draft, onChange }: Edit) {
     rows.some((j) => j !== i && draft.defaultTimes[j] === draft.defaultTimes[i]) &&
     days.some((d) => {
       const posts = visiblePosts(draft, d)
-      return posts[i] && clashes.has(posts[i].id)
+      return posts[i] && clashes.has(posts[i].slot.id)
     })
 
   return (
@@ -417,11 +458,12 @@ export function ScheduleSettingsForm({ draft, onChange }: Edit) {
           <ul className="flex max-w-md flex-col gap-1.5">
             {active.map((d) => {
               const posts = visiblePosts(draft, d)
+              const story = draft.days[d].find(isStorySlot)
               return (
                 <li
                   key={d}
                   className="grid items-center gap-1.5"
-                  style={{ gridTemplateColumns: `3.5rem repeat(${draft.postsPerDay}, minmax(0, 1fr))` }}
+                  style={{ gridTemplateColumns: `3.5rem repeat(${draft.postsPerDay}, minmax(0, 1fr)) 5.5rem` }}
                 >
                   <span className="text-small text-text-primary-default">{WEEKDAY_NAMES[d]}</span>
                   {rows.map((i) =>
@@ -432,13 +474,15 @@ export function ScheduleSettingsForm({ draft, onChange }: Edit) {
                         onChange={onChange}
                         day={d}
                         index={i}
-                        slot={posts[i]}
-                        clash={!!posts[i] && clashes.has(posts[i].id)}
+                        at={posts[i]?.at ?? draft.days[d].length}
+                        slot={posts[i]?.slot}
+                        clash={!!posts[i] && clashes.has(posts[i].slot.id)}
                       />
                     ) : (
                       <span key={i} />
                     ),
                   )}
+                  <StoryToggle draft={draft} onChange={onChange} day={d} on={!!story} />
                 </li>
               )
             })}

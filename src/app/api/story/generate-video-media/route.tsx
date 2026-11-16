@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { knownProviderError } from "@/lib/claude-credits"
 import { spawn } from "child_process"
 import { createWriteStream } from "node:fs"
 import { Readable } from "node:stream"
@@ -700,7 +701,7 @@ export async function POST(req: NextRequest) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("[story/generate-video-media]", msg)
     return NextResponse.json(
-      { error: `הטמעת הכיתוב בסרטון נכשלה: ${msg}` },
+      { error: (knownProviderError(msg) ?? `הטמעת הכיתוב בסרטון נכשלה: ${msg}`) },
       { status: 500 },
     )
   } finally {

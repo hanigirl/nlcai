@@ -1,4 +1,5 @@
 import { BLANK_NEEDS_BRIEF, PLACE_FAILED_GEN, normalizeMediaBrief, withMediaBrief, withMediaReferences, withPlacedImages } from "@/lib/media-brief"
+import { knownProviderError } from "@/lib/claude-credits"
 import { DRIVE_PICTURE_RULE } from "@/lib/brand-drive-media"
 import { brandDriveMedia } from "@/lib/feature-access"
 import { pickBrandDrivePictures } from "@/lib/brand-drive-media"
@@ -213,6 +214,6 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("[image-post/generate-media]", msg)
-    return NextResponse.json({ error: `יצירת התמונה נכשלה: ${msg}` }, { status: 500 })
+    return NextResponse.json({ error: (knownProviderError(msg) ?? `יצירת התמונה נכשלה: ${msg}`) }, { status: 500 })
   }
 }

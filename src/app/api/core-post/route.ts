@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { isInvalidClaudeKey } from "@/lib/claude-credits"
+import { isInvalidClaudeKey, knownProviderError } from "@/lib/claude-credits"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
       ? "credits_exhausted"
       : isOverloaded
         ? "anthropic_overloaded"
-        : `Failed to generate post: ${msg}`
+        : (knownProviderError(msg) ?? `Failed to generate post: ${msg}`)
     return NextResponse.json(
       { error: errCode },
       { status: isKeyInvalid ? 400 : isCredits ? 402 : isOverloaded ? 503 : 500 },

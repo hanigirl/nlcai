@@ -13,7 +13,7 @@ import { isOwnMediaUrl } from "@/lib/own-media"
 import { scriptTextFor } from "@/lib/script-text"
 import { parseReferences, resolveReferences } from "@/lib/ai-edit-references"
 import { loadCarousel, saveCarousel, type StoredCarousel } from "@/lib/carousel-composition"
-import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
+import { knownProviderError } from "@/lib/claude-credits"
 import { runBRollAgent, type BRollAgentOutcome, type ChatTurn } from "@/lib/edit-agent/broll-agent"
 import { runOwnBRollAgent } from "@/lib/edit-agent/own-broll-agent"
 import { runStoryAgent } from "@/lib/edit-agent/story-agent"
@@ -540,11 +540,12 @@ export async function POST(req: NextRequest) {
         await setJob({ status: "done", progress: "", outcome: { kind: "done", reply, url: nowSet[0], urls: nowSet, changed: true } })
         return
       }
-      const reply = isInvalidClaudeKey(msg)
-        ? CLAUDE_KEY_INVALID_MESSAGE
+      const known = knownProviderError(msg)
+      const reply = known
+        ? known
         : msg === "composition_invalid" || msg === "composition_not_seekable"
           ? "העיצוב שיצא לא היה תקין, אז השארתי את הבי-רול כמו שהיה. נסו שוב, אולי בניסוח אחר."
-          : `משהו נתקע בדרך (${msg.slice(0, 120)}), אז ${format === "story" ? "הסטורי" : format === "image_post" ? "פוסט התמונה" : format === "carousel" ? "מה שלא נשמר בקרוסלה" : "הבי-רול"} נשאר כמו שהיה. נסו שוב.`
+          : `משהו נתקע בדרך, אז ${format === "story" ? "הסטורי" : format === "image_post" ? "פוסט התמונה" : format === "carousel" ? "מה שלא נשמר בקרוסלה" : "הבי-רול"} נשאר כמו שהיה. נסו שוב.`
       await appendMessages(admin, user.id, chatKey, [{ role: "assistant", text: reply, error: true, at: now() }])
       await setJob({ status: "failed", progress: "", outcome: { kind: "failed", reply } })
     }

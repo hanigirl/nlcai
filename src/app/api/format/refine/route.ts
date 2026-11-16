@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
-import { isInvalidClaudeKey } from "@/lib/claude-credits"
+import { isInvalidClaudeKey, knownProviderError } from "@/lib/claude-credits"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
 import { getAuthUser } from "@/lib/auth-user"
@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
         ? "credits_exhausted"
         : isOverloaded
           ? "anthropic_overloaded"
-          : `Failed to refine format copy: ${msg}`
+          : (knownProviderError(msg) ?? `Failed to refine format copy: ${msg}`)
     return NextResponse.json(
       { error: errCode },
       { status: isKeyInvalid ? 400 : isCredits ? 402 : isOverloaded ? 503 : 500 },

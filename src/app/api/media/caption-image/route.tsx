@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { knownProviderError } from "@/lib/claude-credits"
 import { canOwnMediaText, qaFixes1112 } from "@/lib/feature-access"
 import { captionLookFor } from "@/lib/caption-look"
 import { NO_SCRIPT_TEXT, scriptTextFor, type TextSource } from "@/lib/script-text"
@@ -471,7 +472,7 @@ export async function POST(req: NextRequest) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("[media/caption-image]", msg)
     return NextResponse.json(
-      { error: `הטמעת הכיתוב בתמונה נכשלה: ${msg}` },
+      { error: (knownProviderError(msg) ?? `הטמעת הכיתוב בתמונה נכשלה: ${msg}`) },
       { status: 500 },
     )
   }

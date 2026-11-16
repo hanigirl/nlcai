@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { knownProviderError } from "@/lib/claude-credits"
 import satori from "satori"
 import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
@@ -455,6 +456,6 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("Reel cover generation error:", msg)
-    return NextResponse.json({ error: `Failed to generate cover: ${msg}` }, { status: 500 })
+    return NextResponse.json({ error: (knownProviderError(msg) ?? `Failed to generate cover: ${msg}`) }, { status: 500 })
   }
 }

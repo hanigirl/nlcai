@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { isInvalidClaudeKey } from "@/lib/claude-credits"
+import { isInvalidClaudeKey, knownProviderError } from "@/lib/claude-credits"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
@@ -1068,7 +1068,7 @@ ${formatTemplatesForPrompt()}
     const msg = error instanceof Error ? error.message : String(error)
     console.error("Homepage hooks error:", msg)
     return NextResponse.json(
-      { error: `Failed to generate hooks: ${msg}` },
+      { error: (knownProviderError(msg) ?? `Failed to generate hooks: ${msg}`) },
       { status: 500 }
     )
   }

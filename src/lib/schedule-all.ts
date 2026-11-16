@@ -88,7 +88,11 @@ export function planScheduleAll(
   // Posts on each date, any format — the "at most N a day" rule.
   const perDay = Math.max(1, schedule.postsPerDay ?? 1)
   const dayCount = new Map<string, number>()
-  for (const o of occupied) dayCount.set(o.scheduledDate, (dayCount.get(o.scheduledDate) ?? 0) + 1)
+  // Stories don't count: a day carries its posts and a story on top.
+  for (const o of occupied) {
+    if (o.format === "story") continue
+    dayCount.set(o.scheduledDate, (dayCount.get(o.scheduledDate) ?? 0) + 1)
+  }
 
   const placed: PlannedSlot[] = []
   const unmatched: PlanInputCard[] = []
@@ -132,7 +136,7 @@ export function planScheduleAll(
     let done = false
     for (let i = 0; i < HORIZON_DAYS && !done; i++) {
       const key = addDaysToKey(today, i)
-      if ((dayCount.get(key) ?? 0) >= perDay) continue
+      if (card.format !== "story" && (dayCount.get(key) ?? 0) >= perDay) continue
       if (!clearOfGap(key)) continue
       if (!clearOfSiblings(card.corePostId, key)) continue
       const slots = slotsForWeekday(schedule, dateKeyWeekday(key)).filter((s) => s.format === card.format)
@@ -148,7 +152,7 @@ export function planScheduleAll(
         const k = slotKey(key, slot.time, card.format)
         if ((used.get(k) ?? 0) >= (capacity.get(k) ?? 0)) continue
         bump(k)
-        dayCount.set(key, (dayCount.get(key) ?? 0) + 1)
+        if (card.format !== "story") dayCount.set(key, (dayCount.get(key) ?? 0) + 1)
         placed.push({ ...card, scheduledDate: key, scheduledTime: slot.time })
         publishDays.add(key)
         notePostDate(card.corePostId, key)

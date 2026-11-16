@@ -13,7 +13,7 @@ import { MAX_STRUCTURE_SLIDES, readCarouselStructure, type CardIdentityForPrompt
 import { avatarDataUrl, loadCardIdentity, missingMessage } from "@/lib/card-identity"
 import sharp from "sharp"
 import { NextRequest, NextResponse } from "next/server"
-import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey } from "@/lib/claude-credits"
+import { CLAUDE_KEY_INVALID_MESSAGE, isInvalidClaudeKey, knownProviderError } from "@/lib/claude-credits"
 import { Resvg } from "@resvg/resvg-js"
 import { createClient } from "@/lib/supabase/server"
 import { getUserApiKey } from "@/lib/api-keys"
@@ -600,7 +600,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "anthropic_key_invalid", message: CLAUDE_KEY_INVALID_MESSAGE }, { status: 400 })
     }
     return NextResponse.json(
-      { error: `יצירת קרוסלת ה-AI נכשלה: ${msg}` },
+      { error: (knownProviderError(msg) ?? `יצירת קרוסלת ה-AI נכשלה: ${msg}`) },
       { status: 500 },
     )
   }

@@ -1,4 +1,5 @@
 import { canOwnMediaText } from "@/lib/feature-access"
+import { knownProviderError } from "@/lib/claude-credits"
 import { DRIVE_PICTURE_RULE } from "@/lib/brand-drive-media"
 import { scriptTextFor } from "@/lib/script-text"
 import { designedStoryVideoFrame, hasStoryExamples } from "@/lib/story-video-frame"
@@ -324,7 +325,7 @@ export async function POST(req: NextRequest) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("[story/generate-media]", msg)
     return NextResponse.json(
-      { error: `יצירת הסטורי נכשלה: ${msg}` },
+      { error: (knownProviderError(msg) ?? `יצירת הסטורי נכשלה: ${msg}`) },
       { status: 500 },
     )
   }

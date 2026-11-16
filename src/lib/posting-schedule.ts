@@ -198,12 +198,22 @@ export function slotsForDate(s: PostingSchedule, date: Date): PostingSlot[] {
   return slotsForWeekday(s, date.getDay())
 }
 
+/** A story rides on top of a day's posts; it isn't one of them. */
+export function isStorySlot(x: Pick<PostingSlot, "format">): boolean {
+  return x.format === "story"
+}
+
 /** Same as slotsForDate, by weekday (0 = Sunday) — no Date, no time zone. */
 export function slotsForWeekday(s: PostingSchedule, dow: number): PostingSlot[] {
   if (s.activeDays && !s.activeDays[dow]) return []
+  // A story doesn't count toward "כמה פוסטים ביום" — a day carries its posts
+  // and a story on top (bug report, Nataliya 2026-11-15; Hani: "סטורי לא
+  // נתפס"). Hours keep their place in the stored list, as before.
+  const cap = s.postsPerDay ?? MAX_POSTS_PER_DAY
+  let posts = 0
   return (s.days[dow] ?? [])
-    .slice(0, s.postsPerDay ?? MAX_POSTS_PER_DAY)
     .map((x, i) => ({ ...x, time: slotTime(s, i, x) }))
+    .filter((x) => isStorySlot(x) || posts++ < cap)
     .sort((a, b) => a.time.localeCompare(b.time))
 }
 
@@ -279,7 +289,8 @@ export function usesStories(s: PostingSchedule): boolean {
 export function clashingSlotIds(s: PostingSchedule): Set<string> {
   const out = new Set<string>()
   for (let i = 0; i < 7; i++) {
-    const day = effectiveDaySlots(s, i)
+    // A story going out at a post's hour is fine — only posts clash.
+    const day = effectiveDaySlots(s, i).filter((x) => !isStorySlot(x))
     const byTime = new Map<string, string[]>()
     for (const x of day) byTime.set(x.time, [...(byTime.get(x.time) ?? []), x.id])
     for (const ids of byTime.values()) if (ids.length > 1) ids.forEach((id) => out.add(id))
@@ -481,6 +492,17 @@ export function withDayPost(s: PostingSchedule, day: number, index: number, form
   }
   c.days[day] = list
   if (format !== null) c.activeDays[day] = true
+  return c
+}
+
+/** Put a story on a day (on top of its posts), or (false) take it off. */
+export function withDayStory(s: PostingSchedule, day: number, on: boolean): PostingSchedule {
+  const c = cloneSchedule(s)
+  const list = c.days[day].filter((x) => !isStorySlot(x))
+  const had = c.days[day].find(isStorySlot)
+  if (on) list.push(had ?? { id: newSlotId(), format: "story", time: c.defaultTimes[0] ?? "09:00", inherit: false })
+  c.days[day] = list
+  if (on) c.activeDays[day] = true
   return c
 }
 

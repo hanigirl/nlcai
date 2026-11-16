@@ -26,3 +26,19 @@ export const CLAUDE_KEY_SETTINGS_LABEL = "לעדכון המפתח בהגדרות
 export function isInvalidClaudeKey(msg: string): boolean {
   return /invalid x-api-key|"authentication_error"/i.test(msg)
 }
+
+/**
+ * A provider error she can act on, in plain Hebrew — or null when it isn't
+ * one we know. Raw Anthropic JSON ("400 {"type":"error",…credit balance is
+ * too low…}") reached the AI chat (bug report, Nataliya 2026-11-15), so every
+ * route that echoes an error passes it through here first.
+ */
+export function knownProviderError(msg: string): string | null {
+  if (/credit balance is too low|credits_exhausted/i.test(msg)) {
+    return `${CLAUDE_CREDITS_MESSAGE}, ולכן לא שינינו כלום. טענו קרדיטים ב-Claude Console (platform.claude.com/settings/billing) ונסו שוב.`
+  }
+  if (isInvalidClaudeKey(msg)) return `${CLAUDE_KEY_INVALID_MESSAGE} (הגדרות ← חיבור חשבונות).`
+  if (/rate.?limit|"rate_limit_error"|\b429\b/i.test(msg)) return "יותר מדי בקשות ל-Claude בבת אחת. נסו שוב בעוד דקה."
+  if (/overloaded|\b529\b/i.test(msg)) return "Claude עמוס כרגע. נסו שוב בעוד כמה רגעים."
+  return null
+}
