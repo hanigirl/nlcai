@@ -33,6 +33,13 @@ export interface TaskCheckInput {
   conversation?: string
   before: CheckShot[]
   after: CheckShot[]
+  /**
+   * Her own files as she brought them, before the app drew any caption on
+   * them. Text already in these is HERS (burned into her file) — without
+   * them a check can't tell her text from the app's caption, and passes
+   * "I removed the caption" over her own words (bug 2026-11-22).
+   */
+  originals?: CheckShot[]
   /** What must hold whatever she asked (the script's words, her pixels…). */
   rules: string[]
   /** The reply the agent wants to send (Hebrew). */
@@ -55,6 +62,7 @@ Check, in this order:
 3. The rules below hold in AFTER.
 4. Looks right: no text cut off, overlapping, touching the edge or unreadable.
 5. The reply is true: it claims nothing AFTER doesn't show, and it says so plainly when part of the request wasn't done.
+6. When HER ORIGINAL FILES are given: any text visible in them is part of her own file — hers, not the app's caption. The app's caption is only what AFTER shows beyond her original. The reply must not call the app's caption hers ("burned into your video"), must not call her own text the app's, must not claim the app's caption was removed / hidden while it is visible in AFTER, and must not claim it is still there when AFTER shows only her original.
 
 Two things are NOT issues:
 - A part of her request that isn't done but that the reply honestly reports as not done, with the reason. Leave it out of "issues"; if that is all that's missing, met is true.
@@ -87,6 +95,9 @@ export async function checkTask(input: TaskCheckInput): Promise<TaskCheck | null
             { type: "text", text: `HER REQUEST NOW (Hebrew):\n${input.request}` },
             ...shots("BEFORE:", input.before),
             ...shots("AFTER (the draft):", input.after),
+            ...(input.originals?.length
+              ? shots("HER ORIGINAL FILES, as she brought them — before the app drew any caption. Text in these is hers, burned into her file:", input.originals)
+              : []),
             { type: "text", text: `RULES THAT MUST HOLD:\n${input.rules.map((r) => `- ${r}`).join("\n")}` },
             { type: "text", text: `THE REPLY THE ASSISTANT WANTS TO SEND (Hebrew):\n${input.reply}` },
           ],

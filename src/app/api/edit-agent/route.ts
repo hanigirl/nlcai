@@ -1,6 +1,6 @@
 import { extractDriveFileId } from "@/lib/drive-media"
 import { brandTerms } from "@/lib/brand-terms"
-import { parseOwnCaptionOffer, saveOwnCaptionLook } from "@/lib/own-caption-look"
+import { describeOwnCaptionLook, parseOwnCaptionOffer, saveOwnCaptionLook } from "@/lib/own-caption-look"
 import { after, NextRequest, NextResponse } from "next/server"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/server"
@@ -346,7 +346,10 @@ export async function POST(req: NextRequest) {
   // caption look (lib/own-caption-look) — no agent run, no credits.
   const ownLook = rememberAsk ? parseOwnCaptionOffer(rememberAsk) : null
   if (ownLook) {
-    let reply = "שמרתי. מעכשיו הכיתוב על המדיה שלכם ייראה ככה בכל הפורמטים."
+    const what = describeOwnCaptionLook(ownLook)
+    let reply = what
+      ? `שמרתי את מראה הכיתוב: ${what}. מעכשיו זה יחול על הכיתוב על המדיה שלכם בכל הפורמטים.`
+      : "שמרתי את מראה הכיתוב. מעכשיו זה יחול על הכיתוב על המדיה שלכם בכל הפורמטים."
     try {
       await saveOwnCaptionLook(admin, user.id, ownLook)
     } catch (err) {

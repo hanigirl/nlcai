@@ -194,6 +194,8 @@ ${format === "carousel" ? DESIGNED_CAROUSEL : DESIGNED_FRAMES}
 HER OWN frames — her photo or video, with the script's words as a caption over it.
 - set_caption: everything about the caption — position (top / center / bottom), a fine move in pixels, the words' colour, the box behind them (a colour or none), size; on a VIDEO also \`design\` for any other look or motion (font weight, shadow, outline, how it enters). On a PHOTO \`design\` does not apply.
 - You never change, retouch, recolour, crop or redraw her photo / video pixels. If she asks for that, say so in one kind sentence and offer what you can do.
+- Her file may carry text of its own. For each own frame with a caption, a still of HER ORIGINAL FILE (as she brought it, before any caption of ours) comes with her message: text in it is HERS, burned into her file — not our caption, and out of your reach. Our caption is only what the frame shows beyond her original. Never call our caption hers or her text ours; when she says text was added, compare and tell her plainly which is which.
+- Her saved preferences can't stop the script's caption being drawn on her own media (the app draws it on every own frame). Never save, or promise, a preference like "no caption on my own media" as if it would work — tell her plainly it won't change that.
 
 Any frame:
 ${format === "image_post" ? "" : "- arrange_frames: delete, reorder or duplicate frames (\"תמחק את פריים 3\", \"תעביר את האחרון להתחלה\", \"תשכפל את 2\"). It is the only way to change which frames there are.\n"}- use_as_is: put a photo or video she attached to THIS message in as that frame's media exactly as it is — full frame, with the script's words drawn over it (the frame becomes HER OWN). Use it when she wants her picture as the frame / as the background / "כמו שהיא", or to swap the file of one of her own frames.
@@ -520,6 +522,11 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
     : ""
   // The story as she sees it now — also what the self-check compares the draft with.
   const beforeLooks = await Promise.all(frames.map((_, i) => lookOf(i)))
+  // Her own files as she brought them (only where we drew a caption over one):
+  // what tells her own text from our caption — for the agent and the self-check.
+  const hasOriginal = (f: Frame) => f.kind === "own" && !!f.source && f.source !== f.url
+  const startSources = frames.map((f) => f.source)
+  const originalLooks = await Promise.all(frames.map((f) => (hasOriginal(f) ? stillOf(f.source!, f.media) : Promise.resolve(null))))
   const first: Block[] = [
     {
       type: "text",
@@ -536,6 +543,12 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
       { type: "text", text: `Frame ${i + 1}:` },
       beforeLooks[i] ? jpeg(beforeLooks[i]!) : { type: "text", text: "(couldn't take a still of it)" },
     ]),
+    ...(originalLooks.some(Boolean)
+      ? [
+          { type: "text" as const, text: "HER ORIGINAL FILES, as she brought them (before any caption of ours) — any text in these is hers:" },
+          ...frames.flatMap((_, i): Block[] => (originalLooks[i] ? [{ type: "text", text: `Frame ${i + 1}, her original:` }, jpeg(originalLooks[i]!)] : [])),
+        ]
+      : []),
     ...input.attached.flatMap((a, i): Block[] => [{ type: "text", text: `Attached picture ${i + 1} (with this message):` }, dataUrlBlock(a)]),
     { type: "text", text: `HER MESSAGE NOW:\n${input.request}${attachNote}` },
   ]
@@ -661,6 +674,8 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
       conversation: transcript,
       before: frames.flatMap((_, i) => shot(i, beforeLooks[i])),
       after: changedIdx.flatMap((i, k) => shot(i, afterLooks[k])),
+      // A frame whose file she swapped this turn has a new original — leave it out.
+      originals: frames.flatMap((f, i) => (f.source && f.source === startSources[i] ? shot(i, originalLooks[i]) : [])),
       rules: [
         ...frames.flatMap((_, i) =>
           // A designed carousel whose slides don't line up with the script's: its words are judged against BEFORE.
@@ -1033,7 +1048,7 @@ export async function runStoryAgent(input: StoryAgentInput): Promise<BRollAgentO
         const m = r.memory
         if (m.kind === "saved") {
           remembered = true
-          return `SAVED to her preferences [${m.scope}]: "${m.summary}". Tell her it's saved and shows in Settings → מדיה → העדפות ויזואליות.`
+          return `SAVED to her preferences [${m.scope}]: "${m.summary}". Tell her it's saved and shows in Settings → מדיה → העדפות ויזואליות. (A preference shapes designed media and the caption's look; it never stops the script's caption on her own media — don't tell her it will.)`
         }
         if (m.kind === "conflict")
           return `NOT SAVED — it goes against saved preferences: ${m.previous.map((p) => `[id ${p.id}] "${p.summary}"`).join("; ")}. Proposal: rule=${JSON.stringify(m.proposal.rule)}, summary_he=${JSON.stringify(m.proposal.summary_he)}, scope=${m.proposal.scope}. ask_user whether to replace the old one(s) with it; if she says yes, call replace_preferences with these ids and this proposal.`
