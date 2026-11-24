@@ -55,6 +55,9 @@ export function InfiniteCanvas({ children, handleRef }: InfiniteCanvasProps) {
   const panningRef = useRef(false)
   const lastUserMoveAt = useRef(0)
   const markUserMove = () => { lastUserMoveAt.current = Date.now() }
+  // Live offset + scale for the native touch listeners, which are bound once.
+  const viewRef = useRef({ offset, scale })
+  useEffect(() => { viewRef.current = { offset, scale } }, [offset, scale])
 
   useImperativeHandle(handleRef, () => ({
     focusOn: (el, opts) => {
@@ -151,6 +154,81 @@ export function InfiniteCanvas({ children, handleRef }: InfiniteCanvasProps) {
     }
     el.addEventListener("wheel", prevent, { passive: false })
     return () => el.removeEventListener("wheel", prevent)
+  }, [])
+
+  // Touch: one finger drags the canvas, two fingers pinch-zoom it.
+  //
+  // Panning used to listen to mouse events only. A phone sends no mouse moves
+  // for a finger drag, and the page around the canvas doesn't scroll
+  // (overflow hidden), so on a phone everything beyond the first screen was
+  // out of reach — after writing an idea, the hooks card and its
+  // "תייצר לי הוקים" button sat off-screen with no way to get to them
+  // (bug report 2026-11-22, iPhone). Native listeners, not React's, because
+  // stopping the page from scrolling needs a non-passive touchmove. A tap
+  // never moves, so buttons still get their click.
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    type Gesture =
+      | { kind: "pan"; startX: number; startY: number; origin: { x: number; y: number } }
+      | { kind: "pinch"; startDist: number; startScale: number; origin: { x: number; y: number }; mid: { x: number; y: number } }
+    let gesture: Gesture | null = null
+    const dist = (a: Touch, b: Touch) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+    const isFormTarget = (t: EventTarget | null) =>
+      t instanceof HTMLElement && !!t.closest("textarea, input, select, [data-no-pan], [contenteditable]")
+
+    const start = (e: TouchEvent) => {
+      if (isFormTarget(e.target)) { gesture = null; return }
+      const view = viewRef.current
+      const rect = el.getBoundingClientRect()
+      if (e.touches.length === 1) {
+        const t = e.touches[0]
+        gesture = { kind: "pan", startX: t.clientX, startY: t.clientY, origin: view.offset }
+      } else if (e.touches.length === 2) {
+        const [a, b] = [e.touches[0], e.touches[1]]
+        gesture = {
+          kind: "pinch",
+          startDist: dist(a, b),
+          startScale: view.scale,
+          origin: view.offset,
+          mid: { x: (a.clientX + b.clientX) / 2 - rect.left, y: (a.clientY + b.clientY) / 2 - rect.top },
+        }
+      }
+    }
+    const move = (e: TouchEvent) => {
+      if (!gesture) return
+      e.preventDefault()
+      markUserMove()
+      panningRef.current = true
+      if (gesture.kind === "pan" && e.touches.length === 1) {
+        const t = e.touches[0]
+        setOffset({ x: gesture.origin.x + t.clientX - gesture.startX, y: gesture.origin.y + t.clientY - gesture.startY })
+      } else if (gesture.kind === "pinch" && e.touches.length === 2) {
+        const next = Math.min(2, Math.max(0.2, gesture.startScale * (dist(e.touches[0], e.touches[1]) / gesture.startDist)))
+        const k = next / gesture.startScale
+        // Zoom around the point between the fingers (transform origin is 0 0).
+        setScale(next)
+        setOffset({ x: gesture.mid.x - (gesture.mid.x - gesture.origin.x) * k, y: gesture.mid.y - (gesture.mid.y - gesture.origin.y) * k })
+      }
+    }
+    const end = (e: TouchEvent) => {
+      if (gesture) markUserMove()
+      panningRef.current = false
+      // Lifting one finger of a pinch carries on as a drag from where it is.
+      if (e.touches.length > 0 && !isFormTarget(e.target)) start(e)
+      else gesture = null
+    }
+
+    el.addEventListener("touchstart", start, { passive: true })
+    el.addEventListener("touchmove", move, { passive: false })
+    el.addEventListener("touchend", end)
+    el.addEventListener("touchcancel", end)
+    return () => {
+      el.removeEventListener("touchstart", start)
+      el.removeEventListener("touchmove", move)
+      el.removeEventListener("touchend", end)
+      el.removeEventListener("touchcancel", end)
+    }
   }, [])
 
   const zoomIn = () => setScale((s) => Math.min(2, s + 0.1))
