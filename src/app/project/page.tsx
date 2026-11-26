@@ -288,6 +288,29 @@ function shortenTitle(text: string, maxWords = 7): string {
   return words.slice(0, maxWords).join(" ")
 }
 
+// Per-hook local backup of the canvas brief ("מה תרצו להגיד על זה?"). The
+// server (hooks.brief) is the source of truth; this covers a network failure
+// or migration 049 not being applied yet. Keyed by hook id — unlike
+// canvasState_v1, opening another hook never overwrites it.
+const HOOK_BRIEFS_KEY = "hookBriefs_v1"
+function readLocalBrief(uid: string, hookId: string): string {
+  try {
+    const map = JSON.parse(localStorage.getItem(userKey(HOOK_BRIEFS_KEY, uid)) || "{}") as Record<string, { text?: unknown }>
+    const text = map[hookId]?.text
+    return typeof text === "string" ? text : ""
+  } catch { return "" }
+}
+function writeLocalBrief(uid: string, hookId: string, text: string) {
+  try {
+    const key = userKey(HOOK_BRIEFS_KEY, uid)
+    const map = JSON.parse(localStorage.getItem(key) || "{}") as Record<string, { text: string; at: number }>
+    map[hookId] = { text, at: Date.now() }
+    // Bounded: keep the 200 most recently touched hooks.
+    const entries = Object.entries(map).sort((a, b) => (b[1]?.at ?? 0) - (a[1]?.at ?? 0)).slice(0, 200)
+    localStorage.setItem(key, JSON.stringify(Object.fromEntries(entries)))
+  } catch (err) { console.error("[project][brief-local-save]", err) }
+}
+
 export default function ProjectPage() {
   return (
     <Suspense fallback={null}>
@@ -1676,6 +1699,168 @@ function ProjectPageInner() {
     }, 800)
     return () => clearTimeout(timer)
   }, [savedPostId, response])
+
+  // ---- Hook brief, on the server -----------------------------------------
+  // On the hook entry (/project?hook=…&hook_id=…) there is no post yet, so
+  // the effect above never fires and "מה תרצו להגיד על זה?" used to live only
+  // in canvasState_v1 — ONE localStorage slot per user, rewritten by whatever
+  // canvas was opened next and restored only on an exact sessionKey match.
+  // Opening hook B wiped hook A's brief; another device never saw it. It is
+  // now saved on the hook row (hooks.brief, migration 049) and loaded from
+  // there; hookBriefs_v1 is a per-hook local backup for when the server
+  // can't be reached or the migration isn't applied yet.
+  const responseRef = useRef(response)
+  useEffect(() => { responseRef.current = response }, [response])
+  // Set when she types in the field — a server value that arrives later must
+  // not replace what she's typing.
+  const briefTypedRef = useRef(false)
+  // The hook whose server brief has been loaded. Autosave waits for it, so the
+  // empty initial value is never written over a brief saved on another device.
+  const [briefLoadedFor, setBriefLoadedFor] = useState<string | null>(null)
+  const lastSavedBriefRef = useRef<string>("")
+  const briefServerOkRef = useRef(true)
+  const pendingBriefRef = useRef<{ hookId: string; text: string } | null>(null)
+  const briefTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (flow !== "hook" || !userId || !hookIdParam) return
+    if (briefLoadedFor === hookIdParam) return
+    const uid = userId
+    const hookId = hookIdParam
+    let cancelled = false
+    const url = `/api/hooks/${encodeURIComponent(hookId)}/brief`
+    // Show a value and count it as saved — unless she has typed meanwhile,
+    // in which case her text stays and the autosave sends it.
+    const adopt = (text: string) => {
+      if (briefTypedRef.current) return
+      responseRef.current = text
+      setResponse(text)
+      lastSavedBriefRef.current = text
+    }
+    // Local copy: the per-hook backup, else whatever the old single-slot
+    // canvasState_v1 restore put in the field for this hook. Read after the
+    // fetch, so that restore's setResponse has reached responseRef.
+    const readLocal = () => readLocalBrief(uid, hookId) || responseRef.current
+    ;(async () => {
+      try {
+        const res = await fetch(url)
+        const data = (await res.json().catch(() => null)) as { brief?: string | null; unavailable?: boolean } | null
+        if (cancelled) return
+        const local = readLocal()
+        if (res.status === 404 || res.status === 401) return // not her hook — never save to it
+        if (!res.ok || !data || data.unavailable) {
+          if (data?.unavailable) {
+            briefServerOkRef.current = false
+            console.warn("[project][brief] server storage not available yet — keeping the brief in this browser")
+          } else {
+            console.error("[project][brief-load]", res.status, data)
+          }
+          adopt(local.trim() ? local : responseRef.current)
+          setBriefLoadedFor(hookId)
+          return
+        }
+        const server = typeof data.brief === "string" ? data.brief : ""
+        if (server.trim()) {
+          // The server is the source of truth.
+          adopt(server)
+        } else if (local.trim()) {
+          // One-time move of a brief that only ever lived in this browser.
+          // onlyIfEmpty: never overwrites a brief saved meanwhile elsewhere.
+          adopt(local)
+          const put = await fetch(url, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ brief: local, onlyIfEmpty: true }),
+          })
+          const putData = (await put.json().catch(() => null)) as { ok?: boolean; skipped?: string; brief?: string | null; unavailable?: boolean } | null
+          if (cancelled) return
+          if (putData?.skipped === "server_not_empty" && typeof putData.brief === "string") {
+            adopt(putData.brief)
+          } else if (!putData?.ok) {
+            // Not pushed — leave lastSaved empty so the next save retries it.
+            lastSavedBriefRef.current = ""
+            if (putData?.unavailable) briefServerOkRef.current = false
+          }
+        } else {
+          lastSavedBriefRef.current = ""
+        }
+        setBriefLoadedFor(hookId)
+      } catch (err) {
+        if (cancelled) return
+        console.error("[project][brief-load]", err)
+        const local = readLocal()
+        adopt(local.trim() ? local : responseRef.current)
+        setBriefLoadedFor(hookId)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [flow, userId, hookIdParam, briefLoadedFor])
+
+  const flushBriefSave = useCallback((keepalive = false) => {
+    if (briefTimerRef.current !== null) {
+      window.clearTimeout(briefTimerRef.current)
+      briefTimerRef.current = null
+    }
+    const pending = pendingBriefRef.current
+    if (!pending) return
+    pendingBriefRef.current = null
+    if (!briefServerOkRef.current) return // local backup already has it
+    fetch(`/api/hooks/${encodeURIComponent(pending.hookId)}/brief`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ brief: pending.text }),
+      keepalive,
+    })
+      .then(async (res) => {
+        const data = (await res.json().catch(() => null)) as { ok?: boolean; unavailable?: boolean } | null
+        if (data?.unavailable) {
+          briefServerOkRef.current = false
+          console.warn("[project][brief] server storage not available yet — keeping the brief in this browser")
+          return
+        }
+        if (res.ok && data?.ok) {
+          lastSavedBriefRef.current = pending.text
+          return
+        }
+        console.error("[project][brief-save]", res.status, data)
+        // Retry on the next flush (blur / page hide) unless newer text is queued.
+        if (res.status >= 500 && !pendingBriefRef.current) pendingBriefRef.current = pending
+      })
+      .catch((err) => {
+        console.error("[project][brief-save]", err)
+        if (!pendingBriefRef.current) pendingBriefRef.current = pending
+      })
+  }, [])
+
+  // Debounced autosave while typing (800ms, like the other fields here).
+  useEffect(() => {
+    if (!userId || !hookIdParam) return
+    if (briefLoadedFor !== hookIdParam) return
+    if (response === lastSavedBriefRef.current && !pendingBriefRef.current) return
+    writeLocalBrief(userId, hookIdParam, response)
+    pendingBriefRef.current = { hookId: hookIdParam, text: response }
+    if (briefTimerRef.current !== null) window.clearTimeout(briefTimerRef.current)
+    briefTimerRef.current = window.setTimeout(() => flushBriefSave(), 800)
+  }, [userId, hookIdParam, briefLoadedFor, response, flushBriefSave])
+
+  // Flush on page hide (tab closed, reload, switching apps) and on leaving
+  // the canvas inside the app (unmount), with keepalive so it completes.
+  useEffect(() => {
+    const onPageHide = () => flushBriefSave(true)
+    const onVisibility = () => { if (document.visibilityState === "hidden") flushBriefSave(true) }
+    window.addEventListener("pagehide", onPageHide)
+    document.addEventListener("visibilitychange", onVisibility)
+    return () => {
+      window.removeEventListener("pagehide", onPageHide)
+      document.removeEventListener("visibilitychange", onVisibility)
+      flushBriefSave(true)
+    }
+  }, [flushBriefSave])
+
+  const onBriefChange = useCallback((val: string) => {
+    briefTypedRef.current = true
+    setResponse(val)
+  }, [])
 
   // ---- Pending saves --------------------------------------------------
   // Both autosaves (core post body, format scripts) park their text here and
@@ -3370,7 +3555,8 @@ function ProjectPageInner() {
                   active={activeCard === "response"}
                   value={response}
                   onFocus={() => setActiveCard("response")}
-                  onChange={(val) => setResponse(val)}
+                  onChange={onBriefChange}
+                  onBlur={() => flushBriefSave()}
                   onSubmit={handleGeneratePost}
                       submitting={postLoading}
                   products={products}

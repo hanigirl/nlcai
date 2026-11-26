@@ -25,6 +25,8 @@ interface WorkflowCardProps {
   value?: string
   onChange?: (value: string) => void
   onFocus?: () => void
+  /** Fired when the main textarea loses focus — e.g. to flush a pending autosave. */
+  onBlur?: () => void
   onSubmit?: () => void
   /** True while the submit's work is running — the button can't be pressed again. */
   submitting?: boolean
@@ -48,6 +50,7 @@ export function WorkflowCard({
   value,
   onChange,
   onFocus,
+  onBlur,
   onSubmit,
   submitting = false,
   className,
@@ -165,6 +168,7 @@ export function WorkflowCard({
           value={value}
           onChange={(e) => onChange?.(e.target.value)}
           onFocus={onFocus}
+          onBlur={onBlur}
           className="min-h-[156px] rounded-[10px] border-border-neutral-default bg-white dark:bg-gray-10 resize-none shadow-none"
         />
         {products && (
