@@ -91,6 +91,8 @@ What you control — EVERYTHING about the caption (the script's words over her m
 - replace_media: when she attaches a photo or video of hers and wants it AS the b-roll (instead of the current one), put it in; the caption is drawn over it again.
 What you never do: change, retouch, recolour, crop or redraw her photo/video pixels, and never change the words (they are the post's script — changed in the script editor). If she asks for that, say so in one kind sentence and offer what you can do.
 
+Her file may carry text of its own (she edited it before bringing it). With her message comes a still of HER ORIGINAL FILE as she brought it, before any caption of ours: any text in it is HERS, burned into her file — you can't change or remove it, and it is not our caption. Our caption is only what the b-roll shows beyond her original. Never call our caption hers ("צרוב בסרטון שלכם"), never call her text ours, and when she says text was added, compare the two stills and tell her plainly which text is ours and which is hers.
+
 You SEE the b-roll: a still of it now comes with her message, and every set_caption / replace_media renders a draft and hands you its still. Look at it like a designer: does it do exactly what she asked (where the caption sits, how far it moved, the colours, the box)? If not, call set_caption again from the draft's state until it does — then finish. In your reply, say only what you SAW happen on the draft. Positions: "למטה/למעלה X פיקסל" = move_y ±X from where it is now; "למעלה / באמצע / למטה" alone = position.
 
 Act with set_caption / replace_media, then finish. Several changes in one turn are fine. Only when her request truly has several readings, ask_user with 2–4 short options. Colours: her brand colours when she says "צבע המותג"; otherwise real hex values for what she named.
@@ -175,11 +177,18 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
     : ""
   await input.setProgress("מסתכל על הבי-רול...")
   const nowStill = await stillOf(mediaUrl, isVideoMediaUrl(mediaUrl) ? "video" : kind)
+  // Her file as she brought it — what tells her own text from our caption.
+  const originalStill = record ? await stillOf(record.sourceUrl, kind) : null
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
       content: [
         ...(nowStill ? [{ type: "text" as const, text: "THE B-ROLL NOW (a still):" }, imageBlock(nowStill)] : []),
+        ...(originalStill
+          ? [{ type: "text" as const, text: "HER ORIGINAL FILE, as she brought it (same moment, no caption of ours) — any text here is hers:" }, imageBlock(originalStill)]
+          : record
+            ? []
+            : [{ type: "text" as const, text: "(The b-roll above IS her original file: no caption of ours is drawn on it yet — any text in it is hers.)" }]),
         ...(imageBlocks.length ? [{ type: "text" as const, text: "HER ATTACHED PICTURES:" }, ...imageBlocks] : []),
         { type: "text", text: `${state}\n\nHER NEW MESSAGE: ${input.request}${attachNote}` },
       ],
@@ -276,6 +285,7 @@ export async function runOwnBRollAgent(input: OwnBRollAgentInput): Promise<BRoll
       conversation: transcript,
       before: [{ label: "Before", jpeg: nowStill }],
       after: [{ label: "After", jpeg: lastLook }],
+      originals: originalStill && !newSource ? [{ label: "Her original", jpeg: originalStill }] : [],
       rules: [
         `The caption's words are exactly the script's, nothing added or dropped (line breaks may differ): ${JSON.stringify([spec.headline, spec.body].filter(Boolean).join(" / "))}`,
         "Her photo / video itself is untouched — only the caption over it may differ (unless she attached a new file to be the b-roll).",

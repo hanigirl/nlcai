@@ -28,6 +28,23 @@ export function parseOwnCaptionOffer(offer: string): CaptionStyle | null {
   }
 }
 
+/**
+ * What a saved look holds, in her words — the confirmation names exactly
+ * this, never "ככה": only colours, the box and the size are kept, so a
+ * hidden caption or a motion from that change is NOT saved (bug 2026-11-22:
+ * "שמרתי. מעכשיו הכיתוב ייראה ככה" over a caption the agent had hidden).
+ */
+export function describeOwnCaptionLook(style: CaptionStyle): string {
+  const parts: string[] = []
+  if (style.pill === "none") parts.push("בלי קופסה מאחורי המילים")
+  else if (style.pill) parts.push("קופסה בצבע שבחרתם מאחורי המילים")
+  if (style.text) parts.push("המילים בצבע שבחרתם")
+  if (typeof style.scale === "number" && style.scale !== 1) parts.push(style.scale < 1 ? "כיתוב קטן יותר" : "כיתוב גדול יותר")
+  if (style.perLine === true) parts.push("קופסה לכל שורה")
+  else if (style.perLine === false) parts.push("קופסה אחת לכל הכיתוב")
+  return parts.join(", ")
+}
+
 /** Colours, box and size hold for every piece; a nudge (offsetY) belongs to this one. */
 function lasting(style: CaptionStyle | undefined): CaptionStyle | undefined {
   if (!style) return undefined
