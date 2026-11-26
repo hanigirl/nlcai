@@ -56,8 +56,6 @@ import {
   isDriveUrl,
   isCompleteDriveUrl,
   isVideoUrl,
-  extractDriveFileId,
-  driveThumbnailUrl,
   playableVideoSrc,
   videoPreviewSrc,
 } from "@/lib/drive-media"
@@ -119,6 +117,7 @@ import { usePreviewAccess } from "@/lib/use-scheduling-access"
 // Image post: her picture + the script's text (gated, Hani only).
 import { useOwnMediaText as useOwnMediaTextImagePost } from "@/lib/use-scheduling-access"
 import { isCaptionedRender, stillOriginalOf } from "@/lib/still-original"
+import { coverFailureMessage, driveCoverThumbnail } from "@/lib/cover-frame"
 
 // Every format the panel can open MUST have an entry here: the header block
 // (title + close button) is gated on `meta`, so a missing key renders a panel
@@ -1036,19 +1035,16 @@ function TalkingHeadFlow({
           pill_color: color ?? pillColor,
         }),
       })
-      if (!res.ok) throw new Error(`status ${res.status}`)
-      const data = await res.json()
+      const data = await res.clone().json().catch(() => ({}))
       if (data.covers?.[0]) {
         onCoverImageChange(data.covers[0])
       } else {
-        // An empty answer used to mean "no brand_style", but the cover route
-        // no longer reads brand_style (one shared style + her pill colour),
-        // so uploading cover examples wouldn't help — don't send her there.
-        toast.error("לא הצלחנו לייצר קאבר. נסו שוב.")
+        // The route's own Hebrew reason when it gave one (lib/cover-frame).
+        toast.error(await coverFailureMessage(res))
       }
     } catch (err) {
       console.error("[media-panel][generate-cover]", err)
-      toast.error("יצירת הקאבר נכשלה. נסו שוב.")
+      toast.error("אין חיבור לשרת כרגע. בדקו את החיבור לאינטרנט ונסו שוב.")
     } finally {
       setCoverLoading(false); onCoverLoadingChange?.(false)
     }
@@ -1194,17 +1190,15 @@ function TalkingHeadFlow({
       // No automatic cover (talking head AI edit, Hani 2026-11-07): the cover
       // is made when she asks — "יצירת קאבר" on the media tab.
       if (!autoCover) return
-      // Cover: we can't read a frame off a Drive-hosted video (canvas would
-      // taint — Drive sends no CORS headers), so use Drive's server-rendered
-      // poster instead. The cover route fetches remote URLs server-side, so
-      // handing it the thumbnail URL works exactly like a data URL frame.
-      const fileId = extractDriveFileId(link)
-      const posterUrl = fileId ? driveThumbnailUrl(fileId) : undefined
       const coverTitle = ownText ? hookText : hookText || transcript || "ריל חדש"
       if (!coverTitle) return
       setCoverLoading(true)
       onCoverLoadingChange?.(true)
       try {
+        // A frame through our own video proxy — Drive sends no CORS, and the
+        // route fetching Drive's poster hung until the platform timeout
+        // (bug 2026-11-21). The poster URL is only the fallback (lib/cover-frame).
+        const posterUrl = await driveCoverThumbnail(link)
         const coverRes = await fetch("/api/reel-cover/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1214,11 +1208,10 @@ function TalkingHeadFlow({
             pill_color: pillColor,
           }),
         })
-        if (!coverRes.ok) throw new Error(`status ${coverRes.status}`)
-        const coverData = await coverRes.json()
+        const coverData = await coverRes.clone().json().catch(() => ({}))
         if (coverData.covers?.[0]) onCoverImageChange(coverData.covers[0])
         else {
-          toast.error("לא הצלחנו לייצר קאבר. נסו שוב.")
+          toast.error(`${await coverFailureMessage(coverRes)} הסרטון חובר בהצלחה.`)
         }
       } catch (err) {
         console.error("[media-panel][cover-from-drive]", err)

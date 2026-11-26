@@ -14,6 +14,15 @@ import { guardedFetch } from "@/lib/server-fetch"
 const COVER_WIDTH = 1080
 const COVER_HEIGHT = 1920 // 9:16 aspect ratio
 
+// Every outside fetch here has a time limit (bug 2026-11-21): the frame
+// fetch had none, Drive's poster never answered from production, and every
+// cover request hung the full 300s into an HTML 504 the client could only
+// show as "לא הצלחתי ליצור קאבר הפעם". Now the slowest honest path (examples
+// read once + font + frame) ends well inside this, with a JSON answer.
+export const maxDuration = 180
+const THUMB_TIMEOUT_MS = 12_000
+const FONT_TIMEOUT_MS = 8_000
+
 // Simplified single-style cover generation. The per-user brand_style
 // pipeline (analyze 3 cover examples → save a 30-field BrandStyle JSON
 // → render with it) is still on disk but bypassed at the route level
@@ -74,11 +83,11 @@ async function loadFont(): Promise<ArrayBuffer> {
     fontDataCache = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
     return fontDataCache
   } catch {
-    const res = await fetch("https://fonts.googleapis.com/css2?family=Rubik:wght@400;600;700&display=swap")
+    const res = await fetch("https://fonts.googleapis.com/css2?family=Rubik:wght@400;600;700&display=swap", { signal: AbortSignal.timeout(FONT_TIMEOUT_MS) })
     const css = await res.text()
     const urlMatch = css.match(/src:\s*url\(([^)]+)\)/)
     if (!urlMatch) throw new Error("Could not find font URL")
-    const fontRes = await fetch(urlMatch[1])
+    const fontRes = await fetch(urlMatch[1], { signal: AbortSignal.timeout(FONT_TIMEOUT_MS) })
     fontDataCache = await fontRes.arrayBuffer()
     return fontDataCache
   }
@@ -94,11 +103,11 @@ async function loadBoldFont(): Promise<ArrayBuffer> {
     boldFontCache = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
     return boldFontCache
   } catch {
-    const res = await fetch("https://fonts.googleapis.com/css2?family=Rubik:wght@700&display=swap")
+    const res = await fetch("https://fonts.googleapis.com/css2?family=Rubik:wght@700&display=swap", { signal: AbortSignal.timeout(FONT_TIMEOUT_MS) })
     const css = await res.text()
     const urlMatch = css.match(/src:\s*url\(([^)]+)\)/)
     if (!urlMatch) throw new Error("Could not find bold font URL")
-    const fontRes = await fetch(urlMatch[1])
+    const fontRes = await fetch(urlMatch[1], { signal: AbortSignal.timeout(FONT_TIMEOUT_MS) })
     boldFontCache = await fontRes.arrayBuffer()
     return boldFontCache
   }
@@ -114,11 +123,11 @@ async function loadExtraBoldFont(): Promise<ArrayBuffer> {
     extraBoldFontCache = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
     return extraBoldFontCache
   } catch {
-    const res = await fetch("https://fonts.googleapis.com/css2?family=Rubik:wght@800&display=swap")
+    const res = await fetch("https://fonts.googleapis.com/css2?family=Rubik:wght@800&display=swap", { signal: AbortSignal.timeout(FONT_TIMEOUT_MS) })
     const css = await res.text()
     const urlMatch = css.match(/src:\s*url\(([^)]+)\)/)
     if (!urlMatch) throw new Error("Could not find extra-bold font URL")
-    const fontRes = await fetch(urlMatch[1])
+    const fontRes = await fetch(urlMatch[1], { signal: AbortSignal.timeout(FONT_TIMEOUT_MS) })
     extraBoldFontCache = await fontRes.arrayBuffer()
     return extraBoldFontCache
   }
@@ -405,14 +414,20 @@ export async function POST(req: NextRequest) {
       if (thumbnail_url.startsWith("data:")) {
         thumbBase64 = thumbnail_url
       } else {
+        // One signal for the whole fetch — headers AND body. Past it, the
+        // cover is made without the picture rather than not at all.
         try {
-          const thumbRes = await guardedFetch(thumbnail_url)
-          if (thumbRes.ok) {
+          const thumbRes = await guardedFetch(thumbnail_url, { signal: AbortSignal.timeout(THUMB_TIMEOUT_MS) })
+          const type = (thumbRes.headers.get("content-type") || "").split(";")[0].trim()
+          if (thumbRes.ok && type.startsWith("image/")) {
             const thumbBuffer = Buffer.from(await thumbRes.arrayBuffer())
-            thumbBase64 = `data:image/jpeg;base64,${thumbBuffer.toString("base64")}`
+            thumbBase64 = `data:${type};base64,${thumbBuffer.toString("base64")}`
+          } else {
+            await thumbRes.body?.cancel().catch(() => undefined)
+            console.error("[reel-cover][thumb] not an image:", thumbRes.status, type)
           }
-        } catch {
-          // Continue without thumbnail
+        } catch (err) {
+          console.error("[reel-cover][thumb]", err instanceof Error ? `${err.name}: ${err.message}` : err)
         }
       }
     }
@@ -456,6 +471,13 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error("Reel cover generation error:", msg)
-    return NextResponse.json({ error: (knownProviderError(msg) ?? `Failed to generate cover: ${msg}`) }, { status: 500 })
+    // `message` is what the client shows her (lib/cover-frame).
+    return NextResponse.json(
+      {
+        error: knownProviderError(msg) ?? `Failed to generate cover: ${msg}`,
+        message: knownProviderError(msg) ?? "לא הצלחתי ליצור קאבר הפעם. נסו שוב.",
+      },
+      { status: 500 },
+    )
   }
 }

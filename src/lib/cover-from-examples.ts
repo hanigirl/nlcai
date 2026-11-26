@@ -17,6 +17,8 @@ import { userExampleKind } from "@/lib/visual-language/types"
  */
 type StoredStyle = BrandStyle & { examples_sig?: string }
 
+const ANALYZE_TIMEOUT_MS = 60_000
+
 export async function coverStyleFromExamples(supabase: SupabaseClient, userId: string): Promise<BrandStyle | null> {
   const { data } = await supabase
     .from("user_media")
@@ -36,7 +38,12 @@ export async function coverStyleFromExamples(supabase: SupabaseClient, userId: s
   try {
     const key = await getUserApiKey(supabase, "anthropic_api_key")
     const images = rows.map((r) => supabase.storage.from("user-media").getPublicUrl(r.storage_path).data.publicUrl)
-    const style = await analyzeBrandStyle(key, images)
+    // Bounded: an unanswered read must not hold the cover past the route's
+    // time limit (bug 2026-11-21) — past it, the stored style or the default.
+    const style = await Promise.race([
+      analyzeBrandStyle(key, images),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("cover examples read timed out")), ANALYZE_TIMEOUT_MS)),
+    ])
     const next: StoredStyle = { ...style, examples_sig: sig }
     await supabase.from("users").update({ brand_style: next } as never).eq("id", userId)
     return next

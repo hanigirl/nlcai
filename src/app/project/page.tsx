@@ -53,6 +53,7 @@ import { TooltipLabel } from "@/components/ui/tooltip"
 import { MediaPanel } from "@/components/media-panel"
 import { HoverMediaIconButton } from "@/components/media-preview-zone"
 import { isTalkingHeadRender } from "@/lib/talking-head-original"
+import { coverFailureMessage, driveCoverThumbnail, videoFrameDataUrl } from "@/lib/cover-frame"
 import {
   FormatCardsRow,
   FormatPanelFooter,
@@ -883,34 +884,6 @@ function ProjectPageInner() {
     return () => clearTimeout(t)
   }, [sessionKey, idea, hooks, hookIds, selectedHook, response, corePost, showFormats, selectedFormats, duplicatedFormats, formatPosts, editableHook, coverText, thTranscript, thSourceMode, savedHookText, originalHooks, originalCorePost, selectedProductId, triggerWord, savedPostId, userId])
 
-  // Extract a frame from a video URL as a data URL
-  const extractVideoFrame = (videoSrc: string): Promise<string | null> => {
-    return new Promise((resolve) => {
-      const video = document.createElement("video")
-      video.crossOrigin = "anonymous"
-      video.muted = true
-      video.src = videoSrc
-      video.onloadeddata = () => {
-        video.currentTime = 1 // grab frame at 1 second
-      }
-      video.onseeked = () => {
-        try {
-          const canvas = document.createElement("canvas")
-          canvas.width = video.videoWidth
-          canvas.height = video.videoHeight
-          const ctx = canvas.getContext("2d")
-          ctx?.drawImage(video, 0, 0)
-          resolve(canvas.toDataURL("image/jpeg", 0.8))
-        } catch (err) {
-          console.error("[project][video-frame-capture]", err)
-          resolve(null)
-        }
-      }
-      video.onerror = () => resolve(null)
-      setTimeout(() => resolve(null), 5000)
-    })
-  }
-
   // Generate cover with optional video frame as thumbnail. colorOverride
   // sidesteps the state-update race when the user picks a new pill colour
   // and we kick off a regenerate before pillColor has flushed through
@@ -958,19 +931,18 @@ function ProjectPageInner() {
     if (thVideoFrameDataUrl && !fromRender) {
       thumbnailUrl = thVideoFrameDataUrl
     } else if (isDriveUrl(videoSrc)) {
-      // Link-mode video: the clip lives in Drive, so a canvas frame-grab
-      // would taint (no CORS) and `extractVideoFrame` would just burn its
-      // 5s timeout and return null. Drive renders its own poster
-      // server-side, and the cover route fetches remote URLs, so hand it
-      // that instead of a data URL.
-      const fileId = extractDriveFileId(videoSrc!)
-      if (fileId) thumbnailUrl = driveThumbnailUrl(fileId)
+      // Link-mode video: Drive itself sends no CORS, so the frame is taken
+      // through our same-origin proxy (lib/cover-frame) — Drive's poster URL
+      // only as a fallback. The route fetching that poster hung every cover
+      // on a Drive video until the 5-minute platform timeout (bug 2026-11-21).
+      thumbnailUrl = await driveCoverThumbnail(videoSrc!)
+      if (thumbnailUrl?.startsWith("data:")) setThVideoFrameDataUrl(thumbnailUrl)
     } else if (videoSrc && !videoSrc.includes("heygen.com")) {
       const isImageUrl = videoSrc.includes("/video-thumb/") || videoSrc.match(/\.(jpg|jpeg|png|webp)(\?|$)/i)
       if (isImageUrl) {
         thumbnailUrl = videoSrc
       } else {
-        const frame = await extractVideoFrame(videoSrc)
+        const frame = await videoFrameDataUrl(videoSrc)
         if (frame) {
           thumbnailUrl = frame
           setThVideoFrameDataUrl(frame)
@@ -978,6 +950,8 @@ function ProjectPageInner() {
       }
     }
 
+    // She pressed the button — a failure always says so. Automatic covers stay quiet.
+    const tell = requested || ownTextRef.current
     try {
       const res = await fetch("/api/reel-cover/generate", {
         method: "POST",
@@ -991,12 +965,12 @@ function ProjectPageInner() {
           ...(thAiOnRef.current ? { use_cover_settings: true } : {}),
         }),
       })
-      const d = await res.json().catch(() => ({}))
+      const d = await res.clone().json().catch(() => ({}))
       if (d.covers?.[0]) setThCoverImage(d.covers[0])
-      else if (ownTextRef.current) toast.error(typeof d.message === "string" && d.message ? d.message : "לא הצלחתי ליצור קאבר הפעם. נסו שוב.")
+      else if (tell) toast.error(await coverFailureMessage(res))
     } catch (err) {
       console.error("[project][th-cover-generate]", err)
-      if (ownTextRef.current) toast.error("יצירת הקאבר נכשלה. נסו שוב.")
+      if (tell) toast.error("אין חיבור לשרת כרגע. בדקו את החיבור לאינטרנט ונסו שוב.")
     }
     finally { setThCoverLoading(false) }
   }
