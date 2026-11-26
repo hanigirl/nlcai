@@ -73,6 +73,7 @@ import {
 } from "@/lib/schedule-all"
 import { NoSettingsDialog, PreviewBar, ScheduleAllButton, UnmatchedNote } from "@/components/schedule-all"
 import { CorePostSheet, HEADER_CHIP_FORMATS, type CorePostSheetData } from "@/components/core-post-sheet"
+import { formatDeepLinkTarget } from "@/lib/calendar-href"
 import { FormatThumbnail } from "@/components/format-thumbnail"
 import { InstagramConnectDialogHost, InstagramConnectionControl } from "@/components/instagram-connect"
 import {
@@ -1279,15 +1280,23 @@ export default function CalendarPage() {
   // (the board jumps to its week), else its first format with media, where
   // "תזמון פוסט" really schedules. Waits for the access answer (null =
   // unknown), with a 3-second fallback to the Sheet.
+  //
+  // `&format=<id>` (a format card's "ללוח התזמון") lands on THAT format —
+  // never on another format's slot. Without it, once the story was on the
+  // board every card's calendar button reopened the story (bug 2026-11-21).
   const deepLinkRef = useRef<string | null>(null)
+  const deepLinkFormatRef = useRef<FormatId | null>(null)
   const schedulingAccess = useSchedulingAccess()
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const pid = params.get("post_id")
     if (!pid) return
     deepLinkRef.current = pid
+    const f = params.get("format")
+    deepLinkFormatRef.current = f && (HEADER_CHIP_FORMATS as string[]).includes(f) ? (f as FormatId) : null
     const url = new URL(window.location.href)
     url.searchParams.delete("post_id")
+    url.searchParams.delete("format")
     window.history.replaceState({}, "", url.toString())
   }, [])
   useEffect(() => {
@@ -1297,13 +1306,26 @@ export default function CalendarPage() {
       const t = window.setTimeout(() => {
         if (deepLinkRef.current !== pid) return
         deepLinkRef.current = null
-        void openSheetForCorePost(pid)
+        void openSheetForCorePost(pid, deepLinkFormatRef.current ?? undefined)
       }, 3000)
       return () => window.clearTimeout(t)
     }
     deepLinkRef.current = null
+    const wanted = deepLinkFormatRef.current
+    deepLinkFormatRef.current = null
     if (!schedulingAccess) {
-      void openSheetForCorePost(pid)
+      void openSheetForCorePost(pid, wanted ?? undefined)
+      return
+    }
+    if (wanted) {
+      // Its own slot, if it has one (the board jumps to that week); else the
+      // preview of the unscheduled format, where "תזמון פוסט" places it.
+      const target = formatDeepLinkTarget(getScheduledPosts(), pid, wanted)
+      if (target.weekOf) {
+        const [y, m, d] = target.weekOf.split("-").map(Number)
+        setWeekStart(startOfWeek(new Date(y, m - 1, d)))
+      }
+      openPreview(pid, wanted)
       return
     }
     const onBoard = getScheduledPosts()

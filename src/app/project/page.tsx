@@ -81,6 +81,7 @@ import { useFormatMediaBusy } from "@/hooks/use-format-media-busy"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { CorePostCelebration } from "@/components/core-post-celebration"
 import { ScheduleInCalendarBar } from "@/components/schedule-in-calendar-bar"
+import { calendarHref } from "@/lib/calendar-href"
 import { CorePostChat } from "@/components/core-post-chat"
 import { AI_HOVER_ZONE, AiHoverEditButton } from "@/components/ai-hover-edit"
 import { isOwnMediaUrl } from "@/lib/own-media"
@@ -2713,7 +2714,7 @@ function ProjectPageInner() {
             status: item.approval,
             onApprove: () => approvals.approve(fid as ApprovalFid),
             onRevoke: () => approvals.revoke(fid as ApprovalFid),
-            calendarHref: savedPostId ? `/calendar?post_id=${savedPostId}` : "/calendar",
+            calendarHref: calendarHref(savedPostId, fid),
           }
         : undefined
     const onAiEditMedia =
@@ -2942,7 +2943,7 @@ function ProjectPageInner() {
                     status: item.approval,
                     onApprove: () => approvals.approve(fid as ApprovalFid),
                     onRevoke: () => approvals.revoke(fid as ApprovalFid),
-                    calendarHref: savedPostId ? `/calendar?post_id=${savedPostId}` : "/calendar",
+                    calendarHref: calendarHref(savedPostId, fid),
                   }
                 : undefined
             }
@@ -3837,9 +3838,7 @@ function ProjectPageInner() {
                               statusOf: approvals.statusOf,
                               approve: approvals.approve,
                               revoke: approvals.revoke,
-                              calendarHref: savedPostId
-                                ? `/calendar?post_id=${savedPostId}`
-                                : "/calendar",
+                              calendarHref: (fid: string) => calendarHref(savedPostId, fid),
                             }
                           : undefined
                       }
@@ -4210,7 +4209,8 @@ type FormatTreeApproval = {
   statusOf: (fid: string) => ApprovalStatus
   approve: (fid: string) => void
   revoke: (fid: string) => void
-  calendarHref: string
+  /** The calendar link for one format — lands on that format, not the post's first slot. */
+  calendarHref: (fid: string) => string
 }
 
 function FormatTree({
@@ -4363,7 +4363,7 @@ function FormatTree({
                 formatNoun={FORMAT_NOUN[fid] ?? format.label}
                 onApprove={() => approval.approve(fid)}
                 onRevoke={() => approval.revoke(fid)}
-                calendarHref={approval.calendarHref}
+                calendarHref={approval.calendarHref(fid)}
                 actions={actions}
               />
             ) : (
