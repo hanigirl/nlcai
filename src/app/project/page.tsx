@@ -1721,6 +1721,62 @@ function ProjectPageInner() {
   const briefServerOkRef = useRef(true)
   const pendingBriefRef = useRef<{ hookId: string; text: string } | null>(null)
   const briefTimerRef = useRef<number | null>(null)
+  // The hook the brief state above belongs to (see the reset effect below).
+  const briefHookRef = useRef(hookIdParam)
+
+  const flushBriefSave = useCallback((keepalive = false) => {
+    if (briefTimerRef.current !== null) {
+      window.clearTimeout(briefTimerRef.current)
+      briefTimerRef.current = null
+    }
+    const pending = pendingBriefRef.current
+    if (!pending) return
+    pendingBriefRef.current = null
+    if (!briefServerOkRef.current) return // local backup already has it
+    fetch(`/api/hooks/${encodeURIComponent(pending.hookId)}/brief`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ brief: pending.text }),
+      keepalive,
+    })
+      .then(async (res) => {
+        const data = (await res.json().catch(() => null)) as { ok?: boolean; unavailable?: boolean } | null
+        if (data?.unavailable) {
+          briefServerOkRef.current = false
+          console.warn("[project][brief] server storage not available yet — keeping the brief in this browser")
+          return
+        }
+        if (res.ok && data?.ok) {
+          // A save for the hook she just left must not mark B's text as saved.
+          if (pending.hookId === briefHookRef.current) lastSavedBriefRef.current = pending.text
+          return
+        }
+        console.error("[project][brief-save]", res.status, data)
+        // Retry on the next flush (blur / page hide) unless newer text is queued.
+        if (res.status >= 500 && !pendingBriefRef.current) pendingBriefRef.current = pending
+      })
+      .catch((err) => {
+        console.error("[project][brief-save]", err)
+        if (!pendingBriefRef.current) pendingBriefRef.current = pending
+      })
+  }, [])
+
+  // Same page, different hook (/project?hook_id=A → ?hook_id=B, or back via
+  // a post URL): send A's pending save — it carries A's id — then start B
+  // from scratch, so B's server brief loads and A's text is never saved to B.
+  // Declared before the load effect so it runs first in the same commit.
+  useEffect(() => {
+    if (briefHookRef.current === hookIdParam) return
+    briefHookRef.current = hookIdParam
+    flushBriefSave()
+    briefTypedRef.current = false
+    lastSavedBriefRef.current = ""
+    setBriefLoadedFor(null)
+    if (hookIdParam) {
+      responseRef.current = ""
+      setResponse("")
+    }
+  }, [hookIdParam, flushBriefSave])
 
   useEffect(() => {
     if (flow !== "hook" || !userId || !hookIdParam) return
@@ -1795,42 +1851,6 @@ function ProjectPageInner() {
     })()
     return () => { cancelled = true }
   }, [flow, userId, hookIdParam, briefLoadedFor])
-
-  const flushBriefSave = useCallback((keepalive = false) => {
-    if (briefTimerRef.current !== null) {
-      window.clearTimeout(briefTimerRef.current)
-      briefTimerRef.current = null
-    }
-    const pending = pendingBriefRef.current
-    if (!pending) return
-    pendingBriefRef.current = null
-    if (!briefServerOkRef.current) return // local backup already has it
-    fetch(`/api/hooks/${encodeURIComponent(pending.hookId)}/brief`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ brief: pending.text }),
-      keepalive,
-    })
-      .then(async (res) => {
-        const data = (await res.json().catch(() => null)) as { ok?: boolean; unavailable?: boolean } | null
-        if (data?.unavailable) {
-          briefServerOkRef.current = false
-          console.warn("[project][brief] server storage not available yet — keeping the brief in this browser")
-          return
-        }
-        if (res.ok && data?.ok) {
-          lastSavedBriefRef.current = pending.text
-          return
-        }
-        console.error("[project][brief-save]", res.status, data)
-        // Retry on the next flush (blur / page hide) unless newer text is queued.
-        if (res.status >= 500 && !pendingBriefRef.current) pendingBriefRef.current = pending
-      })
-      .catch((err) => {
-        console.error("[project][brief-save]", err)
-        if (!pendingBriefRef.current) pendingBriefRef.current = pending
-      })
-  }, [])
 
   // Debounced autosave while typing (800ms, like the other fields here).
   useEffect(() => {
